@@ -124,14 +124,10 @@ with st.sidebar:
 
 def _ticker_row(key_prefix: str) -> str:
     from alan_trader.data.simulator import POPULAR_TICKERS, TICKER_PROFILES, DEFAULT_PROFILE
-    c1, c2, c3 = st.columns([2, 2, 5])
-    preset = c1.selectbox("Ticker", POPULAR_TICKERS, key=f"{key_prefix}_preset")
-    custom = c2.text_input(
-        "Custom", value="", placeholder="e.g. NVDA", key=f"{key_prefix}_custom",
-    ).strip().upper()
-    ticker = custom if custom else preset
+    c1, c2 = st.columns([2, 7])
+    ticker = c1.selectbox("Ticker", POPULAR_TICKERS, index=0, key=f"{key_prefix}_ticker")
     prof = TICKER_PROFILES.get(ticker, DEFAULT_PROFILE)
-    c3.caption(
+    c2.caption(
         f"Est. vol: {prof['annual_vol']*100:.0f}% ann · {prof.get('category', 'equity')}"
     )
     return ticker
