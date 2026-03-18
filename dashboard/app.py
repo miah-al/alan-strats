@@ -99,6 +99,19 @@ with st.sidebar:
         )
         if not st.session_state.get("polygon_api_key"):
             st.warning("⚠️ Enter your Polygon API key to fetch live data.")
+        else:
+            if st.button("🔌 Test API key", use_container_width=True):
+                try:
+                    from alan_trader.data.polygon_client import PolygonClient
+                    c = PolygonClient(api_key=st.session_state["polygon_api_key"])
+                    snap = c._get("/v2/snapshot/locale/us/markets/stocks/tickers/SPY")
+                    if snap.get("ticker"):
+                        price = snap["ticker"].get("day", {}).get("c") or snap["ticker"].get("lastTrade", {}).get("p")
+                        st.success(f"✅ Connected — SPY ${price:.2f}" if price else "✅ Connected")
+                    else:
+                        st.error("❌ Key accepted but no data returned.")
+                except Exception as e:
+                    st.error(f"❌ {e}")
 
     st.markdown("---")
     if st.button("🔄 Clear all results", use_container_width=True):
