@@ -1,0 +1,4388 @@
+{
+  "last_updated": "2026-03-17",
+  "snapshots": [
+    {
+      "date": "2024-10-31",
+      "equity": 100000.0,
+      "cash": 100000.0,
+      "positions_value": 0,
+      "open_position_ids": [],
+      "strategy_weights": {
+        "vol_arbitrage": 1.0
+      },
+      "daily_pnl": 0.0
+    },
+    {
+      "date": "2024-11-01",
+      "equity": 100000.0,
+      "cash": 100000.0,
+      "positions_value": 0,
+      "open_position_ids": [],
+      "strategy_weights": {
+        "vol_arbitrage": 1.0
+      },
+      "daily_pnl": 0.0
+    },
+    {
+      "date": "2024-11-04",
+      "equity": 89807.03,
+      "cash": 79614.06,
+      "positions_value": 10192.97,
+      "open_position_ids": [
+        "d08b8aabb1"
+      ],
+      "strategy_weights": {
+        "vol_arbitrage": 1.0
+      },
+      "daily_pnl": -10192.97
+    },
+    {
+      "date": "2024-11-05",
+      "equity": 89807.03,
+      "cash": 79614.06,
+      "positions_value": 10192.97,
+      "open_position_ids": [
+        "d08b8aabb1"
+      ],
+      "strategy_weights": {
+        "vol_arbitrage": 1.0
+      },
+      "daily_pnl": 0.0
+    },
+    {
+      "date": "2024-11-06",
+      "equity": 89807.03,
+      "cash": 79614.06,
+      "positions_value": 10192.97,
+      "open_position_ids": [
+        "d08b8aabb1"
+      ],
+      "strategy_weights": {
+        "vol_arbitrage": 1.0
+      },
+      "daily_pnl": 0.0
+    },
+    {
+      "date": "2024-11-07",
+      "equity": 100430.13,
+      "cash": 90237.16,
+      "positions_value": 10192.97,
+      "open_position_ids": [
+        "d08b8aabb1"
+      ],
+      "strategy_weights": {
+        "vol_arbitrage": 1.0
+      },
+      "daily_pnl": 10623.1
+    },
+    {
+      "date": "2024-11-08",
+      "equity": 100430.13,
+      "cash": 100430.13,
+      "positions_value": 0,
+      "open_position_ids": [],
+      "strategy_weights": {
+        "vol_arbitrage": 1.0
+      },
+      "daily_pnl": 0.0
+    },
+    {
+      "date": "2024-11-11",
+      "equity": 100430.13,
+      "cash": 100430.13,
+      "positions_value": 0,
+      "open_position_ids": [],
+      "strategy_weights": {
+        "vol_arbitrage": 1.0
+      },
+      "daily_pnl": 0.0
+    },
+    {
+      "date": "2024-11-12",
+      "equity": 90748.53,
+      "cash": 81066.93,
+      "positions_value": 9681.6,
+      "open_position_ids": [
+        "e59bc8ff51"
+      ],
+      "strategy_weights": {
+        "vol_arbitrage": 1.0
+      },
+      "daily_pnl": -9681.6
+    },
+    {
+      "date": "2024-11-13",
+      "equity": 90748.53,
+      "cash": 81066.93,
+      "positions_value": 9681.6,
+      "open_position_ids": [
+        "e59bc8ff51"
+      ],
+      "strategy_weights": {
+        "vol_arbitrage": 1.0
+      },
+      "daily_pnl": 0.0
+    },
+    {
+      "date": "2024-11-14",
+      "equity": 90748.53,
+      "cash": 81066.93,
+      "positions_value": 9681.6,
+      "open_position_ids": [
+        "e59bc8ff51"
+      ],
+      "strategy_weights": {
+        "vol_arbitrage": 1.0
+      },
+      "daily_pnl": 0.0
+    },
+    {
+      "date": "2024-11-15",
+      "equity": 100798.41,
+      "cash": 91116.81,
+      "positions_value": 9681.6,
+      "open_position_ids": [
+        "e59bc8ff51"
+      ],
+      "strategy_weights": {
+        "vol_arbitrage": 1.0
+      },
+      "daily_pnl": 10049.88
+    },
+    {
+      "date": "2024-11-18",
+      "equity": 100798.41,
+      "cash": 100798.41,
+      "positions_value": 0,
+      "open_position_ids": [],
+      "strategy_weights": {
+        "vol_arbitrage": 1.0
+      },
+      "daily_pnl": 0.0
+    },
+    {
+      "date": "2024-11-19",
+      "equity": 100798.41,
+      "cash": 100798.41,
+      "positions_value": 0,
+      "open_position_ids": [],
+      "strategy_weights": {
+        "vol_arbitrage": 1.0
+      },
+      "daily_pnl": 0.0
+    },
+    {
+      "date": "2024-11-20",
+      "equity": 100798.41,
+      "cash": 100798.41,
+      "positions_value": 0,
+      "open_position_ids": [],
+      "strategy_weights": {
+        "vol_arbitrage": 1.0
+      },
+      "daily_pnl": 0.0
+    },
+    {
+      "date": "2024-11-21",
+      "equity": 100798.41,
+      "cash": 100798.41,
+      "positions_value": 0,
+      "open_position_ids": [],
+      "strategy_weights": {
+        "vol_arbitrage": 1.0
+      },
+      "daily_pnl": 0.0
+    },
+    {
+      "date": "2024-11-22",
+      "equity": 100798.41,
+      "cash": 100798.41,
+      "positions_value": 0,
+      "open_position_ids": [],
+      "strategy_weights": {
+        "vol_arbitrage": 1.0
+      },
+      "daily_pnl": 0.0
+    },
+    {
+      "date": "2024-11-25",
+      "equity": 90997.79,
+      "cash": 81197.16,
+      "positions_value": 9800.62,
+      "open_position_ids": [
+        "11702f779f"
+      ],
+      "strategy_weights": {
+        "vol_arbitrage": 1.0
+      },
+      "daily_pnl": -9800.62
+    },
+    {
+      "date": "2024-11-26",
+      "equity": 90997.79,
+      "cash": 81197.16,
+      "positions_value": 9800.62,
+      "open_position_ids": [
+        "11702f779f"
+      ],
+      "strategy_weights": {
+        "vol_arbitrage": 1.0
+      },
+      "daily_pnl": 0.0
+    },
+    {
+      "date": "2024-11-27",
+      "equity": 90997.79,
+      "cash": 81197.16,
+      "positions_value": 9800.62,
+      "open_position_ids": [
+        "11702f779f"
+      ],
+      "strategy_weights": {
+        "vol_arbitrage": 1.0
+      },
+      "daily_pnl": 0.0
+    },
+    {
+      "date": "2024-11-28",
+      "equity": 101044.32,
+      "cash": 91243.69,
+      "positions_value": 9800.62,
+      "open_position_ids": [
+        "11702f779f"
+      ],
+      "strategy_weights": {
+        "vol_arbitrage": 1.0
+      },
+      "daily_pnl": 10046.53
+    },
+    {
+      "date": "2024-11-29",
+      "equity": 101044.32,
+      "cash": 101044.32,
+      "positions_value": 0,
+      "open_position_ids": [],
+      "strategy_weights": {
+        "vol_arbitrage": 1.0
+      },
+      "daily_pnl": 0.0
+    },
+    {
+      "date": "2024-12-02",
+      "equity": 101044.32,
+      "cash": 101044.32,
+      "positions_value": 0,
+      "open_position_ids": [],
+      "strategy_weights": {
+        "vol_arbitrage": 1.0
+      },
+      "daily_pnl": 0.0
+    },
+    {
+      "date": "2024-12-03",
+      "equity": 91680.55,
+      "cash": 82316.78,
+      "positions_value": 9363.77,
+      "open_position_ids": [
+        "be0f704b1c"
+      ],
+      "strategy_weights": {
+        "vol_arbitrage": 1.0
+      },
+      "daily_pnl": -9363.77
+    },
+    {
+      "date": "2024-12-04",
+      "equity": 91680.55,
+      "cash": 82316.78,
+      "positions_value": 9363.77,
+      "open_position_ids": [
+        "be0f704b1c"
+      ],
+      "strategy_weights": {
+        "vol_arbitrage": 1.0
+      },
+      "daily_pnl": 0.0
+    },
+    {
+      "date": "2024-12-05",
+      "equity": 91680.55,
+      "cash": 82316.78,
+      "positions_value": 9363.77,
+      "open_position_ids": [
+        "be0f704b1c"
+      ],
+      "strategy_weights": {
+        "vol_arbitrage": 1.0
+      },
+      "daily_pnl": 0.0
+    },
+    {
+      "date": "2024-12-06",
+      "equity": 101213.3,
+      "cash": 91849.53,
+      "positions_value": 9363.77,
+      "open_position_ids": [
+        "be0f704b1c"
+      ],
+      "strategy_weights": {
+        "vol_arbitrage": 1.0
+      },
+      "daily_pnl": 9532.75
+    },
+    {
+      "date": "2024-12-09",
+      "equity": 91606.41,
+      "cash": 81999.52,
+      "positions_value": 9606.89,
+      "open_position_ids": [
+        "3e3773a1f7"
+      ],
+      "strategy_weights": {
+        "vol_arbitrage": 1.0
+      },
+      "daily_pnl": -9606.89
+    },
+    {
+      "date": "2024-12-10",
+      "equity": 91606.41,
+      "cash": 81999.52,
+      "positions_value": 9606.89,
+      "open_position_ids": [
+        "3e3773a1f7"
+      ],
+      "strategy_weights": {
+        "vol_arbitrage": 1.0
+      },
+      "daily_pnl": 0.0
+    },
+    {
+      "date": "2024-12-11",
+      "equity": 91606.41,
+      "cash": 81999.52,
+      "positions_value": 9606.89,
+      "open_position_ids": [
+        "3e3773a1f7"
+      ],
+      "strategy_weights": {
+        "vol_arbitrage": 1.0
+      },
+      "daily_pnl": 0.0
+    },
+    {
+      "date": "2024-12-12",
+      "equity": 101589.98,
+      "cash": 91983.09,
+      "positions_value": 9606.89,
+      "open_position_ids": [
+        "3e3773a1f7"
+      ],
+      "strategy_weights": {
+        "vol_arbitrage": 1.0
+      },
+      "daily_pnl": 9983.57
+    },
+    {
+      "date": "2024-12-13",
+      "equity": 101589.98,
+      "cash": 101589.98,
+      "positions_value": 0,
+      "open_position_ids": [],
+      "strategy_weights": {
+        "vol_arbitrage": 1.0
+      },
+      "daily_pnl": 0.0
+    },
+    {
+      "date": "2024-12-16",
+      "equity": 101589.98,
+      "cash": 101589.98,
+      "positions_value": 0,
+      "open_position_ids": [],
+      "strategy_weights": {
+        "vol_arbitrage": 1.0
+      },
+      "daily_pnl": 0.0
+    },
+    {
+      "date": "2024-12-17",
+      "equity": 101589.98,
+      "cash": 101589.98,
+      "positions_value": 0,
+      "open_position_ids": [],
+      "strategy_weights": {
+        "vol_arbitrage": 1.0
+      },
+      "daily_pnl": 0.0
+    },
+    {
+      "date": "2024-12-18",
+      "equity": 101589.98,
+      "cash": 101589.98,
+      "positions_value": 0,
+      "open_position_ids": [],
+      "strategy_weights": {
+        "vol_arbitrage": 1.0
+      },
+      "daily_pnl": 0.0
+    },
+    {
+      "date": "2024-12-19",
+      "equity": 101589.98,
+      "cash": 101589.98,
+      "positions_value": 0,
+      "open_position_ids": [],
+      "strategy_weights": {
+        "vol_arbitrage": 1.0
+      },
+      "daily_pnl": 0.0
+    },
+    {
+      "date": "2024-12-20",
+      "equity": 101589.98,
+      "cash": 101589.98,
+      "positions_value": 0,
+      "open_position_ids": [],
+      "strategy_weights": {
+        "vol_arbitrage": 1.0
+      },
+      "daily_pnl": 0.0
+    },
+    {
+      "date": "2024-12-23",
+      "equity": 101589.98,
+      "cash": 101589.98,
+      "positions_value": 0,
+      "open_position_ids": [],
+      "strategy_weights": {
+        "vol_arbitrage": 1.0
+      },
+      "daily_pnl": 0.0
+    },
+    {
+      "date": "2024-12-24",
+      "equity": 101589.98,
+      "cash": 101589.98,
+      "positions_value": 0,
+      "open_position_ids": [],
+      "strategy_weights": {
+        "vol_arbitrage": 1.0
+      },
+      "daily_pnl": 0.0
+    },
+    {
+      "date": "2024-12-25",
+      "equity": 101589.98,
+      "cash": 101589.98,
+      "positions_value": 0,
+      "open_position_ids": [],
+      "strategy_weights": {
+        "vol_arbitrage": 1.0
+      },
+      "daily_pnl": 0.0
+    },
+    {
+      "date": "2024-12-26",
+      "equity": 90179.91,
+      "cash": 78769.84,
+      "positions_value": 11410.07,
+      "open_position_ids": [
+        "a6a854a661"
+      ],
+      "strategy_weights": {
+        "vol_arbitrage": 1.0
+      },
+      "daily_pnl": -11410.07
+    },
+    {
+      "date": "2024-12-27",
+      "equity": 90179.91,
+      "cash": 78769.84,
+      "positions_value": 11410.07,
+      "open_position_ids": [
+        "a6a854a661"
+      ],
+      "strategy_weights": {
+        "vol_arbitrage": 1.0
+      },
+      "daily_pnl": 0.0
+    },
+    {
+      "date": "2024-12-30",
+      "equity": 101962.62,
+      "cash": 90552.55,
+      "positions_value": 11410.07,
+      "open_position_ids": [
+        "a6a854a661"
+      ],
+      "strategy_weights": {
+        "vol_arbitrage": 1.0
+      },
+      "daily_pnl": 11782.71
+    },
+    {
+      "date": "2024-12-31",
+      "equity": 101962.62,
+      "cash": 101962.62,
+      "positions_value": 0,
+      "open_position_ids": [],
+      "strategy_weights": {
+        "vol_arbitrage": 1.0
+      },
+      "daily_pnl": 0.0
+    },
+    {
+      "date": "2025-01-01",
+      "equity": 101962.62,
+      "cash": 101962.62,
+      "positions_value": 0,
+      "open_position_ids": [],
+      "strategy_weights": {
+        "vol_arbitrage": 1.0
+      },
+      "daily_pnl": 0.0
+    },
+    {
+      "date": "2025-01-02",
+      "equity": 101962.62,
+      "cash": 101962.62,
+      "positions_value": 0,
+      "open_position_ids": [],
+      "strategy_weights": {
+        "vol_arbitrage": 1.0
+      },
+      "daily_pnl": 0.0
+    },
+    {
+      "date": "2025-01-03",
+      "equity": 90124.9,
+      "cash": 78287.18,
+      "positions_value": 11837.72,
+      "open_position_ids": [
+        "a42b0fd154"
+      ],
+      "strategy_weights": {
+        "vol_arbitrage": 1.0
+      },
+      "daily_pnl": -11837.72
+    },
+    {
+      "date": "2025-01-06",
+      "equity": 102518.55,
+      "cash": 90680.83,
+      "positions_value": 11837.72,
+      "open_position_ids": [
+        "a42b0fd154"
+      ],
+      "strategy_weights": {
+        "vol_arbitrage": 1.0
+      },
+      "daily_pnl": 12393.65
+    },
+    {
+      "date": "2025-01-07",
+      "equity": 102518.55,
+      "cash": 102518.55,
+      "positions_value": 0,
+      "open_position_ids": [],
+      "strategy_weights": {
+        "vol_arbitrage": 1.0
+      },
+      "daily_pnl": 0.0
+    },
+    {
+      "date": "2025-01-08",
+      "equity": 102518.55,
+      "cash": 102518.55,
+      "positions_value": 0,
+      "open_position_ids": [],
+      "strategy_weights": {
+        "vol_arbitrage": 1.0
+      },
+      "daily_pnl": 0.0
+    },
+    {
+      "date": "2025-01-09",
+      "equity": 102518.55,
+      "cash": 102518.55,
+      "positions_value": 0,
+      "open_position_ids": [],
+      "strategy_weights": {
+        "vol_arbitrage": 1.0
+      },
+      "daily_pnl": 0.0
+    },
+    {
+      "date": "2025-01-10",
+      "equity": 102518.55,
+      "cash": 102518.55,
+      "positions_value": 0,
+      "open_position_ids": [],
+      "strategy_weights": {
+        "vol_arbitrage": 1.0
+      },
+      "daily_pnl": 0.0
+    },
+    {
+      "date": "2025-01-13",
+      "equity": 102518.55,
+      "cash": 102518.55,
+      "positions_value": 0,
+      "open_position_ids": [],
+      "strategy_weights": {
+        "vol_arbitrage": 1.0
+      },
+      "daily_pnl": 0.0
+    },
+    {
+      "date": "2025-01-14",
+      "equity": 102518.55,
+      "cash": 102518.55,
+      "positions_value": 0,
+      "open_position_ids": [],
+      "strategy_weights": {
+        "vol_arbitrage": 1.0
+      },
+      "daily_pnl": 0.0
+    },
+    {
+      "date": "2025-01-15",
+      "equity": 102518.55,
+      "cash": 102518.55,
+      "positions_value": 0,
+      "open_position_ids": [],
+      "strategy_weights": {
+        "vol_arbitrage": 1.0
+      },
+      "daily_pnl": 0.0
+    },
+    {
+      "date": "2025-01-16",
+      "equity": 102518.55,
+      "cash": 102518.55,
+      "positions_value": 0,
+      "open_position_ids": [],
+      "strategy_weights": {
+        "vol_arbitrage": 1.0
+      },
+      "daily_pnl": 0.0
+    },
+    {
+      "date": "2025-01-17",
+      "equity": 102518.55,
+      "cash": 102518.55,
+      "positions_value": 0,
+      "open_position_ids": [],
+      "strategy_weights": {
+        "vol_arbitrage": 1.0
+      },
+      "daily_pnl": 0.0
+    },
+    {
+      "date": "2025-01-20",
+      "equity": 102518.55,
+      "cash": 102518.55,
+      "positions_value": 0,
+      "open_position_ids": [],
+      "strategy_weights": {
+        "vol_arbitrage": 1.0
+      },
+      "daily_pnl": 0.0
+    },
+    {
+      "date": "2025-01-21",
+      "equity": 102518.55,
+      "cash": 102518.55,
+      "positions_value": 0,
+      "open_position_ids": [],
+      "strategy_weights": {
+        "vol_arbitrage": 1.0
+      },
+      "daily_pnl": 0.0
+    },
+    {
+      "date": "2025-01-22",
+      "equity": 102518.55,
+      "cash": 102518.55,
+      "positions_value": 0,
+      "open_position_ids": [],
+      "strategy_weights": {
+        "vol_arbitrage": 1.0
+      },
+      "daily_pnl": 0.0
+    },
+    {
+      "date": "2025-01-23",
+      "equity": 91532.85,
+      "cash": 80547.14,
+      "positions_value": 10985.7,
+      "open_position_ids": [
+        "e3ff198a1a"
+      ],
+      "strategy_weights": {
+        "vol_arbitrage": 1.0
+      },
+      "daily_pnl": -10985.7
+    },
+    {
+      "date": "2025-01-24",
+      "equity": 91532.85,
+      "cash": 80547.14,
+      "positions_value": 10985.7,
+      "open_position_ids": [
+        "e3ff198a1a"
+      ],
+      "strategy_weights": {
+        "vol_arbitrage": 1.0
+      },
+      "daily_pnl": 0.0
+    },
+    {
+      "date": "2025-01-27",
+      "equity": 102921.42,
+      "cash": 91935.71,
+      "positions_value": 10985.7,
+      "open_position_ids": [
+        "e3ff198a1a"
+      ],
+      "strategy_weights": {
+        "vol_arbitrage": 1.0
+      },
+      "daily_pnl": 11388.57
+    },
+    {
+      "date": "2025-01-28",
+      "equity": 102921.42,
+      "cash": 102921.42,
+      "positions_value": 0,
+      "open_position_ids": [],
+      "strategy_weights": {
+        "vol_arbitrage": 1.0
+      },
+      "daily_pnl": 0.0
+    },
+    {
+      "date": "2025-01-29",
+      "equity": 102921.42,
+      "cash": 102921.42,
+      "positions_value": 0,
+      "open_position_ids": [],
+      "strategy_weights": {
+        "vol_arbitrage": 1.0
+      },
+      "daily_pnl": 0.0
+    },
+    {
+      "date": "2025-01-30",
+      "equity": 102921.42,
+      "cash": 102921.42,
+      "positions_value": 0,
+      "open_position_ids": [],
+      "strategy_weights": {
+        "vol_arbitrage": 1.0
+      },
+      "daily_pnl": 0.0
+    },
+    {
+      "date": "2025-01-31",
+      "equity": 102921.42,
+      "cash": 102921.42,
+      "positions_value": 0,
+      "open_position_ids": [],
+      "strategy_weights": {
+        "vol_arbitrage": 1.0
+      },
+      "daily_pnl": 0.0
+    },
+    {
+      "date": "2025-02-03",
+      "equity": 102921.42,
+      "cash": 102921.42,
+      "positions_value": 0,
+      "open_position_ids": [],
+      "strategy_weights": {
+        "vol_arbitrage": 1.0
+      },
+      "daily_pnl": 0.0
+    },
+    {
+      "date": "2025-02-04",
+      "equity": 102921.42,
+      "cash": 102921.42,
+      "positions_value": 0,
+      "open_position_ids": [],
+      "strategy_weights": {
+        "vol_arbitrage": 1.0
+      },
+      "daily_pnl": 0.0
+    },
+    {
+      "date": "2025-02-05",
+      "equity": 102921.42,
+      "cash": 102921.42,
+      "positions_value": 0,
+      "open_position_ids": [],
+      "strategy_weights": {
+        "vol_arbitrage": 1.0
+      },
+      "daily_pnl": 0.0
+    },
+    {
+      "date": "2025-02-06",
+      "equity": 102921.42,
+      "cash": 102921.42,
+      "positions_value": 0,
+      "open_position_ids": [],
+      "strategy_weights": {
+        "vol_arbitrage": 1.0
+      },
+      "daily_pnl": 0.0
+    },
+    {
+      "date": "2025-02-07",
+      "equity": 102921.42,
+      "cash": 102921.42,
+      "positions_value": 0,
+      "open_position_ids": [],
+      "strategy_weights": {
+        "vol_arbitrage": 1.0
+      },
+      "daily_pnl": 0.0
+    },
+    {
+      "date": "2025-02-10",
+      "equity": 93188.35,
+      "cash": 83455.29,
+      "positions_value": 9733.07,
+      "open_position_ids": [
+        "836782c379"
+      ],
+      "strategy_weights": {
+        "vol_arbitrage": 1.0
+      },
+      "daily_pnl": -9733.07
+    },
+    {
+      "date": "2025-02-11",
+      "equity": 93188.35,
+      "cash": 83455.29,
+      "positions_value": 9733.07,
+      "open_position_ids": [
+        "836782c379"
+      ],
+      "strategy_weights": {
+        "vol_arbitrage": 1.0
+      },
+      "daily_pnl": 0.0
+    },
+    {
+      "date": "2025-02-12",
+      "equity": 93188.35,
+      "cash": 83455.29,
+      "positions_value": 9733.07,
+      "open_position_ids": [
+        "836782c379"
+      ],
+      "strategy_weights": {
+        "vol_arbitrage": 1.0
+      },
+      "daily_pnl": 0.0
+    },
+    {
+      "date": "2025-02-13",
+      "equity": 103128.74,
+      "cash": 93395.68,
+      "positions_value": 9733.07,
+      "open_position_ids": [
+        "836782c379"
+      ],
+      "strategy_weights": {
+        "vol_arbitrage": 1.0
+      },
+      "daily_pnl": 9940.39
+    },
+    {
+      "date": "2025-02-14",
+      "equity": 103128.74,
+      "cash": 103128.74,
+      "positions_value": 0,
+      "open_position_ids": [],
+      "strategy_weights": {
+        "vol_arbitrage": 1.0
+      },
+      "daily_pnl": 0.0
+    },
+    {
+      "date": "2025-02-17",
+      "equity": 93822.96,
+      "cash": 84517.17,
+      "positions_value": 9305.78,
+      "open_position_ids": [
+        "1e0469cdb6"
+      ],
+      "strategy_weights": {
+        "vol_arbitrage": 1.0
+      },
+      "daily_pnl": -9305.78
+    },
+    {
+      "date": "2025-02-18",
+      "equity": 93822.96,
+      "cash": 84517.17,
+      "positions_value": 9305.78,
+      "open_position_ids": [
+        "1e0469cdb6"
+      ],
+      "strategy_weights": {
+        "vol_arbitrage": 1.0
+      },
+      "daily_pnl": 0.0
+    },
+    {
+      "date": "2025-02-19",
+      "equity": 93822.96,
+      "cash": 84517.17,
+      "positions_value": 9305.78,
+      "open_position_ids": [
+        "1e0469cdb6"
+      ],
+      "strategy_weights": {
+        "vol_arbitrage": 1.0
+      },
+      "daily_pnl": 0.0
+    },
+    {
+      "date": "2025-02-20",
+      "equity": 103404.91,
+      "cash": 94099.12,
+      "positions_value": 9305.78,
+      "open_position_ids": [
+        "1e0469cdb6"
+      ],
+      "strategy_weights": {
+        "vol_arbitrage": 1.0
+      },
+      "daily_pnl": 9581.95
+    },
+    {
+      "date": "2025-02-21",
+      "equity": 103404.91,
+      "cash": 103404.91,
+      "positions_value": 0,
+      "open_position_ids": [],
+      "strategy_weights": {
+        "vol_arbitrage": 1.0
+      },
+      "daily_pnl": 0.0
+    },
+    {
+      "date": "2025-02-24",
+      "equity": 103404.91,
+      "cash": 103404.91,
+      "positions_value": 0,
+      "open_position_ids": [],
+      "strategy_weights": {
+        "vol_arbitrage": 1.0
+      },
+      "daily_pnl": 0.0
+    },
+    {
+      "date": "2025-02-25",
+      "equity": 103404.91,
+      "cash": 103404.91,
+      "positions_value": 0,
+      "open_position_ids": [],
+      "strategy_weights": {
+        "vol_arbitrage": 1.0
+      },
+      "daily_pnl": 0.0
+    },
+    {
+      "date": "2025-02-26",
+      "equity": 103404.91,
+      "cash": 103404.91,
+      "positions_value": 0,
+      "open_position_ids": [],
+      "strategy_weights": {
+        "vol_arbitrage": 1.0
+      },
+      "daily_pnl": 0.0
+    },
+    {
+      "date": "2025-02-27",
+      "equity": 103404.91,
+      "cash": 103404.91,
+      "positions_value": 0,
+      "open_position_ids": [],
+      "strategy_weights": {
+        "vol_arbitrage": 1.0
+      },
+      "daily_pnl": 0.0
+    },
+    {
+      "date": "2025-02-28",
+      "equity": 103404.91,
+      "cash": 103404.91,
+      "positions_value": 0,
+      "open_position_ids": [],
+      "strategy_weights": {
+        "vol_arbitrage": 1.0
+      },
+      "daily_pnl": 0.0
+    },
+    {
+      "date": "2025-03-03",
+      "equity": 103404.91,
+      "cash": 103404.91,
+      "positions_value": 0,
+      "open_position_ids": [],
+      "strategy_weights": {
+        "vol_arbitrage": 1.0
+      },
+      "daily_pnl": 0.0
+    },
+    {
+      "date": "2025-03-04",
+      "equity": 103404.91,
+      "cash": 103404.91,
+      "positions_value": 0,
+      "open_position_ids": [],
+      "strategy_weights": {
+        "vol_arbitrage": 1.0
+      },
+      "daily_pnl": 0.0
+    },
+    {
+      "date": "2025-03-05",
+      "equity": 103404.91,
+      "cash": 103404.91,
+      "positions_value": 0,
+      "open_position_ids": [],
+      "strategy_weights": {
+        "vol_arbitrage": 1.0
+      },
+      "daily_pnl": 0.0
+    },
+    {
+      "date": "2025-03-06",
+      "equity": 103404.91,
+      "cash": 103404.91,
+      "positions_value": 0,
+      "open_position_ids": [],
+      "strategy_weights": {
+        "vol_arbitrage": 1.0
+      },
+      "daily_pnl": 0.0
+    },
+    {
+      "date": "2025-03-07",
+      "equity": 94606.76,
+      "cash": 85808.61,
+      "positions_value": 8798.15,
+      "open_position_ids": [
+        "b37b6204e4"
+      ],
+      "strategy_weights": {
+        "vol_arbitrage": 1.0
+      },
+      "daily_pnl": -8798.15
+    },
+    {
+      "date": "2025-03-10",
+      "equity": 103604.59,
+      "cash": 94806.44,
+      "positions_value": 8798.15,
+      "open_position_ids": [
+        "b37b6204e4"
+      ],
+      "strategy_weights": {
+        "vol_arbitrage": 1.0
+      },
+      "daily_pnl": 8997.83
+    },
+    {
+      "date": "2025-03-11",
+      "equity": 103604.59,
+      "cash": 103604.59,
+      "positions_value": 0,
+      "open_position_ids": [],
+      "strategy_weights": {
+        "vol_arbitrage": 1.0
+      },
+      "daily_pnl": 0.0
+    },
+    {
+      "date": "2025-03-12",
+      "equity": 103604.59,
+      "cash": 103604.59,
+      "positions_value": 0,
+      "open_position_ids": [],
+      "strategy_weights": {
+        "vol_arbitrage": 1.0
+      },
+      "daily_pnl": 0.0
+    },
+    {
+      "date": "2025-03-13",
+      "equity": 103604.59,
+      "cash": 103604.59,
+      "positions_value": 0,
+      "open_position_ids": [],
+      "strategy_weights": {
+        "vol_arbitrage": 1.0
+      },
+      "daily_pnl": 0.0
+    },
+    {
+      "date": "2025-03-14",
+      "equity": 94337.02,
+      "cash": 85069.45,
+      "positions_value": 9267.57,
+      "open_position_ids": [
+        "3cc7a9da27"
+      ],
+      "strategy_weights": {
+        "vol_arbitrage": 1.0
+      },
+      "daily_pnl": -9267.57
+    },
+    {
+      "date": "2025-03-17",
+      "equity": 94383.37,
+      "cash": 75661.48,
+      "positions_value": 18721.89,
+      "open_position_ids": [
+        "3cc7a9da27",
+        "60333b4411"
+      ],
+      "strategy_weights": {
+        "vol_arbitrage": 1.0
+      },
+      "daily_pnl": 46.35
+    },
+    {
+      "date": "2025-03-18",
+      "equity": 94383.37,
+      "cash": 84929.05,
+      "positions_value": 9454.32,
+      "open_position_ids": [
+        "60333b4411"
+      ],
+      "strategy_weights": {
+        "vol_arbitrage": 1.0
+      },
+      "daily_pnl": 0.0
+    },
+    {
+      "date": "2025-03-19",
+      "equity": 94383.37,
+      "cash": 84929.05,
+      "positions_value": 9454.32,
+      "open_position_ids": [
+        "60333b4411"
+      ],
+      "strategy_weights": {
+        "vol_arbitrage": 1.0
+      },
+      "daily_pnl": 0.0
+    },
+    {
+      "date": "2025-03-20",
+      "equity": 104042.19,
+      "cash": 94587.87,
+      "positions_value": 9454.32,
+      "open_position_ids": [
+        "60333b4411"
+      ],
+      "strategy_weights": {
+        "vol_arbitrage": 1.0
+      },
+      "daily_pnl": 9658.82
+    },
+    {
+      "date": "2025-03-21",
+      "equity": 104042.19,
+      "cash": 104042.19,
+      "positions_value": 0,
+      "open_position_ids": [],
+      "strategy_weights": {
+        "vol_arbitrage": 1.0
+      },
+      "daily_pnl": 0.0
+    },
+    {
+      "date": "2025-03-24",
+      "equity": 94050.52,
+      "cash": 84058.84,
+      "positions_value": 9991.67,
+      "open_position_ids": [
+        "401ad30923"
+      ],
+      "strategy_weights": {
+        "vol_arbitrage": 1.0
+      },
+      "daily_pnl": -9991.67
+    },
+    {
+      "date": "2025-03-25",
+      "equity": 94050.52,
+      "cash": 84058.84,
+      "positions_value": 9991.67,
+      "open_position_ids": [
+        "401ad30923"
+      ],
+      "strategy_weights": {
+        "vol_arbitrage": 1.0
+      },
+      "daily_pnl": 0.0
+    },
+    {
+      "date": "2025-03-26",
+      "equity": 94050.52,
+      "cash": 84058.84,
+      "positions_value": 9991.67,
+      "open_position_ids": [
+        "401ad30923"
+      ],
+      "strategy_weights": {
+        "vol_arbitrage": 1.0
+      },
+      "daily_pnl": 0.0
+    },
+    {
+      "date": "2025-03-27",
+      "equity": 104347.51,
+      "cash": 94355.83,
+      "positions_value": 9991.67,
+      "open_position_ids": [
+        "401ad30923"
+      ],
+      "strategy_weights": {
+        "vol_arbitrage": 1.0
+      },
+      "daily_pnl": 10296.99
+    },
+    {
+      "date": "2025-03-28",
+      "equity": 94091.0,
+      "cash": 83834.49,
+      "positions_value": 10256.51,
+      "open_position_ids": [
+        "5824ede6b9"
+      ],
+      "strategy_weights": {
+        "vol_arbitrage": 1.0
+      },
+      "daily_pnl": -10256.51
+    },
+    {
+      "date": "2025-03-31",
+      "equity": 94357.69,
+      "cash": 73720.32,
+      "positions_value": 20637.37,
+      "open_position_ids": [
+        "5824ede6b9",
+        "f68fe4f164"
+      ],
+      "strategy_weights": {
+        "vol_arbitrage": 1.0
+      },
+      "daily_pnl": 266.69
+    },
+    {
+      "date": "2025-04-01",
+      "equity": 94357.69,
+      "cash": 83976.83,
+      "positions_value": 10380.86,
+      "open_position_ids": [
+        "f68fe4f164"
+      ],
+      "strategy_weights": {
+        "vol_arbitrage": 1.0
+      },
+      "daily_pnl": 0.0
+    },
+    {
+      "date": "2025-04-02",
+      "equity": 94357.69,
+      "cash": 83976.83,
+      "positions_value": 10380.86,
+      "open_position_ids": [
+        "f68fe4f164"
+      ],
+      "strategy_weights": {
+        "vol_arbitrage": 1.0
+      },
+      "daily_pnl": 0.0
+    },
+    {
+      "date": "2025-04-03",
+      "equity": 105063.1,
+      "cash": 94682.24,
+      "positions_value": 10380.86,
+      "open_position_ids": [
+        "f68fe4f164"
+      ],
+      "strategy_weights": {
+        "vol_arbitrage": 1.0
+      },
+      "daily_pnl": 10705.41
+    },
+    {
+      "date": "2025-04-04",
+      "equity": 94590.43,
+      "cash": 84117.76,
+      "positions_value": 10472.67,
+      "open_position_ids": [
+        "c6e802eb16"
+      ],
+      "strategy_weights": {
+        "vol_arbitrage": 1.0
+      },
+      "daily_pnl": -10472.67
+    },
+    {
+      "date": "2025-04-07",
+      "equity": 105527.94,
+      "cash": 95055.27,
+      "positions_value": 10472.67,
+      "open_position_ids": [
+        "c6e802eb16"
+      ],
+      "strategy_weights": {
+        "vol_arbitrage": 1.0
+      },
+      "daily_pnl": 10937.51
+    },
+    {
+      "date": "2025-04-08",
+      "equity": 105527.94,
+      "cash": 105527.94,
+      "positions_value": 0,
+      "open_position_ids": [],
+      "strategy_weights": {
+        "vol_arbitrage": 1.0
+      },
+      "daily_pnl": 0.0
+    },
+    {
+      "date": "2025-04-09",
+      "equity": 105527.94,
+      "cash": 105527.94,
+      "positions_value": 0,
+      "open_position_ids": [],
+      "strategy_weights": {
+        "vol_arbitrage": 1.0
+      },
+      "daily_pnl": 0.0
+    },
+    {
+      "date": "2025-04-10",
+      "equity": 105527.94,
+      "cash": 105527.94,
+      "positions_value": 0,
+      "open_position_ids": [],
+      "strategy_weights": {
+        "vol_arbitrage": 1.0
+      },
+      "daily_pnl": 0.0
+    },
+    {
+      "date": "2025-04-11",
+      "equity": 105527.94,
+      "cash": 105527.94,
+      "positions_value": 0,
+      "open_position_ids": [],
+      "strategy_weights": {
+        "vol_arbitrage": 1.0
+      },
+      "daily_pnl": 0.0
+    },
+    {
+      "date": "2025-04-14",
+      "equity": 105527.94,
+      "cash": 105527.94,
+      "positions_value": 0,
+      "open_position_ids": [],
+      "strategy_weights": {
+        "vol_arbitrage": 1.0
+      },
+      "daily_pnl": 0.0
+    },
+    {
+      "date": "2025-04-15",
+      "equity": 105527.94,
+      "cash": 105527.94,
+      "positions_value": 0,
+      "open_position_ids": [],
+      "strategy_weights": {
+        "vol_arbitrage": 1.0
+      },
+      "daily_pnl": 0.0
+    },
+    {
+      "date": "2025-04-16",
+      "equity": 105527.94,
+      "cash": 105527.94,
+      "positions_value": 0,
+      "open_position_ids": [],
+      "strategy_weights": {
+        "vol_arbitrage": 1.0
+      },
+      "daily_pnl": 0.0
+    },
+    {
+      "date": "2025-04-17",
+      "equity": 94009.94,
+      "cash": 82491.95,
+      "positions_value": 11518.0,
+      "open_position_ids": [
+        "26cb8ecc11"
+      ],
+      "strategy_weights": {
+        "vol_arbitrage": 1.0
+      },
+      "daily_pnl": -11518.0
+    },
+    {
+      "date": "2025-04-18",
+      "equity": 94009.94,
+      "cash": 82491.95,
+      "positions_value": 11518.0,
+      "open_position_ids": [
+        "26cb8ecc11"
+      ],
+      "strategy_weights": {
+        "vol_arbitrage": 1.0
+      },
+      "daily_pnl": 0.0
+    },
+    {
+      "date": "2025-04-21",
+      "equity": 94613.24,
+      "cash": 71755.48,
+      "positions_value": 22857.77,
+      "open_position_ids": [
+        "26cb8ecc11",
+        "9999654014"
+      ],
+      "strategy_weights": {
+        "vol_arbitrage": 1.0
+      },
+      "daily_pnl": 603.3
+    },
+    {
+      "date": "2025-04-22",
+      "equity": 94613.24,
+      "cash": 83273.47,
+      "positions_value": 11339.77,
+      "open_position_ids": [
+        "9999654014"
+      ],
+      "strategy_weights": {
+        "vol_arbitrage": 1.0
+      },
+      "daily_pnl": 0.0
+    },
+    {
+      "date": "2025-04-23",
+      "equity": 94613.24,
+      "cash": 83273.47,
+      "positions_value": 11339.77,
+      "open_position_ids": [
+        "9999654014"
+      ],
+      "strategy_weights": {
+        "vol_arbitrage": 1.0
+      },
+      "daily_pnl": 0.0
+    },
+    {
+      "date": "2025-04-24",
+      "equity": 106215.79,
+      "cash": 94876.02,
+      "positions_value": 11339.77,
+      "open_position_ids": [
+        "9999654014"
+      ],
+      "strategy_weights": {
+        "vol_arbitrage": 1.0
+      },
+      "daily_pnl": 11602.55
+    },
+    {
+      "date": "2025-04-25",
+      "equity": 106215.79,
+      "cash": 106215.79,
+      "positions_value": 0,
+      "open_position_ids": [],
+      "strategy_weights": {
+        "vol_arbitrage": 1.0
+      },
+      "daily_pnl": 0.0
+    },
+    {
+      "date": "2025-04-28",
+      "equity": 106215.79,
+      "cash": 106215.79,
+      "positions_value": 0,
+      "open_position_ids": [],
+      "strategy_weights": {
+        "vol_arbitrage": 1.0
+      },
+      "daily_pnl": 0.0
+    },
+    {
+      "date": "2025-04-29",
+      "equity": 106215.79,
+      "cash": 106215.79,
+      "positions_value": 0,
+      "open_position_ids": [],
+      "strategy_weights": {
+        "vol_arbitrage": 1.0
+      },
+      "daily_pnl": 0.0
+    },
+    {
+      "date": "2025-04-30",
+      "equity": 106215.79,
+      "cash": 106215.79,
+      "positions_value": 0,
+      "open_position_ids": [],
+      "strategy_weights": {
+        "vol_arbitrage": 1.0
+      },
+      "daily_pnl": 0.0
+    },
+    {
+      "date": "2025-05-01",
+      "equity": 106215.79,
+      "cash": 106215.79,
+      "positions_value": 0,
+      "open_position_ids": [],
+      "strategy_weights": {
+        "vol_arbitrage": 1.0
+      },
+      "daily_pnl": 0.0
+    },
+    {
+      "date": "2025-05-02",
+      "equity": 106215.79,
+      "cash": 106215.79,
+      "positions_value": 0,
+      "open_position_ids": [],
+      "strategy_weights": {
+        "vol_arbitrage": 1.0
+      },
+      "daily_pnl": 0.0
+    },
+    {
+      "date": "2025-05-05",
+      "equity": 106215.79,
+      "cash": 106215.79,
+      "positions_value": 0,
+      "open_position_ids": [],
+      "strategy_weights": {
+        "vol_arbitrage": 1.0
+      },
+      "daily_pnl": 0.0
+    },
+    {
+      "date": "2025-05-06",
+      "equity": 106215.79,
+      "cash": 106215.79,
+      "positions_value": 0,
+      "open_position_ids": [],
+      "strategy_weights": {
+        "vol_arbitrage": 1.0
+      },
+      "daily_pnl": 0.0
+    },
+    {
+      "date": "2025-05-07",
+      "equity": 95867.69,
+      "cash": 85519.58,
+      "positions_value": 10348.1,
+      "open_position_ids": [
+        "6265077f09"
+      ],
+      "strategy_weights": {
+        "vol_arbitrage": 1.0
+      },
+      "daily_pnl": -10348.1
+    },
+    {
+      "date": "2025-05-08",
+      "equity": 95867.69,
+      "cash": 85519.58,
+      "positions_value": 10348.1,
+      "open_position_ids": [
+        "6265077f09"
+      ],
+      "strategy_weights": {
+        "vol_arbitrage": 1.0
+      },
+      "daily_pnl": 0.0
+    },
+    {
+      "date": "2025-05-09",
+      "equity": 95867.69,
+      "cash": 85519.58,
+      "positions_value": 10348.1,
+      "open_position_ids": [
+        "6265077f09"
+      ],
+      "strategy_weights": {
+        "vol_arbitrage": 1.0
+      },
+      "daily_pnl": 0.0
+    },
+    {
+      "date": "2025-05-12",
+      "equity": 106417.65,
+      "cash": 96069.54,
+      "positions_value": 10348.1,
+      "open_position_ids": [
+        "6265077f09"
+      ],
+      "strategy_weights": {
+        "vol_arbitrage": 1.0
+      },
+      "daily_pnl": 10549.96
+    },
+    {
+      "date": "2025-05-13",
+      "equity": 106417.65,
+      "cash": 106417.65,
+      "positions_value": 0,
+      "open_position_ids": [],
+      "strategy_weights": {
+        "vol_arbitrage": 1.0
+      },
+      "daily_pnl": 0.0
+    },
+    {
+      "date": "2025-05-14",
+      "equity": 106417.65,
+      "cash": 106417.65,
+      "positions_value": 0,
+      "open_position_ids": [],
+      "strategy_weights": {
+        "vol_arbitrage": 1.0
+      },
+      "daily_pnl": 0.0
+    },
+    {
+      "date": "2025-05-15",
+      "equity": 106417.65,
+      "cash": 106417.65,
+      "positions_value": 0,
+      "open_position_ids": [],
+      "strategy_weights": {
+        "vol_arbitrage": 1.0
+      },
+      "daily_pnl": 0.0
+    },
+    {
+      "date": "2025-05-16",
+      "equity": 106417.65,
+      "cash": 106417.65,
+      "positions_value": 0,
+      "open_position_ids": [],
+      "strategy_weights": {
+        "vol_arbitrage": 1.0
+      },
+      "daily_pnl": 0.0
+    },
+    {
+      "date": "2025-05-19",
+      "equity": 106417.65,
+      "cash": 106417.65,
+      "positions_value": 0,
+      "open_position_ids": [],
+      "strategy_weights": {
+        "vol_arbitrage": 1.0
+      },
+      "daily_pnl": 0.0
+    },
+    {
+      "date": "2025-05-20",
+      "equity": 106417.65,
+      "cash": 106417.65,
+      "positions_value": 0,
+      "open_position_ids": [],
+      "strategy_weights": {
+        "vol_arbitrage": 1.0
+      },
+      "daily_pnl": 0.0
+    },
+    {
+      "date": "2025-05-21",
+      "equity": 106417.65,
+      "cash": 106417.65,
+      "positions_value": 0,
+      "open_position_ids": [],
+      "strategy_weights": {
+        "vol_arbitrage": 1.0
+      },
+      "daily_pnl": 0.0
+    },
+    {
+      "date": "2025-05-22",
+      "equity": 106417.65,
+      "cash": 106417.65,
+      "positions_value": 0,
+      "open_position_ids": [],
+      "strategy_weights": {
+        "vol_arbitrage": 1.0
+      },
+      "daily_pnl": 0.0
+    },
+    {
+      "date": "2025-05-23",
+      "equity": 106417.65,
+      "cash": 106417.65,
+      "positions_value": 0,
+      "open_position_ids": [],
+      "strategy_weights": {
+        "vol_arbitrage": 1.0
+      },
+      "daily_pnl": 0.0
+    },
+    {
+      "date": "2025-05-26",
+      "equity": 106417.65,
+      "cash": 106417.65,
+      "positions_value": 0,
+      "open_position_ids": [],
+      "strategy_weights": {
+        "vol_arbitrage": 1.0
+      },
+      "daily_pnl": 0.0
+    },
+    {
+      "date": "2025-05-27",
+      "equity": 106417.65,
+      "cash": 106417.65,
+      "positions_value": 0,
+      "open_position_ids": [],
+      "strategy_weights": {
+        "vol_arbitrage": 1.0
+      },
+      "daily_pnl": 0.0
+    },
+    {
+      "date": "2025-05-28",
+      "equity": 106417.65,
+      "cash": 106417.65,
+      "positions_value": 0,
+      "open_position_ids": [],
+      "strategy_weights": {
+        "vol_arbitrage": 1.0
+      },
+      "daily_pnl": 0.0
+    },
+    {
+      "date": "2025-05-29",
+      "equity": 106417.65,
+      "cash": 106417.65,
+      "positions_value": 0,
+      "open_position_ids": [],
+      "strategy_weights": {
+        "vol_arbitrage": 1.0
+      },
+      "daily_pnl": 0.0
+    },
+    {
+      "date": "2025-05-30",
+      "equity": 106417.65,
+      "cash": 106417.65,
+      "positions_value": 0,
+      "open_position_ids": [],
+      "strategy_weights": {
+        "vol_arbitrage": 1.0
+      },
+      "daily_pnl": 0.0
+    },
+    {
+      "date": "2025-06-02",
+      "equity": 106417.65,
+      "cash": 106417.65,
+      "positions_value": 0,
+      "open_position_ids": [],
+      "strategy_weights": {
+        "vol_arbitrage": 1.0
+      },
+      "daily_pnl": 0.0
+    },
+    {
+      "date": "2025-06-03",
+      "equity": 106417.65,
+      "cash": 106417.65,
+      "positions_value": 0,
+      "open_position_ids": [],
+      "strategy_weights": {
+        "vol_arbitrage": 1.0
+      },
+      "daily_pnl": 0.0
+    },
+    {
+      "date": "2025-06-04",
+      "equity": 106417.65,
+      "cash": 106417.65,
+      "positions_value": 0,
+      "open_position_ids": [],
+      "strategy_weights": {
+        "vol_arbitrage": 1.0
+      },
+      "daily_pnl": 0.0
+    },
+    {
+      "date": "2025-06-05",
+      "equity": 106417.65,
+      "cash": 106417.65,
+      "positions_value": 0,
+      "open_position_ids": [],
+      "strategy_weights": {
+        "vol_arbitrage": 1.0
+      },
+      "daily_pnl": 0.0
+    },
+    {
+      "date": "2025-06-06",
+      "equity": 94571.37,
+      "cash": 82725.09,
+      "positions_value": 11846.28,
+      "open_position_ids": [
+        "e6adb1ad3e"
+      ],
+      "strategy_weights": {
+        "vol_arbitrage": 1.0
+      },
+      "daily_pnl": -11846.28
+    },
+    {
+      "date": "2025-06-09",
+      "equity": 106665.65,
+      "cash": 94819.37,
+      "positions_value": 11846.28,
+      "open_position_ids": [
+        "e6adb1ad3e"
+      ],
+      "strategy_weights": {
+        "vol_arbitrage": 1.0
+      },
+      "daily_pnl": 12094.28
+    },
+    {
+      "date": "2025-06-10",
+      "equity": 106665.65,
+      "cash": 106665.65,
+      "positions_value": 0,
+      "open_position_ids": [],
+      "strategy_weights": {
+        "vol_arbitrage": 1.0
+      },
+      "daily_pnl": 0.0
+    },
+    {
+      "date": "2025-06-11",
+      "equity": 106665.65,
+      "cash": 106665.65,
+      "positions_value": 0,
+      "open_position_ids": [],
+      "strategy_weights": {
+        "vol_arbitrage": 1.0
+      },
+      "daily_pnl": 0.0
+    },
+    {
+      "date": "2025-06-12",
+      "equity": 106665.65,
+      "cash": 106665.65,
+      "positions_value": 0,
+      "open_position_ids": [],
+      "strategy_weights": {
+        "vol_arbitrage": 1.0
+      },
+      "daily_pnl": 0.0
+    },
+    {
+      "date": "2025-06-13",
+      "equity": 106665.65,
+      "cash": 106665.65,
+      "positions_value": 0,
+      "open_position_ids": [],
+      "strategy_weights": {
+        "vol_arbitrage": 1.0
+      },
+      "daily_pnl": 0.0
+    },
+    {
+      "date": "2025-06-16",
+      "equity": 106665.65,
+      "cash": 106665.65,
+      "positions_value": 0,
+      "open_position_ids": [],
+      "strategy_weights": {
+        "vol_arbitrage": 1.0
+      },
+      "daily_pnl": 0.0
+    },
+    {
+      "date": "2025-06-17",
+      "equity": 94905.4,
+      "cash": 83145.15,
+      "positions_value": 11760.25,
+      "open_position_ids": [
+        "c50b9dbcfa"
+      ],
+      "strategy_weights": {
+        "vol_arbitrage": 1.0
+      },
+      "daily_pnl": -11760.25
+    },
+    {
+      "date": "2025-06-18",
+      "equity": 94905.4,
+      "cash": 83145.15,
+      "positions_value": 11760.25,
+      "open_position_ids": [
+        "c50b9dbcfa"
+      ],
+      "strategy_weights": {
+        "vol_arbitrage": 1.0
+      },
+      "daily_pnl": 0.0
+    },
+    {
+      "date": "2025-06-19",
+      "equity": 94905.4,
+      "cash": 83145.15,
+      "positions_value": 11760.25,
+      "open_position_ids": [
+        "c50b9dbcfa"
+      ],
+      "strategy_weights": {
+        "vol_arbitrage": 1.0
+      },
+      "daily_pnl": 0.0
+    },
+    {
+      "date": "2025-06-20",
+      "equity": 106940.5,
+      "cash": 95180.25,
+      "positions_value": 11760.25,
+      "open_position_ids": [
+        "c50b9dbcfa"
+      ],
+      "strategy_weights": {
+        "vol_arbitrage": 1.0
+      },
+      "daily_pnl": 12035.1
+    },
+    {
+      "date": "2025-06-23",
+      "equity": 106940.5,
+      "cash": 106940.5,
+      "positions_value": 0,
+      "open_position_ids": [],
+      "strategy_weights": {
+        "vol_arbitrage": 1.0
+      },
+      "daily_pnl": 0.0
+    },
+    {
+      "date": "2025-06-24",
+      "equity": 106940.5,
+      "cash": 106940.5,
+      "positions_value": 0,
+      "open_position_ids": [],
+      "strategy_weights": {
+        "vol_arbitrage": 1.0
+      },
+      "daily_pnl": 0.0
+    },
+    {
+      "date": "2025-06-25",
+      "equity": 95693.19,
+      "cash": 84445.87,
+      "positions_value": 11247.31,
+      "open_position_ids": [
+        "1d692a0ebb"
+      ],
+      "strategy_weights": {
+        "vol_arbitrage": 1.0
+      },
+      "daily_pnl": -11247.31
+    },
+    {
+      "date": "2025-06-26",
+      "equity": 95693.19,
+      "cash": 84445.87,
+      "positions_value": 11247.31,
+      "open_position_ids": [
+        "1d692a0ebb"
+      ],
+      "strategy_weights": {
+        "vol_arbitrage": 1.0
+      },
+      "daily_pnl": 0.0
+    },
+    {
+      "date": "2025-06-27",
+      "equity": 95693.19,
+      "cash": 84445.87,
+      "positions_value": 11247.31,
+      "open_position_ids": [
+        "1d692a0ebb"
+      ],
+      "strategy_weights": {
+        "vol_arbitrage": 1.0
+      },
+      "daily_pnl": 0.0
+    },
+    {
+      "date": "2025-06-30",
+      "equity": 107378.31,
+      "cash": 96130.99,
+      "positions_value": 11247.31,
+      "open_position_ids": [
+        "1d692a0ebb"
+      ],
+      "strategy_weights": {
+        "vol_arbitrage": 1.0
+      },
+      "daily_pnl": 11685.12
+    },
+    {
+      "date": "2025-07-01",
+      "equity": 107378.31,
+      "cash": 107378.31,
+      "positions_value": 0,
+      "open_position_ids": [],
+      "strategy_weights": {
+        "vol_arbitrage": 1.0
+      },
+      "daily_pnl": 0.0
+    },
+    {
+      "date": "2025-07-02",
+      "equity": 107378.31,
+      "cash": 107378.31,
+      "positions_value": 0,
+      "open_position_ids": [],
+      "strategy_weights": {
+        "vol_arbitrage": 1.0
+      },
+      "daily_pnl": 0.0
+    },
+    {
+      "date": "2025-07-03",
+      "equity": 96619.57,
+      "cash": 85860.83,
+      "positions_value": 10758.74,
+      "open_position_ids": [
+        "30e7b13ac7"
+      ],
+      "strategy_weights": {
+        "vol_arbitrage": 1.0
+      },
+      "daily_pnl": -10758.74
+    },
+    {
+      "date": "2025-07-04",
+      "equity": 96619.57,
+      "cash": 85860.83,
+      "positions_value": 10758.74,
+      "open_position_ids": [
+        "30e7b13ac7"
+      ],
+      "strategy_weights": {
+        "vol_arbitrage": 1.0
+      },
+      "daily_pnl": 0.0
+    },
+    {
+      "date": "2025-07-07",
+      "equity": 107721.25,
+      "cash": 96962.51,
+      "positions_value": 10758.74,
+      "open_position_ids": [
+        "30e7b13ac7"
+      ],
+      "strategy_weights": {
+        "vol_arbitrage": 1.0
+      },
+      "daily_pnl": 11101.68
+    },
+    {
+      "date": "2025-07-08",
+      "equity": 107721.25,
+      "cash": 107721.25,
+      "positions_value": 0,
+      "open_position_ids": [],
+      "strategy_weights": {
+        "vol_arbitrage": 1.0
+      },
+      "daily_pnl": 0.0
+    },
+    {
+      "date": "2025-07-09",
+      "equity": 107721.25,
+      "cash": 107721.25,
+      "positions_value": 0,
+      "open_position_ids": [],
+      "strategy_weights": {
+        "vol_arbitrage": 1.0
+      },
+      "daily_pnl": 0.0
+    },
+    {
+      "date": "2025-07-10",
+      "equity": 107721.25,
+      "cash": 107721.25,
+      "positions_value": 0,
+      "open_position_ids": [],
+      "strategy_weights": {
+        "vol_arbitrage": 1.0
+      },
+      "daily_pnl": 0.0
+    },
+    {
+      "date": "2025-07-11",
+      "equity": 96722.32,
+      "cash": 85723.39,
+      "positions_value": 10998.93,
+      "open_position_ids": [
+        "b09e79996c"
+      ],
+      "strategy_weights": {
+        "vol_arbitrage": 1.0
+      },
+      "daily_pnl": -10998.93
+    },
+    {
+      "date": "2025-07-14",
+      "equity": 96859.82,
+      "cash": 74578.72,
+      "positions_value": 22281.1,
+      "open_position_ids": [
+        "b09e79996c",
+        "5c334f24ec"
+      ],
+      "strategy_weights": {
+        "vol_arbitrage": 1.0
+      },
+      "daily_pnl": 137.5
+    },
+    {
+      "date": "2025-07-15",
+      "equity": 96859.82,
+      "cash": 85577.65,
+      "positions_value": 11282.17,
+      "open_position_ids": [
+        "5c334f24ec"
+      ],
+      "strategy_weights": {
+        "vol_arbitrage": 1.0
+      },
+      "daily_pnl": 0.0
+    },
+    {
+      "date": "2025-07-16",
+      "equity": 96859.82,
+      "cash": 85577.65,
+      "positions_value": 11282.17,
+      "open_position_ids": [
+        "5c334f24ec"
+      ],
+      "strategy_weights": {
+        "vol_arbitrage": 1.0
+      },
+      "daily_pnl": 0.0
+    },
+    {
+      "date": "2025-07-17",
+      "equity": 108591.32,
+      "cash": 97309.15,
+      "positions_value": 11282.17,
+      "open_position_ids": [
+        "5c334f24ec"
+      ],
+      "strategy_weights": {
+        "vol_arbitrage": 1.0
+      },
+      "daily_pnl": 11731.5
+    },
+    {
+      "date": "2025-07-18",
+      "equity": 108591.32,
+      "cash": 108591.32,
+      "positions_value": 0,
+      "open_position_ids": [],
+      "strategy_weights": {
+        "vol_arbitrage": 1.0
+      },
+      "daily_pnl": 0.0
+    },
+    {
+      "date": "2025-07-21",
+      "equity": 97124.08,
+      "cash": 85656.85,
+      "positions_value": 11467.23,
+      "open_position_ids": [
+        "1d25def961"
+      ],
+      "strategy_weights": {
+        "vol_arbitrage": 1.0
+      },
+      "daily_pnl": -11467.23
+    },
+    {
+      "date": "2025-07-22",
+      "equity": 97124.08,
+      "cash": 85656.85,
+      "positions_value": 11467.23,
+      "open_position_ids": [
+        "1d25def961"
+      ],
+      "strategy_weights": {
+        "vol_arbitrage": 1.0
+      },
+      "daily_pnl": 0.0
+    },
+    {
+      "date": "2025-07-23",
+      "equity": 97124.08,
+      "cash": 85656.85,
+      "positions_value": 11467.23,
+      "open_position_ids": [
+        "1d25def961"
+      ],
+      "strategy_weights": {
+        "vol_arbitrage": 1.0
+      },
+      "daily_pnl": 0.0
+    },
+    {
+      "date": "2025-07-24",
+      "equity": 109118.91,
+      "cash": 97651.68,
+      "positions_value": 11467.23,
+      "open_position_ids": [
+        "1d25def961"
+      ],
+      "strategy_weights": {
+        "vol_arbitrage": 1.0
+      },
+      "daily_pnl": 11994.83
+    },
+    {
+      "date": "2025-07-25",
+      "equity": 109118.91,
+      "cash": 109118.91,
+      "positions_value": 0,
+      "open_position_ids": [],
+      "strategy_weights": {
+        "vol_arbitrage": 1.0
+      },
+      "daily_pnl": 0.0
+    },
+    {
+      "date": "2025-07-28",
+      "equity": 109118.91,
+      "cash": 109118.91,
+      "positions_value": 0,
+      "open_position_ids": [],
+      "strategy_weights": {
+        "vol_arbitrage": 1.0
+      },
+      "daily_pnl": 0.0
+    },
+    {
+      "date": "2025-07-29",
+      "equity": 109118.91,
+      "cash": 109118.91,
+      "positions_value": 0,
+      "open_position_ids": [],
+      "strategy_weights": {
+        "vol_arbitrage": 1.0
+      },
+      "daily_pnl": 0.0
+    },
+    {
+      "date": "2025-07-30",
+      "equity": 109118.91,
+      "cash": 109118.91,
+      "positions_value": 0,
+      "open_position_ids": [],
+      "strategy_weights": {
+        "vol_arbitrage": 1.0
+      },
+      "daily_pnl": 0.0
+    },
+    {
+      "date": "2025-07-31",
+      "equity": 97639.5,
+      "cash": 86160.08,
+      "positions_value": 11479.42,
+      "open_position_ids": [
+        "7c24436d72"
+      ],
+      "strategy_weights": {
+        "vol_arbitrage": 1.0
+      },
+      "daily_pnl": -11479.42
+    },
+    {
+      "date": "2025-08-01",
+      "equity": 97639.5,
+      "cash": 86160.08,
+      "positions_value": 11479.42,
+      "open_position_ids": [
+        "7c24436d72"
+      ],
+      "strategy_weights": {
+        "vol_arbitrage": 1.0
+      },
+      "daily_pnl": 0.0
+    },
+    {
+      "date": "2025-08-04",
+      "equity": 109343.17,
+      "cash": 97863.75,
+      "positions_value": 11479.42,
+      "open_position_ids": [
+        "7c24436d72"
+      ],
+      "strategy_weights": {
+        "vol_arbitrage": 1.0
+      },
+      "daily_pnl": 11703.67
+    },
+    {
+      "date": "2025-08-05",
+      "equity": 97911.18,
+      "cash": 86479.2,
+      "positions_value": 11431.98,
+      "open_position_ids": [
+        "45eb786bca"
+      ],
+      "strategy_weights": {
+        "vol_arbitrage": 1.0
+      },
+      "daily_pnl": -11431.98
+    },
+    {
+      "date": "2025-08-06",
+      "equity": 97911.18,
+      "cash": 86479.2,
+      "positions_value": 11431.98,
+      "open_position_ids": [
+        "45eb786bca"
+      ],
+      "strategy_weights": {
+        "vol_arbitrage": 1.0
+      },
+      "daily_pnl": 0.0
+    },
+    {
+      "date": "2025-08-07",
+      "equity": 97911.18,
+      "cash": 86479.2,
+      "positions_value": 11431.98,
+      "open_position_ids": [
+        "45eb786bca"
+      ],
+      "strategy_weights": {
+        "vol_arbitrage": 1.0
+      },
+      "daily_pnl": 0.0
+    },
+    {
+      "date": "2025-08-08",
+      "equity": 109886.98,
+      "cash": 98455.0,
+      "positions_value": 11431.98,
+      "open_position_ids": [
+        "45eb786bca"
+      ],
+      "strategy_weights": {
+        "vol_arbitrage": 1.0
+      },
+      "daily_pnl": 11975.8
+    },
+    {
+      "date": "2025-08-11",
+      "equity": 109886.98,
+      "cash": 109886.98,
+      "positions_value": 0,
+      "open_position_ids": [],
+      "strategy_weights": {
+        "vol_arbitrage": 1.0
+      },
+      "daily_pnl": 0.0
+    },
+    {
+      "date": "2025-08-12",
+      "equity": 109886.98,
+      "cash": 109886.98,
+      "positions_value": 0,
+      "open_position_ids": [],
+      "strategy_weights": {
+        "vol_arbitrage": 1.0
+      },
+      "daily_pnl": 0.0
+    },
+    {
+      "date": "2025-08-13",
+      "equity": 109886.98,
+      "cash": 109886.98,
+      "positions_value": 0,
+      "open_position_ids": [],
+      "strategy_weights": {
+        "vol_arbitrage": 1.0
+      },
+      "daily_pnl": 0.0
+    },
+    {
+      "date": "2025-08-14",
+      "equity": 109886.98,
+      "cash": 109886.98,
+      "positions_value": 0,
+      "open_position_ids": [],
+      "strategy_weights": {
+        "vol_arbitrage": 1.0
+      },
+      "daily_pnl": 0.0
+    },
+    {
+      "date": "2025-08-15",
+      "equity": 109886.98,
+      "cash": 109886.98,
+      "positions_value": 0,
+      "open_position_ids": [],
+      "strategy_weights": {
+        "vol_arbitrage": 1.0
+      },
+      "daily_pnl": 0.0
+    },
+    {
+      "date": "2025-08-18",
+      "equity": 109886.98,
+      "cash": 109886.98,
+      "positions_value": 0,
+      "open_position_ids": [],
+      "strategy_weights": {
+        "vol_arbitrage": 1.0
+      },
+      "daily_pnl": 0.0
+    },
+    {
+      "date": "2025-08-19",
+      "equity": 109886.98,
+      "cash": 109886.98,
+      "positions_value": 0,
+      "open_position_ids": [],
+      "strategy_weights": {
+        "vol_arbitrage": 1.0
+      },
+      "daily_pnl": 0.0
+    },
+    {
+      "date": "2025-08-20",
+      "equity": 109886.98,
+      "cash": 109886.98,
+      "positions_value": 0,
+      "open_position_ids": [],
+      "strategy_weights": {
+        "vol_arbitrage": 1.0
+      },
+      "daily_pnl": 0.0
+    },
+    {
+      "date": "2025-08-21",
+      "equity": 109886.98,
+      "cash": 109886.98,
+      "positions_value": 0,
+      "open_position_ids": [],
+      "strategy_weights": {
+        "vol_arbitrage": 1.0
+      },
+      "daily_pnl": 0.0
+    },
+    {
+      "date": "2025-08-22",
+      "equity": 109886.98,
+      "cash": 109886.98,
+      "positions_value": 0,
+      "open_position_ids": [],
+      "strategy_weights": {
+        "vol_arbitrage": 1.0
+      },
+      "daily_pnl": 0.0
+    },
+    {
+      "date": "2025-08-25",
+      "equity": 109886.98,
+      "cash": 109886.98,
+      "positions_value": 0,
+      "open_position_ids": [],
+      "strategy_weights": {
+        "vol_arbitrage": 1.0
+      },
+      "daily_pnl": 0.0
+    },
+    {
+      "date": "2025-08-26",
+      "equity": 109886.98,
+      "cash": 109886.98,
+      "positions_value": 0,
+      "open_position_ids": [],
+      "strategy_weights": {
+        "vol_arbitrage": 1.0
+      },
+      "daily_pnl": 0.0
+    },
+    {
+      "date": "2025-08-27",
+      "equity": 98745.56,
+      "cash": 87604.13,
+      "positions_value": 11141.43,
+      "open_position_ids": [
+        "9951dc7bbd"
+      ],
+      "strategy_weights": {
+        "vol_arbitrage": 1.0
+      },
+      "daily_pnl": -11141.43
+    },
+    {
+      "date": "2025-08-28",
+      "equity": 98745.56,
+      "cash": 87604.13,
+      "positions_value": 11141.43,
+      "open_position_ids": [
+        "9951dc7bbd"
+      ],
+      "strategy_weights": {
+        "vol_arbitrage": 1.0
+      },
+      "daily_pnl": 0.0
+    },
+    {
+      "date": "2025-08-29",
+      "equity": 98745.56,
+      "cash": 87604.13,
+      "positions_value": 11141.43,
+      "open_position_ids": [
+        "9951dc7bbd"
+      ],
+      "strategy_weights": {
+        "vol_arbitrage": 1.0
+      },
+      "daily_pnl": 0.0
+    },
+    {
+      "date": "2025-09-01",
+      "equity": 99365.86,
+      "cash": 77396.77,
+      "positions_value": 21969.09,
+      "open_position_ids": [
+        "9951dc7bbd",
+        "3e65bf817e"
+      ],
+      "strategy_weights": {
+        "vol_arbitrage": 1.0
+      },
+      "daily_pnl": 620.3
+    },
+    {
+      "date": "2025-09-02",
+      "equity": 99365.86,
+      "cash": 88538.19,
+      "positions_value": 10827.66,
+      "open_position_ids": [
+        "3e65bf817e"
+      ],
+      "strategy_weights": {
+        "vol_arbitrage": 1.0
+      },
+      "daily_pnl": 0.0
+    },
+    {
+      "date": "2025-09-03",
+      "equity": 99365.86,
+      "cash": 88538.19,
+      "positions_value": 10827.66,
+      "open_position_ids": [
+        "3e65bf817e"
+      ],
+      "strategy_weights": {
+        "vol_arbitrage": 1.0
+      },
+      "daily_pnl": 0.0
+    },
+    {
+      "date": "2025-09-04",
+      "equity": 110526.88,
+      "cash": 99699.21,
+      "positions_value": 10827.66,
+      "open_position_ids": [
+        "3e65bf817e"
+      ],
+      "strategy_weights": {
+        "vol_arbitrage": 1.0
+      },
+      "daily_pnl": 11161.02
+    },
+    {
+      "date": "2025-09-05",
+      "equity": 110526.88,
+      "cash": 110526.88,
+      "positions_value": 0,
+      "open_position_ids": [],
+      "strategy_weights": {
+        "vol_arbitrage": 1.0
+      },
+      "daily_pnl": 0.0
+    },
+    {
+      "date": "2025-09-08",
+      "equity": 110526.88,
+      "cash": 110526.88,
+      "positions_value": 0,
+      "open_position_ids": [],
+      "strategy_weights": {
+        "vol_arbitrage": 1.0
+      },
+      "daily_pnl": 0.0
+    },
+    {
+      "date": "2025-09-09",
+      "equity": 110526.88,
+      "cash": 110526.88,
+      "positions_value": 0,
+      "open_position_ids": [],
+      "strategy_weights": {
+        "vol_arbitrage": 1.0
+      },
+      "daily_pnl": 0.0
+    },
+    {
+      "date": "2025-09-10",
+      "equity": 101013.35,
+      "cash": 91499.83,
+      "positions_value": 9513.52,
+      "open_position_ids": [
+        "f2c3b0ab29"
+      ],
+      "strategy_weights": {
+        "vol_arbitrage": 1.0
+      },
+      "daily_pnl": -9513.52
+    },
+    {
+      "date": "2025-09-11",
+      "equity": 101013.35,
+      "cash": 91499.83,
+      "positions_value": 9513.52,
+      "open_position_ids": [
+        "f2c3b0ab29"
+      ],
+      "strategy_weights": {
+        "vol_arbitrage": 1.0
+      },
+      "daily_pnl": 0.0
+    },
+    {
+      "date": "2025-09-12",
+      "equity": 101013.35,
+      "cash": 91499.83,
+      "positions_value": 9513.52,
+      "open_position_ids": [
+        "f2c3b0ab29"
+      ],
+      "strategy_weights": {
+        "vol_arbitrage": 1.0
+      },
+      "daily_pnl": 0.0
+    },
+    {
+      "date": "2025-09-15",
+      "equity": 110840.72,
+      "cash": 101327.2,
+      "positions_value": 9513.52,
+      "open_position_ids": [
+        "f2c3b0ab29"
+      ],
+      "strategy_weights": {
+        "vol_arbitrage": 1.0
+      },
+      "daily_pnl": 9827.37
+    },
+    {
+      "date": "2025-09-16",
+      "equity": 110840.72,
+      "cash": 110840.72,
+      "positions_value": 0,
+      "open_position_ids": [],
+      "strategy_weights": {
+        "vol_arbitrage": 1.0
+      },
+      "daily_pnl": 0.0
+    },
+    {
+      "date": "2025-09-17",
+      "equity": 110840.72,
+      "cash": 110840.72,
+      "positions_value": 0,
+      "open_position_ids": [],
+      "strategy_weights": {
+        "vol_arbitrage": 1.0
+      },
+      "daily_pnl": 0.0
+    },
+    {
+      "date": "2025-09-18",
+      "equity": 110840.72,
+      "cash": 110840.72,
+      "positions_value": 0,
+      "open_position_ids": [],
+      "strategy_weights": {
+        "vol_arbitrage": 1.0
+      },
+      "daily_pnl": 0.0
+    },
+    {
+      "date": "2025-09-19",
+      "equity": 110840.72,
+      "cash": 110840.72,
+      "positions_value": 0,
+      "open_position_ids": [],
+      "strategy_weights": {
+        "vol_arbitrage": 1.0
+      },
+      "daily_pnl": 0.0
+    },
+    {
+      "date": "2025-09-22",
+      "equity": 110840.72,
+      "cash": 110840.72,
+      "positions_value": 0,
+      "open_position_ids": [],
+      "strategy_weights": {
+        "vol_arbitrage": 1.0
+      },
+      "daily_pnl": 0.0
+    },
+    {
+      "date": "2025-09-23",
+      "equity": 110840.72,
+      "cash": 110840.72,
+      "positions_value": 0,
+      "open_position_ids": [],
+      "strategy_weights": {
+        "vol_arbitrage": 1.0
+      },
+      "daily_pnl": 0.0
+    },
+    {
+      "date": "2025-09-24",
+      "equity": 110840.72,
+      "cash": 110840.72,
+      "positions_value": 0,
+      "open_position_ids": [],
+      "strategy_weights": {
+        "vol_arbitrage": 1.0
+      },
+      "daily_pnl": 0.0
+    },
+    {
+      "date": "2025-09-25",
+      "equity": 110840.72,
+      "cash": 110840.72,
+      "positions_value": 0,
+      "open_position_ids": [],
+      "strategy_weights": {
+        "vol_arbitrage": 1.0
+      },
+      "daily_pnl": 0.0
+    },
+    {
+      "date": "2025-09-26",
+      "equity": 102345.76,
+      "cash": 93850.8,
+      "positions_value": 8494.96,
+      "open_position_ids": [
+        "91530b4511"
+      ],
+      "strategy_weights": {
+        "vol_arbitrage": 1.0
+      },
+      "daily_pnl": -8494.96
+    },
+    {
+      "date": "2025-09-29",
+      "equity": 102799.3,
+      "cash": 85883.07,
+      "positions_value": 16916.23,
+      "open_position_ids": [
+        "91530b4511",
+        "fbe9aaaca8"
+      ],
+      "strategy_weights": {
+        "vol_arbitrage": 1.0
+      },
+      "daily_pnl": 453.54
+    },
+    {
+      "date": "2025-09-30",
+      "equity": 102799.3,
+      "cash": 94378.03,
+      "positions_value": 8421.27,
+      "open_position_ids": [
+        "fbe9aaaca8"
+      ],
+      "strategy_weights": {
+        "vol_arbitrage": 1.0
+      },
+      "daily_pnl": 0.0
+    },
+    {
+      "date": "2025-10-01",
+      "equity": 102799.3,
+      "cash": 94378.03,
+      "positions_value": 8421.27,
+      "open_position_ids": [
+        "fbe9aaaca8"
+      ],
+      "strategy_weights": {
+        "vol_arbitrage": 1.0
+      },
+      "daily_pnl": 0.0
+    },
+    {
+      "date": "2025-10-02",
+      "equity": 111460.27,
+      "cash": 103039.0,
+      "positions_value": 8421.27,
+      "open_position_ids": [
+        "fbe9aaaca8"
+      ],
+      "strategy_weights": {
+        "vol_arbitrage": 1.0
+      },
+      "daily_pnl": 8660.97
+    },
+    {
+      "date": "2025-10-03",
+      "equity": 111460.27,
+      "cash": 111460.27,
+      "positions_value": 0,
+      "open_position_ids": [],
+      "strategy_weights": {
+        "vol_arbitrage": 1.0
+      },
+      "daily_pnl": 0.0
+    },
+    {
+      "date": "2025-10-06",
+      "equity": 111460.27,
+      "cash": 111460.27,
+      "positions_value": 0,
+      "open_position_ids": [],
+      "strategy_weights": {
+        "vol_arbitrage": 1.0
+      },
+      "daily_pnl": 0.0
+    },
+    {
+      "date": "2025-10-07",
+      "equity": 111460.27,
+      "cash": 111460.27,
+      "positions_value": 0,
+      "open_position_ids": [],
+      "strategy_weights": {
+        "vol_arbitrage": 1.0
+      },
+      "daily_pnl": 0.0
+    },
+    {
+      "date": "2025-10-08",
+      "equity": 111460.27,
+      "cash": 111460.27,
+      "positions_value": 0,
+      "open_position_ids": [],
+      "strategy_weights": {
+        "vol_arbitrage": 1.0
+      },
+      "daily_pnl": 0.0
+    },
+    {
+      "date": "2025-10-09",
+      "equity": 111460.27,
+      "cash": 111460.27,
+      "positions_value": 0,
+      "open_position_ids": [],
+      "strategy_weights": {
+        "vol_arbitrage": 1.0
+      },
+      "daily_pnl": 0.0
+    },
+    {
+      "date": "2025-10-10",
+      "equity": 111460.27,
+      "cash": 111460.27,
+      "positions_value": 0,
+      "open_position_ids": [],
+      "strategy_weights": {
+        "vol_arbitrage": 1.0
+      },
+      "daily_pnl": 0.0
+    },
+    {
+      "date": "2025-10-13",
+      "equity": 111460.27,
+      "cash": 111460.27,
+      "positions_value": 0,
+      "open_position_ids": [],
+      "strategy_weights": {
+        "vol_arbitrage": 1.0
+      },
+      "daily_pnl": 0.0
+    },
+    {
+      "date": "2025-10-14",
+      "equity": 111460.27,
+      "cash": 111460.27,
+      "positions_value": 0,
+      "open_position_ids": [],
+      "strategy_weights": {
+        "vol_arbitrage": 1.0
+      },
+      "daily_pnl": 0.0
+    },
+    {
+      "date": "2025-10-15",
+      "equity": 111460.27,
+      "cash": 111460.27,
+      "positions_value": 0,
+      "open_position_ids": [],
+      "strategy_weights": {
+        "vol_arbitrage": 1.0
+      },
+      "daily_pnl": 0.0
+    },
+    {
+      "date": "2025-10-16",
+      "equity": 111460.27,
+      "cash": 111460.27,
+      "positions_value": 0,
+      "open_position_ids": [],
+      "strategy_weights": {
+        "vol_arbitrage": 1.0
+      },
+      "daily_pnl": 0.0
+    }
+  ],
+  "positions": [
+    {
+      "position_id": "d08b8aabb1",
+      "strategy": "vol_arbitrage",
+      "spread_type": "vol_arb_conversion",
+      "long_strike": 510.0,
+      "short_strike": 510.0,
+      "expiration": "",
+      "entry_date": "2024-11-04",
+      "entry_cost": 101.92968743910315,
+      "contracts": 1
+    },
+    {
+      "position_id": "e59bc8ff51",
+      "strategy": "vol_arbitrage",
+      "spread_type": "vol_arb_conversion",
+      "long_strike": 505.0,
+      "short_strike": 505.0,
+      "expiration": "",
+      "entry_date": "2024-11-12",
+      "entry_cost": 96.81602241695786,
+      "contracts": 1
+    },
+    {
+      "position_id": "11702f779f",
+      "strategy": "vol_arbitrage",
+      "spread_type": "vol_arb_conversion",
+      "long_strike": 500.0,
+      "short_strike": 500.0,
+      "expiration": "",
+      "entry_date": "2024-11-25",
+      "entry_cost": 98.00623604971963,
+      "contracts": 1
+    },
+    {
+      "position_id": "be0f704b1c",
+      "strategy": "vol_arbitrage",
+      "spread_type": "vol_arb_conversion",
+      "long_strike": 490.0,
+      "short_strike": 490.0,
+      "expiration": "",
+      "entry_date": "2024-12-03",
+      "entry_cost": 93.63765809536551,
+      "contracts": 1
+    },
+    {
+      "position_id": "3e3773a1f7",
+      "strategy": "vol_arbitrage",
+      "spread_type": "vol_arb_conversion",
+      "long_strike": 465.0,
+      "short_strike": 465.0,
+      "expiration": "",
+      "entry_date": "2024-12-09",
+      "entry_cost": 96.0688834171878,
+      "contracts": 1
+    },
+    {
+      "position_id": "a6a854a661",
+      "strategy": "vol_arbitrage",
+      "spread_type": "vol_arb_conversion",
+      "long_strike": 585.0,
+      "short_strike": 585.0,
+      "expiration": "",
+      "entry_date": "2024-12-26",
+      "entry_cost": 114.10069945084089,
+      "contracts": 1
+    },
+    {
+      "position_id": "a42b0fd154",
+      "strategy": "vol_arbitrage",
+      "spread_type": "vol_arb_conversion",
+      "long_strike": 580.0,
+      "short_strike": 580.0,
+      "expiration": "",
+      "entry_date": "2025-01-03",
+      "entry_cost": 118.37719849677028,
+      "contracts": 1
+    },
+    {
+      "position_id": "e3ff198a1a",
+      "strategy": "vol_arbitrage",
+      "spread_type": "vol_arb_conversion",
+      "long_strike": 560.0,
+      "short_strike": 560.0,
+      "expiration": "",
+      "entry_date": "2025-01-23",
+      "entry_cost": 109.85703937450158,
+      "contracts": 1
+    },
+    {
+      "position_id": "836782c379",
+      "strategy": "vol_arbitrage",
+      "spread_type": "vol_arb_conversion",
+      "long_strike": 475.0,
+      "short_strike": 475.0,
+      "expiration": "",
+      "entry_date": "2025-02-10",
+      "entry_cost": 97.33066016768646,
+      "contracts": 1
+    },
+    {
+      "position_id": "1e0469cdb6",
+      "strategy": "vol_arbitrage",
+      "spread_type": "vol_arb_conversion",
+      "long_strike": 445.0,
+      "short_strike": 445.0,
+      "expiration": "",
+      "entry_date": "2025-02-17",
+      "entry_cost": 93.05783730368768,
+      "contracts": 1
+    },
+    {
+      "position_id": "b37b6204e4",
+      "strategy": "vol_arbitrage",
+      "spread_type": "vol_arb_conversion",
+      "long_strike": 415.0,
+      "short_strike": 415.0,
+      "expiration": "",
+      "entry_date": "2025-03-07",
+      "entry_cost": 87.98149000722377,
+      "contracts": 1
+    },
+    {
+      "position_id": "3cc7a9da27",
+      "strategy": "vol_arbitrage",
+      "spread_type": "vol_arb_conversion",
+      "long_strike": 490.0,
+      "short_strike": 490.0,
+      "expiration": "",
+      "entry_date": "2025-03-14",
+      "entry_cost": 92.67567600781864,
+      "contracts": 1
+    },
+    {
+      "position_id": "60333b4411",
+      "strategy": "vol_arbitrage",
+      "spread_type": "vol_arb_conversion",
+      "long_strike": 450.0,
+      "short_strike": 450.0,
+      "expiration": "",
+      "entry_date": "2025-03-17",
+      "entry_cost": 94.54322604114617,
+      "contracts": 1
+    },
+    {
+      "position_id": "401ad30923",
+      "strategy": "vol_arbitrage",
+      "spread_type": "vol_arb_conversion",
+      "long_strike": 505.0,
+      "short_strike": 505.0,
+      "expiration": "",
+      "entry_date": "2025-03-24",
+      "entry_cost": 99.91672078786314,
+      "contracts": 1
+    },
+    {
+      "position_id": "5824ede6b9",
+      "strategy": "vol_arbitrage",
+      "spread_type": "vol_arb_conversion",
+      "long_strike": 520.0,
+      "short_strike": 520.0,
+      "expiration": "",
+      "entry_date": "2025-03-28",
+      "entry_cost": 102.56509090674372,
+      "contracts": 1
+    },
+    {
+      "position_id": "f68fe4f164",
+      "strategy": "vol_arbitrage",
+      "spread_type": "vol_arb_conversion",
+      "long_strike": 530.0,
+      "short_strike": 530.0,
+      "expiration": "",
+      "entry_date": "2025-03-31",
+      "entry_cost": 103.80859566247301,
+      "contracts": 1
+    },
+    {
+      "position_id": "c6e802eb16",
+      "strategy": "vol_arbitrage",
+      "spread_type": "vol_arb_conversion",
+      "long_strike": 535.0,
+      "short_strike": 535.0,
+      "expiration": "",
+      "entry_date": "2025-04-04",
+      "entry_cost": 104.72667327855396,
+      "contracts": 1
+    },
+    {
+      "position_id": "26cb8ecc11",
+      "strategy": "vol_arbitrage",
+      "spread_type": "vol_arb_conversion",
+      "long_strike": 595.0,
+      "short_strike": 595.0,
+      "expiration": "",
+      "entry_date": "2025-04-17",
+      "entry_cost": 115.1799640085246,
+      "contracts": 1
+    },
+    {
+      "position_id": "9999654014",
+      "strategy": "vol_arbitrage",
+      "spread_type": "vol_arb_conversion",
+      "long_strike": 590.0,
+      "short_strike": 590.0,
+      "expiration": "",
+      "entry_date": "2025-04-21",
+      "entry_cost": 113.3976965174136,
+      "contracts": 1
+    },
+    {
+      "position_id": "6265077f09",
+      "strategy": "vol_arbitrage",
+      "spread_type": "vol_arb_conversion",
+      "long_strike": 495.0,
+      "short_strike": 495.0,
+      "expiration": "",
+      "entry_date": "2025-05-07",
+      "entry_cost": 103.48104830681328,
+      "contracts": 1
+    },
+    {
+      "position_id": "e6adb1ad3e",
+      "strategy": "vol_arbitrage",
+      "spread_type": "vol_arb_conversion",
+      "long_strike": 615.0,
+      "short_strike": 615.0,
+      "expiration": "",
+      "entry_date": "2025-06-06",
+      "entry_cost": 118.46282008161339,
+      "contracts": 1
+    },
+    {
+      "position_id": "c50b9dbcfa",
+      "strategy": "vol_arbitrage",
+      "spread_type": "vol_arb_conversion",
+      "long_strike": 590.0,
+      "short_strike": 590.0,
+      "expiration": "",
+      "entry_date": "2025-06-17",
+      "entry_cost": 117.60248318122721,
+      "contracts": 1
+    },
+    {
+      "position_id": "1d692a0ebb",
+      "strategy": "vol_arbitrage",
+      "spread_type": "vol_arb_conversion",
+      "long_strike": 570.0,
+      "short_strike": 570.0,
+      "expiration": "",
+      "entry_date": "2025-06-25",
+      "entry_cost": 112.47313154690747,
+      "contracts": 1
+    },
+    {
+      "position_id": "30e7b13ac7",
+      "strategy": "vol_arbitrage",
+      "spread_type": "vol_arb_conversion",
+      "long_strike": 515.0,
+      "short_strike": 515.0,
+      "expiration": "",
+      "entry_date": "2025-07-03",
+      "entry_cost": 107.58736954467108,
+      "contracts": 1
+    },
+    {
+      "position_id": "b09e79996c",
+      "strategy": "vol_arbitrage",
+      "spread_type": "vol_arb_conversion",
+      "long_strike": 535.0,
+      "short_strike": 535.0,
+      "expiration": "",
+      "entry_date": "2025-07-11",
+      "entry_cost": 109.9892997672058,
+      "contracts": 1
+    },
+    {
+      "position_id": "5c334f24ec",
+      "strategy": "vol_arbitrage",
+      "spread_type": "vol_arb_conversion",
+      "long_strike": 565.0,
+      "short_strike": 565.0,
+      "expiration": "",
+      "entry_date": "2025-07-14",
+      "entry_cost": 112.82171786309415,
+      "contracts": 1
+    },
+    {
+      "position_id": "1d25def961",
+      "strategy": "vol_arbitrage",
+      "spread_type": "vol_arb_conversion",
+      "long_strike": 570.0,
+      "short_strike": 570.0,
+      "expiration": "",
+      "entry_date": "2025-07-21",
+      "entry_cost": 114.67233989883258,
+      "contracts": 1
+    },
+    {
+      "position_id": "7c24436d72",
+      "strategy": "vol_arbitrage",
+      "spread_type": "vol_arb_conversion",
+      "long_strike": 550.0,
+      "short_strike": 550.0,
+      "expiration": "",
+      "entry_date": "2025-07-31",
+      "entry_cost": 114.79417771278005,
+      "contracts": 1
+    },
+    {
+      "position_id": "45eb786bca",
+      "strategy": "vol_arbitrage",
+      "spread_type": "vol_arb_conversion",
+      "long_strike": 580.0,
+      "short_strike": 580.0,
+      "expiration": "",
+      "entry_date": "2025-08-05",
+      "entry_cost": 114.31982425306383,
+      "contracts": 1
+    },
+    {
+      "position_id": "9951dc7bbd",
+      "strategy": "vol_arbitrage",
+      "spread_type": "vol_arb_conversion",
+      "long_strike": 540.0,
+      "short_strike": 540.0,
+      "expiration": "",
+      "entry_date": "2025-08-27",
+      "entry_cost": 111.41425745073515,
+      "contracts": 1
+    },
+    {
+      "position_id": "3e65bf817e",
+      "strategy": "vol_arbitrage",
+      "spread_type": "vol_arb_conversion",
+      "long_strike": 540.0,
+      "short_strike": 540.0,
+      "expiration": "",
+      "entry_date": "2025-09-01",
+      "entry_cost": 108.27661373279894,
+      "contracts": 1
+    },
+    {
+      "position_id": "f2c3b0ab29",
+      "strategy": "vol_arbitrage",
+      "spread_type": "vol_arb_conversion",
+      "long_strike": 465.0,
+      "short_strike": 465.0,
+      "expiration": "",
+      "entry_date": "2025-09-10",
+      "entry_cost": 95.1352280233237,
+      "contracts": 1
+    },
+    {
+      "position_id": "91530b4511",
+      "strategy": "vol_arbitrage",
+      "spread_type": "vol_arb_conversion",
+      "long_strike": 400.0,
+      "short_strike": 400.0,
+      "expiration": "",
+      "entry_date": "2025-09-26",
+      "entry_cost": 84.94959830861112,
+      "contracts": 1
+    },
+    {
+      "position_id": "fbe9aaaca8",
+      "strategy": "vol_arbitrage",
+      "spread_type": "vol_arb_conversion",
+      "long_strike": 395.0,
+      "short_strike": 395.0,
+      "expiration": "",
+      "entry_date": "2025-09-29",
+      "entry_cost": 84.21273643946896,
+      "contracts": 1
+    }
+  ],
+  "transactions": [
+    {
+      "transaction_id": "8004ebdb5a",
+      "strategy": "vol_arbitrage",
+      "tx_type": "OPEN",
+      "spread_type": "vol_arb_conversion",
+      "long_strike": 510.0,
+      "short_strike": 510.0,
+      "expiration": "",
+      "date": "2024-11-04",
+      "price": 101.92968743910315,
+      "contracts": 1,
+      "realized_pnl": 0.0,
+      "exit_reason": "",
+      "linked_id": "d08b8aabb1"
+    },
+    {
+      "transaction_id": "0c046cfdb6",
+      "strategy": "vol_arbitrage",
+      "tx_type": "CLOSE",
+      "spread_type": "vol_arb_conversion",
+      "long_strike": 510.0,
+      "short_strike": 510.0,
+      "expiration": "",
+      "date": "2024-11-07",
+      "price": 0.0,
+      "contracts": 1,
+      "realized_pnl": 10623.1,
+      "exit_reason": "hold_expired",
+      "linked_id": "d08b8aabb1"
+    },
+    {
+      "transaction_id": "3a1d21c51b",
+      "strategy": "vol_arbitrage",
+      "tx_type": "OPEN",
+      "spread_type": "vol_arb_conversion",
+      "long_strike": 505.0,
+      "short_strike": 505.0,
+      "expiration": "",
+      "date": "2024-11-12",
+      "price": 96.81602241695786,
+      "contracts": 1,
+      "realized_pnl": 0.0,
+      "exit_reason": "",
+      "linked_id": "e59bc8ff51"
+    },
+    {
+      "transaction_id": "38ce2dfa29",
+      "strategy": "vol_arbitrage",
+      "tx_type": "CLOSE",
+      "spread_type": "vol_arb_conversion",
+      "long_strike": 505.0,
+      "short_strike": 505.0,
+      "expiration": "",
+      "date": "2024-11-15",
+      "price": 0.0,
+      "contracts": 1,
+      "realized_pnl": 10049.88,
+      "exit_reason": "hold_expired",
+      "linked_id": "e59bc8ff51"
+    },
+    {
+      "transaction_id": "e71b3712b6",
+      "strategy": "vol_arbitrage",
+      "tx_type": "OPEN",
+      "spread_type": "vol_arb_conversion",
+      "long_strike": 500.0,
+      "short_strike": 500.0,
+      "expiration": "",
+      "date": "2024-11-25",
+      "price": 98.00623604971963,
+      "contracts": 1,
+      "realized_pnl": 0.0,
+      "exit_reason": "",
+      "linked_id": "11702f779f"
+    },
+    {
+      "transaction_id": "4efad64a47",
+      "strategy": "vol_arbitrage",
+      "tx_type": "CLOSE",
+      "spread_type": "vol_arb_conversion",
+      "long_strike": 500.0,
+      "short_strike": 500.0,
+      "expiration": "",
+      "date": "2024-11-28",
+      "price": 0.0,
+      "contracts": 1,
+      "realized_pnl": 10046.53,
+      "exit_reason": "hold_expired",
+      "linked_id": "11702f779f"
+    },
+    {
+      "transaction_id": "696886d57d",
+      "strategy": "vol_arbitrage",
+      "tx_type": "OPEN",
+      "spread_type": "vol_arb_conversion",
+      "long_strike": 490.0,
+      "short_strike": 490.0,
+      "expiration": "",
+      "date": "2024-12-03",
+      "price": 93.63765809536551,
+      "contracts": 1,
+      "realized_pnl": 0.0,
+      "exit_reason": "",
+      "linked_id": "be0f704b1c"
+    },
+    {
+      "transaction_id": "3a2b2f0e15",
+      "strategy": "vol_arbitrage",
+      "tx_type": "CLOSE",
+      "spread_type": "vol_arb_conversion",
+      "long_strike": 490.0,
+      "short_strike": 490.0,
+      "expiration": "",
+      "date": "2024-12-06",
+      "price": 0.0,
+      "contracts": 1,
+      "realized_pnl": 9532.75,
+      "exit_reason": "hold_expired",
+      "linked_id": "be0f704b1c"
+    },
+    {
+      "transaction_id": "3a6ab60019",
+      "strategy": "vol_arbitrage",
+      "tx_type": "OPEN",
+      "spread_type": "vol_arb_conversion",
+      "long_strike": 465.0,
+      "short_strike": 465.0,
+      "expiration": "",
+      "date": "2024-12-09",
+      "price": 96.0688834171878,
+      "contracts": 1,
+      "realized_pnl": 0.0,
+      "exit_reason": "",
+      "linked_id": "3e3773a1f7"
+    },
+    {
+      "transaction_id": "df888e9ea7",
+      "strategy": "vol_arbitrage",
+      "tx_type": "CLOSE",
+      "spread_type": "vol_arb_conversion",
+      "long_strike": 465.0,
+      "short_strike": 465.0,
+      "expiration": "",
+      "date": "2024-12-12",
+      "price": 0.0,
+      "contracts": 1,
+      "realized_pnl": 9983.57,
+      "exit_reason": "hold_expired",
+      "linked_id": "3e3773a1f7"
+    },
+    {
+      "transaction_id": "b8ecf7199f",
+      "strategy": "vol_arbitrage",
+      "tx_type": "OPEN",
+      "spread_type": "vol_arb_conversion",
+      "long_strike": 585.0,
+      "short_strike": 585.0,
+      "expiration": "",
+      "date": "2024-12-26",
+      "price": 114.10069945084089,
+      "contracts": 1,
+      "realized_pnl": 0.0,
+      "exit_reason": "",
+      "linked_id": "a6a854a661"
+    },
+    {
+      "transaction_id": "60b7d7fd93",
+      "strategy": "vol_arbitrage",
+      "tx_type": "CLOSE",
+      "spread_type": "vol_arb_conversion",
+      "long_strike": 585.0,
+      "short_strike": 585.0,
+      "expiration": "",
+      "date": "2024-12-30",
+      "price": 0.0,
+      "contracts": 1,
+      "realized_pnl": 11782.71,
+      "exit_reason": "hold_expired",
+      "linked_id": "a6a854a661"
+    },
+    {
+      "transaction_id": "377038067f",
+      "strategy": "vol_arbitrage",
+      "tx_type": "OPEN",
+      "spread_type": "vol_arb_conversion",
+      "long_strike": 580.0,
+      "short_strike": 580.0,
+      "expiration": "",
+      "date": "2025-01-03",
+      "price": 118.37719849677028,
+      "contracts": 1,
+      "realized_pnl": 0.0,
+      "exit_reason": "",
+      "linked_id": "a42b0fd154"
+    },
+    {
+      "transaction_id": "ef4d66e801",
+      "strategy": "vol_arbitrage",
+      "tx_type": "CLOSE",
+      "spread_type": "vol_arb_conversion",
+      "long_strike": 580.0,
+      "short_strike": 580.0,
+      "expiration": "",
+      "date": "2025-01-06",
+      "price": 0.0,
+      "contracts": 1,
+      "realized_pnl": 12393.65,
+      "exit_reason": "hold_expired",
+      "linked_id": "a42b0fd154"
+    },
+    {
+      "transaction_id": "8fad9a319f",
+      "strategy": "vol_arbitrage",
+      "tx_type": "OPEN",
+      "spread_type": "vol_arb_conversion",
+      "long_strike": 560.0,
+      "short_strike": 560.0,
+      "expiration": "",
+      "date": "2025-01-23",
+      "price": 109.85703937450158,
+      "contracts": 1,
+      "realized_pnl": 0.0,
+      "exit_reason": "",
+      "linked_id": "e3ff198a1a"
+    },
+    {
+      "transaction_id": "6fde2e55ce",
+      "strategy": "vol_arbitrage",
+      "tx_type": "CLOSE",
+      "spread_type": "vol_arb_conversion",
+      "long_strike": 560.0,
+      "short_strike": 560.0,
+      "expiration": "",
+      "date": "2025-01-27",
+      "price": 0.0,
+      "contracts": 1,
+      "realized_pnl": 11388.57,
+      "exit_reason": "hold_expired",
+      "linked_id": "e3ff198a1a"
+    },
+    {
+      "transaction_id": "c698a937ab",
+      "strategy": "vol_arbitrage",
+      "tx_type": "OPEN",
+      "spread_type": "vol_arb_conversion",
+      "long_strike": 475.0,
+      "short_strike": 475.0,
+      "expiration": "",
+      "date": "2025-02-10",
+      "price": 97.33066016768646,
+      "contracts": 1,
+      "realized_pnl": 0.0,
+      "exit_reason": "",
+      "linked_id": "836782c379"
+    },
+    {
+      "transaction_id": "6e6f9f4eae",
+      "strategy": "vol_arbitrage",
+      "tx_type": "CLOSE",
+      "spread_type": "vol_arb_conversion",
+      "long_strike": 475.0,
+      "short_strike": 475.0,
+      "expiration": "",
+      "date": "2025-02-13",
+      "price": 0.0,
+      "contracts": 1,
+      "realized_pnl": 9940.39,
+      "exit_reason": "hold_expired",
+      "linked_id": "836782c379"
+    },
+    {
+      "transaction_id": "f4dfa9e9a7",
+      "strategy": "vol_arbitrage",
+      "tx_type": "OPEN",
+      "spread_type": "vol_arb_conversion",
+      "long_strike": 445.0,
+      "short_strike": 445.0,
+      "expiration": "",
+      "date": "2025-02-17",
+      "price": 93.05783730368768,
+      "contracts": 1,
+      "realized_pnl": 0.0,
+      "exit_reason": "",
+      "linked_id": "1e0469cdb6"
+    },
+    {
+      "transaction_id": "80eded81d1",
+      "strategy": "vol_arbitrage",
+      "tx_type": "CLOSE",
+      "spread_type": "vol_arb_conversion",
+      "long_strike": 445.0,
+      "short_strike": 445.0,
+      "expiration": "",
+      "date": "2025-02-20",
+      "price": 0.0,
+      "contracts": 1,
+      "realized_pnl": 9581.95,
+      "exit_reason": "hold_expired",
+      "linked_id": "1e0469cdb6"
+    },
+    {
+      "transaction_id": "9c16b916cd",
+      "strategy": "vol_arbitrage",
+      "tx_type": "OPEN",
+      "spread_type": "vol_arb_conversion",
+      "long_strike": 415.0,
+      "short_strike": 415.0,
+      "expiration": "",
+      "date": "2025-03-07",
+      "price": 87.98149000722377,
+      "contracts": 1,
+      "realized_pnl": 0.0,
+      "exit_reason": "",
+      "linked_id": "b37b6204e4"
+    },
+    {
+      "transaction_id": "0353b1436f",
+      "strategy": "vol_arbitrage",
+      "tx_type": "CLOSE",
+      "spread_type": "vol_arb_conversion",
+      "long_strike": 415.0,
+      "short_strike": 415.0,
+      "expiration": "",
+      "date": "2025-03-10",
+      "price": 0.0,
+      "contracts": 1,
+      "realized_pnl": 8997.83,
+      "exit_reason": "hold_expired",
+      "linked_id": "b37b6204e4"
+    },
+    {
+      "transaction_id": "b14ce9ba5d",
+      "strategy": "vol_arbitrage",
+      "tx_type": "OPEN",
+      "spread_type": "vol_arb_conversion",
+      "long_strike": 490.0,
+      "short_strike": 490.0,
+      "expiration": "",
+      "date": "2025-03-14",
+      "price": 92.67567600781864,
+      "contracts": 1,
+      "realized_pnl": 0.0,
+      "exit_reason": "",
+      "linked_id": "3cc7a9da27"
+    },
+    {
+      "transaction_id": "0c184bc724",
+      "strategy": "vol_arbitrage",
+      "tx_type": "CLOSE",
+      "spread_type": "vol_arb_conversion",
+      "long_strike": 490.0,
+      "short_strike": 490.0,
+      "expiration": "",
+      "date": "2025-03-17",
+      "price": 0.0,
+      "contracts": 1,
+      "realized_pnl": 9500.67,
+      "exit_reason": "hold_expired",
+      "linked_id": "3cc7a9da27"
+    },
+    {
+      "transaction_id": "b4de4554be",
+      "strategy": "vol_arbitrage",
+      "tx_type": "OPEN",
+      "spread_type": "vol_arb_conversion",
+      "long_strike": 450.0,
+      "short_strike": 450.0,
+      "expiration": "",
+      "date": "2025-03-17",
+      "price": 94.54322604114617,
+      "contracts": 1,
+      "realized_pnl": 0.0,
+      "exit_reason": "",
+      "linked_id": "60333b4411"
+    },
+    {
+      "transaction_id": "889478992b",
+      "strategy": "vol_arbitrage",
+      "tx_type": "CLOSE",
+      "spread_type": "vol_arb_conversion",
+      "long_strike": 450.0,
+      "short_strike": 450.0,
+      "expiration": "",
+      "date": "2025-03-20",
+      "price": 0.0,
+      "contracts": 1,
+      "realized_pnl": 9658.82,
+      "exit_reason": "hold_expired",
+      "linked_id": "60333b4411"
+    },
+    {
+      "transaction_id": "be2fb90896",
+      "strategy": "vol_arbitrage",
+      "tx_type": "OPEN",
+      "spread_type": "vol_arb_conversion",
+      "long_strike": 505.0,
+      "short_strike": 505.0,
+      "expiration": "",
+      "date": "2025-03-24",
+      "price": 99.91672078786314,
+      "contracts": 1,
+      "realized_pnl": 0.0,
+      "exit_reason": "",
+      "linked_id": "401ad30923"
+    },
+    {
+      "transaction_id": "8e81a57dde",
+      "strategy": "vol_arbitrage",
+      "tx_type": "CLOSE",
+      "spread_type": "vol_arb_conversion",
+      "long_strike": 505.0,
+      "short_strike": 505.0,
+      "expiration": "",
+      "date": "2025-03-27",
+      "price": 0.0,
+      "contracts": 1,
+      "realized_pnl": 10296.99,
+      "exit_reason": "hold_expired",
+      "linked_id": "401ad30923"
+    },
+    {
+      "transaction_id": "a8c47023f1",
+      "strategy": "vol_arbitrage",
+      "tx_type": "OPEN",
+      "spread_type": "vol_arb_conversion",
+      "long_strike": 520.0,
+      "short_strike": 520.0,
+      "expiration": "",
+      "date": "2025-03-28",
+      "price": 102.56509090674372,
+      "contracts": 1,
+      "realized_pnl": 0.0,
+      "exit_reason": "",
+      "linked_id": "5824ede6b9"
+    },
+    {
+      "transaction_id": "d9184ed1d6",
+      "strategy": "vol_arbitrage",
+      "tx_type": "CLOSE",
+      "spread_type": "vol_arb_conversion",
+      "long_strike": 520.0,
+      "short_strike": 520.0,
+      "expiration": "",
+      "date": "2025-03-31",
+      "price": 0.0,
+      "contracts": 1,
+      "realized_pnl": 10647.55,
+      "exit_reason": "hold_expired",
+      "linked_id": "5824ede6b9"
+    },
+    {
+      "transaction_id": "afc55f7ec7",
+      "strategy": "vol_arbitrage",
+      "tx_type": "OPEN",
+      "spread_type": "vol_arb_conversion",
+      "long_strike": 530.0,
+      "short_strike": 530.0,
+      "expiration": "",
+      "date": "2025-03-31",
+      "price": 103.80859566247301,
+      "contracts": 1,
+      "realized_pnl": 0.0,
+      "exit_reason": "",
+      "linked_id": "f68fe4f164"
+    },
+    {
+      "transaction_id": "43b8165cdd",
+      "strategy": "vol_arbitrage",
+      "tx_type": "CLOSE",
+      "spread_type": "vol_arb_conversion",
+      "long_strike": 530.0,
+      "short_strike": 530.0,
+      "expiration": "",
+      "date": "2025-04-03",
+      "price": 0.0,
+      "contracts": 1,
+      "realized_pnl": 10705.41,
+      "exit_reason": "hold_expired",
+      "linked_id": "f68fe4f164"
+    },
+    {
+      "transaction_id": "42d66f0b4e",
+      "strategy": "vol_arbitrage",
+      "tx_type": "OPEN",
+      "spread_type": "vol_arb_conversion",
+      "long_strike": 535.0,
+      "short_strike": 535.0,
+      "expiration": "",
+      "date": "2025-04-04",
+      "price": 104.72667327855396,
+      "contracts": 1,
+      "realized_pnl": 0.0,
+      "exit_reason": "",
+      "linked_id": "c6e802eb16"
+    },
+    {
+      "transaction_id": "20a5eca62f",
+      "strategy": "vol_arbitrage",
+      "tx_type": "CLOSE",
+      "spread_type": "vol_arb_conversion",
+      "long_strike": 535.0,
+      "short_strike": 535.0,
+      "expiration": "",
+      "date": "2025-04-07",
+      "price": 0.0,
+      "contracts": 1,
+      "realized_pnl": 10937.51,
+      "exit_reason": "hold_expired",
+      "linked_id": "c6e802eb16"
+    },
+    {
+      "transaction_id": "6de11e88f0",
+      "strategy": "vol_arbitrage",
+      "tx_type": "OPEN",
+      "spread_type": "vol_arb_conversion",
+      "long_strike": 595.0,
+      "short_strike": 595.0,
+      "expiration": "",
+      "date": "2025-04-17",
+      "price": 115.1799640085246,
+      "contracts": 1,
+      "realized_pnl": 0.0,
+      "exit_reason": "",
+      "linked_id": "26cb8ecc11"
+    },
+    {
+      "transaction_id": "9678601100",
+      "strategy": "vol_arbitrage",
+      "tx_type": "CLOSE",
+      "spread_type": "vol_arb_conversion",
+      "long_strike": 595.0,
+      "short_strike": 595.0,
+      "expiration": "",
+      "date": "2025-04-21",
+      "price": 0.0,
+      "contracts": 1,
+      "realized_pnl": 11943.07,
+      "exit_reason": "hold_expired",
+      "linked_id": "26cb8ecc11"
+    },
+    {
+      "transaction_id": "a30f1b4368",
+      "strategy": "vol_arbitrage",
+      "tx_type": "OPEN",
+      "spread_type": "vol_arb_conversion",
+      "long_strike": 590.0,
+      "short_strike": 590.0,
+      "expiration": "",
+      "date": "2025-04-21",
+      "price": 113.3976965174136,
+      "contracts": 1,
+      "realized_pnl": 0.0,
+      "exit_reason": "",
+      "linked_id": "9999654014"
+    },
+    {
+      "transaction_id": "25b8b21a70",
+      "strategy": "vol_arbitrage",
+      "tx_type": "CLOSE",
+      "spread_type": "vol_arb_conversion",
+      "long_strike": 590.0,
+      "short_strike": 590.0,
+      "expiration": "",
+      "date": "2025-04-24",
+      "price": 0.0,
+      "contracts": 1,
+      "realized_pnl": 11602.55,
+      "exit_reason": "hold_expired",
+      "linked_id": "9999654014"
+    },
+    {
+      "transaction_id": "98cd4271d1",
+      "strategy": "vol_arbitrage",
+      "tx_type": "OPEN",
+      "spread_type": "vol_arb_conversion",
+      "long_strike": 495.0,
+      "short_strike": 495.0,
+      "expiration": "",
+      "date": "2025-05-07",
+      "price": 103.48104830681328,
+      "contracts": 1,
+      "realized_pnl": 0.0,
+      "exit_reason": "",
+      "linked_id": "6265077f09"
+    },
+    {
+      "transaction_id": "aaa737f226",
+      "strategy": "vol_arbitrage",
+      "tx_type": "CLOSE",
+      "spread_type": "vol_arb_conversion",
+      "long_strike": 495.0,
+      "short_strike": 495.0,
+      "expiration": "",
+      "date": "2025-05-12",
+      "price": 0.0,
+      "contracts": 1,
+      "realized_pnl": 10549.96,
+      "exit_reason": "hold_expired",
+      "linked_id": "6265077f09"
+    },
+    {
+      "transaction_id": "27c96f191d",
+      "strategy": "vol_arbitrage",
+      "tx_type": "OPEN",
+      "spread_type": "vol_arb_conversion",
+      "long_strike": 615.0,
+      "short_strike": 615.0,
+      "expiration": "",
+      "date": "2025-06-06",
+      "price": 118.46282008161339,
+      "contracts": 1,
+      "realized_pnl": 0.0,
+      "exit_reason": "",
+      "linked_id": "e6adb1ad3e"
+    },
+    {
+      "transaction_id": "a7b24e8963",
+      "strategy": "vol_arbitrage",
+      "tx_type": "CLOSE",
+      "spread_type": "vol_arb_conversion",
+      "long_strike": 615.0,
+      "short_strike": 615.0,
+      "expiration": "",
+      "date": "2025-06-09",
+      "price": 0.0,
+      "contracts": 1,
+      "realized_pnl": 12094.28,
+      "exit_reason": "hold_expired",
+      "linked_id": "e6adb1ad3e"
+    },
+    {
+      "transaction_id": "1f0e33abce",
+      "strategy": "vol_arbitrage",
+      "tx_type": "OPEN",
+      "spread_type": "vol_arb_conversion",
+      "long_strike": 590.0,
+      "short_strike": 590.0,
+      "expiration": "",
+      "date": "2025-06-17",
+      "price": 117.60248318122721,
+      "contracts": 1,
+      "realized_pnl": 0.0,
+      "exit_reason": "",
+      "linked_id": "c50b9dbcfa"
+    },
+    {
+      "transaction_id": "7fc37f708d",
+      "strategy": "vol_arbitrage",
+      "tx_type": "CLOSE",
+      "spread_type": "vol_arb_conversion",
+      "long_strike": 590.0,
+      "short_strike": 590.0,
+      "expiration": "",
+      "date": "2025-06-20",
+      "price": 0.0,
+      "contracts": 1,
+      "realized_pnl": 12035.1,
+      "exit_reason": "hold_expired",
+      "linked_id": "c50b9dbcfa"
+    },
+    {
+      "transaction_id": "c571b56dbc",
+      "strategy": "vol_arbitrage",
+      "tx_type": "OPEN",
+      "spread_type": "vol_arb_conversion",
+      "long_strike": 570.0,
+      "short_strike": 570.0,
+      "expiration": "",
+      "date": "2025-06-25",
+      "price": 112.47313154690747,
+      "contracts": 1,
+      "realized_pnl": 0.0,
+      "exit_reason": "",
+      "linked_id": "1d692a0ebb"
+    },
+    {
+      "transaction_id": "85c1f9c626",
+      "strategy": "vol_arbitrage",
+      "tx_type": "CLOSE",
+      "spread_type": "vol_arb_conversion",
+      "long_strike": 570.0,
+      "short_strike": 570.0,
+      "expiration": "",
+      "date": "2025-06-30",
+      "price": 0.0,
+      "contracts": 1,
+      "realized_pnl": 11685.12,
+      "exit_reason": "hold_expired",
+      "linked_id": "1d692a0ebb"
+    },
+    {
+      "transaction_id": "4ff18d722b",
+      "strategy": "vol_arbitrage",
+      "tx_type": "OPEN",
+      "spread_type": "vol_arb_conversion",
+      "long_strike": 515.0,
+      "short_strike": 515.0,
+      "expiration": "",
+      "date": "2025-07-03",
+      "price": 107.58736954467108,
+      "contracts": 1,
+      "realized_pnl": 0.0,
+      "exit_reason": "",
+      "linked_id": "30e7b13ac7"
+    },
+    {
+      "transaction_id": "80b65a24a0",
+      "strategy": "vol_arbitrage",
+      "tx_type": "CLOSE",
+      "spread_type": "vol_arb_conversion",
+      "long_strike": 515.0,
+      "short_strike": 515.0,
+      "expiration": "",
+      "date": "2025-07-07",
+      "price": 0.0,
+      "contracts": 1,
+      "realized_pnl": 11101.68,
+      "exit_reason": "hold_expired",
+      "linked_id": "30e7b13ac7"
+    },
+    {
+      "transaction_id": "dc1b51597d",
+      "strategy": "vol_arbitrage",
+      "tx_type": "OPEN",
+      "spread_type": "vol_arb_conversion",
+      "long_strike": 535.0,
+      "short_strike": 535.0,
+      "expiration": "",
+      "date": "2025-07-11",
+      "price": 109.9892997672058,
+      "contracts": 1,
+      "realized_pnl": 0.0,
+      "exit_reason": "",
+      "linked_id": "b09e79996c"
+    },
+    {
+      "transaction_id": "87ea36d0f8",
+      "strategy": "vol_arbitrage",
+      "tx_type": "CLOSE",
+      "spread_type": "vol_arb_conversion",
+      "long_strike": 535.0,
+      "short_strike": 535.0,
+      "expiration": "",
+      "date": "2025-07-14",
+      "price": 0.0,
+      "contracts": 1,
+      "realized_pnl": 11419.67,
+      "exit_reason": "hold_expired",
+      "linked_id": "b09e79996c"
+    },
+    {
+      "transaction_id": "82954703e5",
+      "strategy": "vol_arbitrage",
+      "tx_type": "OPEN",
+      "spread_type": "vol_arb_conversion",
+      "long_strike": 565.0,
+      "short_strike": 565.0,
+      "expiration": "",
+      "date": "2025-07-14",
+      "price": 112.82171786309415,
+      "contracts": 1,
+      "realized_pnl": 0.0,
+      "exit_reason": "",
+      "linked_id": "5c334f24ec"
+    },
+    {
+      "transaction_id": "37718c1752",
+      "strategy": "vol_arbitrage",
+      "tx_type": "CLOSE",
+      "spread_type": "vol_arb_conversion",
+      "long_strike": 565.0,
+      "short_strike": 565.0,
+      "expiration": "",
+      "date": "2025-07-17",
+      "price": 0.0,
+      "contracts": 1,
+      "realized_pnl": 11731.5,
+      "exit_reason": "hold_expired",
+      "linked_id": "5c334f24ec"
+    },
+    {
+      "transaction_id": "aefaaf74b7",
+      "strategy": "vol_arbitrage",
+      "tx_type": "OPEN",
+      "spread_type": "vol_arb_conversion",
+      "long_strike": 570.0,
+      "short_strike": 570.0,
+      "expiration": "",
+      "date": "2025-07-21",
+      "price": 114.67233989883258,
+      "contracts": 1,
+      "realized_pnl": 0.0,
+      "exit_reason": "",
+      "linked_id": "1d25def961"
+    },
+    {
+      "transaction_id": "d3f99c590f",
+      "strategy": "vol_arbitrage",
+      "tx_type": "CLOSE",
+      "spread_type": "vol_arb_conversion",
+      "long_strike": 570.0,
+      "short_strike": 570.0,
+      "expiration": "",
+      "date": "2025-07-24",
+      "price": 0.0,
+      "contracts": 1,
+      "realized_pnl": 11994.83,
+      "exit_reason": "hold_expired",
+      "linked_id": "1d25def961"
+    },
+    {
+      "transaction_id": "a180135bdb",
+      "strategy": "vol_arbitrage",
+      "tx_type": "OPEN",
+      "spread_type": "vol_arb_conversion",
+      "long_strike": 550.0,
+      "short_strike": 550.0,
+      "expiration": "",
+      "date": "2025-07-31",
+      "price": 114.79417771278005,
+      "contracts": 1,
+      "realized_pnl": 0.0,
+      "exit_reason": "",
+      "linked_id": "7c24436d72"
+    },
+    {
+      "transaction_id": "2e8eca9073",
+      "strategy": "vol_arbitrage",
+      "tx_type": "CLOSE",
+      "spread_type": "vol_arb_conversion",
+      "long_strike": 550.0,
+      "short_strike": 550.0,
+      "expiration": "",
+      "date": "2025-08-04",
+      "price": 0.0,
+      "contracts": 1,
+      "realized_pnl": 11703.67,
+      "exit_reason": "hold_expired",
+      "linked_id": "7c24436d72"
+    },
+    {
+      "transaction_id": "48cf6edba6",
+      "strategy": "vol_arbitrage",
+      "tx_type": "OPEN",
+      "spread_type": "vol_arb_conversion",
+      "long_strike": 580.0,
+      "short_strike": 580.0,
+      "expiration": "",
+      "date": "2025-08-05",
+      "price": 114.31982425306383,
+      "contracts": 1,
+      "realized_pnl": 0.0,
+      "exit_reason": "",
+      "linked_id": "45eb786bca"
+    },
+    {
+      "transaction_id": "f16135d619",
+      "strategy": "vol_arbitrage",
+      "tx_type": "CLOSE",
+      "spread_type": "vol_arb_conversion",
+      "long_strike": 580.0,
+      "short_strike": 580.0,
+      "expiration": "",
+      "date": "2025-08-08",
+      "price": 0.0,
+      "contracts": 1,
+      "realized_pnl": 11975.8,
+      "exit_reason": "hold_expired",
+      "linked_id": "45eb786bca"
+    },
+    {
+      "transaction_id": "27c8ab6495",
+      "strategy": "vol_arbitrage",
+      "tx_type": "OPEN",
+      "spread_type": "vol_arb_conversion",
+      "long_strike": 540.0,
+      "short_strike": 540.0,
+      "expiration": "",
+      "date": "2025-08-27",
+      "price": 111.41425745073515,
+      "contracts": 1,
+      "realized_pnl": 0.0,
+      "exit_reason": "",
+      "linked_id": "9951dc7bbd"
+    },
+    {
+      "transaction_id": "827e13e452",
+      "strategy": "vol_arbitrage",
+      "tx_type": "CLOSE",
+      "spread_type": "vol_arb_conversion",
+      "long_strike": 540.0,
+      "short_strike": 540.0,
+      "expiration": "",
+      "date": "2025-09-01",
+      "price": 0.0,
+      "contracts": 1,
+      "realized_pnl": 11447.96,
+      "exit_reason": "hold_expired",
+      "linked_id": "9951dc7bbd"
+    },
+    {
+      "transaction_id": "59bbca4b66",
+      "strategy": "vol_arbitrage",
+      "tx_type": "OPEN",
+      "spread_type": "vol_arb_conversion",
+      "long_strike": 540.0,
+      "short_strike": 540.0,
+      "expiration": "",
+      "date": "2025-09-01",
+      "price": 108.27661373279894,
+      "contracts": 1,
+      "realized_pnl": 0.0,
+      "exit_reason": "",
+      "linked_id": "3e65bf817e"
+    },
+    {
+      "transaction_id": "3b3020129a",
+      "strategy": "vol_arbitrage",
+      "tx_type": "CLOSE",
+      "spread_type": "vol_arb_conversion",
+      "long_strike": 540.0,
+      "short_strike": 540.0,
+      "expiration": "",
+      "date": "2025-09-04",
+      "price": 0.0,
+      "contracts": 1,
+      "realized_pnl": 11161.02,
+      "exit_reason": "hold_expired",
+      "linked_id": "3e65bf817e"
+    },
+    {
+      "transaction_id": "c461c9a730",
+      "strategy": "vol_arbitrage",
+      "tx_type": "OPEN",
+      "spread_type": "vol_arb_conversion",
+      "long_strike": 465.0,
+      "short_strike": 465.0,
+      "expiration": "",
+      "date": "2025-09-10",
+      "price": 95.1352280233237,
+      "contracts": 1,
+      "realized_pnl": 0.0,
+      "exit_reason": "",
+      "linked_id": "f2c3b0ab29"
+    },
+    {
+      "transaction_id": "15e41c6c92",
+      "strategy": "vol_arbitrage",
+      "tx_type": "CLOSE",
+      "spread_type": "vol_arb_conversion",
+      "long_strike": 465.0,
+      "short_strike": 465.0,
+      "expiration": "",
+      "date": "2025-09-15",
+      "price": 0.0,
+      "contracts": 1,
+      "realized_pnl": 9827.37,
+      "exit_reason": "hold_expired",
+      "linked_id": "f2c3b0ab29"
+    },
+    {
+      "transaction_id": "8532a9270b",
+      "strategy": "vol_arbitrage",
+      "tx_type": "OPEN",
+      "spread_type": "vol_arb_conversion",
+      "long_strike": 400.0,
+      "short_strike": 400.0,
+      "expiration": "",
+      "date": "2025-09-26",
+      "price": 84.94959830861112,
+      "contracts": 1,
+      "realized_pnl": 0.0,
+      "exit_reason": "",
+      "linked_id": "91530b4511"
+    },
+    {
+      "transaction_id": "aabe7a640a",
+      "strategy": "vol_arbitrage",
+      "tx_type": "CLOSE",
+      "spread_type": "vol_arb_conversion",
+      "long_strike": 400.0,
+      "short_strike": 400.0,
+      "expiration": "",
+      "date": "2025-09-29",
+      "price": 0.0,
+      "contracts": 1,
+      "realized_pnl": 8874.81,
+      "exit_reason": "hold_expired",
+      "linked_id": "91530b4511"
+    },
+    {
+      "transaction_id": "c9cf1edd88",
+      "strategy": "vol_arbitrage",
+      "tx_type": "OPEN",
+      "spread_type": "vol_arb_conversion",
+      "long_strike": 395.0,
+      "short_strike": 395.0,
+      "expiration": "",
+      "date": "2025-09-29",
+      "price": 84.21273643946896,
+      "contracts": 1,
+      "realized_pnl": 0.0,
+      "exit_reason": "",
+      "linked_id": "fbe9aaaca8"
+    },
+    {
+      "transaction_id": "684853eda9",
+      "strategy": "vol_arbitrage",
+      "tx_type": "CLOSE",
+      "spread_type": "vol_arb_conversion",
+      "long_strike": 395.0,
+      "short_strike": 395.0,
+      "expiration": "",
+      "date": "2025-10-02",
+      "price": 0.0,
+      "contracts": 1,
+      "realized_pnl": 8660.97,
+      "exit_reason": "hold_expired",
+      "linked_id": "fbe9aaaca8"
+    }
+  ]
+}
