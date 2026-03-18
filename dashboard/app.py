@@ -90,28 +90,25 @@ with st.sidebar:
     st.subheader("Data")
     use_sim = st.toggle("Simulated data (no API key)", value=True)
     st.caption("Disable to use real Polygon.io data")
-    if not use_sim:
-        st.text_input(
-            "Polygon API key",
-            type="password",
-            placeholder="sk_...",
-            key="polygon_api_key",
-        )
-        api_key_val = st.session_state.get("polygon_api_key", "")
-        if not api_key_val:
-            st.warning("⚠️ Enter your Polygon API key to fetch live data.")
-        if st.button("🔌 Test API key", use_container_width=True, disabled=not api_key_val):
-            try:
-                from alan_trader.data.polygon_client import PolygonClient
-                c = PolygonClient(api_key=api_key_val)
-                snap = c._get("/v2/snapshot/locale/us/markets/stocks/tickers/SPY")
-                if snap.get("ticker"):
-                    price = snap["ticker"].get("day", {}).get("c") or snap["ticker"].get("lastTrade", {}).get("p")
-                    st.success(f"✅ Connected — SPY ${price:.2f}" if price else "✅ Connected")
-                else:
-                    st.error("❌ Key accepted but no data returned.")
-            except Exception as e:
-                st.error(f"❌ {e}")
+    st.text_input(
+        "Polygon API key",
+        type="password",
+        placeholder="sk_...",
+        key="polygon_api_key",
+    )
+    api_key_val = st.session_state.get("polygon_api_key", "")
+    if st.button("🔌 Test API key", use_container_width=True, disabled=not api_key_val):
+        try:
+            from alan_trader.data.polygon_client import PolygonClient
+            c = PolygonClient(api_key=api_key_val)
+            snap = c._get("/v2/snapshot/locale/us/markets/stocks/tickers/SPY")
+            if snap.get("ticker"):
+                price = snap["ticker"].get("day", {}).get("c") or snap["ticker"].get("lastTrade", {}).get("p")
+                st.success(f"✅ Connected — SPY ${price:.2f}" if price else "✅ Connected")
+            else:
+                st.error("❌ Key accepted but no data returned.")
+        except Exception as e:
+            st.error(f"❌ {e}")
 
     st.markdown("---")
     if st.button("🔄 Clear all results", use_container_width=True):
