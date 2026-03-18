@@ -1,5 +1,5 @@
 """
-Main entrypoint for SPY options spread trader.
+Main entrypoint for alan-strats options spread trader.
 
 Usage:
   python -m alan_trader.main train              # train model on 2 years of data
@@ -7,6 +7,8 @@ Usage:
   python -m alan_trader.main live               # run live signal generation once
   python -m alan_trader.main live --loop 15     # run every 15 minutes
   python -m alan_trader.main dashboard          # launch Streamlit dashboard (simulated data)
+
+Add --ticker NVDA to any command to run on a ticker other than SPY.
 """
 
 import argparse
@@ -32,19 +34,20 @@ def cmd_train(args):
     from alan_trader.data.polygon_client import PolygonClient
     from alan_trader.model.trainer import ModelTrainer
 
+    ticker = args.ticker.upper()
     client = PolygonClient(POLYGON_API_KEY)
     to_date = date.today().isoformat()
     from_date = (date.today() - timedelta(days=730)).isoformat()
 
-    logger.info(f"Fetching 2 years of data: {from_date} → {to_date}")
-    spy = client.get_aggregates("SPY", from_date, to_date)
-    vix = client.get_aggregates("I:VIX", from_date, to_date)
+    logger.info(f"Fetching 2 years of data for {ticker}: {from_date} → {to_date}")
+    bars   = client.get_aggregates(ticker, from_date, to_date)
+    vix    = client.get_aggregates("I:VIX", from_date, to_date)
     rate2y = client.get_aggregates("I:UST2Y", from_date, to_date)
     rate10y = client.get_aggregates("I:UST10Y", from_date, to_date)
-    news = client.get_news("SPY", from_date, to_date)
+    news   = client.get_news(ticker, from_date, to_date)
 
     logger.info("Building feature matrix...")
-    df = build_feature_matrix(spy, vix, rate2y, rate10y, news)
+    df = build_feature_matrix(bars, vix, rate2y, rate10y, news)
     logger.info(f"Feature matrix: {df.shape[0]} rows, {len(FEATURE_COLS)} features")
 
     features = df[FEATURE_COLS].values
@@ -65,12 +68,14 @@ def cmd_train(args):
         seq_len=SEQUENCE_LENGTH,
     )
     history = trainer.fit(features, labels)
-    trainer.save("spy_model")
+    model_name = f"{ticker.lower()}_model"
+    trainer.save(model_name)
 
     print(f"\nTraining complete.")
+    print(f"  Ticker:             {ticker}")
     print(f"  Best val accuracy:  {max(history['val_acc']):.3f}")
     print(f"  Final val accuracy: {history['val_acc'][-1]:.3f}")
-    print(f"  Model saved to saved_models/spy_model.pt")
+    print(f"  Model saved to saved_models/{model_name}.pt")
 
 
 def cmd_backtest(args):
@@ -86,18 +91,19 @@ def cmd_backtest(args):
 
     import numpy as np
 
+    ticker = args.ticker.upper()
     client = PolygonClient(POLYGON_API_KEY)
     to_date = date.today().isoformat()
     from_date = (date.today() - timedelta(days=730)).isoformat()
 
-    logger.info("Fetching historical data for backtest...")
-    spy = client.get_aggregates("SPY", from_date, to_date)
-    vix = client.get_aggregates("I:VIX", from_date, to_date)
+    logger.info(f"Fetching historical data for {ticker} backtest...")
+    bars   = client.get_aggregates(ticker, from_date, to_date)
+    vix    = client.get_aggregates("I:VIX", from_date, to_date)
     rate2y = client.get_aggregates("I:UST2Y", from_date, to_date)
     rate10y = client.get_aggregates("I:UST10Y", from_date, to_date)
-    news = client.get_news("SPY", from_date, to_date)
+    news   = client.get_news(ticker, from_date, to_date)
 
-    df = build_feature_matrix(spy, vix, rate2y, rate10y, news)
+    df = build_feature_matrix(bars, vix, rate2y, rate10y, news)
     features = df[FEATURE_COLS].values
     labels = df["label"].values
 
@@ -123,7 +129,7 @@ def cmd_backtest(args):
 
     # Predict on test set
     test_df = df.iloc[n_train:].reset_index()
-    probas = trainer.predict_batch(test_f)
+    probas, _ = trainer.predict_batch(test_f)
     logger.info(f"Running backtest on {len(probas)} bars...")
 
     engine = BacktestEngine(
@@ -157,6 +163,7 @@ def cmd_live(args):
     from alan_trader.live.trader import LiveTrader
 
     trader = LiveTrader(
+        ticker=args.ticker,
         portfolio_value=float(args.capital),
         paper=not args.real,
     )
@@ -175,7 +182,9 @@ def cmd_live(args):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="SPY Options Spread Trader")
+    parser = argparse.ArgumentParser(description="alan-strats Options Spread Trader")
+    parser.add_argument("--ticker", default="SPY", metavar="TICKER",
+                        help="Underlying ticker symbol (default: SPY)")
     sub = parser.add_subparsers(dest="cmd")
 
     sub.add_parser("train", help="Train model on 2 years of historical data")
@@ -190,7 +199,7 @@ def main():
     live_p.add_argument("--real", action="store_true",
                         help="REAL trading mode (default: paper)")
 
-    dash_p = sub.add_parser("dashboard", help="Launch Streamlit dashboard (simulated data)")
+    dash_p = sub.add_parser("dashboard", help="Launch Streamlit dashboard")
     dash_p.add_argument("--port", type=int, default=8501, help="Port for Streamlit server")
 
     args = parser.parse_args()

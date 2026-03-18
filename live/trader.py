@@ -34,7 +34,8 @@ STATE_FILE = Path(__file__).parent.parent / "saved_models" / "live_state.json"
 
 
 class LiveTrader:
-    def __init__(self, portfolio_value: float = 100_000, paper: bool = True):
+    def __init__(self, ticker: str = "SPY", portfolio_value: float = 100_000, paper: bool = True):
+        self.ticker = ticker.upper()
         self.portfolio_value = portfolio_value
         self.paper = paper
         self.client = PolygonClient(POLYGON_API_KEY)
@@ -48,7 +49,7 @@ class LiveTrader:
 
     def run_once(self):
         """Call this on your schedule (e.g., every 15 min during market hours)."""
-        logger.info(f"=== LiveTrader tick @ {datetime.now()} ===")
+        logger.info(f"=== LiveTrader tick @ {datetime.now()} | ticker={self.ticker} ===")
 
         # 1. Refresh / train model
         self._maybe_retrain()
@@ -73,7 +74,7 @@ class LiveTrader:
         logger.info(f"Signal: {signal_names[signal_class]} | proba={proba.round(3)}")
 
         # 4. Select spread
-        spy_price = feature_df["close"].iloc[-1]
+        spot_price = feature_df["close"].iloc[-1]
         vix = feature_df["vix"].iloc[-1] if "vix" in feature_df.columns else 20.0
 
         expiry = self._find_target_expiry()
@@ -81,14 +82,14 @@ class LiveTrader:
             logger.warning("No suitable expiry found")
             return
 
-        chain = self.client.get_options_chain("SPY", expiry)
+        chain = self.client.get_options_chain(self.ticker, expiry)
         if chain.empty:
             logger.warning(f"Empty options chain for {expiry}")
             return
 
         spread = select_spread(
             signal_proba=proba,
-            spy_price=spy_price,
+            spy_price=spot_price,
             vix=vix,
             chain=chain,
             target_expiration=expiry,
@@ -100,19 +101,18 @@ class LiveTrader:
 
         print("\n" + "=" * 60)
         print(f"  SIGNAL: {signal_names[signal_class]}  |  Confidence: {proba[signal_class]:.1%}")
-        print(f"  SPY: ${spy_price:.2f}  |  VIX: {vix:.1f}")
+        print(f"  {self.ticker}: ${spot_price:.2f}  |  VIX: {vix:.1f}")
         print(f"  Spread: {spread.spread_type.upper()}")
         print(f"  Strikes: {spread.long_strike}/{spread.short_strike}  Exp: {spread.expiration}")
         print(f"  Net debit/credit: ${spread.debit_or_credit:.2f}")
         print(f"  Max profit: ${spread.max_profit:.2f}  Max loss: ${spread.max_loss:.2f}")
         print(f"  Breakeven: ${spread.breakeven:.2f}")
         print(f"  Suggested contracts: {n_contracts}")
-        print(f"  Notes: {spread.entry_notes}")
         if self.paper:
             print("  *** PAPER TRADING — no orders sent ***")
         print("=" * 60 + "\n")
 
-        self._save_signal(spread, proba, n_contracts, spy_price)
+        self._save_signal(spread, proba, n_contracts, spot_price)
 
     # ------------------------------------------------------------------
     # Model training / updating
@@ -157,7 +157,7 @@ class LiveTrader:
             seq_len=SEQUENCE_LENGTH,
         )
         history = self.trainer.fit(features, labels)
-        self.trainer.save("spy_model_live")
+        self.trainer.save(f"{self.ticker.lower()}_model_live")
         logger.info(f"Training complete. Final val acc: {history['val_acc'][-1]:.3f}")
 
     # ------------------------------------------------------------------
@@ -166,12 +166,12 @@ class LiveTrader:
 
     def _fetch_historical_features(self, from_date: str, to_date: str) -> pd.DataFrame | None:
         try:
-            spy = self.client.get_aggregates("SPY", from_date, to_date)
-            vix = self.client.get_aggregates("I:VIX", from_date, to_date)
+            bars   = self.client.get_aggregates(self.ticker, from_date, to_date)
+            vix    = self.client.get_aggregates("I:VIX", from_date, to_date)
             rate2y = self.client.get_aggregates("I:UST2Y", from_date, to_date)
             rate10y = self.client.get_aggregates("I:UST10Y", from_date, to_date)
-            news = self.client.get_news("SPY", from_date, to_date)
-            return build_feature_matrix(spy, vix, rate2y, rate10y, news)
+            news   = self.client.get_news(self.ticker, from_date, to_date)
+            return build_feature_matrix(bars, vix, rate2y, rate10y, news)
         except Exception as e:
             logger.exception(f"Error fetching historical features: {e}")
             return None
@@ -185,7 +185,7 @@ class LiveTrader:
     def _find_target_expiry(self) -> str | None:
         """Find expiry closest to DTE_TARGET days out."""
         target = date.today() + timedelta(days=DTE_TARGET)
-        exps = self.client.get_expirations("SPY", as_of=date.today().isoformat())
+        exps = self.client.get_expirations(self.ticker, as_of=date.today().isoformat())
         if not exps:
             return None
         exp_dates = [date.fromisoformat(e) for e in exps]
@@ -202,10 +202,11 @@ class LiveTrader:
                 return json.load(f)
         return {"signals": []}
 
-    def _save_signal(self, spread, proba, contracts, spy_price):
+    def _save_signal(self, spread, proba, contracts, spot_price):
         entry = {
             "timestamp": datetime.now().isoformat(),
-            "spy_price": spy_price,
+            "ticker": self.ticker,
+            "spot_price": spot_price,
             "spread_type": spread.spread_type,
             "long_strike": spread.long_strike,
             "short_strike": spread.short_strike,
