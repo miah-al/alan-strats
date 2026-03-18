@@ -25,6 +25,17 @@ def _fetch_live_bars(ticker: str, api_key: str, n_days: int = 252) -> "pd.DataFr
         return pd.DataFrame()
 
 
+def _fetch_live_quote(ticker: str, api_key: str) -> dict:
+    """Return live price snapshot or empty dict on failure."""
+    try:
+        from alan_trader.data.loader import get_live_quote
+        from alan_trader.data.polygon_client import PolygonClient
+        client = PolygonClient(api_key=api_key)
+        return get_live_quote(client, ticker)
+    except Exception:
+        return {}
+
+
 def render(ticker: str = "SPY", use_sim: bool = True, api_key: str = ""):
     st.header(f"Market Data — {ticker}")
 
@@ -41,6 +52,21 @@ def render(ticker: str = "SPY", use_sim: bool = True, api_key: str = ""):
 
     profile   = TICKER_PROFILES.get(ticker.upper(), DEFAULT_PROFILE)
     default_S = profile["start_price"]
+
+    # ── Live spot price ──────────────────────────────────────────────────────
+    if not use_sim and api_key:
+        with st.spinner(f"Fetching live quote for {ticker}…"):
+            q = _fetch_live_quote(ticker, api_key)
+        if q.get("price"):
+            default_S = q["price"]
+            lq1, lq2, lq3, lq4, lq5 = st.columns(5)
+            lq1.metric("Price",  f"${q['price']:,.2f}")
+            lq2.metric("Change", f"${q.get('change', 0):+.2f}",
+                       delta=f"{q.get('change_pct', 0):+.2f}%")
+            lq3.metric("Volume", f"{int(q.get('volume') or 0):,}")
+            lq4.metric("High",   f"${q.get('high', 0):,.2f}")
+            lq5.metric("Low",    f"${q.get('low', 0):,.2f}")
+            st.markdown("---")
 
     # ── Controls ────────────────────────────────────────────────────────────
     ctrl1, ctrl2, ctrl3 = st.columns(3)
@@ -159,7 +185,21 @@ def render(ticker: str = "SPY", use_sim: bool = True, api_key: str = ""):
             key="md_mom_days",
         )
 
-        momentum_df = simulate_momentum_indicators(ticker=ticker, n_days=mom_days)
+        momentum_df = None
+        if not use_sim and api_key:
+            with st.spinner(f"Fetching {ticker} bars…"):
+                bars = _fetch_live_bars(ticker, api_key, n_days=mom_days)
+            if not bars.empty:
+                from alan_trader.data.features import add_price_features
+                feat = add_price_features(bars.reset_index())
+                feat["macd_line"]   = feat["macd"]
+                feat["signal_line"] = feat["macd_signal"]
+                momentum_df = feat[["date", "rsi_14", "macd_line", "signal_line"]].rename(
+                    columns={"rsi_14": "rsi"}
+                ).dropna()
+                st.caption(f"📡 Live data — {len(momentum_df)} trading days from Polygon.io")
+        if momentum_df is None or momentum_df.empty:
+            momentum_df = simulate_momentum_indicators(ticker=ticker, n_days=mom_days)
 
         st.plotly_chart(
             C.rsi_macd_chart(momentum_df, ticker=ticker),
