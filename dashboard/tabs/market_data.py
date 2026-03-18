@@ -192,9 +192,10 @@ def render(ticker: str = "SPY", use_sim: bool = True, api_key: str = ""):
             if not bars.empty:
                 from alan_trader.data.features import add_price_features
                 feat = add_price_features(bars.reset_index())
-                feat["macd_line"]   = feat["macd"]
-                feat["signal_line"] = feat["macd_signal"]
-                momentum_df = feat[["date", "close", "rsi_14", "macd_line", "signal_line"]].rename(
+                feat["macd_line"]      = feat["macd"]
+                feat["signal_line"]    = feat["macd_signal"]
+                feat["macd_histogram"] = feat["macd_hist"]
+                momentum_df = feat[["date", "close", "rsi_14", "macd_line", "signal_line", "macd_histogram"]].rename(
                     columns={"rsi_14": "rsi"}
                 ).dropna()
                 st.caption(f"📡 Live data — {len(momentum_df)} trading days from Polygon.io")
