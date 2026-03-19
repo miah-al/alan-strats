@@ -19,6 +19,9 @@ env/
 # Portfolio history (runtime state)
 portfolio_history.json
 
+# Secrets
+.env
+
 # IDE
 .idea/
 .vscode/

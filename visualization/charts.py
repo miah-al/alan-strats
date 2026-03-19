@@ -1003,3 +1003,121 @@ def rsi_macd_chart(momentum_df: pd.DataFrame, ticker: str = "") -> go.Figure:
         fig.update_xaxes(gridcolor=COLORS["grid"], row=row, col=1)
         fig.update_yaxes(gridcolor=COLORS["grid"], row=row, col=1)
     return fig
+
+
+# ── Training signal analysis charts ───────────────────────────────────────────
+
+def signal_cumulative_pnl(samples_df: pd.DataFrame, spread_label: str = "") -> go.Figure:
+    """
+    Cumulative P&L over time from all model ENTER signals (test period).
+    Each point = another trade taken; slope = edge per trade.
+    """
+    df = samples_df.copy()
+    df["Trade Date"] = pd.to_datetime(df["Trade Date"])
+    df = df.sort_values("Trade Date")
+    df["cumulative"] = df["Profit / Loss"].cumsum()
+
+    colors = [COLORS["bull"] if v >= 0 else COLORS["bear"] for v in df["Profit / Loss"]]
+
+    fig = go.Figure()
+    fig.add_trace(go.Bar(
+        x=df["Trade Date"], y=df["Profit / Loss"],
+        marker_color=colors, opacity=0.5, name="Trade P&L",
+    ))
+    fig.add_trace(go.Scatter(
+        x=df["Trade Date"], y=df["cumulative"],
+        mode="lines", line=dict(color=COLORS["equity"], width=2),
+        name="Cumulative P&L",
+    ))
+    fig.add_hline(y=0, line_color=COLORS["neutral"], line_dash="dot", line_width=1)
+
+    title = f"Cumulative P&L — {spread_label} signals" if spread_label else "Cumulative P&L"
+    fig.update_layout(
+        **_LAYOUT, height=360,
+        xaxis=dict(title="", gridcolor=COLORS["grid"]),
+        yaxis=dict(title="$ per contract", gridcolor=COLORS["grid"], tickprefix="$"),
+        legend=dict(orientation="h", y=1.05),
+        title=dict(text=title, font=dict(size=13)),
+    )
+    return fig
+
+
+def signal_winrate_by_confidence(samples_df: pd.DataFrame) -> go.Figure:
+    """
+    Win rate vs minimum confidence threshold.
+    Shows: if you only took signals above X% confidence, what % were profitable?
+    Also overlays number of trades remaining at each threshold.
+    """
+    thresholds = list(range(30, 96, 5))
+    win_rates, trade_counts = [], []
+    for t in thresholds:
+        subset = samples_df[samples_df["Model Confidence"] >= t]
+        if len(subset) == 0:
+            win_rates.append(None)
+            trade_counts.append(0)
+        else:
+            wins = subset["Result"].str.startswith("✅").sum()
+            win_rates.append(round(wins / len(subset) * 100, 1))
+            trade_counts.append(len(subset))
+
+    fig = make_subplots(specs=[[{"secondary_y": True}]])
+    fig.add_trace(go.Scatter(
+        x=thresholds, y=win_rates,
+        mode="lines+markers", name="Win Rate %",
+        line=dict(color=COLORS["bull"], width=2),
+        marker=dict(size=6),
+    ), secondary_y=False)
+    fig.add_trace(go.Bar(
+        x=thresholds, y=trade_counts,
+        name="# Trades", opacity=0.3,
+        marker_color=COLORS["equity"],
+    ), secondary_y=True)
+    fig.add_hline(y=50, line_color=COLORS["neutral"], line_dash="dot",
+                  line_width=1, secondary_y=False)
+
+    fig.update_layout(
+        **_LAYOUT, height=360,
+        title=dict(text="Win Rate vs Confidence Threshold", font=dict(size=13)),
+        xaxis=dict(title="Min Confidence %", gridcolor=COLORS["grid"], ticksuffix="%"),
+        legend=dict(orientation="h", y=1.05),
+    )
+    fig.update_yaxes(title_text="Win Rate %", gridcolor=COLORS["grid"],
+                     ticksuffix="%", secondary_y=False)
+    fig.update_yaxes(title_text="# Trades", gridcolor=COLORS["grid"],
+                     secondary_y=True)
+    return fig
+
+
+def signal_pnl_distribution(samples_df: pd.DataFrame) -> go.Figure:
+    """
+    Histogram of individual trade P&L outcomes.
+    Quickly shows the shape: are wins bigger than losses? Is there fat-tail risk?
+    """
+    pnls = samples_df["Profit / Loss"].dropna()
+    wins  = pnls[pnls >= 0]
+    loses = pnls[pnls < 0]
+
+    fig = go.Figure()
+    fig.add_trace(go.Histogram(
+        x=wins, name="Profitable",
+        marker_color=COLORS["bull"], opacity=0.7,
+        xbins=dict(size=10),
+    ))
+    fig.add_trace(go.Histogram(
+        x=loses, name="Loss",
+        marker_color=COLORS["bear"], opacity=0.7,
+        xbins=dict(size=10),
+    ))
+    avg = pnls.mean()
+    fig.add_vline(x=avg, line_color=COLORS["equity"], line_dash="dash", line_width=1.5,
+                  annotation_text=f"Avg ${avg:.0f}", annotation_position="top right",
+                  annotation_font_color=COLORS["text"])
+
+    fig.update_layout(
+        **_LAYOUT, height=360, barmode="overlay",
+        title=dict(text="P&L Distribution per Trade ($/contract)", font=dict(size=13)),
+        xaxis=dict(title="Profit / Loss ($/contract)", gridcolor=COLORS["grid"], tickprefix="$"),
+        yaxis=dict(title="# Trades", gridcolor=COLORS["grid"]),
+        legend=dict(orientation="h", y=1.05),
+    )
+    return fig

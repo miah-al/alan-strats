@@ -35,6 +35,7 @@ class ModelTrainer:
         num_epochs: int = 100,
         patience: int = 15,
         seq_len: int = 30,
+        enter_boost: float = 2.0,
         device: Optional[str] = None,
     ):
         self.num_features = num_features
@@ -45,6 +46,7 @@ class ModelTrainer:
         self.batch_size = batch_size
         self.num_epochs = num_epochs
         self.patience = patience
+        self.enter_boost = enter_boost
         self.device = torch.device(device or ("cuda" if torch.cuda.is_available() else "cpu"))
 
         self.model = SpreadSignalModel(num_features, hidden_size, num_layers, dropout).to(self.device)
@@ -95,10 +97,13 @@ class ModelTrainer:
             generator=torch.Generator().manual_seed(42)
         )
 
-        # Class weights to handle imbalance
+        # Class weights to handle imbalance; multiply ENTER weight by enter_boost
+        # to counteract models collapsing to SKIP/AVOID on rare trade signals
         class_counts = np.bincount(labels, minlength=3).astype(float)
         class_counts = np.where(class_counts == 0, 1, class_counts)
-        weights = torch.tensor(1.0 / class_counts, dtype=torch.float32).to(self.device)
+        w = 1.0 / class_counts
+        w[2] *= self.enter_boost  # class 2 = ENTER
+        weights = torch.tensor(w, dtype=torch.float32).to(self.device)
         criterion = nn.CrossEntropyLoss(weight=weights)
 
         train_loader = DataLoader(train_ds, batch_size=self.batch_size, shuffle=True, drop_last=True)

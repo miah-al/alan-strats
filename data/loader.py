@@ -44,7 +44,7 @@ def _load_cache(key: str):
         try:
             with open(p, "rb") as f:
                 ts, data = pickle.load(f)
-            if datetime.now() - ts < timedelta(hours=CACHE_TTL_HOURS):
+            if datetime.now() - ts < timedelta(hours=CACHE_TTL_HOURS) and data is not None:
                 logger.debug(f"Cache hit: {key}")
                 return data
         except Exception:
@@ -79,7 +79,14 @@ def _fetch_fred_series(series_id: str, from_date: str, to_date: str) -> pd.DataF
         logger.error(f"FRED fetch failed for {series_id}: {e}")
         return pd.DataFrame(columns=["close"])
 
-    df = pd.read_csv(StringIO(resp.text), parse_dates=["DATE"], index_col="DATE")
+    df = pd.read_csv(StringIO(resp.text))
+    # FRED CSV date column may be "DATE" or "date"
+    date_col = next((c for c in df.columns if c.strip().upper() in ("DATE", "OBSERVATION_DATE")), None)
+    if date_col is None:
+        logger.error(f"No date column found in FRED CSV for {series_id}. Columns: {df.columns.tolist()}")
+        return pd.DataFrame(columns=["close"])
+    df[date_col] = pd.to_datetime(df[date_col])
+    df = df.set_index(date_col)
     df.index = df.index.date
     df.index.name = "date"
     df.columns = ["close"]
@@ -174,6 +181,90 @@ def _fetch_polygon_aggs(client, ticker: str, from_date: str, to_date: str) -> pd
     logger.info(f"Polygon: fetching {ticker} bars {from_date}→{to_date}")
     df = client.get_aggregates(ticker, from_date, to_date)
     _save_cache(key, df)
+    return df
+
+
+def fetch_live_vol_surface(
+    client,
+    ticker: str,
+    spot_price: float,
+    min_dte: int = 7,
+    max_dte: int = 180,
+    step_pct: float = 0.05,
+) -> "pd.DataFrame | None":
+    """
+    Fetch real IV surface from Polygon options chain, sampled at step_pct strike steps.
+
+    Calls only, strike range ±30% of spot, DTE between min_dte and max_dte.
+    Uses Polygon's implied_volatility field — no local BS computation needed.
+    Returns DataFrame with columns: strike, dte, iv  (cached 2 h).
+    """
+    from datetime import date, timedelta
+
+    today     = date.today()
+    strike_lo = round(spot_price * 0.70, 2)
+    strike_hi = round(spot_price * 1.30, 2)
+    exp_from  = (today + timedelta(days=min_dte)).strftime("%Y-%m-%d")
+    exp_to    = (today + timedelta(days=max_dte)).strftime("%Y-%m-%d")
+
+    cache_key = f"volsurf_{ticker}_{today}_{int(spot_price)}_{min_dte}_{max_dte}"
+    cached = _load_cache(cache_key)
+    if cached is not None:
+        return cached
+
+    # Target strikes at step_pct intervals (e.g. 5 %)
+    import numpy as np
+    targets = np.round(np.arange(0.70, 1.31, step_pct) * spot_price, 2)
+
+    results = []
+    url = f"/v3/snapshot/options/{ticker}"
+    params = {
+        "expiration_date.gte": exp_from,
+        "expiration_date.lte": exp_to,
+        "strike_price.gte":    strike_lo,
+        "strike_price.lte":    strike_hi,
+        "contract_type":       "call",
+        "limit":               250,
+    }
+    while url:
+        data = client._get(url, params)
+        results.extend(data.get("results", []))
+        next_url = (data.get("next_url") or "").replace(client.BASE, "")
+        url      = next_url or None
+        params   = {}
+
+    if not results:
+        return None
+
+    rows = []
+    for r in results:
+        d  = r.get("details", {})
+        iv = r.get("implied_volatility")
+        if not iv or float(iv) < 0.01:   # exclude zeros and near-zero junk
+            continue
+        strike = d.get("strike_price")
+        exp    = d.get("expiration_date", "")
+        if not strike or not exp:
+            continue
+        dte = (pd.to_datetime(exp).date() - today).days
+        if dte < min_dte or dte > max_dte:
+            continue
+        rows.append({"strike": float(strike), "dte": int(dte), "iv": float(iv)})
+
+    if not rows:
+        return None
+
+    df = pd.DataFrame(rows)
+
+    # Bucket each strike to the nearest step_pct target
+    def _nearest(s: float) -> float:
+        return float(targets[np.argmin(np.abs(targets - s))])
+
+    df["strike"] = df["strike"].apply(_nearest)
+    df = df.groupby(["strike", "dte"])["iv"].median().reset_index()
+
+    if df is not None and not df.empty:
+        _save_cache(cache_key, df)
     return df
 
 
@@ -302,6 +393,7 @@ def get_live_quote(client, ticker: str) -> dict:
         prev = snap.get("prevDay", {})
         return {
             "price":   snap.get("lastTrade", {}).get("p") or day.get("c"),
+            "open":    day.get("o"),
             "change":  day.get("c", 0) - prev.get("c", 0),
             "change_pct": (day.get("c", 1) / (prev.get("c", 1) or 1) - 1) * 100,
             "volume":  day.get("v"),

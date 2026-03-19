@@ -8,15 +8,18 @@ import os
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
 
 import datetime
+import logging
 import numpy as np
 import pandas as pd
 import streamlit as st
+
+logger = logging.getLogger(__name__)
 
 st.set_page_config(
     page_title="alan-strats",
     page_icon="📈",
     layout="wide",
-    initial_sidebar_state="expanded",
+    initial_sidebar_state="collapsed",
 )
 
 st.markdown("""
@@ -52,6 +55,26 @@ def _cap(slug, key, default=False): return _meta(slug).get(key, default)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
+# CONFIG  (.env)
+# ══════════════════════════════════════════════════════════════════════════════
+
+def _load_env():
+    """Load .env from project root into os.environ (simple key=value parser)."""
+    env_path = os.path.join(os.path.dirname(__file__), "..", ".env")
+    env_path = os.path.abspath(env_path)
+    if not os.path.exists(env_path):
+        return
+    with open(env_path) as f:
+        for line in f:
+            line = line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            k, v = line.split("=", 1)
+            os.environ.setdefault(k.strip(), v.strip())
+
+_load_env()
+
+# ══════════════════════════════════════════════════════════════════════════════
 # SESSION STATE
 # ══════════════════════════════════════════════════════════════════════════════
 
@@ -67,13 +90,25 @@ for _k, _v in _SS_DEFAULTS.items():
     if _k not in st.session_state:
         st.session_state[_k] = _v
 
+if "polygon_api_key" not in st.session_state:
+    st.session_state["polygon_api_key"] = os.environ.get("POLYGON_API_KEY", "")
+
 
 # ══════════════════════════════════════════════════════════════════════════════
 # SIDEBAR — strategy picker + global settings
 # ══════════════════════════════════════════════════════════════════════════════
 
 with st.sidebar:
-    st.title("📈 alan-strats")
+    _logo_path = os.path.join(os.path.dirname(__file__), "static", "logo.svg")
+    if os.path.exists(_logo_path):
+        import base64 as _b64
+        _logo_b64 = _b64.b64encode(open(_logo_path, "rb").read()).decode()
+        st.markdown(
+            f'<img src="data:image/svg+xml;base64,{_logo_b64}" width="260" style="margin-bottom:4px"/>',
+            unsafe_allow_html=True,
+        )
+    else:
+        st.title("Project Dream")
     st.markdown("---")
 
     st.subheader("Strategies")
@@ -87,31 +122,19 @@ with st.sidebar:
     )
 
     st.markdown("---")
-    st.subheader("Data")
-    use_sim = st.toggle("Simulated data (no API key)", value=True)
-    st.caption("Disable to use real Polygon.io data")
-    st.text_input(
-        "Polygon API key",
-        type="password",
-        placeholder="sk_...",
-        key="polygon_api_key",
+    st.subheader("Data Source")
+    data_source = st.radio(
+        "Training data",
+        ["Database", "Live API"],
+        index=0,
+        key="data_source",
+        help="Database: local SQL Server (fast, no API calls)\nLive API: Polygon.io (requires API key)",
     )
-    api_key_val = st.session_state.get("polygon_api_key", "")
-    if st.button("🔌 Test API key", use_container_width=True, disabled=not api_key_val):
-        try:
-            from alan_trader.data.polygon_client import PolygonClient
-            c = PolygonClient(api_key=api_key_val)
-            snap = c._get("/v2/snapshot/locale/us/markets/stocks/tickers/SPY")
-            if snap.get("ticker"):
-                price = snap["ticker"].get("day", {}).get("c") or snap["ticker"].get("lastTrade", {}).get("p")
-                st.success(f"✅ Connected — SPY ${price:.2f}" if price else "✅ Connected")
-            else:
-                st.error("❌ Key accepted but no data returned.")
-        except Exception as e:
-            st.error(f"❌ {e}")
+    st.caption("API key" if data_source == "Live API" else "Local SQL Server")
+    st.text_input("Polygon API key", type="password", placeholder="sk_...", key="polygon_api_key")
 
     st.markdown("---")
-    if st.button("🔄 Clear all results", use_container_width=True):
+    if st.button("🔄 Clear all results", width="stretch"):
         st.cache_data.clear()
         for _k in _SS_DEFAULTS:
             st.session_state[_k] = _SS_DEFAULTS[_k]
@@ -133,9 +156,9 @@ with st.sidebar:
 # ══════════════════════════════════════════════════════════════════════════════
 
 def _ticker_row(key_prefix: str) -> str:
-    from alan_trader.data.simulator import POPULAR_TICKERS, TICKER_PROFILES, DEFAULT_PROFILE
+    from alan_trader.data.simulator import TICKER_PROFILES, DEFAULT_PROFILE
     c1, c2 = st.columns([2, 7])
-    ticker = c1.selectbox("Ticker", POPULAR_TICKERS, index=0, key=f"{key_prefix}_ticker")
+    ticker = c1.text_input("Ticker", value="HOOD", key=f"{key_prefix}_ticker").upper().strip() or "HOOD"
     prof = TICKER_PROFILES.get(ticker, DEFAULT_PROFILE)
     c2.caption(
         f"Est. vol: {prof['annual_vol']*100:.0f}% ann · {prof.get('category', 'equity')}"
@@ -198,42 +221,60 @@ def _build_feat_imp(trainer, features, labels, feat_names):
 
 def _do_train(slug, seq_len, hidden_size, num_layers, dropout, lr, num_epochs,
               ticker="SPY", forward_days=5, otm_pct=0.0, spread_type="bull_call",
-              use_sim=True, api_key=""):
+              enter_boost=2.0, data_source="Database", api_key=""):
     import warnings; warnings.filterwarnings("ignore")
     from alan_trader.data.features import build_feature_matrix, FEATURE_COLS
     from alan_trader.model.trainer import ModelTrainer
 
-    if use_sim or not api_key:
-        from alan_trader.data.simulator import (
-            simulate_price, simulate_vix, simulate_rates, simulate_news, simulate_macro,
-        )
-        spy     = simulate_price(ticker=ticker, n_days=756, keep_regime=True)
-        vix     = simulate_vix(756, price_df=spy)
-        spy     = spy.drop(columns=["_regime"], errors="ignore")
-        r2, r10 = simulate_rates(756)
-        news    = simulate_news(756)
-        macro   = simulate_macro(756)
+    if data_source == "Database":
+        from alan_trader.db.loader import load_training_data
+        data  = load_training_data(ticker=ticker)
     else:
         from alan_trader.data.loader import load_real_data
-        data    = load_real_data(ticker=ticker, n_days=756, api_key=api_key)
-        spy     = data["spy"]
-        vix     = data["vix"]
-        r2      = data["rate2y"]
-        r10     = data["rate10y"]
-        macro   = data["macro"]
-        news    = data["news"]
+        data  = load_real_data(ticker=ticker, n_days=756, api_key=api_key)
+
+    spy   = data["spy"]
+    vix   = data["vix"]
+    r2    = data["rate2y"]
+    r10   = data["rate10y"]
+    macro = data["macro"]
+    news  = data["news"]
+
+    spread_pnl_df = None
+    spread_diagnostics = {}
+    if data_source == "Database":
+        try:
+            from alan_trader.db.options_loader import build_spread_history
+            from alan_trader.db.client import get_engine as _ge
+            spread_pnl_df = build_spread_history(
+                _ge(), ticker, spread_type=spread_type,
+                target_dte=30, hold_days=forward_days,
+                otm_pct=max(otm_pct, 5) / 100, wing_pct=0.05,
+                diagnostics=spread_diagnostics,
+            )
+            if spread_pnl_df.empty:
+                spread_pnl_df = None
+        except Exception as _e:
+            logger.warning(f"Spread history unavailable, falling back to fwd_ret labels: {_e}")
+            spread_diagnostics["error"] = str(_e)
+            spread_pnl_df = None
 
     df      = build_feature_matrix(spy, vix, r2, r10, news, forward_days=forward_days,
-                                    spread_type=spread_type, macro_df=macro)
+                                    spread_type=spread_type, macro_df=macro,
+                                    spread_pnl_df=spread_pnl_df)
 
     features = df[FEATURE_COLS].values
     labels   = df["label"].values
     n_train  = int(len(features) * 0.80)
 
+    counts   = np.bincount(labels, minlength=3)
+    label_dist = {"avoid": int(counts[0]), "skip": int(counts[1]), "enter": int(counts[2])}
+
     trainer = ModelTrainer(
         num_features=len(FEATURE_COLS),
         hidden_size=hidden_size, num_layers=num_layers, dropout=dropout,
         lr=lr, batch_size=32, num_epochs=num_epochs, patience=15, seq_len=seq_len,
+        enter_boost=enter_boost,
     )
     history = trainer.fit(features[:n_train], labels[:n_train])
 
@@ -315,66 +356,90 @@ def _do_train(slug, seq_len, hidden_size, num_layers, dropout, lr, num_epochs,
             cost = round(p(lk, "call") - p(sk, "call"), 2)
             return f"{leg('BUY', lk, 'call')} / {leg('SELL', sk, 'call')} | Debit ${cost:.2f}", cost
 
+    has_real_pnl = "entry_value" in aligned_df.columns
+
     rows = []
     for i in range(len(w_df)):
         row    = w_df.iloc[i]
         actual = int(w_actual[i])
-        S   = float(row.get("close", 0))
-        iv  = float(row.get("vix", 18.0)) / 100
-        r   = float(row.get("rate_10y", 0.045))
-        T   = 30 / 252
-        structure_str, cost = _structure(spread_type, S, iv, r, T, otm_pct / 100)
-        rows.append({
-            "date":             row.get(date_col, ""),
-            "outcome":          "✅ Confirmed" if actual == 2 else ("⚠️ Skip" if actual == 1 else "❌ Avoid"),
-            "structure":        structure_str,
-            "spot":             round(S, 2),
-            "total_1ct":        round(cost * 100, 2),
-            "hold_days":        forward_days,
-            "confidence":       round(float(w_probas[i].max()), 3),
-            "fwd_%":            round(float(row.get("fwd_ret", 0)) * 100, 2),
-        })
+        outcome = "✅ Won" if actual == 2 else ("⚠️ Marginal" if actual == 1 else "❌ Lost")
+
+        if has_real_pnl:
+            entry_v   = float(row.get("entry_value", 0))
+            exit_v    = float(row.get("exit_value",  0))
+            pnl_v     = float(row.get("pnl",         0))
+            max_p     = float(row.get("max_profit",  0))
+            max_l     = float(row.get("max_loss",    0))
+            pnl_pct   = float(row.get("fwd_ret",     0))
+            exit_date = row.get("exit_date", "")
+            is_credit = spread_type in ("iron_condor", "bull_put", "bear_call", "short_strangle")
+            rows.append({
+                "Result":           outcome,
+                "Trade Date":       row.get(date_col, ""),
+                "Closed Date":      exit_date,
+                "Collected" if is_credit else "Paid":
+                                    round(abs(entry_v) * 100, 2),
+                "Cost to Close" if is_credit else "Sold For":
+                                    round(abs(exit_v)  * 100, 2),
+                "Profit / Loss":    round(pnl_v   * 100, 2),
+                "% of Max Profit":  round(pnl_pct  * 100, 1),
+                "Max Profit":       round(max_p    * 100, 2),
+                "Max Loss":         round(max_l    * 100, 2),
+                "Model Confidence": round(float(w_probas[i].max()) * 100, 1),
+            })
+        else:
+            S   = float(row.get("close", 0))
+            iv  = float(row.get("vix", 18.0)) / 100
+            r   = float(row.get("rate_10y", 0.045))
+            T   = 30 / 252
+            structure_str, cost = _structure(spread_type, S, iv, r, T, otm_pct / 100)
+            rows.append({
+                "entry date":   row.get(date_col, ""),
+                "outcome":      outcome,
+                "structure":    structure_str,
+                "spot":         round(S, 2),
+                "cost $/ct":    round(cost * 100, 2),
+                "hold days":    forward_days,
+                "fwd ret %":    round(float(row.get("fwd_ret", 0)) * 100, 2),
+                "confidence":   round(float(w_probas[i].max()) * 100, 1),
+            })
     samples = pd.DataFrame(rows)
 
     return {
-        "history":        history,
-        "cm":             cm,
-        "feat_imp":       feat_imp,
-        "trainer":        trainer,
-        "feat_df":        df,
-        "FEATURE_COLS":   FEATURE_COLS,
-        "winner_samples": samples,
-        "n_confirmed":    n_confirmed,
-        "spread_type":    spread_type,
+        "history":           history,
+        "cm":                cm,
+        "feat_imp":          feat_imp,
+        "trainer":           trainer,
+        "feat_df":           df,
+        "FEATURE_COLS":      FEATURE_COLS,
+        "winner_samples":    samples,
+        "n_confirmed":       n_confirmed,
+        "spread_type":       spread_type,
+        "ticker":            ticker,
+        "label_dist":        label_dist,
+        "spread_diagnostics": spread_diagnostics,
     }
 
 
-def _do_backtest(slug, params, ticker, n_days, use_sim=True, api_key=""):
+def _do_backtest(slug, params, ticker, n_days, data_source="Database", api_key=""):
     import warnings; warnings.filterwarnings("ignore")
 
-    if use_sim or not api_key:
-        from alan_trader.data.simulator import (
-            simulate_price, simulate_vix, simulate_rates, simulate_news,
-            simulate_dividend_events, simulate_macro,
-        )
-        spy     = simulate_price(ticker=ticker, n_days=n_days, keep_regime=True)
-        vix     = simulate_vix(n_days, price_df=spy)
-        spy     = spy.drop(columns=["_regime"], errors="ignore")
-        r2, r10 = simulate_rates(n_days)
-        news    = simulate_news(n_days)
-        macro   = simulate_macro(n_days)
-        divs    = simulate_dividend_events(spy)
+    if data_source == "Database":
+        from alan_trader.db.loader import load_training_data
+        data = load_training_data(ticker=ticker)
     else:
         from alan_trader.data.loader import load_real_data
-        data    = load_real_data(ticker=ticker, n_days=n_days, api_key=api_key)
-        spy     = data["spy"]
-        vix     = data["vix"]
-        r2      = data["rate2y"]
-        r10     = data["rate10y"]
-        macro   = data["macro"]
-        news    = data["news"]
-        from alan_trader.data.simulator import simulate_dividend_events
-        divs    = simulate_dividend_events(spy)
+        data = load_real_data(ticker=ticker, n_days=n_days, api_key=api_key)
+
+    spy   = data["spy"]
+    vix   = data["vix"]
+    r2    = data["rate2y"]
+    r10   = data["rate10y"]
+    macro = data["macro"]
+    news  = data["news"]
+
+    from alan_trader.data.simulator import simulate_dividend_events
+    divs = simulate_dividend_events(spy)
 
     aux = {"vix": vix, "rate2y": r2, "rate10y": r10, "macro": macro,
            "news": news, "dividends": divs}
@@ -444,11 +509,48 @@ def _render_train(slug: str):
                         options=[1e-4, 5e-4, 1e-3, 2e-3, 5e-3], value=1e-3,
                         key=f"tr_{slug}_lr")
         epochs     = hp6.slider("Max epochs", 20, 200, 60, step=10, key=f"tr_{slug}_epochs")
-        hp7, hp8, _ = st.columns(3)
+        hp7, hp8, hp9 = st.columns(3)
         forward_days = hp7.slider("Hold / forward days", 2, 20, 5, key=f"tr_{slug}_fwd")
         otm_pct_tr   = hp8.slider("OTM %", 0, 40, 0, 5,
                                    help="Strike offset for winners table leg price estimates.",
                                    key=f"tr_{slug}_otm")
+        enter_boost_tr = hp9.slider("ENTER weight boost", 1.0, 5.0, 2.0, 0.5,
+                                    help="Multiplies the ENTER class loss weight. "
+                                         "Increase if the model produces no ENTER signals.",
+                                    key=f"tr_{slug}_enter_boost")
+
+    ds = st.session_state.get("data_source", "Database")
+    if ds == "Database" and needs_ticker:
+        if st.button("🔍 Check options data for this ticker", key=f"btn_chk_opts_{slug}"):
+            try:
+                from alan_trader.db.client import get_engine as _ge2, get_ticker_id as _gtid
+                from sqlalchemy import text as _text2
+                _eng = _ge2()
+                _tid = _gtid(_eng, ticker)
+                if _tid is None:
+                    st.warning(f"Ticker '{ticker}' not found in database. Make sure it's synced in the Data tab.")
+                else:
+                    with _eng.connect() as _c:
+                        _r = _c.execute(_text2("""
+                            SELECT COUNT(*) as cnt,
+                                   MIN(SnapshotDate) as earliest,
+                                   MAX(SnapshotDate) as latest,
+                                   COUNT(DISTINCT SnapshotDate) as unique_dates
+                            FROM mkt.OptionSnapshot WHERE TickerId = :tid
+                        """), {"tid": _tid}).fetchone()
+                    if _r and _r[0] > 0:
+                        st.success(
+                            f"**{ticker}** has **{int(_r[0]):,}** option snapshot rows "
+                            f"({_r[2]} unique dates, {_r[1]} → {_r[2]}). "
+                            "Real spread P&L should be available for training."
+                        )
+                    else:
+                        st.warning(
+                            f"No option snapshot data found for **{ticker}**. "
+                            "Go to the **🗄 Data** tab → **Sync from Polygon** → **Options Chain** to download it."
+                        )
+            except Exception as _ex:
+                st.error(f"DB check failed: {_ex}")
 
     if st.button("▶ Train Model", type="primary", key=f"btn_train_{slug}"):
         with st.spinner("Training… this may take a minute."):
@@ -457,13 +559,19 @@ def _render_train(slug: str):
                                    ticker=ticker if needs_ticker else "SPY",
                                    forward_days=forward_days, otm_pct=otm_pct_tr,
                                    spread_type=spread_type_tr,
-                                   use_sim=use_sim,
+                                   enter_boost=enter_boost_tr,
+                                   data_source=st.session_state.get("data_source", "Database"),
                                    api_key=st.session_state.get("polygon_api_key", ""))
                 st.session_state["train_results"][slug] = result
-                st.success("Training complete!")
+                st.rerun()
             except Exception as ex:
-                st.error(f"Training failed: {ex}")
-        st.rerun()
+                import traceback
+                st.session_state[f"train_error_{slug}"] = traceback.format_exc()
+
+    err = st.session_state.get(f"train_error_{slug}")
+    if err:
+        st.error("Training failed — see details below:")
+        st.code(err, language="python")
 
     train_res = st.session_state["train_results"].get(slug)
     if train_res is None:
@@ -487,88 +595,182 @@ def _render_train(slug: str):
     m3.metric("Epochs Run",        n_ep)
     m4.metric("Spread Type",       spread_label.split("(")[0].strip())
 
+    ld = train_res.get("label_dist", {})
+    if ld:
+        total_ld = sum(ld.values()) or 1
+        l1, l2, l3 = st.columns(3)
+        l1.metric("AVOID labels", f"{ld.get('avoid', 0):,}",
+                  delta=f"{ld.get('avoid', 0)/total_ld:.0%}", delta_color="off")
+        l2.metric("SKIP labels",  f"{ld.get('skip',  0):,}",
+                  delta=f"{ld.get('skip',  0)/total_ld:.0%}", delta_color="off")
+        l3.metric("ENTER labels", f"{ld.get('enter', 0):,}",
+                  delta=f"{ld.get('enter', 0)/total_ld:.0%}", delta_color="off")
+        if ld.get("enter", 0) / total_ld < 0.15:
+            st.warning("ENTER labels are <15% of training data — increase ENTER weight boost "
+                       "or switch to a credit spread (bull_put / iron_condor) which has more ENTER signals.")
+
     # ── Model ENTER signals — shown first ──────────────────────────────────
     winner_samples = train_res.get("winner_samples")
     n_confirmed    = train_res.get("n_confirmed", 0)
     st.markdown("---")
-    col_cfg = {
-        "outcome":    st.column_config.TextColumn("Outcome",          width="small"),
-        "structure":  st.column_config.TextColumn("Options Structure", width="large"),
-        "spot":       st.column_config.NumberColumn("Spot",            format="$%.2f"),
-        "total_1ct":  st.column_config.NumberColumn("1 Contract Total", format="$%.2f",
-                          help="Per share × 100 — actual dollar amount for 1 contract"),
-        "hold_days":  st.column_config.NumberColumn("Hold Days",       format="%d"),
-        "confidence": st.column_config.ProgressColumn("Confidence",    min_value=0, max_value=1, format="%.2f"),
-        "fwd_%":      st.column_config.NumberColumn("Fwd Ret %",       format="%.2f%%"),
-    }
-    if winner_samples is not None and not winner_samples.empty:
-        n_total = len(winner_samples)
-        st.subheader(f"Model ENTER Signals — {n_total} signals ({n_confirmed} confirmed correct)")
-        st.caption(
-            f"Spread: **{spread_label}**  ·  Strikes are 30-day expiry Black-Scholes at signal date  "
-            "·  ✅ Confirmed = actual label also ENTER  ·  ⚠️ Skip / ❌ Avoid = model fired but conditions weren't ideal."
+
+    # Column config adapts to whether real options P&L is available
+    has_real = winner_samples is not None and "Profit / Loss" in (winner_samples.columns if winner_samples is not None else [])
+    if has_real:
+        col_cfg = {
+            "Result":           st.column_config.TextColumn("Result",          width="small"),
+            "Trade Date":       st.column_config.DateColumn("Trade Date"),
+            "Closed Date":      st.column_config.DateColumn("Closed Date"),
+            "Collected":        st.column_config.NumberColumn("Collected",      format="$%.2f",
+                                    help="Premium received when opening the position (1 contract = 100 shares)"),
+            "Paid":             st.column_config.NumberColumn("Paid",           format="$%.2f",
+                                    help="Premium paid when opening the position (1 contract = 100 shares)"),
+            "Cost to Close":    st.column_config.NumberColumn("Cost to Close",  format="$%.2f",
+                                    help="What it cost to buy back / close the spread"),
+            "Sold For":         st.column_config.NumberColumn("Sold For",       format="$%.2f",
+                                    help="What the spread was worth when closed"),
+            "Profit / Loss":    st.column_config.NumberColumn("Profit / Loss",  format="$%.2f",
+                                    help="Net profit or loss per contract at close"),
+            "% of Max Profit":  st.column_config.NumberColumn("% of Max",       format="%.1f%%",
+                                    help="How much of the best-case profit was captured (or how deep into a loss)"),
+            "Max Profit":       st.column_config.NumberColumn("Max Profit",     format="$%.2f",
+                                    help="Best possible outcome if held to expiry and all legs expire worthless"),
+            "Max Loss":         st.column_config.NumberColumn("Max Loss",       format="$%.2f",
+                                    help="Worst possible outcome (spread fully against you at expiry)"),
+            "Model Confidence": st.column_config.ProgressColumn("Confidence",  min_value=0, max_value=100, format="%.0f%%"),
+        }
+        caption = ""
+    else:
+        col_cfg = {
+            "entry date":  st.column_config.TextColumn("Trade Date"),
+            "outcome":     st.column_config.TextColumn("Result",        width="small"),
+            "structure":   st.column_config.TextColumn("Structure",     width="large"),
+            "spot":        st.column_config.NumberColumn("Spot",        format="$%.2f"),
+            "cost $/ct":   st.column_config.NumberColumn("Cost/ct",     format="$%.2f"),
+            "hold days":   st.column_config.NumberColumn("Hold Days",   format="%d"),
+            "fwd ret %":   st.column_config.NumberColumn("Stock Move",  format="%.2f%%"),
+            "confidence":  st.column_config.ProgressColumn("Confidence", min_value=0, max_value=100, format="%.0f%%"),
+        }
+        caption = (
+            f"Black-Scholes approximation — no options chain data available for this ticker. "
+            f"'Stock Move' = underlying % change over the hold period."
         )
-        st.dataframe(winner_samples, use_container_width=True,
+
+    # ── Options data diagnostics (shown when real P&L is unavailable) ───────
+    trained_ticker = train_res.get("ticker", "?")
+    diag = train_res.get("spread_diagnostics", {})
+    if not has_real and diag:
+        with st.expander("Options data diagnostics — why is Black-Scholes being used?", expanded=True):
+            if "error" in diag:
+                st.error(f"**Error:** {diag['error']}")
+            else:
+                d1, d2, d3 = st.columns(3)
+                d1.metric("Chain rows loaded", f"{diag.get('chain_rows', 0):,}")
+                d2.metric("Price bars",         f"{diag.get('n_price_bars', 0):,}")
+                d3.metric("Entry dates tried",  f"{diag.get('n_entry_dates', 0):,}")
+                if diag.get("n_entry_dates", 0) > 0:
+                    f1, f2, f3, f4, f5 = st.columns(5)
+                    f1.metric("No expiry found", diag.get("n_no_expiry", 0),
+                              help="No option expiration within ±21 days of target DTE")
+                    f2.metric("Legs failed",     diag.get("n_no_legs", 0),
+                              help="Nearest strike selection failed (check OTM% / wing%)")
+                    f3.metric("Entry price N/A", diag.get("n_no_entry_val", 0),
+                              help="Could not get mid price for one or more legs")
+                    f4.metric("Sign mismatch",   diag.get("n_sign_fail", 0),
+                              help="Spread priced as wrong direction (credit/debit)")
+                    f5.metric("No exit data",    diag.get("n_no_exit", 0),
+                              help="No chain snapshot found for exit date within +7 days")
+                st.caption(
+                    f"DTE filter: {diag.get('dte_filter', 'N/A')} | "
+                    f"Date range: {diag.get('date_range', 'N/A')} | "
+                    f"Rows produced: {diag.get('n_rows', 0)}"
+                )
+                if diag.get("chain_rows", 0) == 0:
+                    st.warning(
+                        f"No option chain rows found for **{trained_ticker}** ({trained_spread}). "
+                        "Go to the **🗄 Data** tab and check Options Chain Coverage — options data must be synced for this ticker first."
+                    )
+                elif diag.get("n_no_expiry", 0) == diag.get("n_entry_dates", 0):
+                    st.warning(
+                        "Options data exists but no expiration matched target DTE. "
+                        "Try adjusting the Hold/Forward Days slider or use a longer target DTE."
+                    )
+                elif diag.get("n_no_legs", 0) > diag.get("n_entry_dates", 0) * 0.5:
+                    st.warning(
+                        "Strike selection failed for most dates. "
+                        "The OTM% or wing% may be too large — try reducing them, "
+                        "or the option chain may have wide strike spacing."
+                    )
+                elif diag.get("n_no_exit", 0) > diag.get("n_entry_dates", 0) * 0.5:
+                    st.warning(
+                        "Exit chain data missing for most dates. "
+                        "Options snapshots may not cover a contiguous enough date range "
+                        "for the selected hold period."
+                    )
+                elif diag.get("n_rows", 0) > 0:
+                    st.warning(
+                        f"Only {diag['n_rows']} spread rows produced — below the minimum of 50 needed. "
+                        "Widen the date range or use a different spread type."
+                    )
+
+    if winner_samples is not None and not winner_samples.empty:
+        n_total   = len(winner_samples)
+        n_wins    = (winner_samples.get("Result", pd.Series()).str.startswith("✅")).sum()
+        win_rate  = n_wins / n_total if n_total else 0
+
+        if has_real:
+            avg_win  = winner_samples.loc[winner_samples["Result"].str.startswith("✅"), "Profit / Loss"].mean()
+            avg_loss = winner_samples.loc[winner_samples["Result"].str.startswith("❌"), "Profit / Loss"].mean()
+            st.subheader(f"Trades the model selected — {n_total} total, {n_wins} profitable ({win_rate:.0%} win rate)")
+            st.caption(
+                f"Each row is a **{spread_label}** trade the model said to take, with the real historical outcome. "
+                f"Avg profit on winners: **${avg_win:.0f}/contract** · "
+                f"Avg loss on losers: **${avg_loss:.0f}/contract**"
+                if not np.isnan(avg_win) and not np.isnan(avg_loss) else
+                f"Each row is a **{spread_label}** trade the model said to take, with the real historical outcome."
+            )
+        else:
+            st.subheader(f"Trades the model selected — {n_total} total, {n_wins} confirmed profitable ({win_rate:.0%})")
+            st.caption(caption)
+
+        st.dataframe(winner_samples, width="stretch",
                      column_config=col_cfg, hide_index=True)
+
+        if has_real:
+            st.markdown("---")
+            pa1, pa2 = st.columns(2)
+            with pa1:
+                st.plotly_chart(
+                    C.signal_cumulative_pnl(winner_samples, spread_label),
+                    width="stretch", key=f"tr_{slug}_cpnl",
+                )
+            with pa2:
+                st.plotly_chart(
+                    C.signal_winrate_by_confidence(winner_samples),
+                    width="stretch", key=f"tr_{slug}_wr",
+                )
+            st.plotly_chart(
+                C.signal_pnl_distribution(winner_samples),
+                width="stretch", key=f"tr_{slug}_dist",
+            )
     else:
         st.info(f"Model generated no ENTER signals for **{spread_label}** in the test period. "
                 "Try more epochs or a different spread type.")
 
+    st.markdown("---")
     with st.expander("Training Curves", expanded=False):
         c1, c2 = st.columns(2)
-        with c1: st.plotly_chart(C.loss_curves(history),     use_container_width=True)
-        with c2: st.plotly_chart(C.accuracy_curves(history), use_container_width=True)
+        with c1: st.plotly_chart(C.loss_curves(history),     width="stretch")
+        with c2: st.plotly_chart(C.accuracy_curves(history), width="stretch")
 
-    with st.expander("Confusion Matrix & Label Distribution", expanded=False):
-        c3, c4 = st.columns(2)
-        with c3: st.plotly_chart(C.confusion_matrix_heatmap(cm), use_container_width=True)
-        with c4: st.plotly_chart(C.label_distribution_pie(feat_df["label"].values), use_container_width=True)
+    with st.expander("Confusion Matrix", expanded=False):
+        st.caption("How often the model was right for each class. "
+                   "High ENTER precision = fewer false trade signals.")
+        st.plotly_chart(C.confusion_matrix_heatmap(cm), width="stretch")
 
-    with st.expander("Feature Importance", expanded=False):
-        st.plotly_chart(C.feature_importance_bar(feat_imp, top_n=20), use_container_width=True)
-
-    with st.expander("Feature Correlation", expanded=False):
-        st.plotly_chart(C.feature_correlation_heatmap(feat_df, FEATURE_COLS), use_container_width=True)
-
-    with st.expander("Feature Scatter Analysis", expanded=False):
-        s1, s2 = st.columns(2)
-        with s1:
-            st.plotly_chart(C.rsi_vix_scatter(feat_df), use_container_width=True)
-        with s2:
-            import plotly.graph_objects as go
-            fx = st.selectbox("X feature", FEATURE_COLS, index=0, key=f"tr_{slug}_sc_x")
-            fy = st.selectbox("Y feature", FEATURE_COLS, index=1, key=f"tr_{slug}_sc_y")
-            cm_map = {0: "#ef5350", 1: "#78909c", 2: "#26a69a"}
-            fig_sc = go.Figure()
-            for cls, lbl in {0: "Avoid", 1: "Skip", 2: "Enter"}.items():
-                mask = feat_df["label"] == cls
-                fig_sc.add_trace(go.Scatter(
-                    x=feat_df.loc[mask, fx], y=feat_df.loc[mask, fy],
-                    mode="markers", name=lbl,
-                    marker=dict(size=4, color=cm_map[cls], opacity=0.6),
-                ))
-            fig_sc.update_layout(
-                paper_bgcolor="#0e1117", plot_bgcolor="#0e1117",
-                font=dict(color="#e0e0e0"), height=380, margin=dict(l=40, r=20, t=40, b=40),
-                title=f"{fx} vs {fy}",
-                xaxis=dict(title=fx, gridcolor="#1e2130"),
-                yaxis=dict(title=fy, gridcolor="#1e2130"),
-            )
-            st.plotly_chart(fig_sc, use_container_width=True, key=f"tr_{slug}_scatter")
-
-    with st.expander("3-D Feature Space", expanded=False):
-        c3a, c3b, c3c = st.columns(3)
-        f3x = c3a.selectbox("X", FEATURE_COLS,
-                            index=FEATURE_COLS.index("rsi_14") if "rsi_14" in FEATURE_COLS else 0,
-                            key=f"tr_{slug}_3dx")
-        f3y = c3b.selectbox("Y", FEATURE_COLS,
-                            index=FEATURE_COLS.index("vix") if "vix" in FEATURE_COLS else 1,
-                            key=f"tr_{slug}_3dy")
-        f3z = c3c.selectbox("Z", FEATURE_COLS,
-                            index=FEATURE_COLS.index("macd") if "macd" in FEATURE_COLS else 2,
-                            key=f"tr_{slug}_3dz")
-        st.plotly_chart(C.feature_scatter_3d(feat_df, f3x, f3y, f3z),
-                        use_container_width=True, key=f"tr_{slug}_3d")
+    with st.expander("Top Features Driving Signals", expanded=False):
+        st.caption("Which market conditions the model weighted most heavily.")
+        st.plotly_chart(C.feature_importance_bar(feat_imp, top_n=15), width="stretch")
 
 
 def _render_backtest(slug: str):
@@ -627,7 +829,7 @@ def _render_backtest(slug: str):
         with st.spinner(f"Running {meta['display_name']} backtest…"):
             try:
                 res = _do_backtest(slug, params, ticker or "SPY", n_days,
-                                  use_sim=use_sim,
+                                  data_source=st.session_state.get("data_source", "Database"),
                                   api_key=st.session_state.get("polygon_api_key", ""))
                 st.session_state["bt_results"][slug] = res
 
@@ -645,9 +847,9 @@ def _render_backtest(slug: str):
                 except Exception: pass
 
                 st.success("Backtest complete!")
+                st.rerun()
             except Exception as ex:
                 st.error(f"Backtest failed: {ex}")
-        st.rerun()
 
     res = st.session_state["bt_results"].get(slug)
     if res is None:
@@ -707,7 +909,7 @@ def _render_backtest(slug: str):
             )
         else:
             styled = disp[show_cols]
-        st.dataframe(styled, use_container_width=True, column_config=col_cfg, hide_index=True)
+        st.dataframe(styled, width="stretch", column_config=col_cfg, hide_index=True)
 
     st.markdown("---")
 
@@ -716,20 +918,20 @@ def _render_backtest(slug: str):
     eq_df = pd.DataFrame({"equity": eq, "price": eq * 0 + 100_000})
 
     with st.expander("Equity Curve & Drawdown", expanded=True):
-        st.plotly_chart(C.equity_curve(eq_df),   use_container_width=True, key=f"bt_{slug}_eq")
-        st.plotly_chart(C.drawdown_chart(eq_df), use_container_width=True, key=f"bt_{slug}_dd")
+        st.plotly_chart(C.equity_curve(eq_df),   width="stretch", key=f"bt_{slug}_eq")
+        st.plotly_chart(C.drawdown_chart(eq_df), width="stretch", key=f"bt_{slug}_dd")
         if len(eq_df) > 65:
-            st.plotly_chart(C.rolling_sharpe(eq_df), use_container_width=True, key=f"bt_{slug}_rs")
+            st.plotly_chart(C.rolling_sharpe(eq_df), width="stretch", key=f"bt_{slug}_rs")
 
     if not trades.empty:
         with st.expander("Trade Analysis", expanded=False):
             tr1, tr2 = st.columns(2)
-            with tr1: st.plotly_chart(C.win_loss_pie(trades),    use_container_width=True, key=f"bt_{slug}_wl")
-            with tr2: st.plotly_chart(C.exit_reason_pie(trades), use_container_width=True, key=f"bt_{slug}_er")
-            st.plotly_chart(C.trade_pnl_scatter(trades),  use_container_width=True, key=f"bt_{slug}_pnl_sc")
-            st.plotly_chart(C.pnl_histogram(trades),      use_container_width=True, key=f"bt_{slug}_pnl_hist")
+            with tr1: st.plotly_chart(C.win_loss_pie(trades),    width="stretch", key=f"bt_{slug}_wl")
+            with tr2: st.plotly_chart(C.exit_reason_pie(trades), width="stretch", key=f"bt_{slug}_er")
+            st.plotly_chart(C.trade_pnl_scatter(trades),  width="stretch", key=f"bt_{slug}_pnl_sc")
+            st.plotly_chart(C.pnl_histogram(trades),      width="stretch", key=f"bt_{slug}_pnl_hist")
             if len(eq_df) > 30:
-                st.plotly_chart(C.monthly_returns_heatmap(eq_df), use_container_width=True, key=f"bt_{slug}_mr")
+                st.plotly_chart(C.monthly_returns_heatmap(eq_df), width="stretch", key=f"bt_{slug}_mr")
 
 
 
@@ -810,18 +1012,18 @@ def _render_live(slug: str):
         )
 
         g1, g2 = st.columns([1, 1])
-        with g1: st.plotly_chart(C.signal_gauge(proba),  use_container_width=True, key=f"live_{slug}_gauge")
-        with g2: st.plotly_chart(C.proba_bar(proba),     use_container_width=True, key=f"live_{slug}_proba")
+        with g1: st.plotly_chart(C.signal_gauge(proba),  width="stretch", key=f"live_{slug}_gauge")
+        with g2: st.plotly_chart(C.proba_bar(proba),     width="stretch", key=f"live_{slug}_proba")
         st.markdown("---")
-        st.plotly_chart(C.live_portfolio_line(signals_df),  use_container_width=True, key=f"live_{slug}_port")
+        st.plotly_chart(C.live_portfolio_line(signals_df),  width="stretch", key=f"live_{slug}_port")
         p1, p2 = st.columns(2)
-        with p1: st.plotly_chart(C.cumulative_pnl_line(signals_df), use_container_width=True, key=f"live_{slug}_cpnl")
-        with p2: st.plotly_chart(C.live_pnl_bars(signals_df),       use_container_width=True, key=f"live_{slug}_pnlb")
+        with p1: st.plotly_chart(C.cumulative_pnl_line(signals_df), width="stretch", key=f"live_{slug}_cpnl")
+        with p2: st.plotly_chart(C.live_pnl_bars(signals_df),       width="stretch", key=f"live_{slug}_pnlb")
         st.markdown("---")
-        st.plotly_chart(C.signal_timeline(signals_df),              use_container_width=True, key=f"live_{slug}_tl")
+        st.plotly_chart(C.signal_timeline(signals_df),              width="stretch", key=f"live_{slug}_tl")
         sa1, sa2 = st.columns(2)
-        with sa1: st.plotly_chart(C.vix_vs_confidence_scatter(signals_df), use_container_width=True, key=f"live_{slug}_vix")
-        with sa2: st.plotly_chart(C.spread_type_pie(signals_df),           use_container_width=True, key=f"live_{slug}_pie")
+        with sa1: st.plotly_chart(C.vix_vs_confidence_scatter(signals_df), width="stretch", key=f"live_{slug}_vix")
+        with sa2: st.plotly_chart(C.spread_type_pie(signals_df),           width="stretch", key=f"live_{slug}_pie")
 
         # ── Selected trades (non-neutral, actionable signals) ────────────
         st.markdown("---")
@@ -842,7 +1044,7 @@ def _render_live(slug: str):
                 col_cfg["pnl"] = st.column_config.NumberColumn("P&L ($)", format="$%.2f")
             st.dataframe(
                 selected_trades[trade_cols].sort_values("date", ascending=False),
-                use_container_width=True, column_config=col_cfg, hide_index=True,
+                width="stretch", column_config=col_cfg, hide_index=True,
             )
         else:
             st.info("No actionable signals in this window.")
@@ -859,7 +1061,7 @@ def _render_live(slug: str):
                            else ""),
                 subset=["pnl"],
             ),
-            use_container_width=True,
+            width="stretch",
         )
 
         with st.expander("Auto-refresh"):
@@ -910,7 +1112,7 @@ def _render_live(slug: str):
             st.dataframe(trades[show_cols].tail(20).sort_values(
                 "entry_date", ascending=False
             ) if "entry_date" in show_cols else trades[show_cols].tail(20),
-                use_container_width=True)
+                width="stretch")
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -927,11 +1129,11 @@ if not selected:
 else:
     # Build tab list
     strat_tab_names   = [f"{_meta(s).get('icon','📌')} {_meta(s)['display_name']}" for s in selected]
-    generic_tab_names = ["📦 Portfolio", "🛡 Risk", "📡 Market Data", "🗂 Registry"]
-    all_tabs          = st.tabs(strat_tab_names + generic_tab_names)
+    generic_tab_names = ["🗄 Data", "🔭 Polygon", "📡 Market Data", "📦 Portfolio", "🛡 Risk", "🗂 Registry"]
+    all_tabs          = st.tabs(generic_tab_names + strat_tab_names)
 
-    strategy_tabs = all_tabs[:len(selected)]
-    tab_portfolio, tab_risk, tab_market, tab_registry = all_tabs[len(selected):]
+    tab_data, tab_polygon, tab_market, tab_portfolio, tab_risk, tab_registry = all_tabs[:6]
+    strategy_tabs = all_tabs[6:]
 
     # ── Per-strategy tabs ─────────────────────────────────────────────────────
     for slug, stab in zip(selected, strategy_tabs):
@@ -960,35 +1162,8 @@ else:
 
     # ── Portfolio ─────────────────────────────────────────────────────────────
     with tab_portfolio:
-        from alan_trader.dashboard.tabs.portfolio_overview import render as render_portfolio
-        from alan_trader.visualization import charts as C
-
-        _results = list(st.session_state["bt_results"].values())
-        _report  = st.session_state["bt_report"]
-        _roll_w  = st.session_state["bt_rolling_w"]
-
-        _store = st.session_state.get("portfolio_store")
-        if _store is None:
-            try:
-                from alan_trader.portfolio.store import PortfolioStore
-                _store = PortfolioStore()
-                if _store.load():
-                    st.session_state["portfolio_store"] = _store
-                else:
-                    _store = None
-            except Exception:
-                _store = None
-
-        if not _results:
-            st.info("Run at least one **Backtest** to populate the Portfolio tab.")
-        else:
-            if not _roll_w.empty and _report:
-                _report["rolling_weights"] = _roll_w
-            render_portfolio(_report, _results, store=_store)
-            if not _roll_w.empty:
-                st.markdown("---")
-                st.subheader("Portfolio Allocation Over Time")
-                st.plotly_chart(C.portfolio_allocation_area(_roll_w), use_container_width=True)
+        from alan_trader.dashboard.tabs.trade_log import render as render_tradelog
+        render_tradelog(api_key=st.session_state.get("polygon_api_key", ""))
 
     # ── Risk ──────────────────────────────────────────────────────────────────
     with tab_risk:
@@ -1000,11 +1175,21 @@ else:
         else:
             render_risk(_report, _results)
 
+    # ── Data Manager ──────────────────────────────────────────────────────────
+    with tab_data:
+        from alan_trader.dashboard.tabs.data_manager import render as render_data
+        render_data(api_key=st.session_state.get("polygon_api_key", ""))
+
+    # ── Polygon Explorer ──────────────────────────────────────────────────────
+    with tab_polygon:
+        from alan_trader.dashboard.tabs.polygon_explorer import render as render_polygon
+        render_polygon(api_key=st.session_state.get("polygon_api_key", ""))
+
     # ── Market Data ───────────────────────────────────────────────────────────
     with tab_market:
         from alan_trader.dashboard.tabs.market_data import render as render_market
         mkt_ticker = _ticker_row("mkt")
-        render_market(ticker=mkt_ticker, use_sim=use_sim,
+        render_market(ticker=mkt_ticker,
                       api_key=st.session_state.get("polygon_api_key", ""))
 
     # ── Strategy Registry ─────────────────────────────────────────────────────

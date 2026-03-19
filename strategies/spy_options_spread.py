@@ -125,13 +125,14 @@ class OptionsSpreadStrategy(BaseStrategy):
         # Compute theoretical spread price at each bar (regression target)
         df = add_spread_price_target(df)
 
-        features      = df[FEATURE_COLS].values
+        avail         = [c for c in FEATURE_COLS if c in df.columns]
+        features      = df[avail].values
         labels        = df["label"].values
         spread_prices = df["spread_price_target"].values
         n_train       = int(len(features) * 0.80)
 
         trainer = ModelTrainer(
-            num_features=len(FEATURE_COLS),
+            num_features=len(avail),
             hidden_size=self.hidden_size,
             num_layers=self.num_layers,
             dropout=self.dropout,

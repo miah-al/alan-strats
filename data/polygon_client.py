@@ -67,14 +67,20 @@ class PolygonClient:
         df = df.set_index("date")[["open", "high", "low", "close", "volume", "vwap"]]
         return df
 
-    def get_options_chain(self, underlying: str, expiration_date: str) -> pd.DataFrame:
-        """Fetch options chain for a specific expiration."""
+    def get_options_chain(self, underlying: str, expiration_date: str = None,
+                          snapshot_date: str = None) -> pd.DataFrame:
+        """
+        Fetch options chain.
+        snapshot_date: historical EOD snapshot date (YYYY-MM-DD). Omit for today.
+        expiration_date: filter by specific expiry (optional).
+        """
         results = []
         url = f"/v3/snapshot/options/{underlying}"
-        params = {
-            "expiration_date": expiration_date,
-            "limit": 250,
-        }
+        params = {"limit": 250}
+        if expiration_date:
+            params["expiration_date"] = expiration_date
+        if snapshot_date:
+            params["date"] = snapshot_date
         while url:
             data = self._get(url, params)
             results.extend(data.get("results", []))

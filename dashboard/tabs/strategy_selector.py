@@ -69,7 +69,7 @@ def render(backtest_results: dict = None, selected_slugs: list = None):
 
     st.dataframe(
         display_df.style.apply(_row_style, axis=1),
-        use_container_width=True,
+        width="stretch",
         height=700,
     )
 
@@ -151,9 +151,9 @@ def render(backtest_results: dict = None, selected_slugs: list = None):
             params = strat.get_params()
             if params:
                 param_df = pd.DataFrame(
-                    [{"Parameter": k, "Value": v} for k, v in params.items()]
+                    [{"Parameter": k, "Value": str(v)} for k, v in params.items()]
                 )
-                st.dataframe(param_df, use_container_width=True, hide_index=True)
+                st.dataframe(param_df, width="stretch", hide_index=True)
         except Exception as e:
             st.warning(f"Could not load params: {e}")
 
@@ -176,12 +176,12 @@ def render(backtest_results: dict = None, selected_slugs: list = None):
             tail = feat_df_tail[display_feats].tail(60)
             # Round for readability
             tail = tail.round(5)
-            st.dataframe(tail, use_container_width=True, height=300)
+            st.dataframe(tail, width="stretch", height=300)
 
             # Feature statistics summary
             with st.expander("Feature statistics", expanded=False):
                 stats = tail.describe().T.round(4)
-                st.dataframe(stats, use_container_width=True)
+                st.dataframe(stats, width="stretch")
         else:
             st.info("Run a backtest to populate the feature table.")
 
@@ -199,7 +199,7 @@ def render(backtest_results: dict = None, selected_slugs: list = None):
             c2.metric("Trainable Parameters", f"{trainable:,}")
             c3.metric("Architecture",          "LSTM + Attention")
 
-            st.dataframe(layers_df, use_container_width=True, hide_index=True)
+            st.dataframe(layers_df, width="stretch", hide_index=True)
 
             st.markdown("""
             <div style="background:#161b27;padding:14px;border-radius:8px;font-size:12px;color:#b0b8c8">
@@ -264,7 +264,7 @@ def render(backtest_results: dict = None, selected_slugs: list = None):
                 plot_bgcolor="#0c1020",
                 font=dict(color="#e0e0e0"),
             )
-            st.plotly_chart(fig_ts, use_container_width=True, key="spread_pred_vs_actual_ts")
+            st.plotly_chart(fig_ts, width="stretch", key="spread_pred_vs_actual_ts")
 
             # Error analysis: scatter + residual histogram side by side
             st.subheader("Prediction Error Analysis")
@@ -318,7 +318,7 @@ def render(backtest_results: dict = None, selected_slugs: list = None):
                 plot_bgcolor="#0c1020",
                 font=dict(color="#e0e0e0"),
             )
-            st.plotly_chart(fig_err, use_container_width=True, key="spread_error_analysis")
+            st.plotly_chart(fig_err, width="stretch", key="spread_error_analysis")
 
             # Residuals over time
             fig_res = go.Figure()
@@ -338,7 +338,7 @@ def render(backtest_results: dict = None, selected_slugs: list = None):
                 plot_bgcolor="#0c1020",
                 font=dict(color="#e0e0e0"),
             )
-            st.plotly_chart(fig_res, use_container_width=True, key="spread_residuals_ts")
+            st.plotly_chart(fig_res, width="stretch", key="spread_residuals_ts")
         else:
             st.info("Run a backtest to see spread price predictions.")
 
@@ -348,7 +348,7 @@ def render(backtest_results: dict = None, selected_slugs: list = None):
         st.subheader("Active Strategy Comparison")
         from alan_trader.visualization.charts import strategy_returns_comparison
         curves = {k: v.equity_curve for k, v in backtest_results.items()}
-        st.plotly_chart(strategy_returns_comparison(curves), use_container_width=True, key="strategy_returns_comparison")
+        st.plotly_chart(strategy_returns_comparison(curves), width="stretch", key="strategy_returns_comparison")
 
     # ── roadmap / progress bar ─────────────────────────────────────────────
     st.markdown("---")

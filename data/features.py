@@ -230,23 +230,28 @@ def merge_macro(df: pd.DataFrame, macro_df: pd.DataFrame) -> pd.DataFrame:
 def compute_sentiment(news_df: pd.DataFrame) -> pd.Series:
     """
     Compute daily average sentiment from news titles/descriptions.
-    Uses a simple VADER-style approach or falls back to keyword scoring.
+    Uses pre-computed sentiment if already present (e.g. loaded from DB),
+    otherwise runs VADER or falls back to keyword scoring.
     Returns a Series indexed by date.
     """
-    try:
-        from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
-        analyzer = SentimentIntensityAnalyzer()
+    news_df = news_df.copy()
 
-        def _score(row):
-            text = f"{row.get('title', '')} {row.get('description', '')}"
-            return analyzer.polarity_scores(text)["compound"]
+    # Use stored sentiment if already populated (e.g. synced from DB)
+    if "sentiment" in news_df.columns and news_df["sentiment"].notna().any():
+        pass  # use as-is
+    else:
+        try:
+            from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
+            analyzer = SentimentIntensityAnalyzer()
 
-        news_df = news_df.copy()
-        news_df["sentiment"] = news_df.apply(_score, axis=1)
-    except ImportError:
-        logger.warning("vaderSentiment not installed — using keyword fallback. pip install vaderSentiment")
-        news_df = news_df.copy()
-        news_df["sentiment"] = news_df["title"].fillna("").apply(_keyword_sentiment)
+            def _score(row):
+                text = f"{row.get('title', '')} {row.get('description', '')}"
+                return analyzer.polarity_scores(text)["compound"]
+
+            news_df["sentiment"] = news_df.apply(_score, axis=1)
+        except ImportError:
+            logger.warning("vaderSentiment not installed — using keyword fallback. pip install vaderSentiment")
+            news_df["sentiment"] = news_df["title"].fillna("").apply(_keyword_sentiment)
 
     daily = news_df.groupby("date")["sentiment"].mean()
     return daily.rename("news_sentiment")
@@ -460,8 +465,15 @@ def build_feature_matrix(
     threshold: float = 0.01,
     spread_type: str = "bull_call",
     macro_df: pd.DataFrame = None,
+    spread_pnl_df: pd.DataFrame = None,
 ) -> pd.DataFrame:
-    """Full pipeline: returns df with FEATURE_COLS + label, dropna."""
+    """Full pipeline: returns df with FEATURE_COLS + label, dropna.
+
+    If spread_pnl_df is provided (from db.options_loader.build_spread_history),
+    labels come from actual historical spread P&L instead of the fwd_ret proxy.
+    The feature matrix is inner-joined to spread_pnl_df on date, so only dates
+    with real options data are kept.
+    """
     df = add_price_features(spy_df)
     df = merge_vix(df, vix_df)
     df = merge_rates(df, rate2y_df, rate10y_df)
@@ -471,8 +483,22 @@ def build_feature_matrix(
     sentiment = compute_sentiment(news_df) if not news_df.empty else pd.Series(dtype=float, name="news_sentiment")
     df = merge_sentiment(df, sentiment)
 
-    df = create_labels_for_spread_type(df, spread_type, forward_days, threshold)
+    _SPREAD_EXTRA = ["entry_value", "exit_value", "pnl", "pnl_pct",
+                     "max_profit", "max_loss", "exit_date", "spot"]
+
+    if spread_pnl_df is not None and len(spread_pnl_df) >= 50:
+        # Use real spread P&L as the label source
+        keep = ["date", "label", "pnl_pct"] + [c for c in _SPREAD_EXTRA if c in spread_pnl_df.columns]
+        pnl = spread_pnl_df[keep].copy()
+        pnl["date"] = pd.to_datetime(pnl["date"]).map(lambda x: x.date())
+        pnl = pnl.set_index("date").rename(columns={"pnl_pct": "fwd_ret"})
+        df = df.join(pnl, how="inner")
+    else:
+        df = create_labels_for_spread_type(df, spread_type, forward_days, threshold)
 
     available = [c for c in FEATURE_COLS if c in df.columns]
-    df = df[available + ["label", "fwd_ret", "close"]].dropna()
+    extra = [c for c in _SPREAD_EXTRA if c in df.columns]
+    df = df[available + ["label", "fwd_ret", "close"] + extra].dropna(
+        subset=available + ["label", "fwd_ret", "close"]
+    )
     return df

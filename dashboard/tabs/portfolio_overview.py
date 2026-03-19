@@ -44,7 +44,7 @@ def _positions_table(positions: list[dict], is_demo: bool = False):
         "entry_cost":  "Entry Cost",
         "contracts":   "Contracts",
     })
-    st.dataframe(pos_df, use_container_width=True, hide_index=True)
+    st.dataframe(pos_df, width="stretch", hide_index=True)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -206,7 +206,7 @@ def render(portfolio_report: dict, results: list, store=None):
                         ),
                         subset=["Realized P&L"] if "Realized P&L" in txns_df.columns else [],
                     ),
-                use_container_width=True,
+                width="stretch",
                 height=380,
                 hide_index=True,
             )
@@ -241,7 +241,7 @@ def render(portfolio_report: dict, results: list, store=None):
         curves["PORTFOLIO (blended)"] = blended
         st.plotly_chart(
             C.strategy_returns_comparison(curves),
-            use_container_width=True,
+            width="stretch",
             key="portfolio_blended_equity",
         )
 
@@ -250,7 +250,7 @@ def render(portfolio_report: dict, results: list, store=None):
         st.subheader("Portfolio Drawdown")
         st.plotly_chart(
             C.drawdown_chart(pd.DataFrame({"equity": blended, "price": blended})),
-            use_container_width=True,
+            width="stretch",
             key="portfolio_drawdown",
         )
 
@@ -260,12 +260,12 @@ def render(portfolio_report: dict, results: list, store=None):
     col_w, col_c = st.columns(2)
     with col_w:
         if weights:
-            st.plotly_chart(C.kelly_weights_bar(weights), use_container_width=True,
+            st.plotly_chart(C.kelly_weights_bar(weights), width="stretch",
                             key="portfolio_kelly_weights")
     with col_c:
         if not corr.empty:
             st.plotly_chart(C.strategy_correlation_heatmap(corr),
-                            use_container_width=True,
+                            width="stretch",
                             key="portfolio_correlation_heatmap")
 
     st.markdown("---")
@@ -274,7 +274,7 @@ def render(portfolio_report: dict, results: list, store=None):
     if per_strat:
         st.subheader("Strategy Metrics Comparison")
         st.plotly_chart(C.strategy_metrics_table(per_strat),
-                        use_container_width=True,
+                        width="stretch",
                         key="portfolio_metrics_table")
 
     # ── win rate + max drawdown ────────────────────────────────────────────
@@ -298,10 +298,10 @@ def render(portfolio_report: dict, results: list, store=None):
                 xaxis=dict(gridcolor="#1e2130"),
                 yaxis=dict(gridcolor="#1e2130", range=[0, 110]),
             )
-            st.plotly_chart(fig_wr, use_container_width=True, key="portfolio_win_rate")
+            st.plotly_chart(fig_wr, width="stretch", key="portfolio_win_rate")
         with rc2:
             st.plotly_chart(C.max_drawdown_comparison(per_strat),
-                            use_container_width=True,
+                            width="stretch",
                             key="portfolio_max_drawdown")
 
     # ── monthly returns ────────────────────────────────────────────────────
@@ -314,7 +314,7 @@ def render(portfolio_report: dict, results: list, store=None):
         )
         try:
             st.plotly_chart(C.monthly_returns_heatmap(blended_df2),
-                            use_container_width=True,
+                            width="stretch",
                             key="portfolio_monthly_returns")
         except Exception:
             pass
@@ -345,6 +345,6 @@ def render(portfolio_report: dict, results: list, store=None):
                           else ("color: #ef5350" if isinstance(v, (int, float)) and v < 0 else ""),
                 subset=["pnl"] if "pnl" in show else [],
             ),
-            use_container_width=True,
+            width="stretch",
             height=340,
         )

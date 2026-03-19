@@ -55,7 +55,7 @@ def render(portfolio_report: dict, results: list):
             merged = dict(per_strat)
             if pm:
                 merged["portfolio"] = pm
-            st.plotly_chart(C.var_cvar_bar(merged), use_container_width=True, key="rm_var_cvar")
+            st.plotly_chart(C.var_cvar_bar(merged), width="stretch", key="rm_var_cvar")
     with v2:
         if not blended.empty and len(blended) > 5:
             rets = blended.pct_change().dropna()
@@ -63,7 +63,7 @@ def render(portfolio_report: dict, results: list):
             cvar = rm.conditional_var(rets, 0.95)
             st.plotly_chart(
                 C.return_distribution_with_var(rets, var, cvar, "Portfolio"),
-                use_container_width=True,
+                width="stretch",
                 key="rm_ret_dist",
             )
 
@@ -80,7 +80,7 @@ def render(portfolio_report: dict, results: list):
     if active_returns:
         st.plotly_chart(
             C.rolling_metric_per_strategy(active_returns, metric_choice, window_choice),
-            use_container_width=True,
+            width="stretch",
             key="rm_rolling_metric",
         )
     else:
@@ -122,7 +122,7 @@ def render(portfolio_report: dict, results: list):
         xaxis=dict(gridcolor="#1e2130"),
         yaxis=dict(gridcolor="#1e2130"),
     )
-    st.plotly_chart(fig_dd, use_container_width=True, key="rm_rolling_dd")
+    st.plotly_chart(fig_dd, width="stretch", key="rm_rolling_dd")
 
     st.markdown("---")
 
@@ -130,7 +130,7 @@ def render(portfolio_report: dict, results: list):
     dd1, dd2 = st.columns(2)
     with dd1:
         if per_strat:
-            st.plotly_chart(C.max_drawdown_comparison(per_strat), use_container_width=True, key="rm_max_dd")
+            st.plotly_chart(C.max_drawdown_comparison(per_strat), width="stretch", key="rm_max_dd")
     with dd2:
         if per_strat:
             calmar_data = {k: m.get("calmar", 0) for k, m in per_strat.items()}
@@ -149,7 +149,7 @@ def render(portfolio_report: dict, results: list):
                 xaxis=dict(gridcolor="#1e2130"),
                 yaxis=dict(gridcolor="#1e2130"),
             )
-            st.plotly_chart(fig_c, use_container_width=True, key="rm_calmar")
+            st.plotly_chart(fig_c, width="stretch", key="rm_calmar")
 
     st.markdown("---")
 
@@ -175,7 +175,7 @@ def render(portfolio_report: dict, results: list):
             st.caption(res.strategy_name.replace("_", " ").title())
             st.plotly_chart(
                 C.pnl_histogram(trades),
-                use_container_width=True,
+                width="stretch",
                 key=f"rm_pnl_hist_{res.strategy_name}",
             )
     else:
@@ -194,7 +194,7 @@ def render(portfolio_report: dict, results: list):
         if corr_window != "Full period":
             df_r = df_r.tail(int(corr_window))
         corr = df_r.corr()
-        st.plotly_chart(C.strategy_correlation_heatmap(corr), use_container_width=True, key="rm_corr_heatmap")
+        st.plotly_chart(C.strategy_correlation_heatmap(corr), width="stretch", key="rm_corr_heatmap")
         st.caption("Lower correlation between strategies = better diversification benefit.")
     else:
         st.info("Enable 2+ strategies to see correlation analysis.")
