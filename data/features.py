@@ -27,9 +27,9 @@ def add_price_features(df: pd.DataFrame) -> pd.DataFrame:
     df["ret_20d"] = np.log(df["close"] / df["close"].shift(20))
 
     # Realized volatility (rolling std of daily log returns)
-    df["rvol_5d"] = df["ret_1d"].rolling(5).std() * np.sqrt(252)
-    df["rvol_10d"] = df["ret_1d"].rolling(10).std() * np.sqrt(252)
-    df["rvol_20d"] = df["ret_1d"].rolling(20).std() * np.sqrt(252)
+    df["rvol_5d"] = df["ret_1d"].rolling(5,  min_periods=2).std() * np.sqrt(252)
+    df["rvol_10d"] = df["ret_1d"].rolling(10, min_periods=2).std() * np.sqrt(252)
+    df["rvol_20d"] = df["ret_1d"].rolling(20, min_periods=2).std() * np.sqrt(252)
 
     # Simple moving averages
     for w in [5, 10, 20, 50, 200]:
@@ -91,7 +91,7 @@ def add_price_features(df: pd.DataFrame) -> pd.DataFrame:
     df["cmf_20"] = (mf_mult * df["volume"]).rolling(20).sum() / (df["volume"].rolling(20).sum() + 1)
 
     # Realized return skewness (fat-tail / directional bias)
-    df["ret_skew_20d"] = df["ret_1d"].rolling(20).skew()
+    df["ret_skew_20d"] = df["ret_1d"].rolling(20, min_periods=3).skew()
 
     # Vol term structure: short-term vs long-term realized vol ratio
     df["rvol_ratio"] = df["rvol_5d"] / (df["rvol_20d"] + 1e-9)

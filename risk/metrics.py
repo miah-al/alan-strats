@@ -159,19 +159,25 @@ def rolling_sharpe(returns: pd.Series, window: int = 60) -> pd.Series:
 
 def rolling_sortino(returns: pd.Series, window: int = 60) -> pd.Series:
     def _sortino(r):
+        r = r[~np.isnan(r)]
+        if len(r) < 2:
+            return np.nan
         d = r[r < 0]
         if len(d) == 0 or d.std() == 0:
             return np.nan
         return (r.mean() / d.std()) * np.sqrt(TRADING_DAYS)
-    return returns.rolling(window).apply(_sortino, raw=False).rename(f"sortino_{window}d")
+    return returns.rolling(window, min_periods=2).apply(_sortino, raw=True).rename(f"sortino_{window}d")
 
 
 def rolling_max_drawdown(equity_curve: pd.Series, window: int = 60) -> pd.Series:
     def _mdd(eq):
+        eq = eq[~np.isnan(eq)]
+        if len(eq) < 2:
+            return np.nan
         rm = np.maximum.accumulate(eq)
-        dd = (eq - rm) / rm
-        return dd.min()
-    return equity_curve.rolling(window).apply(_mdd, raw=False).rename(f"mdd_{window}d")
+        dd = (eq - rm) / np.where(rm == 0, np.nan, rm)
+        return np.nanmin(dd)
+    return equity_curve.rolling(window, min_periods=2).apply(_mdd, raw=True).rename(f"mdd_{window}d")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
