@@ -111,12 +111,17 @@ class PolygonClient:
         return pd.DataFrame(rows)
 
     def get_expirations(self, underlying: str, as_of: str = None) -> list[str]:
-        """Get available expiration dates."""
-        params = {"limit": 100}
+        """Get available expiration dates via options snapshot."""
+        # Use the snapshot endpoint — reference/options requires a specific contract ticker
+        params = {"limit": 250}
         if as_of:
             params["expiration_date.gte"] = as_of
-        data = self._get(f"/v3/reference/options/{underlying}", params)
-        exps = sorted(set(r["expiration_date"] for r in data.get("results", [])))
+        data = self._get(f"/v3/snapshot/options/{underlying}", params)
+        exps = sorted(set(
+            r.get("details", {}).get("expiration_date", "")
+            for r in data.get("results", [])
+            if r.get("details", {}).get("expiration_date")
+        ))
         return exps
 
     def get_news(
@@ -124,7 +129,7 @@ class PolygonClient:
         ticker: str,
         from_date: str,
         to_date: str,
-        limit: int = 1000,
+        limit: int = 5000,
     ) -> pd.DataFrame:
         """Fetch news articles. Returns DataFrame with published_utc, title, description."""
         results = []

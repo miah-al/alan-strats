@@ -28,36 +28,36 @@ logger = logging.getLogger(__name__)
 def cmd_train(args):
     from alan_trader.config import (
         BATCH_SIZE, DROPOUT, EARLY_STOPPING_PATIENCE, HIDDEN_SIZE,
-        LEARNING_RATE, NUM_EPOCHS, NUM_LAYERS, POLYGON_API_KEY, SEQUENCE_LENGTH,
+        LEARNING_RATE, NUM_EPOCHS, NUM_LAYERS, SEQUENCE_LENGTH,
     )
     from alan_trader.data.features import FEATURE_COLS, build_feature_matrix
-    from alan_trader.data.polygon_client import PolygonClient
+    from alan_trader.db.loader import load_training_data
     from alan_trader.model.trainer import ModelTrainer
 
     ticker = args.ticker.upper()
-    client = PolygonClient(POLYGON_API_KEY)
-    to_date = date.today().isoformat()
-    from_date = (date.today() - timedelta(days=730)).isoformat()
 
-    logger.info(f"Fetching 2 years of data for {ticker}: {from_date} → {to_date}")
-    bars   = client.get_aggregates(ticker, from_date, to_date)
-    vix    = client.get_aggregates("I:VIX", from_date, to_date)
-    rate2y = client.get_aggregates("I:UST2Y", from_date, to_date)
-    rate10y = client.get_aggregates("I:UST10Y", from_date, to_date)
-    news   = client.get_news(ticker, from_date, to_date)
+    logger.info(f"Loading training data from DB for {ticker}...")
+    data = load_training_data(ticker=ticker)
+    spy    = data["spy"]
+    vix    = data["vix"]
+    rate2y = data["rate2y"]
+    rate10y = data["rate10y"]
+    macro  = data["macro"]
+    news   = data["news"]
 
     logger.info("Building feature matrix...")
-    df = build_feature_matrix(bars, vix, rate2y, rate10y, news)
-    logger.info(f"Feature matrix: {df.shape[0]} rows, {len(FEATURE_COLS)} features")
+    df = build_feature_matrix(spy, vix, rate2y, rate10y, news, macro_df=macro)
+    avail    = [c for c in FEATURE_COLS if c in df.columns]
+    logger.info(f"Feature matrix: {df.shape[0]} rows, {len(avail)} features")
 
-    features = df[FEATURE_COLS].values
+    features = df[avail].values
     labels = df["label"].values
 
     from collections import Counter
     logger.info(f"Label distribution: {dict(Counter(labels))}")
 
     trainer = ModelTrainer(
-        num_features=len(FEATURE_COLS),
+        feature_cols=avail,
         hidden_size=HIDDEN_SIZE,
         num_layers=NUM_LAYERS,
         dropout=DROPOUT,
@@ -81,31 +81,31 @@ def cmd_train(args):
 def cmd_backtest(args):
     from alan_trader.config import (
         BATCH_SIZE, DROPOUT, EARLY_STOPPING_PATIENCE, HIDDEN_SIZE,
-        LEARNING_RATE, NUM_EPOCHS, NUM_LAYERS, POLYGON_API_KEY,
+        LEARNING_RATE, NUM_EPOCHS, NUM_LAYERS,
         SEQUENCE_LENGTH, TRAIN_SPLIT,
     )
     from alan_trader.data.features import FEATURE_COLS, build_feature_matrix
-    from alan_trader.data.polygon_client import PolygonClient
+    from alan_trader.db.loader import load_training_data
     from alan_trader.model.trainer import ModelTrainer
     from alan_trader.backtest.engine import BacktestEngine
 
     import numpy as np
 
     ticker = args.ticker.upper()
-    client = PolygonClient(POLYGON_API_KEY)
-    to_date = date.today().isoformat()
-    from_date = (date.today() - timedelta(days=730)).isoformat()
 
-    logger.info(f"Fetching historical data for {ticker} backtest...")
-    bars   = client.get_aggregates(ticker, from_date, to_date)
-    vix    = client.get_aggregates("I:VIX", from_date, to_date)
-    rate2y = client.get_aggregates("I:UST2Y", from_date, to_date)
-    rate10y = client.get_aggregates("I:UST10Y", from_date, to_date)
-    news   = client.get_news(ticker, from_date, to_date)
+    logger.info(f"Loading data from DB for {ticker} backtest...")
+    data = load_training_data(ticker=ticker)
+    spy    = data["spy"]
+    vix    = data["vix"]
+    rate2y = data["rate2y"]
+    rate10y = data["rate10y"]
+    macro  = data["macro"]
+    news   = data["news"]
 
-    df = build_feature_matrix(bars, vix, rate2y, rate10y, news)
-    features = df[FEATURE_COLS].values
-    labels = df["label"].values
+    df = build_feature_matrix(spy, vix, rate2y, rate10y, news, macro_df=macro)
+    avail    = [c for c in FEATURE_COLS if c in df.columns]
+    features = df[avail].values
+    labels   = df["label"].values
 
     # Train/test split (no shuffling — time-series)
     n_train = int(len(features) * TRAIN_SPLIT)
@@ -115,7 +115,7 @@ def cmd_backtest(args):
     logger.info(f"Train: {n_train} samples | Test: {len(test_f)} samples")
 
     trainer = ModelTrainer(
-        num_features=len(FEATURE_COLS),
+        feature_cols=avail,
         hidden_size=HIDDEN_SIZE,
         num_layers=NUM_LAYERS,
         dropout=DROPOUT,

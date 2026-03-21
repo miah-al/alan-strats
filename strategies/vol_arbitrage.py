@@ -273,6 +273,12 @@ class VolArbitrageStrategy(BaseStrategy):
             params=self.get_params(),
         )
 
+    def get_backtest_ui_params(self) -> list:
+        return [
+            {"key": "hold_days",          "label": "Max hold days",       "type": "slider", "min": 1, "max": 10,  "default": 3,   "step": 1,   "col": 0},
+            {"key": "min_violation_pct",  "label": "Min violation % of S","type": "slider", "min": 0.1,"max": 1.0,"default": 0.3, "step": 0.1, "col": 1},
+        ]
+
     def get_params(self) -> dict:
         return {
             "min_violation_pct":    self.min_viol,

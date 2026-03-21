@@ -64,7 +64,8 @@ class LiveTrader:
             logger.warning("Insufficient data for signal")
             return
 
-        features = feature_df[FEATURE_COLS].values
+        avail    = [c for c in FEATURE_COLS if c in feature_df.columns]
+        features = feature_df[avail].values
 
         # 3. Generate signal
         proba = self.trainer.predict(features)
@@ -141,12 +142,12 @@ class LiveTrader:
             logger.error("Not enough historical data to train")
             return
 
-        features = feature_df[FEATURE_COLS].values
-        labels = feature_df["label"].values
+        avail    = [c for c in FEATURE_COLS if c in feature_df.columns]
+        features = feature_df[avail].values
+        labels   = feature_df["label"].values
 
-        num_features = len(FEATURE_COLS)
         self.trainer = ModelTrainer(
-            num_features=num_features,
+            feature_cols=avail,
             hidden_size=HIDDEN_SIZE,
             num_layers=NUM_LAYERS,
             dropout=DROPOUT,

@@ -113,7 +113,7 @@ class PortfolioManager:
             return pd.Series(dtype=float)
 
         # Align on common date range
-        all_eq = pd.DataFrame(normalized).fillna(method="ffill").fillna(1.0)
+        all_eq = pd.DataFrame(normalized).ffill().fillna(1.0)
 
         blended = pd.Series(0.0, index=all_eq.index)
         total_w = 0.0

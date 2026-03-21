@@ -1,5 +1,5 @@
 """
-Strategy registry — metadata for all 30 strategies + lazy factory.
+Strategy registry — metadata for all strategies + lazy factory.
 """
 
 from alan_trader.strategies.base import BaseStrategy, StubStrategy, StrategyStatus
@@ -19,7 +19,7 @@ STRATEGY_METADATA: dict[str, dict] = {
         "asset_class": "equities_options",
         "typical_holding_days": 5,
         "target_sharpe": 1.2,
-        "class_path": "alan_trader.strategies.spy_options_spread.OptionsSpreadStrategy",
+        "class_path": "alan_trader.strategies.options_spread.OptionsSpreadStrategy",
         # ── capability flags ─────────────────────────────────────────────
         "requires_training": True,   # has a meaningful fit() / train step
         "uses_ml": True,             # uses a neural network (PyTorch)
@@ -357,6 +357,529 @@ STRATEGY_METADATA: dict[str, dict] = {
         "typical_holding_days": 5,
         "target_sharpe": 0.8,
         "class_path": "",
+    },
+
+    # ── Systematic vol selling ───────────────────────────────────────────────
+    "wheel_strategy": {
+        "display_name": "The Wheel",
+        "type": "rule",
+        "status": "stub",
+        "icon": "🎡",
+        "description": (
+            "Sell cash-secured puts on pullbacks. When assigned, sell covered calls at or above cost basis. "
+            "Repeat until called away. Pure theta extraction with defined equity entry."
+        ),
+        "asset_class": "equities_options",
+        "typical_holding_days": 30,
+        "target_sharpe": 1.0,
+        "class_path": "",
+        "requires_training": False,
+        "uses_ml": False,
+        "required_data": ["price", "options_chain"],
+    },
+    "0dte_condor": {
+        "display_name": "0-DTE Iron Condor",
+        "type": "rule",
+        "status": "stub",
+        "icon": "⚡",
+        "description": (
+            "Sell same-day-expiry SPY/SPX iron condors at the open. "
+            "Place wings at 1-sigma expected move. Close at 50% profit or 200% loss. "
+            "Exploits the steepest theta-decay window in the options lifecycle."
+        ),
+        "asset_class": "equities_options",
+        "typical_holding_days": 1,
+        "target_sharpe": 1.2,
+        "class_path": "",
+        "requires_training": False,
+        "uses_ml": False,
+        "required_data": ["price", "options_chain", "vix"],
+    },
+    "iv_rank_credit": {
+        "display_name": "IV Rank Credit Spread",
+        "type": "hybrid",
+        "status": "stub",
+        "icon": "📐",
+        "description": (
+            "Enter short-premium positions only when IV Rank > 50th percentile (options are expensive). "
+            "Select spread type (bull put or bear call) based on trend filter. "
+            "Systematically harvests volatility risk premium when it is statistically elevated."
+        ),
+        "asset_class": "equities_options",
+        "typical_holding_days": 21,
+        "target_sharpe": 1.2,
+        "class_path": "",
+        "requires_training": False,
+        "uses_ml": False,
+        "required_data": ["price", "options_chain", "vix"],
+    },
+    "vix_futures_roll": {
+        "display_name": "VIX Futures Roll Yield",
+        "type": "rule",
+        "status": "stub",
+        "icon": "🌀",
+        "description": (
+            "Systematically short front-month VIX futures when the VIX term structure is in contango "
+            "(spot < M1 < M2). Harvest the roll-down yield. Size position by steepness of contango. "
+            "Similar to the SVXY / XIV strategy but with explicit position limits."
+        ),
+        "asset_class": "volatility",
+        "typical_holding_days": 30,
+        "target_sharpe": 1.1,
+        "class_path": "",
+        "requires_training": False,
+        "uses_ml": False,
+        "required_data": ["vix", "vix_futures"],
+    },
+    "tail_risk_collar": {
+        "display_name": "Zero-Cost Collar",
+        "type": "rule",
+        "status": "stub",
+        "icon": "🛡️",
+        "description": (
+            "Buy OTM SPY put (downside protection), fund it by selling OTM call (upside cap). "
+            "Target near-zero net premium. Converts long equity exposure into a defined risk/reward band. "
+            "Useful as a portfolio-level hedge during elevated drawdown risk."
+        ),
+        "asset_class": "equities_options",
+        "typical_holding_days": 30,
+        "target_sharpe": 0.4,
+        "class_path": "",
+        "requires_training": False,
+        "uses_ml": False,
+        "required_data": ["price", "options_chain", "vix"],
+    },
+
+    # ── Intraday / microstructure ────────────────────────────────────────────
+    "opening_range_breakout": {
+        "display_name": "Opening Range Breakout",
+        "type": "hybrid",
+        "status": "stub",
+        "icon": "🔔",
+        "description": (
+            "Define the high/low of the first 30 minutes after open (ORB). "
+            "Enter long call spread on break above range, put spread on break below. "
+            "ML filter qualifies breaks by volume confirmation and overnight gap alignment."
+        ),
+        "asset_class": "equities_options",
+        "typical_holding_days": 1,
+        "target_sharpe": 1.1,
+        "class_path": "",
+        "requires_training": True,
+        "uses_ml": True,
+        "required_data": ["price_intraday", "volume"],
+    },
+    "vwap_reversion": {
+        "display_name": "VWAP Mean Reversion",
+        "type": "rule",
+        "status": "stub",
+        "icon": "📉",
+        "description": (
+            "Enter when SPY deviates more than 0.4% from anchored VWAP with declining volume. "
+            "Target reversion to VWAP within the session. "
+            "High win rate in low-volatility trending sessions; skip on high-VIX days."
+        ),
+        "asset_class": "equities",
+        "typical_holding_days": 1,
+        "target_sharpe": 1.0,
+        "class_path": "",
+        "requires_training": False,
+        "uses_ml": False,
+        "required_data": ["price_intraday", "volume"],
+    },
+    "gap_fade": {
+        "display_name": "Gap Fade",
+        "type": "hybrid",
+        "status": "stub",
+        "icon": "🪃",
+        "description": (
+            "When SPY gaps up or down more than 0.5% at the open without fundamental news catalyst, "
+            "fade the gap expecting mean reversion to prior close by midday. "
+            "ML model filters out gap-and-go days using pre-market volume + futures momentum."
+        ),
+        "asset_class": "equities_options",
+        "typical_holding_days": 1,
+        "target_sharpe": 1.0,
+        "class_path": "",
+        "requires_training": True,
+        "uses_ml": True,
+        "required_data": ["price_intraday", "futures", "news"],
+    },
+
+    # ── Event-driven ─────────────────────────────────────────────────────────
+    "fomc_event_straddle": {
+        "display_name": "FOMC Event Straddle",
+        "type": "rule",
+        "status": "stub",
+        "icon": "🏦",
+        "description": (
+            "Buy ATM SPY straddle 3 days before scheduled FOMC meeting. "
+            "Sell one leg immediately after the announcement, hold survivor for follow-through. "
+            "Captures the IV expansion into the event and the directional move after."
+        ),
+        "asset_class": "equities_options",
+        "typical_holding_days": 5,
+        "target_sharpe": 0.9,
+        "class_path": "",
+        "requires_training": False,
+        "uses_ml": False,
+        "required_data": ["price", "options_chain", "vix", "fomc_calendar"],
+    },
+    "earnings_drift": {
+        "display_name": "Post-Earnings Drift",
+        "type": "ai",
+        "status": "stub",
+        "icon": "📣",
+        "description": (
+            "Exploit the PEAD (post-earnings announcement drift) anomaly: stocks that beat by large margins "
+            "continue drifting upward for 5–20 days. ML model ranks magnitude of surprise vs IV. "
+            "Enter bull call spread the morning after earnings; exit at 10-day mark or 50% profit."
+        ),
+        "asset_class": "equities_options",
+        "typical_holding_days": 10,
+        "target_sharpe": 1.1,
+        "class_path": "",
+        "requires_training": True,
+        "uses_ml": True,
+        "required_data": ["price", "earnings", "options_chain"],
+    },
+    "expiry_max_pain": {
+        "display_name": "OpEx Max Pain Pin",
+        "type": "rule",
+        "status": "stub",
+        "icon": "📌",
+        "description": (
+            "On expiration Fridays, calculate the max-pain strike (where total option value is minimized). "
+            "Enter ATM butterfly centered on max-pain when spot is within 0.5% of the pin. "
+            "Market makers' delta hedging tends to pin prices near this level into close."
+        ),
+        "asset_class": "equities_options",
+        "typical_holding_days": 1,
+        "target_sharpe": 0.9,
+        "class_path": "",
+        "requires_training": False,
+        "uses_ml": False,
+        "required_data": ["price", "options_chain"],
+    },
+    "turn_of_month": {
+        "display_name": "Turn-of-Month Effect",
+        "type": "rule",
+        "status": "stub",
+        "icon": "🗓️",
+        "description": (
+            "Enter bull call spreads on SPY on the last trading day of each month; close on day +3. "
+            "Exploits the systematic end-of-month institutional rebalancing and pension fund inflows "
+            "that historically produce a 4-day positive edge around month-end."
+        ),
+        "asset_class": "equities_options",
+        "typical_holding_days": 4,
+        "target_sharpe": 0.8,
+        "class_path": "",
+        "requires_training": False,
+        "uses_ml": False,
+        "required_data": ["price", "options_chain"],
+    },
+
+    # ── Alt data / flow signals ──────────────────────────────────────────────
+    "options_flow_scanner": {
+        "display_name": "Options Flow Scanner",
+        "type": "ai",
+        "status": "stub",
+        "icon": "🌊",
+        "description": (
+            "Detect unusually large block and sweep trades in the options market (> 10× average daily volume "
+            "on a single strike). ML model scores each flow event by size, urgency (AON vs sweep), "
+            "and direction vs existing OI. Follow smart-money directional bets with defined-risk spreads."
+        ),
+        "asset_class": "equities_options",
+        "typical_holding_days": 3,
+        "target_sharpe": 1.2,
+        "class_path": "",
+        "requires_training": True,
+        "uses_ml": True,
+        "required_data": ["options_chain", "price"],
+    },
+    "news_sentiment_nlp": {
+        "display_name": "News Sentiment NLP",
+        "type": "ai",
+        "status": "stub",
+        "icon": "📰",
+        "description": (
+            "Fine-tuned FinBERT model scores real-time news articles and earnings call transcripts. "
+            "Aggregate daily sentiment score across top stories. Enter bull/bear spreads when sentiment "
+            "diverges sharply from recent price action (sentiment leads price by 1–3 days)."
+        ),
+        "asset_class": "equities_options",
+        "typical_holding_days": 3,
+        "target_sharpe": 1.0,
+        "class_path": "",
+        "requires_training": True,
+        "uses_ml": True,
+        "required_data": ["price", "news"],
+    },
+    "gex_positioning": {
+        "display_name": "Dealer Gamma Exposure",
+        "type": "rule",
+        "status": "active",
+        "icon": "⚙️",
+        "description": (
+            "Classifies the volatility regime from Dealer Gamma Exposure (GEX) and sizes SPY / cash "
+            "exposure accordingly. Positive GEX → dealers long gamma → vol-suppressed → heavy equity. "
+            "Negative GEX → dealers short gamma → moves amplified → cut exposure. "
+            "Live mode uses Polygon options chain; backtest uses VIX as a GEX proxy."
+        ),
+        "asset_class": "equities",
+        "typical_holding_days": 5,
+        "target_sharpe": 1.1,
+        "class_path": "alan_trader.strategies.gex_positioning.GexPositioningStrategy",
+        "requires_training": False,
+        "uses_ml": False,
+        "required_data": ["price", "vix"],
+    },
+    "short_squeeze_detector": {
+        "display_name": "Short Squeeze Detector",
+        "type": "ai",
+        "status": "stub",
+        "icon": "🚀",
+        "description": (
+            "Screen for stocks with short interest > 20% of float, high borrow cost, and a positive "
+            "catalyst trigger (beat + raise, breakout on volume). ML model scores squeeze potential. "
+            "Enter OTM bull call spreads sized for asymmetric payoff on explosive moves."
+        ),
+        "asset_class": "equities_options",
+        "typical_holding_days": 5,
+        "target_sharpe": 1.3,
+        "class_path": "",
+        "requires_training": True,
+        "uses_ml": True,
+        "required_data": ["price", "short_interest", "options_chain", "news"],
+    },
+
+    # ── Technical / systematic trend ─────────────────────────────────────────
+    "trend_ma_crossover": {
+        "display_name": "Dual MA Crossover",
+        "type": "rule",
+        "status": "stub",
+        "icon": "📈",
+        "description": (
+            "50/200 SMA golden cross → buy bull call spread; death cross → buy bear put spread on SPY. "
+            "Hold until opposite crossover. Use spread instead of equity for defined max loss. "
+            "Classic trend-following applied to ETF options for leverage efficiency."
+        ),
+        "asset_class": "equities_options",
+        "typical_holding_days": 60,
+        "target_sharpe": 0.7,
+        "class_path": "",
+        "requires_training": False,
+        "uses_ml": False,
+        "required_data": ["price"],
+    },
+    "bollinger_squeeze": {
+        "display_name": "Bollinger Band Squeeze",
+        "type": "hybrid",
+        "status": "stub",
+        "icon": "🗜️",
+        "description": (
+            "Detect volatility contraction (Bollinger Bands narrowing to 6-month low). Enter long straddle "
+            "or directional spread on the initial breakout bar with volume confirmation. "
+            "ML classifier predicts breakout direction using order flow and macro regime context."
+        ),
+        "asset_class": "equities_options",
+        "typical_holding_days": 5,
+        "target_sharpe": 1.0,
+        "class_path": "",
+        "requires_training": True,
+        "uses_ml": True,
+        "required_data": ["price", "volume", "vix"],
+    },
+    "rsi_mean_reversion": {
+        "display_name": "RSI Extreme Reversion",
+        "type": "rule",
+        "status": "stub",
+        "icon": "↩️",
+        "description": (
+            "Enter bull put spread when SPY 2-period RSI drops below 10 (extreme oversold). "
+            "Enter bear call spread when RSI exceeds 90. "
+            "Larry Connors-style high-win-rate mean reversion; tight hold of 2–4 days."
+        ),
+        "asset_class": "equities_options",
+        "typical_holding_days": 3,
+        "target_sharpe": 1.1,
+        "class_path": "",
+        "requires_training": False,
+        "uses_ml": False,
+        "required_data": ["price"],
+    },
+
+    # ── Regime-aware ML ──────────────────────────────────────────────────────
+    "regime_hmm": {
+        "display_name": "HMM Regime Classifier",
+        "type": "ai",
+        "status": "stub",
+        "icon": "🔮",
+        "description": (
+            "Hidden Markov Model on daily returns, realized vol, and VIX detects market regime: "
+            "bull (low vol, trending), bear (high vol, trending), or choppy (high vol, mean-reverting). "
+            "Acts as a master filter — routes signals from other strategies through regime gating."
+        ),
+        "asset_class": "equities",
+        "typical_holding_days": 0,   # meta-strategy, no direct positions
+        "target_sharpe": 0.0,
+        "class_path": "",
+        "requires_training": True,
+        "uses_ml": True,
+        "required_data": ["price", "vix"],
+    },
+    "reinforcement_agent": {
+        "display_name": "RL Execution Agent",
+        "type": "ai",
+        "status": "stub",
+        "icon": "🧠",
+        "description": (
+            "Proximal Policy Optimization (PPO) agent learns when to enter, size, and exit spread positions. "
+            "State space: price features, Greeks, portfolio P&L, time features. "
+            "Reward: risk-adjusted P&L penalized by drawdown. Trained in sim, validated on paper account."
+        ),
+        "asset_class": "equities_options",
+        "typical_holding_days": 5,
+        "target_sharpe": 1.5,
+        "class_path": "",
+        "requires_training": True,
+        "uses_ml": True,
+        "required_data": ["price", "options_chain", "vix"],
+    },
+    "neural_regime_transformer": {
+        "display_name": "Regime Transformer",
+        "type": "ai",
+        "status": "stub",
+        "icon": "🔬",
+        "description": (
+            "Temporal Fusion Transformer trained on 40+ macro and technical features. "
+            "Outputs probability distribution over 5 regimes (crash, bear, chop, bull, melt-up). "
+            "Used to dynamically tilt portfolio allocation across all other strategies."
+        ),
+        "asset_class": "equities",
+        "typical_holding_days": 0,
+        "target_sharpe": 0.0,
+        "class_path": "",
+        "requires_training": True,
+        "uses_ml": True,
+        "required_data": ["price", "vix", "rates", "macro"],
+    },
+    "online_adaptive_model": {
+        "display_name": "Online Adaptive LSTM",
+        "type": "ai",
+        "status": "stub",
+        "icon": "🔄",
+        "description": (
+            "LSTM that updates weights continuously using a sliding 60-day window (online learning). "
+            "Adapts to regime shifts without full retraining. "
+            "Exponentially weighted loss favours recent data. Replaces static weekly retraining."
+        ),
+        "asset_class": "equities_options",
+        "typical_holding_days": 5,
+        "target_sharpe": 1.3,
+        "class_path": "",
+        "requires_training": True,
+        "uses_ml": True,
+        "required_data": ["price", "vix", "rates"],
+    },
+
+    # ── Portfolio construction ────────────────────────────────────────────────
+    "risk_parity_alloc": {
+        "display_name": "Risk Parity Allocation",
+        "type": "rule",
+        "status": "stub",
+        "icon": "⚖️",
+        "description": (
+            "Allocate capital across active strategies so each contributes equal marginal risk "
+            "(equal volatility contribution). Rebalance weekly. "
+            "Prevents any single strategy from dominating portfolio drawdown."
+        ),
+        "asset_class": "portfolio",
+        "typical_holding_days": 7,
+        "target_sharpe": 1.0,
+        "class_path": "",
+        "requires_training": False,
+        "uses_ml": False,
+        "required_data": ["strategy_returns"],
+    },
+    "min_variance_hedge": {
+        "display_name": "Minimum Variance Hedge",
+        "type": "rule",
+        "status": "stub",
+        "icon": "🧮",
+        "description": (
+            "Continuously estimate the portfolio beta to SPY and overlay an SPX put spread hedge "
+            "sized to neutralise 80% of directional market exposure. "
+            "Targets near-zero portfolio beta while preserving strategy alpha."
+        ),
+        "asset_class": "equities_options",
+        "typical_holding_days": 30,
+        "target_sharpe": 0.6,
+        "class_path": "",
+        "requires_training": False,
+        "uses_ml": False,
+        "required_data": ["price", "options_chain", "strategy_returns"],
+    },
+
+    # ── Fixed income / rates signals ─────────────────────────────────────────
+    "rates_spy_rotation_options": {
+        "display_name": "TLT / SPY Rotation (Options)",
+        "type": "rule",
+        "status": "active",
+        "icon": "🎯",
+        "description": (
+            "Long calls and puts only — no short selling. "
+            "Same regime detection as TLT/SPY Rotation (Growth/Inflation/Fear/Risk-On) "
+            "but positions are long calls on the favored asset or long puts in Inflation. "
+            "Retail-friendly: max loss = premium paid."
+        ),
+        "asset_class": "equities_options",
+        "typical_holding_days": 30,
+        "target_sharpe": 0.7,
+        "class_path": "alan_trader.strategies.rates_spy_rotation_options.RatesSpyRotationOptionsStrategy",
+        "requires_training": False,
+        "uses_ml": False,
+        "requires_ticker": False,
+        "required_data": ["price", "rates", "tlt", "vix", "spy_options", "tlt_options"],
+    },
+    "rates_spy_rotation": {
+        "display_name": "TLT / SPY Rotation",
+        "type": "rule",
+        "status": "active",
+        "icon": "🔁",
+        "description": (
+            "Rotate between SPY and TLT based on rate-equity regime: Growth / Inflation / Fear / Risk-On. "
+            "Regime detected from 20-day yield change + 20-day SPY return; 3-day confirmation before switching. "
+            "Classic flight-to-safety tactical asset allocation with defined per-regime weights."
+        ),
+        "asset_class": "equities",
+        "typical_holding_days": 21,
+        "target_sharpe": 0.8,
+        "class_path": "alan_trader.strategies.rates_spy_rotation.RatesSpyRotationStrategy",
+        "requires_training": False,
+        "uses_ml": False,
+        "requires_ticker": False,
+        "required_data": ["price", "rates", "tlt"],
+    },
+    "credit_spread_signal": {
+        "display_name": "Credit Spread Canary",
+        "type": "rule",
+        "status": "stub",
+        "icon": "🐦",
+        "description": (
+            "Monitor HYG/LQD credit spread as a leading indicator for equity stress. "
+            "When IG-HY spread widens > 2σ above 60-day mean, shift to defensive bear call spreads. "
+            "Credit markets price in stress 2–3 weeks before equities reprice."
+        ),
+        "asset_class": "equities_options",
+        "typical_holding_days": 14,
+        "target_sharpe": 0.9,
+        "class_path": "",
+        "requires_training": False,
+        "uses_ml": False,
+        "required_data": ["price", "credit_spreads"],
     },
 }
 

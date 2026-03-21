@@ -1,0 +1,21 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(xargs sed:*)",
+      "Bash(\"d:/Work/ClaudeCodeTest/alan_trader/visualization/charts.py\")",
+      "Bash(python -c \"from dashboard.tabs.trade_log import render; print\\(''OK''\\)\")",
+      "Bash(python -c \"import sys; sys.path.insert\\(0, ''.''\\); from alan_trader.dashboard.tabs.trade_log import render, _compute_risk, _risk_card; print\\(''OK''\\)\")",
+      "Bash(python -c \"import ast; ast.parse\\(open\\(''dashboard/app.py'', encoding=''utf-8''\\).read\\(\\)\\); print\\(''Syntax OK''\\)\")",
+      "Bash(python -c \":*)",
+      "Bash(python -c \"import alan_trader.dashboard.tabs.strategy_guide as g; print\\(''OK, slugs with charts:'', sum\\(1 for s in [''options_spread'',''iron_condor'',''long_straddle'',''short_strangle'',''butterfly_spread'',''vix_mean_reversion'',''vwap_reversion'',''regime_hmm'',''earnings_drift'',''risk_parity_alloc'',''options_flow_scanner'',''rates_spy_rotation'',''momentum_factor''] if g._payoff_chart\\(s\\) is not None\\)\\)\")",
+      "Bash(python -c \"import sys; print\\(sys.executable\\)\")",
+      "Bash(C:/Users/alomg/AppData/Local/Programs/Python/Python313/python.exe -c \"import alan_trader.dashboard.tabs.strategy_guide as g; print\\(''OK''\\)\")",
+      "Bash(C:/Users/alomg/AppData/Local/Programs/Python/Python313/python.exe -c \":*)",
+      "Bash(C:/Users/alomg/AppData/Local/Programs/Python/Python313/python.exe -m py_compile alan_trader/dashboard/app.py)",
+      "Bash(C:/Users/alomg/AppData/Local/Programs/Python/Python313/python.exe -c \"from alan_trader.strategies.registry import get_strategy; s = get_strategy\\(''options_spread''\\); print\\(''OK:'', s\\)\")",
+      "Bash(C:/Users/alomg/AppData/Local/Programs/Python/Python313/python.exe -m py_compile alan_trader/dashboard/tabs/strategy_guide.py)",
+      "Bash(grep -rn \"Backtest failed\\\\|float division\\\\|ZeroDivisionError\" d:/Work/ClaudeCodeTest/alan_trader/ --include=*.py)",
+      "Bash(python -c \"import ast; ast.parse\\(open\\(''data/loader.py'', encoding=''utf-8''\\).read\\(\\)\\); print\\(''OK''\\)\")"
+    ]
+  }
+}

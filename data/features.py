@@ -142,7 +142,7 @@ def merge_vix(spy_df: pd.DataFrame, vix_df: pd.DataFrame) -> pd.DataFrame:
     """Merge VIX close into SPY df and add derived features."""
     vix = vix_df[["close"]].rename(columns={"close": "vix"})
     df = spy_df.join(vix, how="left")
-    df["vix"] = df["vix"].ffill()
+    df["vix"] = df["vix"].ffill().infer_objects(copy=False)
 
     df["vix_chg_1d"] = df["vix"].pct_change(1)
     df["vix_chg_5d"] = df["vix"].pct_change(5)
@@ -173,8 +173,8 @@ def merge_rates(df: pd.DataFrame, rate2y_df: pd.DataFrame, rate10y_df: pd.DataFr
     """Merge 2Y/10Y yield data and add spread features."""
     df = df.join(rate2y_df[["close"]].rename(columns={"close": "rate_2y"}),  how="left")
     df = df.join(rate10y_df[["close"]].rename(columns={"close": "rate_10y"}), how="left")
-    df["rate_2y"]  = df["rate_2y"].ffill()
-    df["rate_10y"] = df["rate_10y"].ffill()
+    df["rate_2y"]  = df["rate_2y"].ffill().infer_objects(copy=False)
+    df["rate_10y"] = df["rate_10y"].ffill().infer_objects(copy=False)
 
     df["yield_spread"]   = df["rate_10y"] - df["rate_2y"]
     df["rate_10y_chg5d"] = df["rate_10y"].diff(5)
@@ -206,7 +206,7 @@ def merge_macro(df: pd.DataFrame, macro_df: pd.DataFrame) -> pd.DataFrame:
 
     df = df.join(macro_df[available], how="left")
     for c in available:
-        df[c] = df[c].ffill()
+        df[c] = df[c].ffill().infer_objects(copy=False)
 
     if "rate_3m" in df.columns and "rate_10y" in df.columns:
         df["curve_3m10y"] = df["rate_10y"] - df["rate_3m"]

@@ -796,21 +796,22 @@ def vol_surface_3d(
     strikes: np.ndarray,
     dtes: np.ndarray,
     iv_matrix: np.ndarray,
+    spot_price: float = None,
 ) -> go.Figure:
     """
     Pure wireframe mesh vol surface.
     No filled surface — only grid lines and vertex markers, both coloured by IV.
+    ATM strike column highlighted in cyan.
     """
-    import plotly.colors as pc
+    WIRE_COLOR = "#3a5a8a"   # steel-blue wireframe
+    ATM_COLOR  = "#69f0ae"   # bright green for ATM
 
     z      = iv_matrix * 100          # convert to %
     z_min  = float(z.min())
     z_max  = float(z.max())
 
-    def _line_color(val: float) -> str:
-        """Map a scalar IV value to a Plasma hex colour."""
-        t = (val - z_min) / (z_max - z_min) if z_max > z_min else 0.5
-        return pc.sample_colorscale("Plasma", [float(np.clip(t, 0, 1))])[0]
+    # Find ATM strike index (closest to spot_price)
+    atm_j = int(np.argmin(np.abs(strikes - spot_price))) if spot_price is not None else None
 
     fig = go.Figure()
 
@@ -821,7 +822,7 @@ def vol_surface_3d(
             y=[float(dte)] * len(strikes),
             z=z[i].tolist(),
             mode="lines",
-            line=dict(color=_line_color(float(z[i].mean())), width=3),
+            line=dict(color=WIRE_COLOR, width=2),
             showlegend=False,
             hovertemplate=(
                 f"DTE {int(dte)}d — "
@@ -831,14 +832,17 @@ def vol_surface_3d(
 
     # ── grid lines along DTE axis (one line per strike column) ──────────────
     for j, strike in enumerate(strikes):
+        is_atm = (atm_j is not None and j == atm_j)
         fig.add_trace(go.Scatter3d(
             x=[float(strike)] * len(dtes),
             y=dtes.tolist(),
             z=z[:, j].tolist(),
             mode="lines",
-            line=dict(color=_line_color(float(z[:, j].mean())), width=3),
+            line=dict(color=ATM_COLOR if is_atm else WIRE_COLOR,
+                      width=5 if is_atm else 2),
             showlegend=False,
             hovertemplate=(
+                ("⚡ ATM — " if is_atm else "") +
                 f"Strike ${strike:.0f} — "
                 "DTE %{y}d — IV %{z:.1f}%<extra></extra>"
             ),
@@ -846,20 +850,27 @@ def vol_surface_3d(
 
     # ── vertex markers (grid nodes, tiny dots coloured by IV) ───────────────
     xv, yv, zv, cv = [], [], [], []
+    atm_xv, atm_yv, atm_zv = [], [], []
     for i in range(len(dtes)):
         for j in range(len(strikes)):
-            xv.append(float(strikes[j]))
-            yv.append(float(dtes[i]))
-            zv.append(float(z[i, j]))
-            cv.append(float(z[i, j]))
+            if atm_j is not None and j == atm_j:
+                atm_xv.append(float(strikes[j]))
+                atm_yv.append(float(dtes[i]))
+                atm_zv.append(float(z[i, j]))
+            else:
+                xv.append(float(strikes[j]))
+                yv.append(float(dtes[i]))
+                zv.append(float(z[i, j]))
+                cv.append(float(z[i, j]))
 
+    # regular grid nodes
     fig.add_trace(go.Scatter3d(
         x=xv, y=yv, z=zv,
         mode="markers",
         marker=dict(
-            size=4,
+            size=3,
             color=cv,
-            colorscale="Plasma",
+            colorscale="Viridis",
             cmin=z_min, cmax=z_max,
             showscale=True,
             colorbar=dict(
@@ -872,6 +883,16 @@ def vol_surface_3d(
         hovertemplate="Strike $%{x:.0f} — DTE %{y}d — IV %{z:.1f}%<extra></extra>",
     ))
 
+    # ATM nodes — bright cyan, larger
+    if atm_xv:
+        fig.add_trace(go.Scatter3d(
+            x=atm_xv, y=atm_yv, z=atm_zv,
+            mode="markers",
+            marker=dict(size=7, color=ATM_COLOR, symbol="circle"),
+            showlegend=False,
+            hovertemplate="⚡ ATM $%{x:.0f} — DTE %{y}d — IV %{z:.1f}%<extra></extra>",
+        ))
+
     # ── layout ───────────────────────────────────────────────────────────────
     _ax = dict(
         gridcolor="#2a3050", backgroundcolor="#0c1020",
@@ -881,7 +902,7 @@ def vol_surface_3d(
     fig.update_layout(
         paper_bgcolor="#0e1117",
         font=dict(color="#e0e0e0", family="monospace"),
-        title=dict(text="Volatility Surface — Wireframe", font=dict(size=15, color="#e0e0e0")),
+        title=dict(text="Volatility Surface  ·  <span style='color:#69f0ae'>green = ATM</span>", font=dict(size=15, color="#e0e0e0")),
         scene=dict(
             xaxis=dict(**_ax, title=dict(text="Strike ($)", font=dict(color="#e0e0e0"))),
             yaxis=dict(**_ax, title=dict(text="DTE",        font=dict(color="#e0e0e0"))),

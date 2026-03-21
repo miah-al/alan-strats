@@ -99,11 +99,13 @@ def get_price_bars(engine: Engine, symbol: str,
     return df
 
 
-def upsert_price_bars(engine: Engine, symbol: str, df: pd.DataFrame) -> int:
+def upsert_price_bars(engine: Engine, symbol: str, df: pd.DataFrame,
+                      progress_cb=None) -> int:
     """
     Insert price bars, skipping rows that already exist.
     df must have columns: date, open, high, low, close, volume, vwap (optional).
     Returns number of rows inserted.
+    progress_cb(inserted, total) called every 50 rows if provided.
     """
     if df.empty:
         return 0
@@ -130,10 +132,15 @@ def upsert_price_bars(engine: Engine, symbol: str, df: pd.DataFrame) -> int:
     _out = _out.astype(object).where(pd.notnull(_out), other=None)
     rows = _out.to_dict("records")
     inserted = 0
+    total = len(rows)
     with engine.begin() as conn:
-        for row in rows:
+        for i, row in enumerate(rows):
             result = conn.execute(sql, row)
             inserted += result.rowcount
+            if progress_cb and (i + 1) % 50 == 0:
+                progress_cb(i + 1, total, row.get("date"))
+    if progress_cb:
+        progress_cb(total, total, rows[-1].get("date") if rows else None)
     return inserted
 
 
@@ -248,7 +255,7 @@ def upsert_option_snapshots(engine: Engine, symbol: str,
     df["contract_type"] = df["type"].str.upper().str[:1]   # C | P
     bid = df["bid"] if "bid" in df.columns else 0
     ask = df["ask"] if "ask" in df.columns else 0
-    df["mid"] = (bid.fillna(0) + ask.fillna(0)) / 2
+    df["mid"] = (pd.to_numeric(bid, errors="coerce").fillna(0) + pd.to_numeric(ask, errors="coerce").fillna(0)) / 2
 
     for col in ["bid","ask","mid","last","iv","delta","gamma","theta","vega"]:
         if col not in df.columns:
@@ -315,8 +322,9 @@ def get_option_coverage(engine: Engine, symbol: str) -> Optional[tuple[date, dat
 
 # ── MacroBar ──────────────────────────────────────────────────────────────────
 
-def upsert_macro_bars(engine: Engine, df: pd.DataFrame) -> int:
-    """Insert macro rows, skipping duplicates. Accepts full macro df from fetch_macro()."""
+def upsert_macro_bars(engine: Engine, df: pd.DataFrame, progress_cb=None) -> int:
+    """Insert macro rows, skipping duplicates. Accepts full macro df from fetch_macro().
+    progress_cb(inserted, total) called every 50 rows if provided."""
     if df.empty:
         return 0
     df = df.copy()
@@ -360,19 +368,26 @@ def upsert_macro_bars(engine: Engine, df: pd.DataFrame) -> int:
     rows = out.to_dict("records")
 
     inserted = 0
+    total = len(rows)
     with engine.begin() as conn:
-        for row in rows:
+        for i, row in enumerate(rows):
             result = conn.execute(sql, row)
             inserted += result.rowcount
+            if progress_cb and (i + 1) % 50 == 0:
+                progress_cb(i + 1, total, row.get("date"))
+    if progress_cb:
+        progress_cb(total, total, rows[-1].get("date") if rows else None)
     return inserted
 
 
 # ── News ─────────────────────────────────────────────────────────────────────
 
-def upsert_news(engine: Engine, symbol: str, df: pd.DataFrame) -> int:
+def upsert_news(engine: Engine, symbol: str, df: pd.DataFrame,
+                progress_cb=None) -> int:
     """
     Insert news articles, skipping duplicates by (TickerId, ArticleId).
     df columns: id (Polygon article id), published_utc, title, description.
+    progress_cb(inserted, total) called every 50 rows if provided.
     """
     if df.empty:
         return 0
@@ -393,14 +408,22 @@ def upsert_news(engine: Engine, symbol: str, df: pd.DataFrame) -> int:
 
     if "description" not in df.columns:
         df["description"] = None
+    # Coerce non-string description/title to None (NaN floats from Polygon)
+    df["description"] = df["description"].apply(lambda v: v if isinstance(v, str) else None)
+    if "title" in df.columns:
+        df["title"] = df["title"].apply(lambda v: v if isinstance(v, str) else None)
 
     # Compute sentiment from title + description using VADER
     try:
         from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
         _sia = SentimentIntensityAnalyzer()
         def _score(row):
-            text = " ".join(filter(None, [row.get("title", ""), row.get("description", "")]))
-            return round(_sia.polarity_scores(text)["compound"], 4) if text.strip() else None
+            title = row.get("title") or ""
+            desc  = row.get("description") or ""
+            if not isinstance(title, str): title = ""
+            if not isinstance(desc,  str): desc  = ""
+            text = f"{title} {desc}".strip()
+            return round(_sia.polarity_scores(text)["compound"], 4) if text else None
         df["sentiment"] = df.apply(_score, axis=1)
     except ImportError:
         df["sentiment"] = None
@@ -422,10 +445,15 @@ def upsert_news(engine: Engine, symbol: str, df: pd.DataFrame) -> int:
     rows = df[["ticker_id","id","published_utc","published_date",
                "title","description","sentiment"]].to_dict("records")
     inserted = 0
+    total = len(rows)
     with engine.begin() as conn:
-        for row in rows:
+        for i, row in enumerate(rows):
             result = conn.execute(sql, row)
             inserted += result.rowcount
+            if progress_cb and (i + 1) % 50 == 0:
+                progress_cb(i + 1, total)
+    if progress_cb:
+        progress_cb(total, total)
     return inserted
 
 
@@ -455,8 +483,9 @@ def get_news(engine: Engine, symbol: str,
 
 # ── VixBar ────────────────────────────────────────────────────────────────────
 
-def upsert_vix_bars(engine: Engine, df: pd.DataFrame) -> int:
-    """Insert VIX bars, skipping duplicates."""
+def upsert_vix_bars(engine: Engine, df: pd.DataFrame, progress_cb=None) -> int:
+    """Insert VIX bars, skipping duplicates.
+    progress_cb(inserted, total) called every 50 rows if provided."""
     if df.empty:
         return 0
     df = df.copy()
@@ -471,10 +500,15 @@ def upsert_vix_bars(engine: Engine, df: pd.DataFrame) -> int:
     """)
     rows = df[["date","open","high","low","close"]].to_dict("records")
     inserted = 0
+    total = len(rows)
     with engine.begin() as conn:
-        for row in rows:
+        for i, row in enumerate(rows):
             result = conn.execute(sql, row)
             inserted += result.rowcount
+            if progress_cb and (i + 1) % 50 == 0:
+                progress_cb(i + 1, total, row.get("date"))
+    if progress_cb:
+        progress_cb(total, total, rows[-1].get("date") if rows else None)
     return inserted
 
 

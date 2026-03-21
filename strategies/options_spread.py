@@ -132,7 +132,7 @@ class OptionsSpreadStrategy(BaseStrategy):
         n_train       = int(len(features) * 0.80)
 
         trainer = ModelTrainer(
-            num_features=len(avail),
+            feature_cols=avail,
             hidden_size=self.hidden_size,
             num_layers=self.num_layers,
             dropout=self.dropout,
@@ -189,7 +189,7 @@ class OptionsSpreadStrategy(BaseStrategy):
             "spread_price_predictions": price_preds,
             "spread_price_actuals":     actual_sp,
             "test_dates":               test_dates,
-            "feature_cols":             FEATURE_COLS,
+            "feature_cols":             avail,
             "feature_df_tail":          df.tail(60),
             "model_summary":            trainer.get_model_summary(),
         }
@@ -203,6 +203,31 @@ class OptionsSpreadStrategy(BaseStrategy):
             params=self.get_params(),
             extra=extra,
         )
+
+    def is_trainable(self) -> bool:
+        return True
+
+    def get_model_name(self, ticker: str = "SPY") -> str:
+        return f"options_spread_{ticker.lower()}"
+
+    def get_backtest_ui_params(self) -> list:
+        from alan_trader.data.features import SPREAD_TYPE_OPTIONS
+        return [
+            {
+                "key": "spread_type", "label": "Spread type", "type": "selectbox",
+                "options": list(SPREAD_TYPE_OPTIONS.keys()),
+                "format_func": lambda k: SPREAD_TYPE_OPTIONS[k],
+                "default": "bull_call",
+            },
+            {"key": "seq_len",        "label": "Seq length",     "type": "slider", "min": 10,   "max": 60,   "default": 30,   "step": 1,    "col": 0},
+            {"key": "hold_days",      "label": "Hold days",      "type": "slider", "min": 2,    "max": 15,   "default": 5,    "step": 1,    "col": 1},
+            {"key": "min_confidence", "label": "Min confidence", "type": "slider", "min": 0.33, "max": 0.70, "default": 0.38, "step": 0.01, "col": 2},
+            {
+                "key": "otm_pct",    "label": "OTM %",          "type": "slider", "min": 0,    "max": 40,   "default": 0,    "step": 5,    "col": 0, "row": 1,
+                "help": "How far OTM the long strike is. 0 = ATM, 20 = 20% OTM.",
+            },
+            {"key": "num_epochs",     "label": "Train epochs",   "type": "slider", "min": 20,   "max": 200,  "default": 60,   "step": 10,   "col": 1, "row": 1},
+        ]
 
     def get_params(self) -> dict:
         return {

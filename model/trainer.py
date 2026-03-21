@@ -26,7 +26,7 @@ MODEL_DIR.mkdir(exist_ok=True)
 class ModelTrainer:
     def __init__(
         self,
-        num_features: int,
+        num_features: int = 0,
         hidden_size: int = 128,
         num_layers: int = 2,
         dropout: float = 0.3,
@@ -37,8 +37,10 @@ class ModelTrainer:
         seq_len: int = 30,
         enter_boost: float = 2.0,
         device: Optional[str] = None,
+        feature_cols: Optional[list] = None,
     ):
-        self.num_features = num_features
+        self.feature_cols = list(feature_cols) if feature_cols else []
+        self.num_features = len(self.feature_cols) if self.feature_cols else num_features
         self.hidden_size = hidden_size
         self.num_layers = num_layers
         self.dropout = dropout
@@ -49,7 +51,7 @@ class ModelTrainer:
         self.enter_boost = enter_boost
         self.device = torch.device(device or ("cuda" if torch.cuda.is_available() else "cpu"))
 
-        self.model = SpreadSignalModel(num_features, hidden_size, num_layers, dropout).to(self.device)
+        self.model = SpreadSignalModel(self.num_features, hidden_size, num_layers, dropout).to(self.device)
         self.optimizer = torch.optim.AdamW(self.model.parameters(), lr=lr, weight_decay=1e-4)
         self.scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
             self.optimizer, mode="min", factor=0.5, patience=5
@@ -241,6 +243,60 @@ class ModelTrainer:
             "trainable_params": sum(p.numel() for p in m.parameters() if p.requires_grad),
         }
 
+    def compute_confusion_matrix(self, features: np.ndarray, labels: np.ndarray) -> np.ndarray:
+        """Return 3×3 confusion matrix (rows=true, cols=pred) on unscaled features."""
+        import torch
+        from alan_trader.model.architecture import SequenceDataset
+        from torch.utils.data import DataLoader
+        scaled = self.scaler.transform(features)
+        ds     = SequenceDataset(scaled, labels, self.seq_len)
+        loader = DataLoader(ds, batch_size=256, shuffle=False)
+        self.model.eval()
+        preds, trues = [], []
+        with torch.no_grad():
+            for x, y, _ in loader:
+                out = self.model(x.to(self.device)).argmax(1).cpu().numpy()
+                preds.extend(out); trues.extend(y.numpy())
+        cm = np.zeros((3, 3), dtype=float)
+        for t, p in zip(trues, preds):
+            cm[int(t), int(p)] += 1
+        return cm
+
+    def compute_feature_importance(
+        self, features: np.ndarray, labels: np.ndarray, feat_names: Optional[list] = None
+    ) -> "pd.Series":
+        """Permutation importance on unscaled features. Returns Series sorted descending."""
+        import pandas as pd
+        import torch
+        from alan_trader.model.architecture import SequenceDataset
+        from torch.utils.data import DataLoader
+
+        names = feat_names or self.feature_cols or [str(i) for i in range(features.shape[1])]
+        scaled = self.scaler.transform(features.copy())
+
+        def _acc():
+            ds = SequenceDataset(scaled, labels, self.seq_len)
+            loader = DataLoader(ds, batch_size=256)
+            self.model.eval()
+            correct = total = 0
+            with torch.no_grad():
+                for x, y, _ in loader:
+                    correct += (self.model(x.to(self.device)).argmax(1)
+                                == y.to(self.device)).sum().item()
+                    total += len(y)
+            return correct / total if total else 0.0
+
+        baseline = _acc()
+        rng = np.random.default_rng(0)
+        imp = {}
+        for i, name in enumerate(names):
+            if i >= scaled.shape[1]: continue
+            saved = scaled[:, i].copy()
+            rng.shuffle(scaled[:, i])
+            imp[name] = max(0.0, baseline - _acc())
+            scaled[:, i] = saved
+        return pd.Series(imp).sort_values(ascending=False)
+
     def save(self, name: str = "spy_model"):
         path = MODEL_DIR / f"{name}.pt"
         torch.save({
@@ -248,6 +304,7 @@ class ModelTrainer:
             "scaler_mean": self.scaler.mean_,
             "scaler_scale": self.scaler.scale_,
             "num_features": self.num_features,
+            "feature_cols": self.feature_cols,
             "has_price_regression": self._has_price_regression,
             "price_mean": self._price_mean,
             "price_std": self._price_std,
@@ -260,6 +317,7 @@ class ModelTrainer:
         self.model.load_state_dict(ckpt["model_state"])
         self.scaler.mean_ = ckpt["scaler_mean"]
         self.scaler.scale_ = ckpt["scaler_scale"]
+        self.feature_cols = ckpt.get("feature_cols", self.feature_cols)
         self._has_price_regression = ckpt.get("has_price_regression", False)
         self._price_mean = ckpt.get("price_mean", 0.0)
         self._price_std = ckpt.get("price_std", 1.0)

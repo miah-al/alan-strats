@@ -214,6 +214,11 @@ class DividendArbitrageStrategy(BaseStrategy):
             params=self.get_params(),
         )
 
+    def get_backtest_ui_params(self) -> list:
+        return [
+            {"key": "hold_days", "label": "Days before ex-div", "type": "slider", "min": 1, "max": 10, "default": 3, "step": 1, "col": 0},
+        ]
+
     def get_params(self) -> dict:
         return {
             "entry_days_before_exdiv": self.entry_days,

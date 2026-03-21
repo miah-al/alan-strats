@@ -127,13 +127,259 @@ def _fetch_live_quote(ticker: str, api_key: str) -> dict:
         return {}
 
 
+_MATURITIES = [
+    ("3M",  "rate_3m"),
+    ("6M",  "rate_6m"),
+    ("1Y",  "rate_1y"),
+    ("2Y",  "rate_2y"),
+    ("5Y",  "rate_5y"),
+    ("10Y", "rate_10y"),
+    ("30Y", "rate_30y"),
+]
+
+
+# yfinance tickers for intraday snapshot (15-min delayed, free)
+_TREASURY_YF = {
+    "rate_3m":  "^IRX",
+    "rate_5y":  "^FVX",
+    "rate_10y": "^TNX",
+    "rate_30y": "^TYX",
+}
+
+_TREASURY_FRED_SERIES = {
+    "rate_3m":  "DGS3MO",
+    "rate_6m":  "DGS6MO",
+    "rate_1y":  "DGS1",
+    "rate_2y":  "DGS2",
+    "rate_5y":  "DGS5",
+    "rate_10y": "DGS10",
+    "rate_30y": "DGS30",
+    "sofr":     "SOFR",
+}
+
+
+@st.cache_data(ttl=300)
+def _fetch_yield_snapshot() -> "dict":
+    """Fetch intraday Treasury yields via yfinance (15-min delayed, cached 5 min)."""
+    try:
+        import yfinance as yf
+        tickers = list(_TREASURY_YF.values())
+        data = yf.download(tickers, period="1d", interval="1m", progress=False, auto_adjust=True)
+        snapshot = {}
+        for col, ticker in _TREASURY_YF.items():
+            try:
+                series = data["Close"][ticker].dropna()
+                if not series.empty:
+                    snapshot[col] = round(float(series.iloc[-1]), 3)
+            except Exception:
+                pass
+        return snapshot
+    except Exception:
+        return {}
+
+
+@st.cache_data(ttl=3600)
+def _load_yield_curve_live() -> "pd.DataFrame | None":
+    """Fetch Treasury yield curve directly from FRED free CSVs (no API key, cached 1h)."""
+    import requests
+    from io import StringIO
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
+    def _fetch_one(col_series):
+        col, series_id = col_series
+        try:
+            resp = requests.get(
+                f"https://fred.stlouisfed.org/graph/fredgraph.csv?id={series_id}",
+                timeout=15,
+            )
+            resp.raise_for_status()
+            df = pd.read_csv(StringIO(resp.text))
+            df.columns = ["date", col]
+            df["date"] = pd.to_datetime(df["date"], errors="coerce").dt.date
+            df[col]    = pd.to_numeric(df[col], errors="coerce")
+            return col, df.dropna(subset=["date"]).set_index("date")
+        except Exception:
+            return col, None
+
+    series_dfs = {}
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        futures = {pool.submit(_fetch_one, item): item for item in _TREASURY_FRED_SERIES.items()}
+        for fut in as_completed(futures):
+            col, df = fut.result()
+            if df is not None:
+                series_dfs[col] = df
+
+    if not series_dfs:
+        return None
+
+    merged = None
+    for col, df in series_dfs.items():
+        merged = df if merged is None else merged.join(df, how="outer")
+
+    merged = merged.reset_index().sort_values("date")
+    merged["spread_2s10s"] = pd.to_numeric(merged.get("rate_10y"), errors="coerce") - \
+                             pd.to_numeric(merged.get("rate_2y"),  errors="coerce")
+    merged["spread_3m10y"] = pd.to_numeric(merged.get("rate_10y"), errors="coerce") - \
+                             pd.to_numeric(merged.get("rate_3m"),  errors="coerce")
+    return merged.reset_index(drop=True)
+
+
+def _render_term_structure():
+    import plotly.graph_objects as go
+    import numpy as np
+
+    with st.spinner("Loading yield curve from FRED…"):
+        df = _load_yield_curve_live()
+
+    if df is None or df.empty:
+        st.warning("Could not load yield curve data from FRED.")
+        return
+
+    latest_date = df["date"].iloc[-1]
+    cols_avail   = [col for _, col in _MATURITIES if col in df.columns]
+    labels_avail = [lbl for lbl, col in _MATURITIES if col in df.columns]
+
+    # ── Live snapshot from yfinance (overrides FRED for available tenors) ─────
+    live = _fetch_yield_snapshot()
+    eod  = df.iloc[-1]
+
+    def _y(col):
+        """Live value if available, else latest FRED end-of-day."""
+        v = live.get(col) or eod.get(col)
+        return float(v) if v and str(v) != "nan" else None
+
+    y2  = _y("rate_2y")
+    y10 = _y("rate_10y")
+    y30 = _y("rate_30y")
+    y3m = _y("rate_3m")
+    spread_2s10s = (y10 - y2)  if y10 and y2  else None
+    spread_3m10y = (y10 - y3m) if y10 and y3m else None
+
+    live_label = "📡 live (15-min delayed)" if live else f"end-of-day {latest_date}"
+
+    m1, m2, m3, m4, m5 = st.columns(5)
+    m1.metric("2Y Yield",     f"{y2:.2f}%"  if y2  else "—")
+    m2.metric("10Y Yield",    f"{y10:.2f}%" if y10 else "—")
+    m3.metric("30Y Yield",    f"{y30:.2f}%" if y30 else "—")
+    if spread_2s10s is not None:
+        m4.metric("2s10s Spread", f"{spread_2s10s:+.2f}%",
+                  delta="Inverted" if spread_2s10s < 0 else "Normal",
+                  delta_color="inverse" if spread_2s10s < 0 else "normal")
+    else:
+        m4.metric("2s10s Spread", "—")
+    if spread_3m10y is not None:
+        m5.metric("3m10y Spread", f"{spread_3m10y:+.2f}%",
+                  delta="Inverted" if spread_3m10y < 0 else "Normal",
+                  delta_color="inverse" if spread_3m10y < 0 else "normal")
+    else:
+        m5.metric("3m10y Spread", "—")
+    st.caption(f"Yields: {live_label}  •  History: FRED (end-of-day, cached 1h)")
+
+    # ── Controls ─────────────────────────────────────────────────────────────
+    tc1, tc2 = st.columns([3, 1])
+    compare_dates_labels = ["Today only", "vs 1M ago", "vs 3M ago", "vs 1Y ago", "All 4"]
+    compare_mode = tc1.selectbox("Compare", compare_dates_labels, index=4, key="ts_compare")
+    chart_type   = tc2.radio("View", ["Curve", "History"], key="ts_chart_type", horizontal=True)
+
+    # ── Term Structure Snapshot Chart ─────────────────────────────────────────
+    if chart_type == "Curve":
+        offsets = {"Today only": [0], "vs 1M ago": [0, 21], "vs 3M ago": [0, 63],
+                   "vs 1Y ago": [0, 252], "All 4": [0, 21, 63, 252]}
+        target_offsets = offsets.get(compare_mode, [0])
+        fig = go.Figure()
+        colors = ["#00d4ff", "#ff9933", "#66ff66", "#ff4488"]
+        for idx, offset in enumerate(target_offsets):
+            row_idx = max(0, len(df) - 1 - offset)
+            row = df.iloc[row_idx]
+            yields = [float(row[col]) if row[col] is not None and not np.isnan(float(row[col])) else None
+                      for col in cols_avail]
+            label = str(row["date"])
+            if offset == 0:
+                label = f"Today ({row['date']})"
+            elif offset == 21:
+                label = f"~1M ago ({row['date']})"
+            elif offset == 63:
+                label = f"~3M ago ({row['date']})"
+            elif offset == 252:
+                label = f"~1Y ago ({row['date']})"
+            fig.add_trace(go.Scatter(
+                x=labels_avail, y=yields, mode="lines+markers",
+                name=label, line=dict(color=colors[idx % len(colors)], width=2),
+                marker=dict(size=7),
+            ))
+        fig.update_layout(
+            title="Treasury Yield Curve",
+            xaxis_title="Maturity", yaxis_title="Yield (%)",
+            yaxis_tickformat=".2f",
+            template="plotly_dark",
+            height=350,
+            legend=dict(orientation="h", y=-0.2),
+            margin=dict(t=40, b=80, l=50, r=20),
+        )
+        # Overlay live yfinance dots where available
+        if live:
+            live_x = [lbl for lbl, col in _MATURITIES if live.get(col) is not None]
+            live_y = [live[col] for _, col in _MATURITIES if live.get(col) is not None]
+            if live_x:
+                fig.add_trace(go.Scatter(
+                    x=live_x, y=live_y, mode="markers",
+                    name="Live (yfinance)",
+                    marker=dict(color="#ffffff", size=10, symbol="circle",
+                                line=dict(color="#00d4ff", width=2)),
+                ))
+
+        # Zero line to highlight inversion
+        fig.add_hline(y=0, line_dash="dot", line_color="gray", opacity=0.5)
+        st.plotly_chart(fig, width="stretch", key="ts_curve_chart")
+
+    # ── Historical Yield Chart ────────────────────────────────────────────────
+    else:
+        plot_tenors = st.multiselect(
+            "Tenors to plot", labels_avail,
+            default=["2Y", "10Y", "30Y"],
+            key="ts_hist_tenors",
+        )
+        fig = go.Figure()
+        colors = ["#00d4ff", "#ff9933", "#66ff66", "#ff4488", "#cc88ff", "#ffff44", "#ff6666"]
+        for i, lbl in enumerate(plot_tenors):
+            col = dict(_MATURITIES)[lbl]
+            if col in df.columns:
+                fig.add_trace(go.Scatter(
+                    x=df["date"], y=df[col], mode="lines",
+                    name=f"{lbl} Yield",
+                    line=dict(color=colors[i % len(colors)], width=1.5),
+                ))
+
+        # 2s10s spread as secondary
+        if "rate_2y" in df.columns and "rate_10y" in df.columns:
+            spread = df["rate_10y"] - df["rate_2y"]
+            fig.add_trace(go.Scatter(
+                x=df["date"], y=spread, mode="lines",
+                name="2s10s Spread",
+                line=dict(color="#888888", width=1, dash="dot"),
+                yaxis="y2",
+            ))
+
+        fig.update_layout(
+            title="Treasury Yields — History",
+            xaxis_title="Date", yaxis_title="Yield (%)",
+            yaxis2=dict(title="Spread (%)", overlaying="y", side="right",
+                        showgrid=False, zeroline=True, zerolinecolor="#555"),
+            template="plotly_dark",
+            height=380,
+            legend=dict(orientation="h", y=-0.2),
+            margin=dict(t=40, b=80, l=50, r=60),
+        )
+        fig.add_hline(y=0, line_dash="dot", line_color="gray", opacity=0.4)
+        st.plotly_chart(fig, width="stretch", key="ts_hist_chart")
+
+
 def render(ticker: str = "SPY", api_key: str = ""):
     st.header(f"Market Data — {ticker}")
 
     from alan_trader.data.simulator import (
         TICKER_PROFILES, DEFAULT_PROFILE,
         simulate_price,
-        simulate_vol_surface,
         simulate_iv_smile,
         simulate_top_movers,
         simulate_gex,
@@ -164,15 +410,11 @@ def render(ticker: str = "SPY", api_key: str = ""):
                 lq5.metric("Low",    f"${q.get('low', 0):,.2f}")
                 st.markdown("---")
 
-        candle_days = st.slider("Candle history (trading days)", 20, 504, 120, 10,
-                                key="md_candle_days")
-
         bars_df = None
         if api_key:
             with st.spinner(f"Fetching {ticker} bars from Polygon.io…"):
-                bars_df = _fetch_live_bars(ticker, api_key, n_days=candle_days)
+                bars_df = _fetch_live_bars(ticker, api_key, n_days=504)
             if bars_df is not None and not bars_df.empty:
-                bars_df = bars_df.tail(candle_days)
                 # Append today's partial bar from snapshot if missing
                 import datetime as _dt
                 today = _dt.date.today()
@@ -195,14 +437,34 @@ def render(ticker: str = "SPY", api_key: str = ""):
                 bars_df = None
 
         if bars_df is None or bars_df.empty:
-            bars_df = simulate_price(ticker=ticker, n_days=candle_days).tail(candle_days)
+            bars_df = simulate_price(ticker=ticker, n_days=504)
             if api_key:
                 st.caption("⚠️ Showing simulated data — live bars unavailable.")
             else:
                 st.caption("Simulated data — enter API key in sidebar for real bars.")
 
-        st.plotly_chart(C.candlestick_chart(bars_df, ticker=ticker),
+        # ── Date range slice ─────────────────────────────────────────────────
+        import datetime as _dt
+        bar_dates = pd.to_datetime(bars_df.index).date
+        d_min, d_max = bar_dates.min(), bar_dates.max()
+        rng = st.slider(
+            "View range",
+            min_value=d_min, max_value=d_max,
+            value=(d_min, d_max),
+            format="YYYY-MM-DD",
+            key="md_candle_range",
+        )
+        slice_df = bars_df.loc[
+            (pd.to_datetime(bars_df.index).date >= rng[0]) &
+            (pd.to_datetime(bars_df.index).date <= rng[1])
+        ]
+
+        st.plotly_chart(C.candlestick_chart(slice_df, ticker=ticker),
                         width="stretch", key="md_candle")
+
+    # ── Treasury Term Structure ───────────────────────────────────────────────
+    with st.expander("Treasury Term Structure", expanded=False):
+        _render_term_structure()
 
     # ── Shared controls (used by Vol Surface + GEX below) ────────────────────
     st.markdown("---")
@@ -234,10 +496,16 @@ def render(ticker: str = "SPY", api_key: str = ""):
                 live_surf, surf_err = _fetch_live_vol_surface(
                     ticker, api_key, spot_price, min_dte=dte_lo, max_dte=dte_hi
                 )
-            if surf_err:
-                st.error(f"Vol surface error: {surf_err}")
-
-        if live_surf is not None and not live_surf.empty:
+        if not api_key:
+            st.info("Enter your Polygon API key in the sidebar to load the real volatility surface.")
+        elif live_surf is None or live_surf.empty:
+            msg = surf_err or (
+                f"Live IV surface unavailable for {ticker}. "
+                "The `implied_volatility` field requires a Polygon Options add-on plan. "
+                "The IV smile below uses simulated data."
+            )
+            st.warning(msg)
+        else:
             strikes_z = np.array(sorted(live_surf["strike"].unique()))
             dtes_z    = np.array(sorted(live_surf["dte"].unique()))
             iv_z  = np.full((len(dtes_z), len(strikes_z)), np.nan)
@@ -248,37 +516,46 @@ def render(ticker: str = "SPY", api_key: str = ""):
                 if iv and float(iv) > 0:
                     iv_z[d_idx[row["dte"]], s_idx[row["strike"]]] = float(iv)
 
-            # 2-D interpolation: linear for interior, nearest for edges
             from scipy.interpolate import griddata
             di, si = np.meshgrid(np.arange(len(dtes_z)), np.arange(len(strikes_z)), indexing="ij")
             valid  = ~np.isnan(iv_z)
             if valid.sum() >= 4:
-                pts = np.column_stack([di[valid], si[valid]])
+                pts     = np.column_stack([di[valid], si[valid]])
                 all_pts = np.column_stack([di.ravel(), si.ravel()])
-                iv_linear  = griddata(pts, iv_z[valid], all_pts, method="linear").reshape(iv_z.shape)
                 iv_nearest = griddata(pts, iv_z[valid], all_pts, method="nearest").reshape(iv_z.shape)
-                iv_z = np.where(np.isnan(iv_linear), iv_nearest, iv_linear)
-            n_strikes = len(strikes_z)
-            n_exp     = len(dtes_z)
-            st.caption(f"📡 Live IV surface — {n_strikes} strikes × {n_exp} expirations (Polygon calls, 5 % steps, cached 2 h)")
-        else:
-            # Simulated fallback — apply DTE filter
-            strikes_all, dtes_all, iv_all = simulate_vol_surface(S=spot_price, iv_base=iv_base)
-            mask_s = (strikes_all >= spot_price * 0.80) & (strikes_all <= spot_price * 1.20)
-            mask_d = (dtes_all >= dte_lo) & (dtes_all <= dte_hi)
-            strikes_z = strikes_all[mask_s]
-            dtes_z    = dtes_all[mask_d]
-            iv_z      = iv_all[np.ix_(mask_d, mask_s)]
-            if api_key:
-                st.caption("⚠️ Showing simulated surface — live options unavailable.")
-            else:
-                st.caption("Simulated surface — enter API key in sidebar for real IV data.")
+                try:
+                    iv_linear = griddata(pts, iv_z[valid], all_pts, method="linear").reshape(iv_z.shape)
+                    iv_z = np.where(np.isnan(iv_linear), iv_nearest, iv_linear)
+                except Exception:
+                    # Degenerate geometry (e.g. all points share one DTE) — nearest is fine
+                    iv_z = iv_nearest
 
-        if strikes_z.size >= 2 and dtes_z.size >= 2:
-            st.plotly_chart(C.vol_surface_3d(strikes_z, dtes_z, iv_z),
-                            width="stretch", key="md_vol_surface")
-        else:
-            st.warning("Not enough data — broaden the DTE range.")
+            n_strikes = strikes_z.size
+            n_dtes    = dtes_z.size
+            if n_strikes >= 2 and n_dtes >= 2:
+                st.caption(f"📡 Live IV surface — {n_strikes} strikes × {n_dtes} expirations")
+                st.plotly_chart(C.vol_surface_3d(strikes_z, dtes_z, iv_z, spot_price=spot_price),
+                                width="stretch", key="md_vol_surface")
+            elif n_strikes >= 2 and n_dtes == 1:
+                import plotly.graph_objects as _go
+                dte_val   = int(dtes_z[0])
+                fig_smile = _go.Figure(_go.Scatter(
+                    x=strikes_z, y=iv_z[0], mode="lines+markers",
+                    line=dict(color="#00d4ff", width=2), marker=dict(size=6),
+                ))
+                fig_smile.update_layout(
+                    title=f"📡 IV Smile — {ticker} ({dte_val} DTE)",
+                    xaxis_title="Strike", yaxis_title="IV",
+                    template="plotly_dark", height=320,
+                    margin=dict(t=40, b=40, l=50, r=20),
+                )
+                st.caption("Single expiry with live IV — showing IV smile. Outside market hours Polygon only populates IV for the nearest active expiry. Try again during trading hours for 3D view.")
+                st.plotly_chart(fig_smile, width="stretch", key="md_vol_surface")
+            else:
+                st.warning(
+                    f"Not enough data for {ticker}: {n_strikes} strike(s) × {n_dtes} expiry(s). "
+                    "Try widening the DTE range or strike range."
+                )
 
         sm1, sm2 = st.columns([3, 1])
         with sm1:

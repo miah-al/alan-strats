@@ -162,7 +162,7 @@ def fetch_macro(from_date: str, to_date: str) -> pd.DataFrame:
         macro["jobless_claims"] = macro["jobless_claims"] * 1000   # FRED: raw number
 
     # Forward-fill gaps (weekends, holidays, weekly/monthly releases)
-    macro = macro.ffill()
+    macro = macro.ffill().infer_objects(copy=False)
 
     _save_cache(key, macro)
     return macro
@@ -212,10 +212,6 @@ def fetch_live_vol_surface(
     if cached is not None:
         return cached
 
-    # Target strikes at step_pct intervals (e.g. 5 %)
-    import numpy as np
-    targets = np.round(np.arange(0.70, 1.31, step_pct) * spot_price, 2)
-
     results = []
     url = f"/v3/snapshot/options/{ticker}"
     params = {
@@ -233,34 +229,78 @@ def fetch_live_vol_surface(
         url      = next_url or None
         params   = {}
 
+    # If empty (e.g. weekend / after-hours), retry without strike filter — wider net
+    if not results:
+        data = client._get(f"/v3/snapshot/options/{ticker}", {
+            "expiration_date.gte": exp_from,
+            "expiration_date.lte": exp_to,
+            "contract_type": "call",
+            "limit": 10,
+        })
+        if not data.get("results"):
+            # Nothing at all — surface unavailable (market closed or plan restriction)
+            raise ValueError(
+                f"No options data from Polygon for {ticker}. "
+                "This endpoint requires an Options plan. "
+                "If markets are closed, data from the last session will be unavailable via snapshot."
+            )
+        # Wider results exist — relax strike range and retry
+        params = {
+            "expiration_date.gte": exp_from,
+            "expiration_date.lte": exp_to,
+            "contract_type": "call",
+            "limit": 250,
+        }
+        url = f"/v3/snapshot/options/{ticker}"
+        results = []
+        while url:
+            data = client._get(url, params)
+            results.extend(data.get("results", []))
+            next_url = (data.get("next_url") or "").replace(client.BASE, "")
+            url    = next_url or None
+            params = {}
+
     if not results:
         return None
 
     rows = []
+    no_iv_count  = 0
+    dte_miss     = 0
     for r in results:
         d  = r.get("details", {})
         iv = r.get("implied_volatility")
-        if not iv or float(iv) < 0.01:   # exclude zeros and near-zero junk
-            continue
         strike = d.get("strike_price")
         exp    = d.get("expiration_date", "")
         if not strike or not exp:
             continue
         dte = (pd.to_datetime(exp).date() - today).days
         if dte < min_dte or dte > max_dte:
+            dte_miss += 1
+            continue
+        if not iv or float(iv) < 0.01:
+            no_iv_count += 1
             continue
         rows.append({"strike": float(strike), "dte": int(dte), "iv": float(iv)})
 
     if not rows:
-        return None
+        if no_iv_count > 0 and dte_miss == 0:
+            raise ValueError(
+                f"Polygon returned {no_iv_count} options for {ticker} but implied_volatility "
+                "is null on all of them. This typically happens outside market hours — "
+                "IV is only populated in live snapshots during trading sessions. "
+                "Try again during market hours (9:30 AM – 4:00 PM ET, Mon–Fri)."
+            )
+        if dte_miss > 0 and no_iv_count == 0:
+            raise ValueError(
+                f"Options exist for {ticker} but none fall in the {min_dte}–{max_dte} DTE range. "
+                "Try widening the DTE sliders."
+            )
+        raise ValueError(
+            f"No usable options data for {ticker} "
+            f"({no_iv_count} missing IV, {dte_miss} outside DTE range)."
+        )
 
     df = pd.DataFrame(rows)
-
-    # Bucket each strike to the nearest step_pct target
-    def _nearest(s: float) -> float:
-        return float(targets[np.argmin(np.abs(targets - s))])
-
-    df["strike"] = df["strike"].apply(_nearest)
     df = df.groupby(["strike", "dte"])["iv"].median().reset_index()
 
     if df is not None and not df.empty:

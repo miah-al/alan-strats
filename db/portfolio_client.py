@@ -1,7 +1,3 @@
-"""
-portfolio_client.py — CRUD helpers for the portfolio.* schema.
-All functions accept a SQLAlchemy engine and return plain DataFrames or dicts.
-"""
 from __future__ import annotations
 
 import datetime
@@ -33,12 +29,10 @@ def get_accounts(engine) -> pd.DataFrame:
 
 
 def ensure_default_account(engine) -> int:
-    """Return AccountId=1 (paper account); create it if it doesn't exist."""
     with engine.connect() as c:
         aid = _scalar(c, "SELECT TOP 1 AccountId FROM portfolio.Account WHERE IsActive=1 ORDER BY AccountId")
         if aid is not None:
             return int(aid)
-    # Re-seed if table is empty
     with engine.begin() as c:
         c.execute(text("""
             INSERT INTO portfolio.Account (Name, BrokerName, AccountType, Notes)
@@ -101,10 +95,20 @@ def get_balance_history(engine, account_id: int, days: int = 90) -> pd.DataFrame
         )
 
 
+# ── tickers ────────────────────────────────────────────────────────────────────
+
+def get_security_id(engine, symbol: str) -> int | None:
+    with engine.connect() as c:
+        val = _scalar(c,
+            "SELECT TickerId FROM mkt.Ticker WHERE Symbol = :sym",
+            {"sym": symbol}
+        )
+    return int(val) if val is not None else None
+
+
 # ── positions ─────────────────────────────────────────────────────────────────
 
 def get_open_positions(engine, account_id: int | None = None) -> pd.DataFrame:
-    # Filter via the base table (views don't expose AccountId in their SELECT)
     pid_filter = ""
     params: dict = {}
     if account_id is not None:
@@ -119,7 +123,8 @@ def get_open_positions(engine, account_id: int | None = None) -> pd.DataFrame:
 
 def get_closed_positions(engine, account_id: int | None = None,
                          symbol: str | None = None,
-                         spread_type: str | None = None,
+                         position_type: str | None = None,
+                         strategy_name: str | None = None,
                          from_date: datetime.date | None = None,
                          to_date: datetime.date | None = None) -> pd.DataFrame:
     where_parts = ["1=1"]
@@ -131,8 +136,10 @@ def get_closed_positions(engine, account_id: int | None = None,
         params["aid"] = account_id
     if symbol:
         where_parts.append("Symbol = :sym"); params["sym"] = symbol
-    if spread_type:
-        where_parts.append("SpreadType = :st"); params["st"] = spread_type
+    if position_type:
+        where_parts.append("PositionType = :pt"); params["pt"] = position_type
+    if strategy_name:
+        where_parts.append("StrategyName = :sn"); params["sn"] = strategy_name
     if from_date:
         where_parts.append("CloseDate >= :fd"); params["fd"] = from_date
     if to_date:
@@ -145,51 +152,154 @@ def get_closed_positions(engine, account_id: int | None = None,
         )
 
 
-def insert_position(engine, account_id: int, symbol: str, spread_type: str,
-                    contracts: int, open_date: datetime.date, expiration: datetime.date,
-                    dte_at_entry: int, entry_value: float, max_profit: float,
-                    max_loss: float, commission: float = 0.0,
-                    spot: float | None = None, vix: float | None = None,
-                    ivr: float | None = None, source: str = "manual",
-                    model_signal_id: int | None = None,
-                    tags: str | None = None, notes: str | None = None) -> int:
+def insert_position(engine, account_id: int, security_id: int,
+                    position_type: str, quantity: float,
+                    open_date: datetime.date, avg_entry_price: float,
+                    direction: str = 'long',
+                    commission: float = 0.0,
+                    regime: str | None = None,
+                    strategy_name: str | None = None,
+                    source: str = 'paper',
+                    tags: str | None = None,
+                    notes: str | None = None) -> int:
+    with engine.begin() as c:
+        row = _scalar(c, """
+            INSERT INTO portfolio.Position
+                (AccountId, SecurityId, PositionType, Quantity, OpenDate, AvgEntryPrice,
+                 Direction, Commission, Regime, StrategyName, Source, Tags, Notes)
+            OUTPUT INSERTED.PositionId
+            VALUES
+                (:aid, :sid, :ptype, :qty, :od, :aep,
+                 :dir, :comm, :regime, :strat, :src, :tags, :notes)
+        """, {
+            "aid": account_id, "sid": security_id, "ptype": position_type,
+            "qty": quantity, "od": open_date, "aep": avg_entry_price,
+            "dir": direction, "comm": commission, "regime": regime,
+            "strat": strategy_name, "src": source, "tags": tags, "notes": notes,
+        })
+        return int(row or 0)
+
+
+def close_position(engine, position_id: int, close_date: datetime.date,
+                   avg_exit_price: float, realized_pnl: float,
+                   status: str = 'closed') -> None:
     with engine.begin() as c:
         c.execute(text("""
-            INSERT INTO portfolio.Position
-                (AccountId, Symbol, SpreadType, Contracts, OpenDate, Expiration,
-                 DTEAtEntry, EntryValue, MaxProfit, MaxLoss, Commission,
-                 SpotAtEntry, VixAtEntry, IVRAtEntry, Source, ModelSignalId, Tags, Notes)
+            UPDATE portfolio.Position
+            SET CloseDate=:cd, AvgExitPrice=:aep, RealizedPnL=:pnl,
+                Status=:status, UpdatedAt=SYSUTCDATETIME()
+            WHERE PositionId=:pid
+        """), {"cd": close_date, "aep": avg_exit_price, "pnl": realized_pnl,
+               "status": status, "pid": position_id})
+
+
+# ── transactions ──────────────────────────────────────────────────────────────
+
+def record_transaction(engine, account_id: int, security_id: int,
+                       txn_date: datetime.date, action: str,
+                       amount: float, quantity: float | None = None,
+                       price: float | None = None, commission: float = 0.0,
+                       position_id: int | None = None,
+                       regime: str | None = None,
+                       strategy_name: str | None = None,
+                       notes: str | None = None) -> int:
+    with engine.begin() as c:
+        c.execute(text("""
+            INSERT INTO portfolio.[Transaction]
+                (AccountId, SecurityId, PositionId, TransactionDate, Action,
+                 Quantity, Price, Amount, Commission, Regime, StrategyName, Notes)
             VALUES
-                (:aid, :sym, :st, :ct, :od, :exp, :dte, :ev, :mp, :ml, :comm,
-                 :spot, :vix, :ivr, :src, :msid, :tags, :notes)
+                (:aid, :sid, :pid, :td, :action,
+                 :qty, :price, :amount, :comm, :regime, :strat, :notes)
         """), {
-            "aid": account_id, "sym": symbol, "st": spread_type, "ct": contracts,
-            "od": open_date, "exp": expiration, "dte": dte_at_entry,
-            "ev": entry_value, "mp": max_profit, "ml": max_loss, "comm": commission,
-            "spot": spot, "vix": vix, "ivr": ivr, "src": source,
-            "msid": model_signal_id, "tags": tags, "notes": notes,
+            "aid": account_id, "sid": security_id, "pid": position_id,
+            "td": txn_date, "action": action, "qty": quantity, "price": price,
+            "amount": amount, "comm": commission, "regime": regime,
+            "strat": strategy_name, "notes": notes,
         })
         return int(_scalar(c, "SELECT SCOPE_IDENTITY()") or 0)
 
 
-def close_position(engine, position_id: int, close_date: datetime.date,
-                   exit_value: float, realized_pnl: float,
-                   status: str = "closed") -> None:
-    with engine.begin() as c:
-        pos = _df(c,
-            "SELECT MaxProfit, Contracts FROM portfolio.Position WHERE PositionId=:pid",
-            {"pid": position_id}
-        )
-        max_p = float(pos.iloc[0]["MaxProfit"]) if not pos.empty and pos.iloc[0]["MaxProfit"] else 0
-        pnl_pct = realized_pnl / (max_p * float(pos.iloc[0]["Contracts"]) * 100) if max_p else None
-        c.execute(text("""
-            UPDATE portfolio.Position
-            SET CloseDate=:cd, ExitValue=:ev, RealizedPnL=:pnl, PnLPct=:pct,
-                Status=:status, UpdatedAt=SYSUTCDATETIME()
-            WHERE PositionId=:pid
-        """), {"cd": close_date, "ev": exit_value, "pnl": realized_pnl,
-               "pct": pnl_pct, "status": status, "pid": position_id})
+def get_transactions(engine, account_id: int,
+                     symbol: str | None = None,
+                     from_date: datetime.date | None = None,
+                     to_date: datetime.date | None = None,
+                     limit: int = 500) -> pd.DataFrame:
+    where_parts = ["t.AccountId = :aid"]
+    params: dict = {"aid": account_id}
+    if symbol:
+        where_parts.append("tk.Symbol = :sym"); params["sym"] = symbol
+    if from_date:
+        where_parts.append("t.TransactionDate >= :fd"); params["fd"] = from_date
+    if to_date:
+        where_parts.append("t.TransactionDate <= :td"); params["td"] = to_date
+    where = " AND ".join(where_parts)
+    sql = f"""
+        SELECT TOP {limit}
+            t.TransactionId, t.TransactionDate, tk.Symbol, t.Action,
+            t.Quantity, t.Price, t.Amount, t.Commission,
+            t.Regime, t.StrategyName, t.Notes, t.CreatedAt
+        FROM portfolio.[Transaction] t
+        LEFT JOIN mkt.Ticker tk ON CAST(tk.TickerId AS BIGINT) = t.SecurityId
+        WHERE {where}
+        ORDER BY t.TransactionDate DESC, t.TransactionId DESC
+    """
+    with engine.connect() as c:
+        return _df(c, sql, params)
 
+
+# ── holdings ──────────────────────────────────────────────────────────────────
+
+def upsert_holding(engine, account_id: int, security_id: int,
+                   shares: float, avg_cost: float,
+                   current_price: float | None = None) -> None:
+    market_value = round(shares * current_price, 2) if current_price is not None else None
+    unrealized   = round((current_price - avg_cost) * shares, 2) if current_price is not None else None
+    with engine.begin() as c:
+        if shares == 0:
+            c.execute(text(
+                "DELETE FROM portfolio.Holding WHERE AccountId=:aid AND SecurityId=:sid"
+            ), {"aid": account_id, "sid": security_id})
+            return
+        exists = _scalar(c,
+            "SELECT 1 FROM portfolio.Holding WHERE AccountId=:aid AND SecurityId=:sid",
+            {"aid": account_id, "sid": security_id}
+        )
+        if exists:
+            c.execute(text("""
+                UPDATE portfolio.Holding
+                SET Shares=:shares, AvgCostBasis=:cost,
+                    CurrentPrice=:cp, MarketValue=:mv, UnrealizedPnL=:upnl,
+                    UpdatedAt=SYSUTCDATETIME()
+                WHERE AccountId=:aid AND SecurityId=:sid
+            """), {"shares": shares, "cost": avg_cost, "cp": current_price,
+                   "mv": market_value, "upnl": unrealized,
+                   "aid": account_id, "sid": security_id})
+        else:
+            c.execute(text("""
+                INSERT INTO portfolio.Holding
+                    (AccountId, SecurityId, Shares, AvgCostBasis, CurrentPrice, MarketValue, UnrealizedPnL)
+                VALUES (:aid, :sid, :shares, :cost, :cp, :mv, :upnl)
+            """), {"aid": account_id, "sid": security_id, "shares": shares,
+                   "cost": avg_cost, "cp": current_price,
+                   "mv": market_value, "upnl": unrealized})
+
+
+def get_holdings(engine, account_id: int) -> pd.DataFrame:
+    with engine.connect() as c:
+        return _df(c, """
+            SELECT h.HoldingId, h.AccountId, h.SecurityId,
+                   tk.Symbol, tk.Name, tk.InstrumentType,
+                   h.Shares, h.AvgCostBasis, h.CurrentPrice, h.MarketValue, h.UnrealizedPnL,
+                   h.UpdatedAt
+            FROM portfolio.Holding h
+            LEFT JOIN mkt.Ticker tk ON CAST(tk.TickerId AS BIGINT) = h.SecurityId
+            WHERE h.AccountId = :aid
+            ORDER BY h.MarketValue DESC
+        """, {"aid": account_id})
+
+
+# ── legs ──────────────────────────────────────────────────────────────────────
 
 def insert_leg(engine, position_id: int, symbol: str, action: str,
                contracts: int, fill_price: float, fill_date: datetime.date,
@@ -239,9 +349,6 @@ def link_signal_to_position(engine, signal_id: int, position_id: int) -> None:
         c.execute(text(
             "UPDATE portfolio.ModelSignal SET WasTaken=1, PositionId=:pid WHERE SignalId=:sid"
         ), {"pid": position_id, "sid": signal_id})
-        c.execute(text(
-            "UPDATE portfolio.Position SET ModelSignalId=:sid WHERE PositionId=:pid"
-        ), {"sid": signal_id, "pid": position_id})
 
 
 # ── analytics ─────────────────────────────────────────────────────────────────
@@ -252,8 +359,6 @@ def get_strategy_performance(engine) -> pd.DataFrame:
 
 
 def get_monthly_pnl(engine) -> pd.DataFrame:
-    # Bypass vw_MonthlyPnL — FORMAT() in window ORDER BY exceeds SQL Server's 900-byte limit.
-    # Use integer Year/Month in the window function instead.
     with engine.connect() as c:
         return _df(c, """
             SELECT
@@ -271,7 +376,7 @@ def get_monthly_pnl(engine) -> pd.DataFrame:
                     ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
                 ), 2) AS CumPnL
             FROM portfolio.Position p
-            WHERE p.Status IN ('closed','expired','assigned')
+            WHERE p.Status IN ('closed','expired','assigned','rolled')
               AND p.RealizedPnL IS NOT NULL
               AND p.CloseDate IS NOT NULL
             GROUP BY YEAR(p.CloseDate), MONTH(p.CloseDate), FORMAT(p.CloseDate, 'yyyy-MM')
@@ -285,7 +390,6 @@ def get_model_accuracy(engine) -> pd.DataFrame:
 
 
 def get_kpis(engine, account_id: int) -> dict:
-    """Returns headline KPIs for the dashboard header."""
     with engine.connect() as c:
         bal = _df(c,
             "SELECT TOP 1 TotalEquity, DayPnL, RealizedPnLYTD "
@@ -298,23 +402,23 @@ def get_kpis(engine, account_id: int) -> dict:
         ) or 0
         perf = _df(c,
             "SELECT COUNT(*) AS T, SUM(CASE WHEN RealizedPnL>0 THEN 1 ELSE 0 END) AS W "
-            "FROM portfolio.Position WHERE AccountId=:aid AND Status IN ('closed','expired','assigned')",
+            "FROM portfolio.Position WHERE AccountId=:aid AND Status IN ('closed','expired','assigned','rolled')",
             {"aid": account_id}
         )
 
-    total_eq = float(bal.iloc[0]["TotalEquity"]) if not bal.empty else None
-    day_pnl  = float(bal.iloc[0]["DayPnL"])      if not bal.empty and bal.iloc[0]["DayPnL"] else None
-    ytd_pnl  = float(bal.iloc[0]["RealizedPnLYTD"]) if not bal.empty and bal.iloc[0]["RealizedPnLYTD"] else None
-    total_t  = int(perf.iloc[0]["T"])  if not perf.empty else 0
-    wins     = int(perf.iloc[0]["W"])  if not perf.empty and perf.iloc[0]["W"] else 0
-    win_rate = round(wins / total_t * 100, 1) if total_t > 0 else None
+    total_eq = float(bal.iloc[0]["TotalEquity"])      if not bal.empty else None
+    day_pnl  = float(bal.iloc[0]["DayPnL"])           if not bal.empty and bal.iloc[0]["DayPnL"] else None
+    ytd_pnl  = float(bal.iloc[0]["RealizedPnLYTD"])   if not bal.empty and bal.iloc[0]["RealizedPnLYTD"] else None
+    total_t  = int(perf.iloc[0]["T"])                 if not perf.empty else 0
+    wins     = int(perf.iloc[0]["W"])                 if not perf.empty and perf.iloc[0]["W"] else 0
+    win_rate = round(wins / total_t * 100, 1)          if total_t > 0 else None
 
     return {
-        "total_equity": total_eq,
-        "day_pnl":      day_pnl,
-        "ytd_pnl":      ytd_pnl,
+        "total_equity":   total_eq,
+        "day_pnl":        day_pnl,
+        "ytd_pnl":        ytd_pnl,
         "open_positions": int(open_ct),
-        "total_trades": total_t,
-        "wins":         wins,
-        "win_rate":     win_rate,
+        "total_trades":   total_t,
+        "wins":           wins,
+        "win_rate":       win_rate,
     }

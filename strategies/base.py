@@ -105,6 +105,24 @@ class BaseStrategy(ABC):
         """Return all hyperparameters as a flat dict for display."""
         ...
 
+    def is_trainable(self) -> bool:
+        """Return True if this strategy requires/supports ML training."""
+        return False
+
+    def get_model_name(self, ticker: str = "SPY") -> str:
+        """Return unique checkpoint name for this strategy + ticker combo."""
+        return f"{self.name}_{ticker.lower()}"
+
+    def get_backtest_ui_params(self) -> list:
+        """
+        Return a list of param-spec dicts used by the generic backtest UI renderer.
+        Each dict: {"key", "label", "type", "default", ...widget-specific kwargs...}
+        "col" (0/1/2) groups params into a 3-column row; omit for full-width.
+        "row" groups multiple column rows (default 0).
+        Supported types: slider, select_slider, selectbox, checkbox, number_input.
+        """
+        return []
+
     def is_ready(self) -> bool:
         return self.status == StrategyStatus.ACTIVE
 

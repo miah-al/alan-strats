@@ -171,6 +171,25 @@ def validate_training_data(ticker: str = "HOOD") -> dict:
         else:
             warnings.append(f"No news for {ticker} — sentiment features will be zero")
 
+    # ── Option chain ─────────────────────────────────────────────────────────
+    from alan_trader.db.client import get_option_coverage
+    opt_cov = get_option_coverage(engine, ticker)
+    if opt_cov:
+        _tid_opt = get_ticker_id(engine, ticker)
+        with engine.connect() as conn:
+            opt_count = conn.execute(
+                text("SELECT COUNT(*) FROM mkt.OptionSnapshot WHERE TickerId = :tid"),
+                {"tid": _tid_opt},
+            ).scalar()
+        coverage["Option Chain"] = (opt_cov[0], opt_cov[1], opt_count)
+    else:
+        coverage["Option Chain"] = ("MISSING", "MISSING", 0)
+        warnings.append(
+            f"No option chain data for {ticker} — strategies that use real option pricing "
+            f"(e.g. TLT/SPY Rotation Options) will not be able to backtest. "
+            f"Go to Data Manager → Options Snapshots to sync."
+        )
+
     # ── Price bar gap check ───────────────────────────────────────────────────
     if "Price Bars" in coverage and coverage["Price Bars"][2] > 50:
         tid = get_ticker_id(engine, ticker)

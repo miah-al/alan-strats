@@ -24,20 +24,72 @@ st.set_page_config(
 
 st.markdown("""
 <style>
+  /* ── App chrome ────────────────────────────────────────────────────── */
   [data-testid="stAppViewContainer"] { background-color: #0e1117; }
-  [data-testid="stSidebar"]          { background-color: #161b27; }
-  .stTabs [data-baseweb="tab-list"]  { gap: 4px; flex-wrap: wrap; }
+  [data-testid="stSidebar"]          { background-color: #0c1020; }
+
+  /* ── Tabs — clean underline style ──────────────────────────────────── */
+  .stTabs [data-baseweb="tab-list"] {
+      gap: 0;
+      border-bottom: 1px solid #1e2538;
+      background: transparent;
+      flex-wrap: wrap;
+  }
   .stTabs [data-baseweb="tab"] {
-      background: #1e2130; border-radius: 6px;
-      padding: 6px 14px; color: #e0e0e0; font-size: 13px;
+      background: transparent;
+      border: none;
+      border-bottom: 2px solid transparent;
+      border-radius: 0;
+      padding: 8px 16px;
+      color: #546e7a;
+      font-size: 13px;
+      font-weight: 500;
+      letter-spacing: 0.02em;
+      transition: color 0.15s, border-color 0.15s;
+      margin-bottom: -1px;
+  }
+  .stTabs [data-baseweb="tab"]:hover {
+      color: #b0c8e0 !important;
+      background: rgba(92,107,192,0.06) !important;
   }
   .stTabs [aria-selected="true"] {
-      background: #5c6bc0 !important; color: white !important;
+      color: #e0e0e0 !important;
+      border-bottom: 2px solid #5c6bc0 !important;
+      background: transparent !important;
+      font-weight: 600 !important;
   }
+  /* inner strategy sub-tabs — slightly different accent */
+  .stTabs .stTabs [aria-selected="true"] {
+      border-bottom: 2px solid #26a69a !important;
+  }
+
+  /* ── Typography ─────────────────────────────────────────────────────── */
   h1, h2, h3 { color: #e0e0e0 !important; }
   p, li       { color: #b0b8c8; }
-  [data-testid="stMetricValue"]  { color: #e0e0e0 !important; }
-  [data-testid="stMetricLabel"]  { color: #78909c !important; }
+
+  /* ── Metrics ────────────────────────────────────────────────────────── */
+  [data-testid="stMetricValue"] { color: #e0e0e0 !important; font-size: 1.15rem !important; }
+  [data-testid="stMetricLabel"] { color: #546e7a  !important; font-size: 0.78rem !important; }
+
+  /* ── Buttons ────────────────────────────────────────────────────────── */
+  .stButton > button {
+      background: #1e2538; border: 1px solid #2a3550;
+      color: #b0b8c8; border-radius: 7px;
+      font-size: 12px; padding: 5px 12px;
+      transition: background 0.15s, border-color 0.15s;
+  }
+  .stButton > button:hover {
+      background: #252d45; border-color: #5c6bc0; color: #e0e0e0;
+  }
+
+  /* ── Inputs ─────────────────────────────────────────────────────────── */
+  div[data-testid="stTextInput"] input,
+  div[data-testid="stNumberInput"] input {
+      background: #161b27 !important;
+      border: 1px solid #2a2f3f !important;
+      color: #e0e0e0 !important;
+      border-radius: 7px !important;
+  }
 </style>
 """, unsafe_allow_html=True)
 
@@ -79,7 +131,7 @@ _load_env()
 # ══════════════════════════════════════════════════════════════════════════════
 
 _SS_DEFAULTS: dict = {
-    "selected_strategies": ACTIVE_SLUGS[:1],
+    "selected_strategies": [],
     "train_results":   {},          # {slug: train_result_dict}
     "bt_results":      {},          # {slug: BacktestResult}
     "bt_report":       {},          # last portfolio report (aggregate)
@@ -112,32 +164,38 @@ with st.sidebar:
     st.markdown("---")
 
     st.subheader("Strategies")
-    selected = st.multiselect(
-        "Active strategies",
-        options=ACTIVE_SLUGS,
-        default=st.session_state["selected_strategies"],
-        format_func=lambda s: f"{_meta(s).get('icon','📌')} {_meta(s)['display_name']}",
-        key="selected_strategies",
-        label_visibility="collapsed",
-    )
+
+    # Group strategies by type for a cleaner selector
+    _groups: dict[str, list[str]] = {}
+    for _s in ACTIVE_SLUGS:
+        _group = _meta(_s).get("type", "other").replace("_", " ").title()
+        _groups.setdefault(_group, []).append(_s)
+
+    _current = set(st.session_state.get("selected_strategies", []))
+    _new_selected: list[str] = []
+    for _group_name, _slugs in _groups.items():
+        st.caption(_group_name)
+        for _s in _slugs:
+            _checked = st.checkbox(
+                f"{_meta(_s).get('icon','📌')} {_meta(_s)['display_name']}",
+                value=_s in _current,
+                key=f"strat_cb_{_s}",
+            )
+            if _checked:
+                _new_selected.append(_s)
+    selected = _new_selected
+    st.session_state["selected_strategies"] = selected
 
     st.markdown("---")
-    st.subheader("Data Source")
-    data_source = st.radio(
-        "Training data",
-        ["Database", "Live API"],
-        index=0,
-        key="data_source",
-        help="Database: local SQL Server (fast, no API calls)\nLive API: Polygon.io (requires API key)",
-    )
-    st.caption("API key" if data_source == "Live API" else "Local SQL Server")
+    st.caption("Training & backtest data — local SQL Server")
     st.text_input("Polygon API key", type="password", placeholder="sk_...", key="polygon_api_key")
 
     st.markdown("---")
     if st.button("🔄 Clear all results", width="stretch"):
         st.cache_data.clear()
-        for _k in _SS_DEFAULTS:
-            st.session_state[_k] = _SS_DEFAULTS[_k]
+        for _k in list(_SS_DEFAULTS.keys()):
+            if _k in st.session_state:
+                del st.session_state[_k]
         st.rerun()
 
     st.markdown("---")
@@ -170,68 +228,58 @@ def _ticker_row(key_prefix: str) -> str:
 # BACKEND HELPERS
 # ══════════════════════════════════════════════════════════════════════════════
 
-def _build_cm(trainer, features, labels):
-    import torch
-    from alan_trader.model.architecture import SequenceDataset
-    from torch.utils.data import DataLoader
-    scaled = trainer.scaler.transform(features)
-    ds     = SequenceDataset(scaled, labels, trainer.seq_len)
-    loader = DataLoader(ds, batch_size=256, shuffle=False)
-    trainer.model.eval()
-    preds, trues = [], []
-    with torch.no_grad():
-        for x, y, _ in loader:
-            out = trainer.model(x.to(trainer.device)).argmax(1).cpu().numpy()
-            preds.extend(out); trues.extend(y.numpy())
-    cm = np.zeros((3, 3), dtype=float)
-    for t, p in zip(trues, preds):
-        cm[int(t), int(p)] += 1
-    return cm
+def _render_single_param(p: dict, key_prefix: str, container=None):
+    """Render one param-spec dict as a Streamlit widget. Returns the widget value."""
+    ctx   = container or st
+    key   = f"{key_prefix}_{p['key']}"
+    label = p["label"]
+    ptype = p["type"]
+    if ptype == "slider":
+        return ctx.slider(label, p["min"], p["max"], p.get("default"), p.get("step", 1),
+                          key=key, help=p.get("help"))
+    elif ptype == "select_slider":
+        return ctx.select_slider(label, options=p["options"], value=p.get("default"), key=key)
+    elif ptype == "selectbox":
+        kwargs = {"options": p["options"], "key": key}
+        if "format_func" in p:
+            kwargs["format_func"] = p["format_func"]
+        return ctx.selectbox(label, **kwargs)
+    elif ptype == "checkbox":
+        return ctx.checkbox(label, value=p.get("default", False), key=key)
+    elif ptype == "number_input":
+        return ctx.number_input(label, value=p.get("default", 0), step=p.get("step", 1), key=key)
+    return p.get("default")
 
 
-def _build_feat_imp(trainer, features, labels, feat_names):
-    import torch
-    from alan_trader.model.architecture import SequenceDataset
-    from torch.utils.data import DataLoader
-    scaled = trainer.scaler.transform(features.copy())
+def _render_ui_params(params_spec: list, key_prefix: str) -> dict:
+    """Render a list of param-spec dicts and return {key: value} dict."""
+    result = {}
+    full_width = [p for p in params_spec if "col" not in p]
+    for p in full_width:
+        result[p["key"]] = _render_single_param(p, key_prefix)
 
-    def _acc():
-        ds = SequenceDataset(scaled, labels, trainer.seq_len)
-        loader = DataLoader(ds, batch_size=256)
-        trainer.model.eval()
-        correct = total = 0
-        with torch.no_grad():
-            for x, y, _ in loader:
-                correct += (trainer.model(x.to(trainer.device)).argmax(1)
-                            == y.to(trainer.device)).sum().item()
-                total += len(y)
-        return correct / total if total else 0.0
-
-    baseline = _acc()
-    rng = np.random.default_rng(0)
-    imp = {}
-    for i, name in enumerate(feat_names):
-        if i >= scaled.shape[1]: continue
-        saved = scaled[:, i].copy()
-        rng.shuffle(scaled[:, i])
-        imp[name] = max(0.0, baseline - _acc())
-        scaled[:, i] = saved
-    return pd.Series(imp).sort_values(ascending=False)
+    grid_params = [p for p in params_spec if "col" in p]
+    rows: dict = {}
+    for p in grid_params:
+        rows.setdefault(p.get("row", 0), []).append(p)
+    for row_idx in sorted(rows):
+        row_ps = sorted(rows[row_idx], key=lambda p: p["col"])
+        n_cols = max(p["col"] for p in row_ps) + 1
+        cols   = st.columns(n_cols)
+        for p in row_ps:
+            result[p["key"]] = _render_single_param(p, key_prefix, container=cols[p["col"]])
+    return result
 
 
 def _do_train(slug, seq_len, hidden_size, num_layers, dropout, lr, num_epochs,
               ticker="SPY", forward_days=5, otm_pct=0.0, spread_type="bull_call",
-              enter_boost=2.0, data_source="Database", api_key=""):
+              enter_boost=2.0):
     import warnings; warnings.filterwarnings("ignore")
     from alan_trader.data.features import build_feature_matrix, FEATURE_COLS
     from alan_trader.model.trainer import ModelTrainer
+    from alan_trader.db.loader import load_training_data
 
-    if data_source == "Database":
-        from alan_trader.db.loader import load_training_data
-        data  = load_training_data(ticker=ticker)
-    else:
-        from alan_trader.data.loader import load_real_data
-        data  = load_real_data(ticker=ticker, n_days=756, api_key=api_key)
+    data = load_training_data(ticker=ticker)
 
     spy   = data["spy"]
     vix   = data["vix"]
@@ -242,28 +290,28 @@ def _do_train(slug, seq_len, hidden_size, num_layers, dropout, lr, num_epochs,
 
     spread_pnl_df = None
     spread_diagnostics = {}
-    if data_source == "Database":
-        try:
-            from alan_trader.db.options_loader import build_spread_history
-            from alan_trader.db.client import get_engine as _ge
-            spread_pnl_df = build_spread_history(
-                _ge(), ticker, spread_type=spread_type,
-                target_dte=30, hold_days=forward_days,
-                otm_pct=max(otm_pct, 5) / 100, wing_pct=0.05,
-                diagnostics=spread_diagnostics,
-            )
-            if spread_pnl_df.empty:
-                spread_pnl_df = None
-        except Exception as _e:
-            logger.warning(f"Spread history unavailable, falling back to fwd_ret labels: {_e}")
-            spread_diagnostics["error"] = str(_e)
+    try:
+        from alan_trader.db.options_loader import build_spread_history
+        from alan_trader.db.client import get_engine as _ge
+        spread_pnl_df = build_spread_history(
+            _ge(), ticker, spread_type=spread_type,
+            target_dte=30, hold_days=forward_days,
+            otm_pct=max(otm_pct, 5) / 100, wing_pct=0.05,
+            diagnostics=spread_diagnostics,
+        )
+        if spread_pnl_df.empty:
             spread_pnl_df = None
+    except Exception as _e:
+        logger.warning(f"Spread history unavailable, falling back to fwd_ret labels: {_e}")
+        spread_diagnostics["error"] = str(_e)
+        spread_pnl_df = None
 
     df      = build_feature_matrix(spy, vix, r2, r10, news, forward_days=forward_days,
                                     spread_type=spread_type, macro_df=macro,
                                     spread_pnl_df=spread_pnl_df)
 
-    features = df[FEATURE_COLS].values
+    avail    = [c for c in FEATURE_COLS if c in df.columns]
+    features = df[avail].values
     labels   = df["label"].values
     n_train  = int(len(features) * 0.80)
 
@@ -271,17 +319,21 @@ def _do_train(slug, seq_len, hidden_size, num_layers, dropout, lr, num_epochs,
     label_dist = {"avoid": int(counts[0]), "skip": int(counts[1]), "enter": int(counts[2])}
 
     trainer = ModelTrainer(
-        num_features=len(FEATURE_COLS),
+        feature_cols=avail,
         hidden_size=hidden_size, num_layers=num_layers, dropout=dropout,
         lr=lr, batch_size=32, num_epochs=num_epochs, patience=15, seq_len=seq_len,
         enter_boost=enter_boost,
     )
     history = trainer.fit(features[:n_train], labels[:n_train])
 
+    # Persist model to disk so live trader and backtest can reload it
+    strat = get_strategy(slug)
+    trainer.save(strat.get_model_name(ticker))
+
     test_features = features[n_train:]
     test_labels   = labels[n_train:]
-    cm            = _build_cm(trainer, test_features, test_labels)
-    feat_imp      = _build_feat_imp(trainer, test_features, test_labels, FEATURE_COLS)
+    cm            = trainer.compute_confusion_matrix(test_features, test_labels)
+    feat_imp      = trainer.compute_feature_importance(test_features, test_labels)
 
     # All model ENTER signals (pred_class == 2) — show them all, flag correct vs incorrect
     probas, _ = trainer.predict_batch(test_features)
@@ -411,7 +463,7 @@ def _do_train(slug, seq_len, hidden_size, num_layers, dropout, lr, num_epochs,
         "feat_imp":          feat_imp,
         "trainer":           trainer,
         "feat_df":           df,
-        "FEATURE_COLS":      FEATURE_COLS,
+        "FEATURE_COLS":      avail,
         "winner_samples":    samples,
         "n_confirmed":       n_confirmed,
         "spread_type":       spread_type,
@@ -421,15 +473,11 @@ def _do_train(slug, seq_len, hidden_size, num_layers, dropout, lr, num_epochs,
     }
 
 
-def _do_backtest(slug, params, ticker, n_days, data_source="Database", api_key=""):
+def _do_backtest(slug, params, ticker, n_days):
     import warnings; warnings.filterwarnings("ignore")
 
-    if data_source == "Database":
-        from alan_trader.db.loader import load_training_data
-        data = load_training_data(ticker=ticker)
-    else:
-        from alan_trader.data.loader import load_real_data
-        data = load_real_data(ticker=ticker, n_days=n_days, api_key=api_key)
+    from alan_trader.db.loader import load_training_data
+    data = load_training_data(ticker=ticker)
 
     spy   = data["spy"]
     vix   = data["vix"]
@@ -443,6 +491,45 @@ def _do_backtest(slug, params, ticker, n_days, data_source="Database", api_key="
 
     aux = {"vix": vix, "rate2y": r2, "rate10y": r10, "macro": macro,
            "news": news, "dividends": divs}
+
+    # Load TLT price bars for strategies that need them
+    meta_for_slug = STRATEGY_METADATA.get(slug, {})
+    if "tlt" in meta_for_slug.get("required_data", []):
+        try:
+            from alan_trader.db.client import get_engine, get_price_bars
+            _engine = get_engine()
+            _tlt_from = (datetime.date.today() - datetime.timedelta(days=n_days * 2))
+            _tlt_df   = get_price_bars(_engine, "TLT", _tlt_from, datetime.date.today())
+            if not _tlt_df.empty:
+                _tlt_df["date"] = pd.to_datetime(_tlt_df["date"]).dt.date
+                _tlt_df = _tlt_df.set_index("date")
+            aux["tlt"] = _tlt_df
+        except Exception as _e:
+            logger.warning(f"Could not load TLT data: {_e}")
+            aux["tlt"] = pd.DataFrame()
+
+    # Load real option chains for the options rotation strategy
+    if slug == "rates_spy_rotation_options":
+        try:
+            from alan_trader.db.options_loader import _load_chain
+            from alan_trader.db.client import get_engine as _ge_o, get_ticker_id as _gtid_o
+            _eng_o   = _ge_o()
+            _opt_from = (datetime.date.today() - datetime.timedelta(days=n_days * 2))
+            _opt_to   = datetime.date.today()
+            _spy_tid  = _gtid_o(_eng_o, "SPY")
+            _tlt_tid  = _gtid_o(_eng_o, "TLT")
+            aux["spy_options"] = (
+                _load_chain(_eng_o, _spy_tid, _opt_from, _opt_to, min_dte=15, max_dte=120)
+                if _spy_tid else pd.DataFrame()
+            )
+            aux["tlt_options"] = (
+                _load_chain(_eng_o, _tlt_tid, _opt_from, _opt_to, min_dte=15, max_dte=120)
+                if _tlt_tid else pd.DataFrame()
+            )
+        except Exception as _e_o:
+            logger.warning(f"Could not load options chain data: {_e_o}")
+            aux["spy_options"] = pd.DataFrame()
+            aux["tlt_options"] = pd.DataFrame()
 
     strat = get_strategy(slug)
     if not strat.is_ready():
@@ -519,8 +606,7 @@ def _render_train(slug: str):
                                          "Increase if the model produces no ENTER signals.",
                                     key=f"tr_{slug}_enter_boost")
 
-    ds = st.session_state.get("data_source", "Database")
-    if ds == "Database" and needs_ticker:
+    if needs_ticker:
         if st.button("🔍 Check options data for this ticker", key=f"btn_chk_opts_{slug}"):
             try:
                 from alan_trader.db.client import get_engine as _ge2, get_ticker_id as _gtid
@@ -559,9 +645,7 @@ def _render_train(slug: str):
                                    ticker=ticker if needs_ticker else "SPY",
                                    forward_days=forward_days, otm_pct=otm_pct_tr,
                                    spread_type=spread_type_tr,
-                                   enter_boost=enter_boost_tr,
-                                   data_source=st.session_state.get("data_source", "Database"),
-                                   api_key=st.session_state.get("polygon_api_key", ""))
+                                   enter_boost=enter_boost_tr)
                 st.session_state["train_results"][slug] = result
                 st.rerun()
             except Exception as ex:
@@ -773,6 +857,151 @@ def _render_train(slug: str):
         st.plotly_chart(C.feature_importance_bar(feat_imp, top_n=15), width="stretch")
 
 
+def _render_regime_chart(slug: str, res):
+    """Render regime-annotated SPY + 10Y yield + VIX chart for rotation strategies."""
+    import plotly.graph_objects as go
+    from plotly.subplots import make_subplots
+
+    extra = res.extra
+    regime_series = extra.get("regime_series")
+    spy_weights   = extra.get("spy_weights")
+    tlt_weights   = extra.get("tlt_weights")
+    spy_prices    = extra.get("spy_prices")
+    tlt_prices    = extra.get("tlt_prices")
+    rate10y       = extra.get("rate10y")
+    vix           = extra.get("vix")
+    equity        = res.equity_curve
+
+    if regime_series is None:
+        return
+
+    _REGIME_COLORS = {
+        "Growth":     "rgba(38,166,154,0.25)",
+        "Inflation":  "rgba(239,83,80,0.25)",
+        "Fear":       "rgba(92,107,192,0.25)",
+        "Risk-On":    "rgba(255,167,38,0.25)",
+        "Transition": "rgba(120,144,156,0.15)",
+    }
+    _REGIME_LINE = {
+        "Growth":     "#26a69a",
+        "Inflation":  "#ef5350",
+        "Fear":       "#5c6bc0",
+        "Risk-On":    "#ffa726",
+        "Transition": "#78909c",
+    }
+
+    with st.expander("Regime Map — Portfolio / SPY & TLT / VIX & Yield", expanded=True):
+        fig = make_subplots(
+            rows=3, cols=1,
+            shared_xaxes=True,
+            row_heights=[0.38, 0.38, 0.24],
+            subplot_titles=(
+                "Portfolio Equity",
+                "SPY & TLT (indexed)  ·  VIX →",
+                "Regime",
+            ),
+            vertical_spacing=0.05,
+            specs=[[{"secondary_y": True}],
+                   [{"secondary_y": True}],
+                   [{"secondary_y": False}]],
+        )
+
+        # ── Row 1: Portfolio equity (left) + 10Y Yield (right) ────────────────
+        idx = pd.to_datetime(equity.index)
+        fig.add_trace(go.Scatter(
+            x=idx, y=equity.values,
+            name="Portfolio", line=dict(color="#26a69a", width=2),
+        ), row=1, col=1, secondary_y=False)
+
+        if rate10y is not None and not rate10y.empty:
+            r10_idx = pd.to_datetime(rate10y.index)
+            fig.add_trace(go.Scatter(
+                x=r10_idx, y=(rate10y * 100).values,
+                name="10Y Yield (%)", line=dict(color="#ffa726", width=1.2, dash="dot"),
+            ), row=1, col=1, secondary_y=True)
+
+        fig.update_yaxes(title_text="Equity ($)", row=1, col=1, secondary_y=False,
+                         title_font=dict(color="#26a69a"), tickfont=dict(color="#26a69a"))
+        fig.update_yaxes(title_text="10Y Yield (%)", row=1, col=1, secondary_y=True,
+                         title_font=dict(color="#ffa726"), tickfont=dict(color="#ffa726"))
+
+        # ── Row 2: SPY + TLT indexed prices (left) | VIX shaded (right) ──────
+        # Base strategy: use actual price data if available; fall back to weights
+        _spy_line = spy_prices if spy_prices is not None and not spy_prices.empty else (
+            spy_weights * 500 if spy_weights is not None else None   # weights scaled for visibility
+        )
+        _tlt_line = tlt_prices if tlt_prices is not None and not tlt_prices.empty else (
+            tlt_weights * 150 if tlt_weights is not None else None
+        )
+
+        if _spy_line is not None:
+            sp_idx = pd.to_datetime(_spy_line.index)
+            base = _spy_line.dropna().iloc[0] if not _spy_line.dropna().empty else 1
+            fig.add_trace(go.Scatter(
+                x=sp_idx, y=(_spy_line / base * 100).values,
+                name="SPY (indexed)", line=dict(color="#5c6bc0", width=2),
+            ), row=2, col=1, secondary_y=False)
+
+        if _tlt_line is not None:
+            tp_idx = pd.to_datetime(_tlt_line.index)
+            base = _tlt_line.dropna().iloc[0] if not _tlt_line.dropna().empty else 1
+            fig.add_trace(go.Scatter(
+                x=tp_idx, y=(_tlt_line / base * 100).values,
+                name="TLT (indexed)", line=dict(color="#ab47bc", width=2),
+            ), row=2, col=1, secondary_y=False)
+
+        if vix is not None and not (isinstance(vix, pd.Series) and vix.empty):
+            vix_idx = pd.to_datetime(vix.index)
+            fig.add_trace(go.Scatter(
+                x=vix_idx, y=vix.values,
+                name="VIX", line=dict(color="#ef5350", width=1),
+                fill="tozeroy", fillcolor="rgba(239,83,80,0.08)",
+            ), row=2, col=1, secondary_y=True)
+            for level, label in [(20, "20"), (30, "30")]:
+                fig.add_hline(y=level, line=dict(color="#ef5350", dash="dash", width=0.7),
+                              row=2, col=1, secondary_y=True,
+                              annotation_text=f"VIX {label}",
+                              annotation_font=dict(color="#ef5350", size=9),
+                              annotation_position="right")
+
+        fig.update_yaxes(title_text="Indexed (100 = start)", row=2, col=1, secondary_y=False,
+                         title_font=dict(color="#b0b8c8"), tickfont=dict(color="#b0b8c8"))
+        fig.update_yaxes(title_text="VIX", row=2, col=1, secondary_y=True,
+                         title_font=dict(color="#ef5350"), tickfont=dict(color="#ef5350"))
+
+        # ── Row 3: Regime strip ────────────────────────────────────────────────
+        regime_idx = pd.to_datetime(regime_series.index)
+        for rname, rcolor in _REGIME_LINE.items():
+            mask = regime_series == rname
+            if mask.any():
+                xs, ys = [], []
+                prev_in = False
+                for dt, val in zip(regime_idx, regime_series):
+                    if val == rname:
+                        xs.append(dt); ys.append(rname); prev_in = True
+                    else:
+                        if prev_in:
+                            xs.append(None); ys.append(None)
+                        prev_in = False
+                fig.add_trace(go.Scatter(
+                    x=xs, y=ys, name=rname, mode="markers",
+                    marker=dict(color=rcolor, size=6, symbol="square"),
+                    showlegend=True,
+                ), row=3, col=1)
+
+        fig.update_layout(
+            height=680,
+            paper_bgcolor="#0c1020",
+            plot_bgcolor="#0c1020",
+            font=dict(color="#e0e0e0"),
+            legend=dict(orientation="h", y=-0.05, x=0, yanchor="top"),
+            margin=dict(t=50, b=80),
+        )
+        fig.update_yaxes(gridcolor="#1e2130", zeroline=False)
+        fig.update_xaxes(gridcolor="#1e2130")
+        st.plotly_chart(fig, width="stretch", key=f"bt_{slug}_regime_map")
+
+
 def _render_backtest(slug: str):
     """Backtest sub-tab — universal for all strategies."""
     from alan_trader.visualization import charts as C
@@ -794,43 +1023,20 @@ def _render_backtest(slug: str):
     n_days   = max(60, int((bt_end - bt_start).days * 252 / 365))
     st.caption(f"≈ {n_days} trading days")
 
-    # Strategy-specific parameters
+    # Strategy-specific parameters — driven by strategy.get_backtest_ui_params()
     params = {}
+    _strat_for_ui = get_strategy(slug)
+    _param_specs  = _strat_for_ui.get_backtest_ui_params()
     with st.expander("Strategy Parameters", expanded=True):
-        p1, p2, p3 = st.columns(3)
-        if slug == "options_spread":
-            from alan_trader.data.features import SPREAD_TYPE_OPTIONS as _STO2
-            params["spread_type"] = st.selectbox(
-                "Spread type",
-                options=list(_STO2.keys()),
-                format_func=lambda k: _STO2[k],
-                key=f"bt_{slug}_spread_type",
-            )
-            params["seq_len"]         = p1.slider("Seq length",      10, 60,  30, key=f"bt_{slug}_seq")
-            params["hold_days"]       = p2.slider("Hold days",        2, 15,   5, key=f"bt_{slug}_hold")
-            params["min_confidence"]  = p3.slider("Min confidence", 0.33, 0.70, 0.38, 0.01,
-                                                   key=f"bt_{slug}_minc")
-            p4, p5, p6 = st.columns(3)
-            params["otm_pct"] = p4.slider("OTM %", 0, 40, 0, 5,
-                                           help="How far out-of-the-money the long strike is. "
-                                                "0 = ATM, 20 = 20% OTM, 30 = 30% OTM.",
-                                           key=f"bt_{slug}_otm")
-            params["num_epochs"] = p5.slider("Train epochs", 20, 200, 60, 10,
-                                              key=f"bt_{slug}_epochs")
-            p6.caption(f"Strike = spot × (1 ± {params['otm_pct']}%)")
-        elif slug == "dividend_arb":
-            params["hold_days"]       = p1.slider("Days before ex-div", 1, 10, 3, key=f"bt_{slug}_hold")
-        elif slug == "vol_arbitrage":
-            params["hold_days"]       = p1.slider("Max hold days",  1, 10, 3, key=f"bt_{slug}_hold")
-            params["min_violation_pct"] = p2.slider("Min violation % of S", 0.1, 1.0, 0.3, 0.1,
-                                                     key=f"bt_{slug}_minv")
+        if _param_specs:
+            params = _render_ui_params(_param_specs, f"bt_{slug}")
+        else:
+            st.caption("No configurable parameters for this strategy.")
 
     if st.button("▶ Run Backtest", type="primary", key=f"btn_bt_{slug}"):
         with st.spinner(f"Running {meta['display_name']} backtest…"):
             try:
-                res = _do_backtest(slug, params, ticker or "SPY", n_days,
-                                  data_source=st.session_state.get("data_source", "Database"),
-                                  api_key=st.session_state.get("polygon_api_key", ""))
+                res = _do_backtest(slug, params, ticker or "SPY", n_days)
                 st.session_state["bt_results"][slug] = res
 
                 # Rebuild aggregate portfolio report
@@ -849,7 +1055,9 @@ def _render_backtest(slug: str):
                 st.success("Backtest complete!")
                 st.rerun()
             except Exception as ex:
+                import traceback
                 st.error(f"Backtest failed: {ex}")
+                st.code(traceback.format_exc())
 
     res = st.session_state["bt_results"].get(slug)
     if res is None:
@@ -877,22 +1085,28 @@ def _render_backtest(slug: str):
         n_winners = int((trades["pnl"] > 0).sum()) if "pnl" in trades.columns else 0
         n_losers  = n_total - n_winners
         st.subheader(f"Trades — {n_winners} winners / {n_losers} losers / {n_total} total")
-        st.caption("Long/short leg prices are per-share option prices at entry. "
-                   "Spread cost = long leg − short leg + slippage.")
+        if "long_strike" in trades.columns:
+            st.caption("Long/short leg prices are per-share option prices at entry. "
+                       "Spread cost = long leg − short leg + slippage.")
 
         disp = trades.copy()
         if "entry_cost" in disp.columns and "predicted_spread_price" in disp.columns:
             disp["price_error"] = (disp["predicted_spread_price"] - disp["entry_cost"]).round(4)
+        if "pnl" in disp.columns:
+            disp["cum_pnl"] = disp["pnl"].cumsum().round(2)
 
         show_cols = [c for c in ["entry_date", "exit_date", "spread_type",
                                   "long_strike", "long_leg_price",
                                   "short_strike", "short_leg_price",
-                                  "entry_cost", "predicted_spread_price",
-                                  "price_error", "pnl", "exit_reason"]
+                                  "entry_cost", "exit_value",
+                                  "predicted_spread_price",
+                                  "price_error", "pnl", "cum_pnl", "exit_reason"]
                      if c in disp.columns]
         col_cfg = {
             "pnl":                    st.column_config.NumberColumn("P&L ($)",         format="$%.2f"),
-            "entry_cost":             st.column_config.NumberColumn("Spread Cost ($)",  format="$%.4f"),
+            "cum_pnl":                st.column_config.NumberColumn("Cum. P&L ($)",    format="$%.2f"),
+            "entry_cost":             st.column_config.NumberColumn("Entry Value ($)",  format="$%.2f"),
+            "exit_value":             st.column_config.NumberColumn("Exit Value ($)",   format="$%.2f"),
             "predicted_spread_price": st.column_config.NumberColumn("Predicted ($)",   format="$%.4f"),
             "price_error":            st.column_config.NumberColumn("Price Error ($)",  format="$%.4f"),
             "long_strike":            st.column_config.NumberColumn("Long Strike",      format="$%.0f"),
@@ -901,11 +1115,12 @@ def _render_backtest(slug: str):
             "short_leg_price":        st.column_config.NumberColumn("Short Leg ($)",    format="$%.4f"),
         }
         if "pnl" in disp.columns:
+            color_cols = [c for c in ["pnl", "cum_pnl"] if c in disp.columns]
             styled = disp[show_cols].style.map(
                 lambda v: ("color:#26a69a;font-weight:600" if isinstance(v, (int, float)) and v > 0
                            else "color:#ef5350" if isinstance(v, (int, float)) and v < 0
                            else ""),
-                subset=["pnl"],
+                subset=color_cols,
             )
         else:
             styled = disp[show_cols]
@@ -915,7 +1130,8 @@ def _render_backtest(slug: str):
 
     eq = res.equity_curve.copy()
     eq.index = pd.to_datetime(eq.index)
-    eq_df = pd.DataFrame({"equity": eq, "price": eq * 0 + 100_000})
+    starting_cap = float(res.equity_curve.iloc[0]) if not res.equity_curve.empty else 10_000
+    eq_df = pd.DataFrame({"equity": eq, "price": eq * 0 + starting_cap})
 
     with st.expander("Equity Curve & Drawdown", expanded=True):
         st.plotly_chart(C.equity_curve(eq_df),   width="stretch", key=f"bt_{slug}_eq")
@@ -925,6 +1141,10 @@ def _render_backtest(slug: str):
 
     if not trades.empty:
         with st.expander("Trade Analysis", expanded=False):
+            if "pnl" in trades.columns and "exit_date" in trades.columns:
+                _cum_df = trades[["exit_date", "pnl"]].rename(columns={"exit_date": "date"}).copy()
+                _cum_df["date"] = pd.to_datetime(_cum_df["date"])
+                st.plotly_chart(C.cumulative_pnl_line(_cum_df), width="stretch", key=f"bt_{slug}_cum_pnl")
             tr1, tr2 = st.columns(2)
             with tr1: st.plotly_chart(C.win_loss_pie(trades),    width="stretch", key=f"bt_{slug}_wl")
             with tr2: st.plotly_chart(C.exit_reason_pie(trades), width="stretch", key=f"bt_{slug}_er")
@@ -932,6 +1152,10 @@ def _render_backtest(slug: str):
             st.plotly_chart(C.pnl_histogram(trades),      width="stretch", key=f"bt_{slug}_pnl_hist")
             if len(eq_df) > 30:
                 st.plotly_chart(C.monthly_returns_heatmap(eq_df), width="stretch", key=f"bt_{slug}_mr")
+
+    # ── Rates/SPY Rotation — regime chart (both variants) ─────────────────
+    if slug in ("rates_spy_rotation", "rates_spy_rotation_options") and res.extra:
+        _render_regime_chart(slug, res)
 
 
 
@@ -1116,56 +1340,222 @@ def _render_live(slug: str):
 
 
 # ══════════════════════════════════════════════════════════════════════════════
+# STRATEGY PERFORMANCE — live P&L from portfolio tables, filtered by slug
+# ══════════════════════════════════════════════════════════════════════════════
+
+def _render_strategy_performance(slug: str):
+    import plotly.graph_objects as go
+    import pandas as pd
+
+    meta = _meta(slug)
+    display_name = meta["display_name"]
+
+    try:
+        from alan_trader.db.client import get_engine
+        from alan_trader.db import portfolio_client as pc
+        engine = get_engine()
+    except Exception as e:
+        st.warning(f"DB not available: {e}")
+        return
+
+    # Try slug first, fall back to display_name (handles both paper trading and trade log entries)
+    closed = pc.get_closed_positions(engine, strategy_name=slug)
+    if closed.empty:
+        closed = pc.get_closed_positions(engine, strategy_name=display_name)
+
+    if closed.empty:
+        st.info(f"No closed trades recorded for **{display_name}** yet.\n\n"
+                "Trades are recorded when you execute from the Paper Trading tab or log them in Portfolio → Log Trade.")
+        return
+
+    closed["CloseDate"] = pd.to_datetime(closed["CloseDate"])
+    closed = closed.sort_values("CloseDate")
+
+    # ── Summary metrics ──────────────────────────────────────────────────────
+    total_pnl  = closed["RealizedPnL"].sum()
+    wins       = (closed["RealizedPnL"] > 0).sum()
+    losses     = (closed["RealizedPnL"] <= 0).sum()
+    n_trades   = len(closed)
+    win_rate   = 100 * wins / n_trades if n_trades else 0
+    avg_pnl    = closed["RealizedPnL"].mean()
+    best       = closed["RealizedPnL"].max()
+    worst      = closed["RealizedPnL"].min()
+
+    c1, c2, c3, c4, c5, c6 = st.columns(6)
+    c1.metric("Total P&L",  f"${total_pnl:,.2f}")
+    c2.metric("Trades",      str(n_trades))
+    c3.metric("Win Rate",   f"{win_rate:.1f}%")
+    c4.metric("Avg P&L",    f"${avg_pnl:,.2f}")
+    c5.metric("Best Trade", f"${best:,.2f}")
+    c6.metric("Worst Trade",f"${worst:,.2f}")
+
+    # ── Cumulative P&L chart ─────────────────────────────────────────────────
+    closed["CumPnL"] = closed["RealizedPnL"].cumsum()
+    fig_cum = go.Figure()
+    fig_cum.add_trace(go.Scatter(
+        x=closed["CloseDate"], y=closed["CumPnL"],
+        mode="lines+markers", name="Cumulative P&L",
+        line=dict(color="#5c6bc0", width=2),
+        fill="tozeroy", fillcolor="rgba(92,107,192,0.1)",
+        hovertemplate="<b>%{x|%Y-%m-%d}</b><br>Cumulative: $%{y:,.2f}<extra></extra>",
+    ))
+    fig_cum.add_hline(y=0, line=dict(color="#546e7a", width=1, dash="dot"))
+    fig_cum.update_layout(
+        title=f"Cumulative P&L — {display_name}", height=320,
+        paper_bgcolor="#0e1117", plot_bgcolor="#0e1117",
+        font=dict(color="#b0b8c8"),
+        xaxis=dict(gridcolor="#1e2130"),
+        yaxis=dict(gridcolor="#1e2130", title="P&L ($)"),
+        margin=dict(l=0, r=0, t=40, b=0),
+    )
+    st.plotly_chart(fig_cum, width="stretch")
+
+    # ── Per-trade bars + P&L distribution ───────────────────────────────────
+    col_left, col_right = st.columns(2)
+
+    with col_left:
+        colors = ["#4caf50" if v >= 0 else "#ef5350" for v in closed["RealizedPnL"]]
+        fig_bars = go.Figure(go.Bar(
+            x=closed["CloseDate"], y=closed["RealizedPnL"],
+            marker_color=colors, name="Trade P&L",
+            hovertemplate="<b>%{x|%Y-%m-%d}</b><br>P&L: $%{y:,.2f}<extra></extra>",
+        ))
+        fig_bars.add_hline(y=0, line=dict(color="#546e7a", width=1, dash="dot"))
+        fig_bars.update_layout(
+            title="Per-Trade P&L", height=280,
+            paper_bgcolor="#0e1117", plot_bgcolor="#0e1117",
+            font=dict(color="#b0b8c8"),
+            xaxis=dict(gridcolor="#1e2130"),
+            yaxis=dict(gridcolor="#1e2130", title="P&L ($)"),
+            margin=dict(l=0, r=0, t=36, b=0),
+        )
+        st.plotly_chart(fig_bars, width="stretch")
+
+    with col_right:
+        win_vals  = closed[closed["RealizedPnL"] > 0]["RealizedPnL"]
+        loss_vals = closed[closed["RealizedPnL"] <= 0]["RealizedPnL"]
+        fig_hist = go.Figure()
+        if not win_vals.empty:
+            fig_hist.add_trace(go.Histogram(x=win_vals,   name="Wins",
+                                            marker_color="#4caf50", opacity=0.8))
+        if not loss_vals.empty:
+            fig_hist.add_trace(go.Histogram(x=loss_vals,  name="Losses",
+                                            marker_color="#ef5350", opacity=0.8))
+        fig_hist.update_layout(
+            title="P&L Distribution", barmode="overlay", height=280,
+            paper_bgcolor="#0e1117", plot_bgcolor="#0e1117",
+            font=dict(color="#b0b8c8"),
+            xaxis=dict(gridcolor="#1e2130", title="P&L ($)"),
+            yaxis=dict(gridcolor="#1e2130"),
+            legend=dict(orientation="h", y=1.1),
+            margin=dict(l=0, r=0, t=36, b=0),
+        )
+        st.plotly_chart(fig_hist, width="stretch")
+
+    # ── Trade table ──────────────────────────────────────────────────────────
+    st.markdown("#### Trade history")
+    show_cols = [c for c in ["CloseDate", "Symbol", "PositionType", "Direction",
+                              "Quantity", "AvgEntryPrice", "AvgExitPrice",
+                              "RealizedPnL", "HoldDays", "Outcome", "Regime", "Tags"]
+                 if c in closed.columns]
+    import streamlit as _st
+    import streamlit.column_config as cc
+    st.dataframe(
+        closed[show_cols].sort_values("CloseDate", ascending=False),
+        width="stretch", hide_index=True,
+        column_config={
+            "CloseDate":     cc.DateColumn("Close Date"),
+            "RealizedPnL":   cc.NumberColumn("P&L",        format="$%.2f"),
+            "AvgEntryPrice": cc.NumberColumn("Entry",       format="$%.4f"),
+            "AvgExitPrice":  cc.NumberColumn("Exit",        format="$%.4f"),
+            "Quantity":      cc.NumberColumn("Qty",         format="%.2f"),
+            "HoldDays":      cc.NumberColumn("Hold Days",   format="%d d"),
+        },
+    )
+
+
+# ══════════════════════════════════════════════════════════════════════════════
 # MAIN LAYOUT — dynamic strategy tabs + generic tabs
 # ══════════════════════════════════════════════════════════════════════════════
 
-if not selected:
-    st.markdown(
-        """<div style="text-align:center;padding:80px 0;color:#78909c">
-          <div style="font-size:3rem">📈</div>
-          <div style="font-size:1.3rem;margin-top:12px">Select strategies from the sidebar to get started.</div>
-        </div>""", unsafe_allow_html=True,
-    )
-else:
-    # Build tab list
-    strat_tab_names   = [f"{_meta(s).get('icon','📌')} {_meta(s)['display_name']}" for s in selected]
-    generic_tab_names = ["🗄 Data", "🔭 Polygon", "📡 Market Data", "📦 Portfolio", "🛡 Risk", "🗂 Registry"]
-    all_tabs          = st.tabs(generic_tab_names + strat_tab_names)
+# ── Top-level tabs ─────────────────────────────────────────────────────────────
+tab_market, tab_screener, tab_paper, tab_portfolio, tab_strategies, tab_tools = st.tabs(
+    ["📡 Market", "🔍 Screener", "💹 Paper Trading", "📦 Portfolio", "📈 Strategies", "🛠 Tools"]
+)
 
-    tab_data, tab_polygon, tab_market, tab_portfolio, tab_risk, tab_registry = all_tabs[:6]
-    strategy_tabs = all_tabs[6:]
+# ── MARKET (homepage) ─────────────────────────────────────────────────────────
+with tab_market:
+    from alan_trader.dashboard.tabs.market_data import render as render_market
+    mkt_ticker = _ticker_row("mkt")
+    render_market(ticker=mkt_ticker, api_key=st.session_state.get("polygon_api_key", ""))
 
-    # ── Per-strategy tabs ─────────────────────────────────────────────────────
-    for slug, stab in zip(selected, strategy_tabs):
-        meta = _meta(slug)
-        with stab:
-            # Build inner sub-tab list based on capabilities
-            inner_names = []
-            if _cap(slug, "requires_training"):
-                inner_names.append("🧠 Train")
-            inner_names += ["📊 Backtest", "🔴 Live"]
+# ── SCREENER ──────────────────────────────────────────────────────────────────
+with tab_screener:
+    from alan_trader.dashboard.tabs.screener import render as render_screener
+    render_screener(api_key=st.session_state.get("polygon_api_key", ""))
 
-            inner_tabs = st.tabs(inner_names)
-            idx = 0
+# ── PAPER TRADING ──────────────────────────────────────────────────────────────
+with tab_paper:
+    from alan_trader.dashboard.tabs.paper_trading import render as render_paper_trading
+    render_paper_trading()
 
-            if _cap(slug, "requires_training"):
+# ── PORTFOLIO / TRADE LOG ──────────────────────────────────────────────────────
+with tab_portfolio:
+    from alan_trader.dashboard.tabs.trade_log import render as render_tradelog
+    render_tradelog(api_key=st.session_state.get("polygon_api_key", ""))
+
+# ── STRATEGIES ────────────────────────────────────────────────────────────────
+with tab_strategies:
+    if not selected:
+        st.markdown(
+            """<div style="text-align:center;padding:80px 0;color:#78909c">
+              <div style="font-size:3rem">📈</div>
+              <div style="font-size:1.3rem;margin-top:12px">Select strategies from the sidebar to get started.</div>
+            </div>""", unsafe_allow_html=True,
+        )
+    else:
+        strat_tab_names = [f"{_meta(s).get('icon','📌')} {_meta(s)['display_name']}" for s in selected]
+        strategy_tabs   = st.tabs(strat_tab_names)
+
+        for slug, stab in zip(selected, strategy_tabs):
+            with stab:
+                inner_names = []
+                if _cap(slug, "requires_training"):
+                    inner_names.append("🧠 Train")
+                inner_names += ["📊 Backtest", "🔴 Live", "📈 Performance"]
+
+                inner_tabs = st.tabs(inner_names)
+                idx = 0
+
+                if _cap(slug, "requires_training"):
+                    with inner_tabs[idx]:
+                        _render_train(slug)
+                    idx += 1
+
                 with inner_tabs[idx]:
-                    _render_train(slug)
+                    _render_backtest(slug)
                 idx += 1
 
-            with inner_tabs[idx]:
-                _render_backtest(slug)
-            idx += 1
+                with inner_tabs[idx]:
+                    _render_live(slug)
+                idx += 1
 
-            with inner_tabs[idx]:
-                _render_live(slug)
+                with inner_tabs[idx]:
+                    _render_strategy_performance(slug)
 
-    # ── Portfolio ─────────────────────────────────────────────────────────────
-    with tab_portfolio:
-        from alan_trader.dashboard.tabs.trade_log import render as render_tradelog
-        render_tradelog(api_key=st.session_state.get("polygon_api_key", ""))
+# ── TOOLS ─────────────────────────────────────────────────────────────────────
+with tab_tools:
+    tool_tab_names = ["🗄 Data", "🔭 Polygon", "🛡 Risk", "🗂 Registry", "📚 Guide"]
+    (tab_data, tab_polygon, tab_risk, tab_registry, tab_guide) = st.tabs(tool_tab_names)
 
-    # ── Risk ──────────────────────────────────────────────────────────────────
+    with tab_data:
+        from alan_trader.dashboard.tabs.data_manager import render as render_data
+        render_data(api_key=st.session_state.get("polygon_api_key", ""))
+
+    with tab_polygon:
+        from alan_trader.dashboard.tabs.polygon_explorer import render as render_polygon
+        render_polygon(api_key=st.session_state.get("polygon_api_key", ""))
+
     with tab_risk:
         from alan_trader.dashboard.tabs.risk_management import render as render_risk
         _results = list(st.session_state["bt_results"].values())
@@ -1175,25 +1565,11 @@ else:
         else:
             render_risk(_report, _results)
 
-    # ── Data Manager ──────────────────────────────────────────────────────────
-    with tab_data:
-        from alan_trader.dashboard.tabs.data_manager import render as render_data
-        render_data(api_key=st.session_state.get("polygon_api_key", ""))
-
-    # ── Polygon Explorer ──────────────────────────────────────────────────────
-    with tab_polygon:
-        from alan_trader.dashboard.tabs.polygon_explorer import render as render_polygon
-        render_polygon(api_key=st.session_state.get("polygon_api_key", ""))
-
-    # ── Market Data ───────────────────────────────────────────────────────────
-    with tab_market:
-        from alan_trader.dashboard.tabs.market_data import render as render_market
-        mkt_ticker = _ticker_row("mkt")
-        render_market(ticker=mkt_ticker,
-                      api_key=st.session_state.get("polygon_api_key", ""))
-
-    # ── Strategy Registry ─────────────────────────────────────────────────────
     with tab_registry:
         from alan_trader.dashboard.tabs.strategy_selector import render as render_selector
         bt_results_dict = st.session_state["bt_results"]
         render_selector(bt_results_dict, list(bt_results_dict.keys()))
+
+    with tab_guide:
+        from alan_trader.dashboard.tabs.strategy_guide import render as render_guide
+        render_guide()
