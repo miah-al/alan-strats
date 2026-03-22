@@ -1535,11 +1535,13 @@ div[data-testid="stDialog"] > div[role="dialog"] {
                 for _w in _wf_windows:
                     _pf = _w["profit_factor"]
                     _pf_str = f"{_pf:.2f}" if _pf != float("inf") else "∞"
+                    _ret = _w["total_return"]
                     _wf_rows.append({
+                        "":               "🟢" if _ret > 0 else ("🔴" if _ret < 0 else "⚪"),
                         "Period":         _w["period"],
                         "Trades":         _w["trades"],
                         "Win Rate":       f"{_w['win_rate']:.0f}%",
-                        "Return":         f"{_w['total_return']:+.1f}%",
+                        "Return":         f"{_ret:+.1f}%",
                         "Sharpe":         f"{_w['sharpe']:.2f}",
                         "Max DD":         f"{_w['max_dd']:.1f}%",
                         "Profit Factor":  _pf_str,
@@ -2085,9 +2087,15 @@ def _render_strategy_performance(slug: str):
                 if "exit_value" in _td.columns:
                     _td["total_out"] = (_td["exit_value"] * _td["contracts"] * 100).round(2)
 
+            if "pnl" in _td.columns:
+                _td = _td.copy()
+                _td.insert(0, "W/L", _td["pnl"].apply(
+                    lambda v: "🟢" if isinstance(v, (int, float)) and v > 0
+                    else ("🔴" if isinstance(v, (int, float)) and v < 0 else "⚪")
+                ))
             if "description" in _td.columns:
                 perf_show = [c for c in [
-                    "entry_date", "exit_date", "description", "comment",
+                    "W/L", "entry_date", "exit_date", "description", "comment",
                     "contracts", "trade_type",
                     "iv_call", "iv_put", "iv_skew",
                     "total_in", "total_out",
@@ -2095,7 +2103,7 @@ def _render_strategy_performance(slug: str):
                 ] if c in _td.columns]
             else:
                 perf_show = [c for c in [
-                    "entry_date", "exit_date", "spread_type",
+                    "W/L", "entry_date", "exit_date", "spread_type",
                     "entry_cost", "exit_value", "pnl", "cum_pnl", "exit_reason",
                 ] if c in _td.columns]
 
@@ -2118,6 +2126,7 @@ div[data-testid="element-container"] .ag-row {
                 _td[perf_show].sort_values(date_col, ascending=False),
                 hide_index=True, width="stretch",
                 column_config={
+                    "W/L":          cc.TextColumn("", width="small"),
                     "entry_date":   cc.DateColumn("Entry"),
                     "exit_date":    cc.DateColumn("Exit"),
                     "spread_type":  cc.TextColumn("Regime / Type"),
