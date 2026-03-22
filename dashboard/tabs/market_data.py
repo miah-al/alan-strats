@@ -533,18 +533,19 @@ def _render_term_structure():
         ]
         avail_tenors = [(lbl, yrs, col) for lbl, yrs, col in _TENOR_YEARS if col in df.columns]
 
-        # Weekly sample — 2 years of daily data → ~104 rows
+        import datetime as _ts_dt
+        _ts_max     = pd.to_datetime(df["date"].max()).date()
+        _ts_cap_min = _ts_max - _ts_dt.timedelta(days=730)   # cap at 2 years back
+        _ts_default = _ts_max - _ts_dt.timedelta(days=365)
+        ts_start = st.date_input("Start Date", value=_ts_default,
+                                 min_value=_ts_cap_min, max_value=_ts_max,
+                                 key="ts_3d_start")
+
         surf_df = df.set_index("date").sort_index()
         surf_df = surf_df[[col for _, _, col in avail_tenors]].dropna(how="all")
-        surf_df = surf_df.iloc[::5]  # every 5 trading days ≈ weekly
+        surf_df = surf_df[surf_df.index >= pd.Timestamp(ts_start)]
+        surf_df = surf_df.iloc[::21]  # monthly sample
 
-        dates_z    = surf_df.index.tolist()
-        maturities = [yrs for _, yrs, _ in avail_tenors]
-        tenor_cols = [col for _, _, col in avail_tenors]
-        tenor_lbls = [lbl for lbl, _, _ in avail_tenors]
-
-        # Monthly sample (~24 rows) — weekly causes too many traces and hangs browser
-        surf_df = surf_df.iloc[::21]
         dates_z    = surf_df.index.tolist()
         date_strs  = [str(d) for d in dates_z]
 
