@@ -25,6 +25,149 @@ def _fetch_live_bars(ticker: str, api_key: str, n_days: int = 252) -> "pd.DataFr
         return pd.DataFrame()
 
 
+def _fetch_api_vol_surface_historical(
+    ticker: str, api_key: str, as_of: "datetime.date",
+    min_dte: int = 7, max_dte: int = 180,
+    spot_range_pct: float = 0.25,
+) -> "tuple[pd.DataFrame | None, str]":
+    """
+    Build a vol surface for a specific historical date using the same approach
+    as the DB backfill — per-contract OHLC + BS IV inversion.
+    No DB dependency. No volume filter.
+    """
+    import math
+    import datetime as _dt
+    from datetime import timedelta
+    try:
+        from alan_trader.data.polygon_client import PolygonClient
+        from scipy.optimize import brentq as _brentq
+        from scipy.stats import norm as _norm
+    except ImportError as e:
+        return None, f"Missing dependency: {e}"
+
+    def _bs_mid(S, K, T, r, iv, opt):
+        if T <= 0 or iv <= 0 or S <= 0 or K <= 0:
+            return float("nan")
+        try:
+            d1 = (math.log(S / K) + (r + 0.5 * iv * iv) * T) / (iv * math.sqrt(T))
+            d2 = d1 - iv * math.sqrt(T)
+            if opt == "call":
+                return S * _norm.cdf(d1) - K * math.exp(-r * T) * _norm.cdf(d2)
+            else:
+                return K * math.exp(-r * T) * _norm.cdf(-d2) - S * _norm.cdf(-d1)
+        except Exception:
+            return float("nan")
+
+    try:
+        client = PolygonClient(api_key=api_key)
+
+        # Get spot price for the as_of date from Polygon aggregates
+        agg = client._get(
+            f"/v2/aggs/ticker/{ticker}/range/1/day/{as_of}/{as_of}",
+            {"adjusted": "true", "limit": 1},
+        )
+        results = agg.get("results", [])
+        if not results:
+            return None, f"No price bar for {ticker} on {as_of}. Market may have been closed."
+        S = float(results[0]["c"])  # close price
+
+        strike_lo = round(S * (1 - spot_range_pct), 2)
+        strike_hi = round(S * (1 + spot_range_pct), 2)
+        exp_min   = str(as_of + timedelta(days=min_dte))
+        exp_max   = str(as_of + timedelta(days=max_dte))
+
+        # Enumerate contracts (including expired) active on as_of date
+        all_contracts = []
+        for ctype in ("call", "put"):
+            url    = "/v3/reference/options/contracts"
+            params = {
+                "underlying_ticker":   ticker,
+                "contract_type":       ctype,
+                "expiration_date.gte": exp_min,
+                "expiration_date.lte": exp_max,
+                "strike_price.gte":    strike_lo,
+                "strike_price.lte":    strike_hi,
+                "expired":             "true",
+                "limit":               1000,
+            }
+            while url:
+                data = client._get(url, params)
+                all_contracts.extend(data.get("results", []))
+                url  = (data.get("next_url") or "").replace(client.BASE, "") or None
+                params = {}
+
+        if not all_contracts:
+            return None, f"No option contracts found for {ticker} around {as_of} (strike {strike_lo}–{strike_hi}, DTE {min_dte}–{max_dte})."
+
+        rows = []
+        r    = 0.045  # fixed risk-free rate
+        date_str = str(as_of)
+
+        for contract in all_contracts:
+            cticker  = contract["ticker"]
+            K        = float(contract["strike_price"])
+            exp_str  = contract["expiration_date"]
+            opt_type = contract["contract_type"]  # "call" or "put"
+            exp_date = _dt.date.fromisoformat(exp_str)
+            dte      = (exp_date - as_of).days
+
+            if not (min_dte <= dte <= max_dte):
+                continue
+
+            try:
+                bar = client._get(
+                    f"/v2/aggs/ticker/{cticker}/range/1/day/{date_str}/{date_str}",
+                    {"adjusted": "true", "limit": 1},
+                )
+                bar_results = bar.get("results", [])
+            except Exception:
+                continue
+
+            if not bar_results:
+                continue
+
+            close_price = float(bar_results[0].get("c", 0) or 0)
+            if close_price <= 0:
+                continue
+
+            T = dte / 252.0
+            intrinsic = max(0.0, S - K) if opt_type == "call" else max(0.0, K - S)
+            if close_price <= intrinsic * 1.001:
+                continue
+
+            try:
+                iv = _brentq(
+                    lambda v: _bs_mid(S, K, T, r, v, opt_type) - close_price,
+                    1e-4, 10.0, xtol=1e-5, maxiter=50,
+                )
+                if not (0.01 <= iv <= 5.0):
+                    continue
+            except (ValueError, RuntimeError):
+                continue
+
+            spread = max(0.01, close_price * (0.04 if close_price < 1 else 0.02))
+            rows.append({
+                "strike": K,
+                "dte":    dte,
+                "type":   opt_type,
+                "iv":     round(iv, 6),
+                "bid":    round(close_price - spread / 2, 4),
+                "ask":    round(close_price + spread / 2, 4),
+                "delta":  None,
+            })
+
+        if not rows:
+            return None, f"No tradeable options with valid IV found for {ticker} on {as_of}."
+
+        df = pd.DataFrame(rows)
+        # Use calls for the surface (same convention as live API)
+        calls = df[df["type"] == "call"]
+        return (calls if not calls.empty else df), ""
+
+    except Exception as e:
+        return None, str(e)
+
+
 def _fetch_live_vol_surface(ticker: str, api_key: str, spot_price: float,
                             min_dte: int = 7, max_dte: int = 180) -> "tuple[pd.DataFrame | None, str]":
     """Returns (df_or_None, error_message)."""
@@ -540,21 +683,26 @@ def render(ticker: str = "SPY", api_key: str = ""):
         surf_err = ""
 
         if api_key:
-            with st.spinner("Fetching live options chain…"):
-                surf_df, surf_err = _fetch_live_vol_surface(
-                    ticker, api_key, spot_price, min_dte=dte_lo, max_dte=dte_hi
-                )
-            surf_src = f"📡 Live IV surface — {ticker} (as of {as_of})"
+            _is_today = (as_of == _vs_dt.date.today())
+            if _is_today:
+                with st.spinner("Fetching live options chain…"):
+                    surf_df, surf_err = _fetch_live_vol_surface(
+                        ticker, api_key, spot_price, min_dte=dte_lo, max_dte=dte_hi
+                    )
+                surf_src = f"📡 Live IV surface — {ticker}"
+            else:
+                with st.spinner(f"Building IV surface for {ticker} on {as_of} (per-contract OHLC + BS inversion)…"):
+                    surf_df, surf_err = _fetch_api_vol_surface_historical(
+                        ticker, api_key, as_of, min_dte=dte_lo, max_dte=dte_hi
+                    )
+                surf_src = f"📡 IV surface — {ticker} as of {as_of} (per-contract OHLC)"
         else:
             surf_err = ""
 
         if not api_key:
-            st.info("Enter your Polygon API key in the sidebar to load the live surface.")
+            st.info("Enter your Polygon API key in the sidebar to load the surface.")
         elif surf_df is None or surf_df.empty:
-            msg = surf_err or (
-                f"IV surface unavailable for {ticker}. "
-                "The `implied_volatility` field requires a Polygon Options add-on plan."
-            )
+            msg = surf_err or f"IV surface unavailable for {ticker} on {as_of}."
             st.warning(msg)
         else:
             live_surf = surf_df
