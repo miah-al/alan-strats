@@ -1239,7 +1239,7 @@ def _render_backtest(slug: str):
                                      * disp["contracts"] * 100).round(2)
                 if "pnl" in disp.columns:
                     disp["total_out"] = (disp["total_in"] + disp["pnl"]).round(2)
-            elif "entry_cost" in disp.columns:
+            elif "entry_cost" in disp.columns and "contracts" in disp.columns:
                 disp["total_in"]  = (disp["entry_cost"] * disp["contracts"] * 100).round(2)
                 if "exit_value" in disp.columns:
                     disp["total_out"] = (disp["exit_value"] * disp["contracts"] * 100).round(2)
@@ -2079,7 +2079,7 @@ def _render_strategy_performance(slug: str):
                                     * _td["contracts"] * 100).round(2)
                 if "pnl" in _td.columns:
                     _td["total_out"] = (_td["total_in"] + _td["pnl"]).round(2)
-            elif "entry_cost" in _td.columns:
+            elif "entry_cost" in _td.columns and "contracts" in _td.columns:
                 _td["total_in"]  = (_td["entry_cost"] * _td["contracts"] * 100).round(2)
                 if "exit_value" in _td.columns:
                     _td["total_out"] = (_td["exit_value"] * _td["contracts"] * 100).round(2)
