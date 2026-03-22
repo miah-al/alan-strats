@@ -528,48 +528,32 @@ def render(ticker: str = "SPY", api_key: str = ""):
         import datetime as _vs_dt
 
         # ── Controls row ──────────────────────────────────────────────────
-        vc1, vc2, vc3, vc4 = st.columns([2, 2, 2, 3])
-        dte_lo   = vc1.slider("Min DTE",  1,  60,   7, 1,  key="vs_dte_lo")
-        dte_hi   = vc2.slider("Max DTE", 30, 365, 180, 10, key="vs_dte_hi")
-        src_mode = vc3.radio("Source", ["API (live)", "DB (historical)"],
-                             horizontal=True, key="vs_src_mode")
-        use_db   = src_mode == "DB (historical)"
-
-        # As Of date — only relevant for DB mode
-        _db_min  = _vs_dt.date(2020, 1, 1)
-        _db_max  = _vs_dt.date.today()
-        _db_def  = _vs_dt.date.today() - _vs_dt.timedelta(days=1)
-        as_of    = vc4.date_input("As Of", value=_db_def,
-                                  min_value=_db_min, max_value=_db_max,
-                                  key="vs_as_of",
-                                  disabled=not use_db)
+        vc1, vc2, vc3 = st.columns([2, 2, 2])
+        dte_lo = vc1.slider("Min DTE",  1,  60,   7, 1,  key="vs_dte_lo")
+        dte_hi = vc2.slider("Max DTE", 30, 365, 180, 10, key="vs_dte_hi")
+        as_of  = vc3.date_input("As Of", value=_vs_dt.date.today(),
+                                min_value=_vs_dt.date(2020, 1, 1),
+                                max_value=_vs_dt.date.today(), key="vs_as_of")
 
         surf_df  = None
         surf_src = ""
+        surf_err = ""
 
-        if use_db:
-            with st.spinner(f"Loading {ticker} chain from DB for {as_of}…"):
-                surf_df, surf_err = _fetch_db_vol_surface(
-                    ticker, as_of, min_dte=dte_lo, max_dte=dte_hi
+        if api_key:
+            with st.spinner("Fetching live options chain…"):
+                surf_df, surf_err = _fetch_live_vol_surface(
+                    ticker, api_key, spot_price, min_dte=dte_lo, max_dte=dte_hi
                 )
-            surf_src = f"📦 DB snapshot — {ticker} as of {as_of}"
+            surf_src = f"📡 Live IV surface — {ticker} (as of {as_of})"
         else:
-            if api_key:
-                with st.spinner("Fetching live options chain (calls, 5 % strike steps)…"):
-                    surf_df, surf_err = _fetch_live_vol_surface(
-                        ticker, api_key, spot_price, min_dte=dte_lo, max_dte=dte_hi
-                    )
-                surf_src = f"📡 Live IV surface — {ticker}"
-            else:
-                surf_err = ""
+            surf_err = ""
 
-        if not use_db and not api_key:
-            st.info("Enter your Polygon API key in the sidebar to load the live surface, or switch to **DB (historical)**.")
+        if not api_key:
+            st.info("Enter your Polygon API key in the sidebar to load the live surface.")
         elif surf_df is None or surf_df.empty:
             msg = surf_err or (
                 f"IV surface unavailable for {ticker}. "
-                + ("Try a different date or sync options via Data Manager." if use_db
-                   else "The `implied_volatility` field requires a Polygon Options add-on plan.")
+                "The `implied_volatility` field requires a Polygon Options add-on plan."
             )
             st.warning(msg)
         else:
