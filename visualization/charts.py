@@ -216,10 +216,13 @@ def equity_curve(equity_df: pd.DataFrame) -> go.Figure:
         x=equity_df.index, y=bah,
         name="Buy & Hold", line=dict(color=COLORS["spy"], width=1.5, dash="dot"),
     ))
-    fig.update_layout(legend=dict(
-        orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1,
-        bgcolor="rgba(14,17,23,0.7)", borderwidth=0,
-    ))
+    fig.update_layout(
+        legend=dict(
+            orientation="h", yanchor="top", y=0.99, xanchor="right", x=0.99,
+            bgcolor="rgba(14,17,23,0.7)", borderwidth=0,
+        ),
+        margin=dict(l=50, r=30, t=50, b=40),
+    )
     return _apply(fig, "Equity Curve vs Buy-and-Hold", 420)
 
 
