@@ -418,6 +418,138 @@ class VolArbitrageStrategy(BaseStrategy):
             },
         )
 
+    # ── Walk-forward ──────────────────────────────────────────────────────────
+
+    def walk_forward(
+        self,
+        price_data:       pd.DataFrame,
+        auxiliary_data:   dict,
+        test_months:      int   = 2,
+        starting_capital: float = 100_000,
+        **backtest_kwargs,
+    ) -> dict:
+        """
+        Roll a fixed-param backtest across non-overlapping test windows.
+        Returns a dict with:
+            windows  : list of per-window metric dicts (+ date bounds + trades)
+            summary  : dict of aggregate stats (consistency, avg sharpe, etc.)
+            equity   : pd.Series — concatenated equity across all test windows
+        Since vol arb has no trainable model, walk-forward tests parameter
+        stability across different market regimes rather than re-fitting.
+        """
+        import datetime as _dt
+        from alan_trader.risk.metrics import compute_all_metrics
+
+        price_data = price_data.copy()
+        price_data.index = pd.to_datetime(price_data.index)
+        chains = auxiliary_data.get("options_chains", {})
+
+        # Build sorted list of dates with chain data
+        chain_dates = sorted(chains.keys())
+        if not chain_dates:
+            return {"windows": [], "summary": {}, "equity": pd.Series(dtype=float)}
+
+        # Split into test windows by calendar month boundaries
+        first_date = chain_dates[0]
+        last_date  = chain_dates[-1]
+        if isinstance(first_date, _dt.date) and not isinstance(first_date, _dt.datetime):
+            first_date = pd.Timestamp(first_date)
+            last_date  = pd.Timestamp(last_date)
+
+        # Generate window start/end dates
+        window_starts = []
+        cur = first_date.to_period("M").to_timestamp()
+        while cur <= last_date:
+            window_starts.append(cur)
+            # advance by test_months
+            yr   = cur.year + (cur.month - 1 + test_months) // 12
+            mo   = (cur.month - 1 + test_months) % 12 + 1
+            cur  = pd.Timestamp(yr, mo, 1)
+
+        windows     = []
+        all_equity  = []
+
+        for ws in window_starts:
+            we = ws + pd.DateOffset(months=test_months) - pd.DateOffset(days=1)
+
+            # Slice price data
+            pd_slice = price_data.loc[
+                (price_data.index >= ws) & (price_data.index <= we)
+            ]
+            if len(pd_slice) < 5:
+                continue
+
+            # Slice chains
+            ch_slice = {
+                d: v for d, v in chains.items()
+                if pd.Timestamp(d) >= ws and pd.Timestamp(d) <= we
+            }
+            if not ch_slice:
+                continue
+
+            # Slice auxiliary series (vix, rate10y) — keep full history for context
+            aux_slice = {k: v for k, v in auxiliary_data.items()
+                         if k != "options_chains"}
+            aux_slice["options_chains"]       = ch_slice
+            aux_slice["option_data_quality"]  = auxiliary_data.get("option_data_quality", "unknown")
+
+            try:
+                res = self.backtest(
+                    pd_slice, aux_slice,
+                    starting_capital=starting_capital,
+                    **backtest_kwargs,
+                )
+                m = res.metrics
+                n_trades = m.get("num_trades", 0)
+                window_record = {
+                    "period":       f"{ws.strftime('%b %Y')} – {we.strftime('%b %Y')}",
+                    "start":        ws.date(),
+                    "end":          we.date(),
+                    "trades":       n_trades,
+                    "win_rate":     m.get("win_rate_pct", 0.0),
+                    "total_return": m.get("total_return_pct", 0.0),
+                    "sharpe":       m.get("sharpe", 0.0),
+                    "max_dd":       m.get("max_drawdown_pct", 0.0),
+                    "profit_factor": m.get("profit_factor", 0.0),
+                    "result":       res,
+                }
+                windows.append(window_record)
+                if not res.equity_curve.empty:
+                    all_equity.append(res.equity_curve)
+            except Exception:
+                pass  # skip empty windows silently
+
+        if not windows:
+            return {"windows": [], "summary": {}, "equity": pd.Series(dtype=float)}
+
+        # Concatenated equity (each window starts where previous ended —
+        # rescale so the curve is continuous)
+        combined_equity = pd.Series(dtype=float)
+        if all_equity:
+            offset = 0.0
+            pieces  = []
+            for eq in all_equity:
+                if pieces:
+                    offset = pieces[-1].iloc[-1] - float(eq.iloc[0])
+                pieces.append(eq + offset)
+            combined_equity = pd.concat(pieces).sort_index()
+            combined_equity = combined_equity[~combined_equity.index.duplicated(keep="last")]
+
+        # Aggregate stats
+        profitable_windows = sum(1 for w in windows if w["total_return"] > 0)
+        sharpes = [w["sharpe"] for w in windows if w["trades"] > 0]
+        returns = [w["total_return"] for w in windows]
+        summary = {
+            "n_windows":            len(windows),
+            "profitable_windows":   profitable_windows,
+            "consistency_pct":      round(profitable_windows / len(windows) * 100, 1),
+            "avg_return_pct":       round(float(pd.Series(returns).mean()), 2),
+            "avg_sharpe":           round(float(pd.Series(sharpes).mean()), 3) if sharpes else 0.0,
+            "worst_window_return":  round(min(returns), 2),
+            "best_window_return":   round(max(returns), 2),
+        }
+        return {"windows": windows, "summary": summary, "equity": combined_equity}
+
     # ── UI params ─────────────────────────────────────────────────────────────
 
     def get_backtest_ui_params(self) -> list:

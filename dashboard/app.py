@@ -1431,6 +1431,134 @@ div[data-testid="stDialog"] > div[role="dialog"] {
             if len(eq_df) > 30:
                 st.plotly_chart(C.monthly_returns_heatmap(eq_df), width="stretch", key=f"bt_{slug}_mr")
 
+    # ── Walk-Forward Analysis (vol_arbitrage only) ────────────────────────
+    if slug == "vol_arbitrage":
+        st.markdown("---")
+        with st.expander("Walk-Forward Analysis", expanded=False):
+            st.caption(
+                "Runs the same fixed parameters on non-overlapping 2-month windows. "
+                "Tests whether the edge holds across different market regimes — not curve fitting."
+            )
+            _wf_key = f"wf_results_{slug}"
+            _wf_months_key = f"wf_months_{slug}"
+            _wf_cols = st.columns([1, 3])
+            _wf_test_months = _wf_cols[0].selectbox(
+                "Window size", [1, 2, 3], index=1,
+                format_func=lambda x: f"{x} month{'s' if x > 1 else ''}",
+                key=_wf_months_key,
+            )
+            if _wf_cols[1].button("▶ Run Walk-Forward", key=f"btn_wf_{slug}"):
+                with st.spinner("Running walk-forward…"):
+                    try:
+                        from alan_trader.strategies.vol_arbitrage import VolArbitrageStrategy as _WFStrat
+                        _wf_strat = _WFStrat()
+                        _wf_price = res.extra.get("spy_returns")  # reuse loaded data
+
+                        # Re-load price + chains from session (already loaded for main backtest)
+                        # We need the raw price_data (not returns) — reload from DB
+                        from alan_trader.db.loader import load_training_data as _wf_ltd
+                        _wf_data   = _wf_ltd(ticker=ticker or "SPY")
+                        _wf_spy_df = _wf_data["spy"]
+
+                        # Reuse aux (vix, rate, chains) built during _do_backtest
+                        # The chains are not in res.extra — need to rebuild aux from DB
+                        from alan_trader.db.options_loader import _load_chain as _wf_lc
+                        from alan_trader.db.client import get_engine as _wf_ge, get_ticker_id as _wf_gtid
+                        from alan_trader.db.sync import bs_price_chain as _wf_bspc
+                        from alan_trader.db.client import get_price_bars as _wf_gpb
+                        _wf_eng  = _wf_ge()
+                        _wf_tid  = _wf_gtid(_wf_eng, ticker or "SPY")
+                        _wf_from = (datetime.date.today() - datetime.timedelta(days=730))
+                        _wf_raw  = _wf_lc(_wf_eng, _wf_tid, _wf_from, datetime.date.today(), min_dte=7, max_dte=60) if _wf_tid else pd.DataFrame()
+
+                        _wf_chains = {}
+                        if not _wf_raw.empty:
+                            _wf_raw["dte"] = (_wf_raw["expiration_date"] - _wf_raw["snapshot_date"]).apply(
+                                lambda td: td.days if hasattr(td, "days") else int(td)
+                            )
+                            _wf_raw = _wf_raw.rename(columns={"contract_type": "type"})
+                            _wf_raw["type"] = _wf_raw["type"].str.lower().map(
+                                {"c": "call", "call": "call", "p": "put", "put": "put"}
+                            )
+                            _wf_spots_df = _wf_gpb(_wf_eng, ticker or "SPY", _wf_from, datetime.date.today())
+                            _wf_spot_map = {}
+                            if not _wf_spots_df.empty:
+                                for _, _wf_sr in _wf_spots_df.iterrows():
+                                    _sd = _wf_sr["date"].date() if hasattr(_wf_sr["date"], "date") else _wf_sr["date"]
+                                    _wf_spot_map[_sd] = float(_wf_sr["close"])
+                            for _snap_dt, _grp in _wf_raw.groupby("snapshot_date"):
+                                import datetime as _dt2
+                                _k = _snap_dt if isinstance(_snap_dt, _dt2.date) else pd.Timestamp(_snap_dt).date()
+                                _ch = _grp[["strike", "type", "bid", "ask", "iv", "delta", "dte"]].reset_index(drop=True)
+                                _S2 = _wf_spot_map.get(_k)
+                                if _S2:
+                                    _ch = _wf_bspc(_ch, _S2)
+                                _wf_chains[_k] = _ch
+
+                        _wf_aux = {
+                            "vix":               _wf_data["vix"],
+                            "rate10y":           _wf_data["rate10y"],
+                            "options_chains":    _wf_chains,
+                            "option_data_quality": (res.extra or {}).get("data_quality", "unknown"),
+                        }
+
+                        _wf_result = _wf_strat.walk_forward(
+                            _wf_spy_df, _wf_aux,
+                            test_months=_wf_test_months,
+                            starting_capital=100_000,
+                            skip_parity_arb=True,
+                            **params,
+                        )
+                        st.session_state[_wf_key] = _wf_result
+                        st.rerun()
+                    except Exception as _wf_ex:
+                        import traceback
+                        st.error(f"Walk-forward failed: {_wf_ex}")
+                        st.code(traceback.format_exc())
+
+            _wf_res = st.session_state.get(_wf_key)
+            if _wf_res and _wf_res.get("windows"):
+                _wf_summary = _wf_res["summary"]
+                _wf_windows = _wf_res["windows"]
+                _wf_eq      = _wf_res["equity"]
+
+                # Summary metrics
+                _ws1, _ws2, _ws3, _ws4, _ws5 = st.columns(5)
+                _ws1.metric("Windows",        f"{_wf_summary['n_windows']}")
+                _ws2.metric("Profitable",     f"{_wf_summary['profitable_windows']}/{_wf_summary['n_windows']} ({_wf_summary['consistency_pct']:.0f}%)")
+                _ws3.metric("Avg Return/Wdw", f"{_wf_summary['avg_return_pct']:+.1f}%")
+                _ws4.metric("Avg Sharpe",     f"{_wf_summary['avg_sharpe']:.2f}")
+                _ws5.metric("Worst Window",   f"{_wf_summary['worst_window_return']:+.1f}%")
+
+                # Per-window table
+                _wf_rows = []
+                for _w in _wf_windows:
+                    _pf = _w["profit_factor"]
+                    _pf_str = f"{_pf:.2f}" if _pf != float("inf") else "∞"
+                    _wf_rows.append({
+                        "Period":         _w["period"],
+                        "Trades":         _w["trades"],
+                        "Win Rate":       f"{_w['win_rate']:.0f}%",
+                        "Return":         f"{_w['total_return']:+.1f}%",
+                        "Sharpe":         f"{_w['sharpe']:.2f}",
+                        "Max DD":         f"{_w['max_dd']:.1f}%",
+                        "Profit Factor":  _pf_str,
+                    })
+                _wf_df = pd.DataFrame(_wf_rows)
+                st.dataframe(_wf_df, hide_index=True, use_container_width=True)
+
+                # Combined equity curve
+                if not _wf_eq.empty:
+                    from alan_trader.visualization import charts as _C2
+                    _wf_eq_df = pd.DataFrame({"equity": _wf_eq})
+                    st.plotly_chart(_C2.equity_curve(_wf_eq_df), use_container_width=True, key=f"wf_{slug}_eq")
+
+                st.caption(
+                    f"**Interpretation:** {_wf_summary['consistency_pct']:.0f}% of windows profitable. "
+                    "If consistency ≥ 60% and avg Sharpe > 0, the edge is regime-independent. "
+                    "Low consistency means the strategy only worked in specific market conditions."
+                )
+
     # ── Rates/SPY Rotation — regime chart (both variants) ─────────────────
     if slug in ("rates_spy_rotation", "rates_spy_rotation_options") and res.extra:
         _render_regime_chart(slug, res)
