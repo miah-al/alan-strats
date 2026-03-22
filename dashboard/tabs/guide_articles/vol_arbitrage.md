@@ -72,6 +72,85 @@ Counterintuitively, very high skew is *not* a better entry. When skew is 45 vp, 
 
 ---
 
+## Real Trade Walkthrough — HOOD (from Live Backtest)
+
+All 4 trades below are from the actual HOOD backtest run on real Polygon IV data. Click any trade row in the Backtest tab to see the full breakdown.
+
+---
+
+### Trade 1 — Textbook Skew Compression ✅ +$904
+
+| Field | Value |
+|-------|-------|
+| Date | 2025-02-18 |
+| HOOD spot | $60.44 |
+| Strike | $69 (OTM) |
+| DTE | 10 |
+| Call IV | 54.5% |
+| Put IV | 67.6% |
+| **IV Skew** | **13.0 vol pts** |
+| Legs | Sell 6 puts @ $9.20 · Buy 6 calls @ $0.39 · Short 565 shares |
+| Net credit | $5,286 |
+| Hold | 2 days |
+| **P&L** | **+$904** |
+
+**What happened:** Put IV mean-reverted from 67.6% toward call IV in 2 days. Bought back the put cheaper. Textbook compression trade with skew in the sweet spot (10–25 vp).
+
+---
+
+### Trade 2 — Best Trade: Hedge Dominated ✅ +$2,126
+
+| Field | Value |
+|-------|-------|
+| Date | 2025-02-20 |
+| HOOD spot | $56.06 |
+| Strike | $61 (near ATM) |
+| DTE | 8 |
+| Call IV | 51.4% |
+| Put IV | 63.7% |
+| **IV Skew** | **12.3 vol pts** |
+| Legs | Sell 7 puts @ $5.75 · Buy 7 calls @ $0.53 · Short 661 shares |
+| Net credit | $3,654 |
+| Hold | 2 days |
+| **P&L** | **+$2,126** |
+
+**What happened:** Stock fell sharply. Short stock hedge gained **$4,051**. The sold put lost value (stock moved toward strike), but the hedge more than offset it. This is an example where directional P&L from the hedge dominated over the IV skew compression.
+
+---
+
+### Trade 3 — Loser: Extreme Skew Widened ❌ −$580
+
+| Field | Value |
+|-------|-------|
+| Date | 2024-12-13 |
+| HOOD spot | $40.20 |
+| Strike | $48 (OTM) |
+| DTE | 7 |
+| Call IV | 67.0% |
+| Put IV | 112.1% |
+| **IV Skew** | **45.1 vol pts** ⚠️ extreme |
+| Legs | Sell 10 puts @ $8.50 · Buy 10 calls @ $0.12 |
+| Net credit | $8,380 |
+| Hold | 2 days |
+| **P&L** | **−$580** |
+
+**What happened:** Skew widened further instead of compressing. At 45 vol pts, the market was pricing real event risk — not a temporary overreaction. Extreme skew often signals *something is actually happening*, not random retail fear. Lesson: skew > 35 vp = skip or size down.
+
+---
+
+### Trade 4 — Worst Trade: Macro Shock ❌ −$2,970
+
+| Field | Value |
+|-------|-------|
+| Date | 2026-02-24 |
+| **IV Skew at entry** | **24.2 vol pts** |
+| Hold | 2 days |
+| **P&L** | **−$2,970** |
+
+**What happened:** A sudden macro event caused put IV to spike sharply after entry. The put we sold became far more expensive to buy back. This is the primary tail risk: macro surprises during the hold window. No entry filter fully prevents this — position sizing (6% max) is the mitigation.
+
+---
+
 ## Full HOOD Backtest — Dec 2024 to Mar 2026
 
 **Period:** Dec 2024 – Jul 2025 + Feb–Mar 2026 (7-month gap excluded — no HOOD option volume)
