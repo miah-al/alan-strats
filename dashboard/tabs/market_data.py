@@ -547,8 +547,12 @@ def _render_term_structure():
         surf_df = surf_df[surf_df.index >= pd.Timestamp(ts_start)]
         surf_df = surf_df.iloc[::21]  # monthly sample
 
-        dates_z    = surf_df.index.tolist()
-        date_strs  = [str(d) for d in dates_z]
+        maturities = [yrs for _, yrs, _ in avail_tenors]
+        tenor_cols = [col for _, _, col in avail_tenors]
+        tenor_lbls = [lbl for lbl, _, _ in avail_tenors]
+
+        dates_z   = surf_df.index.tolist()
+        date_strs = [str(d.date() if hasattr(d, 'date') else d) for d in dates_z]
 
         z_mat = surf_df[tenor_cols].values.astype(float)
         # Fill NaNs via forward-fill so Surface renders cleanly
