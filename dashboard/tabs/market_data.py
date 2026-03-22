@@ -561,9 +561,12 @@ def _render_term_structure():
         tick_vals = list(range(0, n_dates, tick_step))
         tick_text = [date_strs[i] for i in tick_vals]
 
+        # Use evenly spaced indices for x (tenor) — avoids 10→30Y gap distortion
+        tenor_indices = list(range(len(maturities)))
+
         # Single go.Surface with hidesurface + contour lines = efficient wireframe
         fig3d = go.Figure(data=[go.Surface(
-            x=maturities,
+            x=tenor_indices,
             y=list(range(n_dates)),
             z=z_mat.tolist(),
             hidesurface=True,
@@ -578,7 +581,7 @@ def _render_term_structure():
                 thickness=14, len=0.7,
                 tickfont=dict(color="#e0e0e0", size=11),
             ),
-            hovertemplate="Maturity: %{x}Y<br>Yield: %{z:.2f}%<extra></extra>",
+            hovertemplate="Yield: %{z:.2f}%<extra></extra>",
         )])
 
         _ax = dict(
@@ -595,8 +598,8 @@ def _render_term_structure():
             ),
             scene=dict(
                 xaxis=dict(**_ax,
-                    title=dict(text="Maturity (years)", font=dict(color="#e0e0e0", size=13)),
-                    tickvals=maturities, ticktext=tenor_lbls,
+                    title=dict(text="Maturity", font=dict(color="#e0e0e0", size=13)),
+                    tickvals=tenor_indices, ticktext=tenor_lbls,
                 ),
                 yaxis=dict(**_ax,
                     title=dict(text="Date", font=dict(color="#e0e0e0", size=13)),
