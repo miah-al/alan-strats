@@ -136,7 +136,7 @@ def trade_stats(trades_df: pd.DataFrame) -> dict:
     win_rate = len(wins) / len(trades_df) * 100 if len(trades_df) else 0.0
     avg_win  = float(wins.mean()) if len(wins) else 0.0
     avg_loss = float(losses.mean()) if len(losses) else 0.0
-    pf = abs(avg_win / avg_loss) if avg_loss != 0 else float("inf")
+    pf = abs(wins.sum() / losses.sum()) if len(losses) > 0 and losses.sum() != 0 else float("inf")
     return {
         "win_rate_pct": round(win_rate, 2),
         "avg_win": round(avg_win, 2),

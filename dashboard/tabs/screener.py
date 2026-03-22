@@ -261,8 +261,8 @@ def render(api_key: str = "") -> None:
     st.markdown("---")
 
     # ── Tabs ──────────────────────────────────────────────────────────────────
-    t_movers, t_scan, t_options, t_tech = st.tabs([
-        "📈 Movers", "💧 Liquidity Scan", "🔀 Options Flow", "📐 Technicals"
+    t_movers, t_scan, t_options, t_tech, t_volarb = st.tabs([
+        "📈 Movers", "💧 Liquidity Scan", "🔀 Options Flow", "📐 Technicals", "⚡ Vol Arb Scan"
     ])
 
     # ══════════════════════════════════════════════════════════════════════════
@@ -542,3 +542,259 @@ def render(api_key: str = "") -> None:
                 )
             else:
                 st.info("No tickers in RSI range — adjust the filter.")
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # VOL ARB SCAN — detect parity violations & IV skew opportunities
+    # ══════════════════════════════════════════════════════════════════════════
+    with t_volarb:
+        st.caption(
+            "Scans the selected universe for **put-call parity violations** and "
+            "**IV skew arbitrage** opportunities. Works best on retail-heavy names "
+            "(HOOD, COIN, GME) where structural put buying creates persistent mispricing."
+        )
+
+        va_col1, va_col2, va_col3, va_col4 = st.columns(4)
+        va_min_viol  = va_col1.slider("Min parity violation %", 0.1, 2.0, 0.3, 0.1,
+                                      key="va_mv",
+                                      help="Minimum C-P deviation from theoretical as % of spot")
+        va_skew_thr  = va_col2.slider("IV skew threshold (vol pts)", 2, 20, 8, 1,
+                                      key="va_sk",
+                                      help="Put minus call IV at same strike to flag skew arb")
+        va_dte_min   = va_col3.slider("DTE min", 5, 30, 14, 1, key="va_dtl")
+        va_dte_max   = va_col4.slider("DTE max", 20, 90, 45, 5, key="va_dth")
+
+        va_tickers = st.multiselect(
+            "Tickers to scan",
+            options=sorted({t for lst in UNIVERSES.values() for t in lst}),
+            default=["HOOD", "COIN", "PLTR", "SOFI", "GME", "MSTR", "RIVN", "RKLB"],
+            key="va_tickers",
+        )
+
+        if st.button("⚡ Run Vol Arb Scan", width="stretch", key="va_btn"):
+            if not api_key:
+                st.warning("Enter a Polygon API key in the sidebar.")
+            elif not va_tickers:
+                st.warning("Select at least one ticker.")
+            else:
+                from alan_trader.data.polygon_client import PolygonClient
+                from alan_trader.backtest.engine import bs_price
+                from scipy.optimize import brentq
+
+                def _iv(price, S, K, T, r, kind):
+                    if T <= 0 or price <= 0:
+                        return None
+                    intr = max(0, S - K) if kind == "call" else max(0, K - S)
+                    if price < intr:
+                        return None
+                    try:
+                        return brentq(lambda v: bs_price(S, K, T, r, v, kind) - price,
+                                      1e-4, 10.0, xtol=1e-5, maxiter=80)
+                    except Exception:
+                        return None
+
+                def _scan_ticker(ticker, client, min_viol_pct, skew_thr, dte_lo, dte_hi):
+                    import datetime as _dt
+                    snap  = client.get_snapshot(ticker)
+                    S     = (snap.get("day", {}).get("c") or
+                             snap.get("lastTrade", {}).get("p") or 0)
+                    if S <= 0:
+                        return []
+
+                    # ── Targeted fetch: only 14-45 DTE + ±25% strike band ──
+                    # This cuts API calls from 6+ pages to typically 1 page per ticker.
+                    today    = _dt.date.today()
+                    exp_gte  = (today + _dt.timedelta(days=dte_lo)).isoformat()
+                    exp_lte  = (today + _dt.timedelta(days=dte_hi)).isoformat()
+                    s_lo     = round(S * 0.75, 2)
+                    s_hi     = round(S * 1.25, 2)
+
+                    chain = client.get_options_chain(
+                        ticker,
+                        expiration_date_gte=exp_gte,
+                        expiration_date_lte=exp_lte,
+                        strike_price_gte=s_lo,
+                        strike_price_lte=s_hi,
+                    )
+                    if chain is None or chain.empty:
+                        return []
+
+                    # Aggregate chain stats (whole chain)
+                    calls = chain[chain["type"] == "call"]
+                    puts  = chain[chain["type"] == "put"]
+                    call_oi  = calls["open_interest"].fillna(0).sum()
+                    put_oi   = puts["open_interest"].fillna(0).sum()
+                    call_vol = calls["volume"].fillna(0).sum()
+                    put_vol  = puts["volume"].fillna(0).sum()
+                    pc_oi    = round(put_oi / call_oi, 2) if call_oi > 0 else None
+                    pc_vol   = round(put_vol / call_vol, 2) if call_vol > 0 else None
+                    avg_iv   = chain["iv"].dropna().mean()
+
+                    # Filter by DTE window (dte column now always present from polygon_client)
+                    chain_f = chain.dropna(subset=["dte"])
+                    chain_f = chain_f[(chain_f["dte"] >= dte_lo) & (chain_f["dte"] <= dte_hi)]
+                    if chain_f.empty:
+                        chain_f = chain  # fallback: use whole chain
+
+                    r_rate = 0.045
+                    parity_viols, skew_viols = [], []
+
+                    # ── Process per expiration to avoid duplicate-strike index issues ──
+                    for exp_date, exp_grp in chain_f.groupby("expiration"):
+                        dte_v = exp_grp["dte"].iloc[0]
+                        if dte_v is None or dte_v != dte_v:
+                            continue
+                        dte_v = float(dte_v)
+                        T = dte_v / 252
+                        if T <= 0:
+                            continue
+
+                        c_map = (exp_grp[exp_grp["type"] == "call"]
+                                 .dropna(subset=["strike"])
+                                 .set_index("strike"))
+                        p_map = (exp_grp[exp_grp["type"] == "put"]
+                                 .dropna(subset=["strike"])
+                                 .set_index("strike"))
+                        common = c_map.index.intersection(p_map.index)
+
+                        for K in common:
+                            c_row = c_map.loc[K]
+                            p_row = p_map.loc[K]
+
+                            # Handle duplicate strikes within same expiration (take first)
+                            if isinstance(c_row, pd.DataFrame):
+                                c_row = c_row.iloc[0]
+                            if isinstance(p_row, pd.DataFrame):
+                                p_row = p_row.iloc[0]
+
+                            c_bid = c_row.get("bid", float("nan"))
+                            c_ask = c_row.get("ask", float("nan"))
+                            p_bid = p_row.get("bid", float("nan"))
+                            p_ask = p_row.get("ask", float("nan"))
+
+                            # Skip if no valid quotes
+                            if any(v != v for v in [c_bid, c_ask, p_bid, p_ask]):
+                                continue
+
+                            c_mid = (float(c_bid) + float(c_ask)) / 2
+                            p_mid = (float(p_bid) + float(p_ask)) / 2
+                            if c_mid <= 0 or p_mid <= 0:
+                                continue
+
+                            theory   = S * np.exp(-0.013 * T) - K * np.exp(-r_rate * T)
+                            obs      = c_mid - p_mid
+                            viol     = obs - theory
+                            viol_pct = abs(viol) / S * 100
+
+                            if viol_pct >= min_viol_pct:
+                                trade = "Conversion" if viol > 0 else "Reversal"
+                                parity_viols.append((K, int(dte_v), round(viol, 3),
+                                                     round(viol_pct, 3), trade))
+
+                            iv_c = _iv(c_mid, S, K, T, r_rate, "call")
+                            iv_p = _iv(p_mid, S, K, T, r_rate, "put")
+                            if iv_c and iv_p:
+                                skew = iv_p - iv_c
+                                if skew > skew_thr / 100:
+                                    skew_viols.append((K, int(dte_v),
+                                                       round(iv_c * 100, 1),
+                                                       round(iv_p * 100, 1),
+                                                       round(skew * 100, 1)))
+
+                    best_parity = max(parity_viols, key=lambda x: abs(x[2])) if parity_viols else None
+                    best_skew   = max(skew_viols,   key=lambda x: x[4])      if skew_viols   else None
+
+                    signal = "—"
+                    if best_parity and best_skew:
+                        signal = f"Parity + Skew Arb"
+                    elif best_parity:
+                        signal = best_parity[4]  # Conversion / Reversal
+                    elif best_skew:
+                        signal = "Skew Arb"
+
+                    return [{
+                        "Ticker":        ticker,
+                        "Price":         round(S, 2),
+                        "Avg IV":        round(avg_iv * 100, 1) if avg_iv == avg_iv else None,
+                        "P/C OI":        pc_oi,
+                        "P/C Vol":       pc_vol,
+                        "Best Violation %": round(max((abs(x[2]) / S * 100 for x in parity_viols), default=0), 3),
+                        "Best Skew (pts)":  round(max((x[4] for x in skew_viols), default=0), 1),
+                        "# Parity":      len(parity_viols),
+                        "# Skew":        len(skew_viols),
+                        "Signal":        signal,
+                    }]
+
+                client = PolygonClient(api_key=api_key)
+                results = []
+                prog = st.progress(0, text="Scanning…")
+                for i, tkr in enumerate(va_tickers):
+                    prog.progress((i + 1) / len(va_tickers), text=f"Scanning {tkr}…")
+                    try:
+                        results.extend(_scan_ticker(
+                            tkr, client, va_min_viol, va_skew_thr, va_dte_min, va_dte_max
+                        ))
+                    except Exception as exc:
+                        logger.warning(f"Vol arb scan {tkr}: {exc}")
+                prog.empty()
+
+                if not results:
+                    st.info("No violations found. Try widening thresholds or check API key.")
+                else:
+                    df_va = pd.DataFrame(results)
+                    df_va = df_va.sort_values("Best Violation %", ascending=False)
+
+                    # Highlight rows with signals
+                    signal_tickers = df_va[df_va["Signal"] != "—"]["Ticker"].tolist()
+                    if signal_tickers:
+                        st.success(f"**Opportunities found:** {', '.join(signal_tickers)}")
+
+                    st.dataframe(
+                        df_va, hide_index=True, width="stretch",
+                        column_config={
+                            "Price":               cc.NumberColumn("Price",       format="$%.2f"),
+                            "Avg IV":              cc.NumberColumn("Avg IV",      format="%.1f%%"),
+                            "P/C OI":              cc.NumberColumn("P/C OI",      format="%.2f"),
+                            "P/C Vol":             cc.NumberColumn("P/C Vol",     format="%.2f"),
+                            "Best Violation %":    cc.NumberColumn("Best Viol %", format="%.3f%%"),
+                            "Best Skew (pts)":     cc.NumberColumn("Best Skew",   format="%.1f pt"),
+                            "# Parity":            cc.NumberColumn("# Parity",    format="%d"),
+                            "# Skew":              cc.NumberColumn("# Skew",      format="%d"),
+                            "Signal":              cc.TextColumn("Signal"),
+                        },
+                    )
+
+                    # Bar: violations by ticker
+                    opp = df_va[(df_va["Best Violation %"] > 0) | (df_va["Best Skew (pts)"] > 0)]
+                    if not opp.empty:
+                        fig_va = go.Figure()
+                        fig_va.add_trace(go.Bar(
+                            name="Parity Violation %", x=opp["Ticker"],
+                            y=opp["Best Violation %"],
+                            marker_color="#ef9a9a",
+                            hovertemplate="%{x}: %{y:.3f}%<extra>Parity</extra>",
+                        ))
+                        fig_va.add_trace(go.Bar(
+                            name="IV Skew (pts)", x=opp["Ticker"],
+                            y=opp["Best Skew (pts)"] / 10,  # scale to same axis
+                            marker_color="#80cbc4",
+                            hovertemplate="%{x}: %{y:.1f} pts (÷10)<extra>Skew</extra>",
+                        ))
+                        fig_va.update_layout(
+                            title="Vol Arb Opportunities by Ticker",
+                            barmode="group", height=300,
+                            paper_bgcolor="#0e1117", plot_bgcolor="#0e1117",
+                            font=dict(color="#b0b8c8"),
+                            xaxis=dict(gridcolor="#1e2130"),
+                            yaxis=dict(gridcolor="#1e2130", title="Violation % / Skew÷10"),
+                            legend=dict(orientation="h", y=1.1),
+                            margin=dict(l=0, r=0, t=40, b=0),
+                        )
+                        st.plotly_chart(fig_va, width="stretch")
+
+                    st.caption(
+                        "**Parity Violation %** = |C − P − theoretical| / S × 100.  "
+                        "**IV Skew** = put IV − call IV at same strike (vol points).  "
+                        "**P/C OI > 1.5** = put-heavy flow (typical for HOOD, COIN).  "
+                        "Signal: *Conversion* = calls overpriced; *Reversal* = puts overpriced; "
+                        "*Skew Arb* = risk-reversal opportunity."
+                    )

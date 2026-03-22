@@ -114,10 +114,12 @@ def render(api_key: str = ""):
         opts_prog_text = st.empty()
         opts_prog_bar  = st.empty()
         if st.button(f"Sync Options — {ticker or '…'}", key="dm_sync_options",
-                     disabled=not api_key or not ticker):
+                     disabled=not api_key or not ticker,
+                     help="Fetches real historical IV from per-contract daily OHLC. "
+                          "Takes 5-20 min depending on date range."):
             st.session_state["_dm_run"] = {"options"}
         options_result = st.empty()
-        st.caption(f"DB: {_cv.get('options', '—')}  ·  1 API call per trading day")
+        st.caption(f"DB: {_cv.get('options', '—')}  ·  real historical IV via per-contract OHLC")
 
         # Dividends
         if st.button(f"Sync Dividends — {ticker or '…'}", key="dm_sync_divs",
@@ -210,6 +212,16 @@ def render(api_key: str = ""):
         if "options" in _run:
             opts_prog_text.empty()
             opts_prog_bar.empty()
+            if force_full:
+                from alan_trader.db.client import get_ticker_id
+                from sqlalchemy import text as _t2
+                _eng = get_engine()
+                _tid2 = get_ticker_id(_eng, ticker)
+                if _tid2:
+                    with _eng.begin() as c:
+                        c.execute(_t2("DELETE FROM mkt.OptionSnapshot WHERE TickerId=:tid"), {"tid": _tid2})
+                        c.execute(_t2("DELETE FROM mkt.SyncLog WHERE DataType='OptionSnapshot' AND TickerId=:tid"), {"tid": _tid2})
+                    options_result.info("Cleared existing option snapshots — re-fetching from scratch…")
             _start = _time.time()
             def _opts_cb(msg, current, total, rows_so_far=0):
                 elapsed = _time.time() - _start
@@ -222,7 +234,8 @@ def render(api_key: str = ""):
                     eta_str = est_str = ""
                 elapsed_str = f"{int(elapsed)//60}m {int(elapsed)%60:02d}s"
                 opts_prog_text.info(f"{msg}  •  {rows_so_far:,} rows{est_str}  •  {elapsed_str} elapsed{eta_str}")
-                opts_prog_bar.progress(current / total)
+                if total > 0:
+                    opts_prog_bar.progress(current / total)
             try:
                 result = sync_option_snapshots(ticker, api_key, from_date=from_date, progress_cb=_opts_cb)
                 opts_prog_text.empty()
@@ -234,8 +247,8 @@ def render(api_key: str = ""):
                     options_result.error(result.get("message", "No calendar"))
                 else:
                     rows = result.get("rows", 0)
-                    dates = result.get("dates", 0)
-                    options_result.success(f"Options — {rows:,} rows · {dates} trading days")
+                    contracts = result.get("contracts", 0)
+                    options_result.success(f"Options — {rows:,} rows · {contracts} contracts processed")
                     if result.get("errors"):
                         with st.expander(f"{len(result['errors'])} errors"):
                             for e in result["errors"]:

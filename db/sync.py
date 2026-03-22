@@ -4,6 +4,7 @@ Handles backfill and incremental updates for all data types.
 """
 
 import logging
+import math
 from datetime import date, timedelta
 from typing import Callable, Optional
 
@@ -79,6 +80,180 @@ def sync_price_bars(
         raise
 
 
+# ── Black-Scholes mid-price estimator ────────────────────────────────────────
+
+def _bs_mid(S: float, K: float, T: float, r: float, iv: float, opt: str) -> float:
+    """Return Black-Scholes theoretical mid price. opt = 'call' or 'put'."""
+    if T <= 0 or iv <= 0 or S <= 0 or K <= 0:
+        return float("nan")
+    try:
+        d1 = (math.log(S / K) + (r + 0.5 * iv * iv) * T) / (iv * math.sqrt(T))
+        d2 = d1 - iv * math.sqrt(T)
+        try:
+            from scipy.stats import norm as _norm
+            cdf = _norm.cdf
+        except ImportError:
+            cdf = lambda x: 0.5 * (1 + math.erf(x / math.sqrt(2)))
+        if opt == "call":
+            return S * cdf(d1) - K * math.exp(-r * T) * cdf(d2)
+        else:
+            return K * math.exp(-r * T) * cdf(-d2) - S * cdf(-d1)
+    except Exception:
+        return float("nan")
+
+
+def bs_price_chain(df: pd.DataFrame, S: float, r: float = 0.045) -> pd.DataFrame:
+    """
+    Recalculate bid/ask/mid for every row using Black-Scholes with the given
+    spot price S and stored IV.  Overwrites existing bid/ask — used at load
+    time so each snapshot date gets historically-correct option prices even
+    though Polygon stores current prices for all dates.
+    """
+    if df.empty:
+        return df
+    df = df.copy()
+    for col in ("iv", "dte", "strike", "type"):
+        if col not in df.columns:
+            return df
+
+    for idx in df.index:
+        iv  = df.at[idx, "iv"]
+        K   = float(df.at[idx, "strike"])
+        dte = float(df.at[idx, "dte"] or 0)
+        opt = str(df.at[idx, "type"] or "").lower()
+        if not iv or iv != iv or float(iv) <= 0 or float(iv) > 3.0:
+            continue
+        if opt not in ("call", "put") or dte <= 0:
+            continue
+        T   = dte / 252.0
+        mid = _bs_mid(S, K, T, r, float(iv), opt)
+        if math.isnan(mid) or mid <= 0:
+            continue
+        spread_pct = 0.04 if mid < 1 else 0.02
+        spread = max(0.01, mid * spread_pct)
+        df.at[idx, "bid"] = round(mid - spread / 2, 4)
+        df.at[idx, "ask"] = round(mid + spread / 2, 4)
+    return df
+
+
+# Mapping from treasury ticker symbol → approximate DTE (trading days)
+_TENOR_DTE = {
+    "rate_3m":  63,
+    "rate_6m":  126,
+    "rate_1y":  252,
+    "rate_2y":  504,
+    "rate_5y":  1260,
+    "rate_10y": 2520,
+    "rate_30y": 7560,
+}
+
+
+def _term_rate(dte: float, yield_curve: dict) -> float:
+    """
+    Interpolate risk-free rate for a given DTE (trading days) from the yield curve.
+    yield_curve: {dte_trading_days: rate_decimal}
+    Falls back to 0.045 if curve is empty.
+    """
+    if not yield_curve:
+        return 0.045
+    tenors = sorted(yield_curve.keys())
+    vals   = [yield_curve[t] for t in tenors]
+    if len(tenors) == 1:
+        return vals[0]
+    import numpy as _np
+    return float(_np.interp(dte, tenors, vals))
+
+
+def _compute_iv_from_prices(df: pd.DataFrame, S: float,
+                             yield_curve: dict = None) -> pd.DataFrame:
+    """
+    Compute real historical IV by inverting BS on the actual option close price.
+
+    Polygon's `implied_volatility` field is frozen — it reflects today's IV regardless
+    of the snapshot date.  But `day.close` (captured in bid/ask via mid_proxy in
+    get_options_chain) is the actual option price on that historical date.
+    Inverting BS on that price gives the true historical implied volatility.
+
+    Only overwrites rows that have valid bid/ask (i.e. rows where historical price
+    data was available).  Rows with no price data keep the Polygon IV as fallback.
+    """
+    try:
+        from scipy.optimize import brentq as _brentq
+    except ImportError:
+        return df
+
+    if df.empty or S <= 0:
+        return df
+
+    df = df.copy()
+    for idx in df.index:
+        bid = df.at[idx, "bid"]
+        ask = df.at[idx, "ask"]
+        # Only process rows that have a real historical price
+        if not (bid == bid and ask == ask and float(bid) > 0 and float(ask) > 0):
+            continue
+        mid = (float(bid) + float(ask)) / 2
+        K   = float(df.at[idx, "strike"] or 0)
+        dte = float(df.at[idx, "dte"]    or 0)
+        opt = str(df.at[idx, "type"]     or "").lower()
+        if K <= 0 or dte <= 0 or opt not in ("call", "put"):
+            continue
+        T = dte / 252.0
+        r = _term_rate(dte, yield_curve or {})
+        # Skip if price is at or below intrinsic (can't solve IV)
+        intrinsic = max(0.0, S - K) if opt == "call" else max(0.0, K - S)
+        if mid <= intrinsic * 1.001:
+            continue
+        try:
+            iv = _brentq(
+                lambda v: _bs_mid(S, K, T, r, v, opt) - mid,
+                1e-4, 10.0, xtol=1e-5, maxiter=50,
+            )
+            if 0.01 <= iv <= 5.0:  # sanity: 1% – 500%
+                df.at[idx, "iv"] = round(float(iv), 6)
+        except (ValueError, RuntimeError):
+            pass  # keep Polygon IV as fallback if solver fails
+    return df
+
+
+def _fill_bid_ask_from_iv(df: pd.DataFrame, S: float,
+                           yield_curve: dict = None) -> pd.DataFrame:
+    """
+    For rows where bid/ask are NaN but ImpliedVol is available, compute
+    Black-Scholes theoretical mid using a term-matched risk-free rate and
+    estimate a bid/ask spread around it.
+    yield_curve: {dte_trading_days: rate_decimal} — if None, falls back to 4.5%.
+    """
+    if df.empty:
+        return df
+    df = df.copy()
+    for col in ("bid", "ask", "iv", "dte", "strike", "type"):
+        if col not in df.columns:
+            return df  # can't reconstruct without these
+
+    needs_fill = df["bid"].isna() & df["ask"].isna() & df["iv"].notna() & (df["iv"] > 0)
+    if not needs_fill.any():
+        return df
+
+    for idx in df.index[needs_fill]:
+        iv  = float(df.at[idx, "iv"])
+        K   = float(df.at[idx, "strike"])
+        dte = float(df.at[idx, "dte"] or 30)
+        opt = str(df.at[idx, "type"] or "").lower()
+        if opt not in ("call", "put") or iv > 3.0 or dte <= 0:
+            continue
+        T   = dte / 252.0
+        r   = _term_rate(dte, yield_curve or {})
+        mid = _bs_mid(S, K, T, r, iv, opt)
+        if math.isnan(mid) or mid <= 0:
+            continue
+        spread_pct = 0.04 if mid < 1 else 0.02
+        spread = max(0.01, mid * spread_pct)
+        df.at[idx, "bid"] = round(mid - spread / 2, 4)
+        df.at[idx, "ask"] = round(mid + spread / 2, 4)
+    return df
+
+
 # ── Option Snapshots ──────────────────────────────────────────────────────────
 
 def sync_option_snapshots(
@@ -86,105 +261,201 @@ def sync_option_snapshots(
     api_key: str,
     from_date: date = DEFAULT_START,
     to_date:   date = None,
-    progress_cb: Callable[[str, int, int], None] = None,
+    dte_min:   int  = 7,
+    dte_max:   int  = 90,
+    spot_range_pct: float = 0.25,   # fetch strikes within ±25% of spot
+    progress_cb: Callable[[str, int, int, int], None] = None,
 ) -> dict:
     """
-    Fetch EOD options snapshots from Polygon for each trading day and store
-    in mkt.OptionSnapshot.  Uses SPY price bars as the trading calendar.
+    Build a real historical IV surface from per-contract daily OHLC data.
+
+    Unlike the snapshot endpoint (which always returns today's chain with fake
+    historical dates), this approach:
+      1. Queries reference/options/contracts with expired=true to get ALL
+         contracts that existed in the target date range.
+      2. For each contract, fetches daily OHLC via the aggregates endpoint —
+         actual prices on each day it traded.
+      3. Reconstructs bid/ask from the closing price and computes real historical
+         IV by inverting BS against the actual option price and underlying spot.
+      4. Stores into mkt.OptionSnapshot with the real trade date as SnapshotDate.
+
+    This is the only way to get genuine historical IV on the Polygon Starter plan.
     """
-    to_date = to_date or date.today() - timedelta(days=1)  # yesterday = last complete EOD
+    to_date = to_date or date.today() - timedelta(days=1)
     engine  = get_engine()
     client  = PolygonClient(api_key=api_key)
 
-    # Build trading calendar from stored SPY price bars
+    # Get spot price series for the underlying (already in DB)
     with engine.connect() as conn:
         from sqlalchemy import text
-        rows = conn.execute(text("""
-            SELECT pb.BarDate
+        spot_rows = conn.execute(text("""
+            SELECT pb.BarDate, pb.[Close]
             FROM   mkt.PriceBar pb
             JOIN   mkt.Ticker   t ON t.TickerId = pb.TickerId
-            WHERE  t.Symbol = 'SPY'
+            WHERE  t.Symbol = :sym
               AND  pb.BarDate BETWEEN :from_d AND :to_d
             ORDER  BY pb.BarDate
-        """), {"from_d": from_date, "to_d": to_date}).fetchall()
-    trading_days = [r[0].date() if hasattr(r[0], 'date') else r[0] for r in rows]
+        """), {"sym": symbol, "from_d": from_date, "to_d": to_date}).fetchall()
+    if not spot_rows:
+        return {"status": "error", "message": f"No price bars for {symbol} — sync price bars first."}
+    spot_series = {r[0]: float(r[1]) for r in spot_rows}
+    spot_dates  = sorted(spot_series.keys())
 
-    if not trading_days:
-        return {"status": "no_calendar", "rows": 0,
-                "message": "No SPY price bars found — sync SPY price bars first."}
+    # Rough ATM range across the full period
+    avg_spot    = sum(spot_series.values()) / len(spot_series)
+    strike_lo   = round(avg_spot * (1 - spot_range_pct), 2)
+    strike_hi   = round(avg_spot * (1 + spot_range_pct), 2)
 
-    # Find already-covered dates
-    with engine.connect() as conn:
-        from sqlalchemy import text
-        tid_row = conn.execute(
-            text("SELECT TickerId FROM mkt.Ticker WHERE Symbol = :s"), {"s": symbol}
-        ).fetchone()
-        if tid_row:
-            covered = set(
-                r[0].date() if hasattr(r[0], 'date') else r[0]
-                for r in conn.execute(text("""
-                    SELECT DISTINCT SnapshotDate FROM mkt.OptionSnapshot
-                    WHERE TickerId = :tid AND SnapshotDate BETWEEN :from_d AND :to_d
-                """), {"tid": tid_row[0], "from_d": from_date, "to_d": to_date})
-            )
-        else:
-            covered = set()
+    if progress_cb:
+        progress_cb(f"Fetching contract list for {symbol}...", 0, 0, 0)
 
-    # Re-sync the most recent covered date (delete + re-fetch) in case it was partial
-    if covered and tid_row:
-        last_covered = max(covered)
-        covered.discard(last_covered)
-        with engine.begin() as _conn:
-            from sqlalchemy import text as _t2
-            _conn.execute(_t2("DELETE FROM mkt.OptionSnapshot WHERE TickerId = :tid AND SnapshotDate = :d"),
-                          {"tid": tid_row[0], "d": last_covered})
+    # Step 1: enumerate all contracts in the date range (including expired)
+    all_contracts = []
+    for contract_type in ("call", "put"):
+        url = "/v3/reference/options/contracts"
+        params = {
+            "underlying_ticker":   symbol,
+            "contract_type":       contract_type,
+            "expiration_date.gte": str(from_date + timedelta(days=dte_min)),
+            "expiration_date.lte": str(to_date   + timedelta(days=dte_max)),
+            "strike_price.gte":    strike_lo,
+            "strike_price.lte":    strike_hi,
+            "expired":             "true",
+            "limit":               1000,
+        }
+        while url:
+            data = client._get(url, params)
+            all_contracts.extend(data.get("results", []))
+            url = (data.get("next_url") or "").replace(client.BASE, "") or None
+            params = {}
 
-    missing = [d for d in trading_days if d not in covered]
-    if not missing:
-        return {"status": "up_to_date", "rows": 0}
+    if not all_contracts:
+        return {"status": "error", "message": "No contracts found for given parameters."}
 
-    total_rows = 0
-    errors     = []
+    if progress_cb:
+        progress_cb(f"Found {len(all_contracts)} contracts — fetching daily OHLC...", 0, len(all_contracts), 0)
 
-    for i, snap_date in enumerate(missing):
+    # Build yield curve helper
+    def _get_rate(snap_d):
+        with engine.connect() as _c:
+            from sqlalchemy import text as _t
+            rows = _c.execute(_t("""
+                SELECT t.Symbol, pb.[Close]
+                FROM   mkt.PriceBar pb
+                JOIN   mkt.Ticker   t ON t.TickerId = pb.TickerId
+                WHERE  t.Symbol IN ('rate_3m','rate_6m','rate_1y','rate_2y',
+                                    'rate_5y','rate_10y','rate_30y')
+                  AND  pb.BarDate = (
+                        SELECT MAX(pb2.BarDate) FROM mkt.PriceBar pb2
+                        JOIN   mkt.Ticker t2 ON t2.TickerId = pb2.TickerId
+                        WHERE  t2.Symbol = t.Symbol AND pb2.BarDate <= :d)
+            """), {"d": snap_d}).fetchall()
+        return {_TENOR_DTE[r[0]]: float(r[1]) / 100 for r in rows if r[1] is not None}
+
+    # Step 2: for each contract, fetch daily OHLC and build per-date chain rows
+    # Accumulate rows by snapshot date for batch upsert
+    rows_by_date: dict[date, list[dict]] = {}
+    total_rows   = 0
+    errors       = []
+
+    from scipy.optimize import brentq as _brentq
+
+    for i, contract in enumerate(all_contracts):
+        ticker     = contract["ticker"]
+        K          = float(contract["strike_price"])
+        exp_str    = contract["expiration_date"]
+        opt_type   = contract["contract_type"]   # "call" or "put"
+        exp_date   = date.fromisoformat(exp_str)
+
         if progress_cb:
-            progress_cb(f"Fetching {symbol} options for {snap_date}...", i + 1, len(missing), total_rows)
+            progress_cb(f"[{i+1}/{len(all_contracts)}] {ticker}", i + 1, len(all_contracts), total_rows)
+
         try:
-            df = client.get_options_chain(symbol, snapshot_date=str(snap_date))
-            if df.empty:
+            bars = client.get_aggregates(ticker, str(from_date), str(to_date))
+        except Exception as e:
+            errors.append(f"{ticker}: {e}")
+            continue
+
+        if bars.empty:
+            continue
+
+        for bar_date, row in bars.iterrows():
+            if not isinstance(bar_date, date):
+                bar_date = bar_date.date()
+            if bar_date < from_date or bar_date > to_date:
                 continue
 
-            # Normalise column names to match upsert expectation
-            df = df.rename(columns={
-                "expiration":    "expiration",
-                "type":          "type",
-                "strike":        "strike",
-                "bid":           "bid",
-                "ask":           "ask",
-                "iv":            "iv",
-                "delta":         "delta",
-                "gamma":         "gamma",
-                "theta":         "theta",
-                "vega":          "vega",
-                "open_interest": "open_interest",
-                "volume":        "volume",
+            S = spot_series.get(bar_date)
+            if not S:
+                # find nearest spot
+                nearest = min(spot_dates, key=lambda d: abs((d - bar_date).days))
+                if abs((nearest - bar_date).days) > 5:
+                    continue
+                S = spot_series[nearest]
+
+            close_price = float(row.get("close") or 0)
+            if close_price <= 0:
+                continue
+
+            dte = (exp_date - bar_date).days
+            if not (dte_min <= dte <= dte_max):
+                continue
+
+            T = dte / 252.0
+            yc = _get_rate(bar_date)
+            r  = _term_rate(dte, yc)
+
+            # Compute real historical IV from actual option close price
+            intrinsic = max(0.0, S - K) if opt_type == "call" else max(0.0, K - S)
+            iv = None
+            if close_price > intrinsic * 1.001:
+                try:
+                    iv = _brentq(
+                        lambda v: _bs_mid(S, K, T, r, v, opt_type) - close_price,
+                        1e-4, 10.0, xtol=1e-5, maxiter=50,
+                    )
+                    if not (0.01 <= iv <= 5.0):
+                        iv = None
+                except (ValueError, RuntimeError):
+                    iv = None
+
+            if iv is None:
+                continue
+
+            spread = max(0.01, close_price * (0.04 if close_price < 1 else 0.02))
+            rows_by_date.setdefault(bar_date, []).append({
+                "expiration":    exp_str,
+                "type":          opt_type,
+                "strike":        K,
+                "bid":           round(close_price - spread / 2, 4),
+                "ask":           round(close_price + spread / 2, 4),
+                "iv":            round(iv, 6),
+                "delta":         None,
+                "gamma":         None,
+                "theta":         None,
+                "vega":          None,
+                "open_interest": None,
+                "volume":        int(row.get("volume") or 0),
             })
 
-            rows = upsert_option_snapshots(engine, symbol, snap_date, df)
-            total_rows += rows
-
+    # Step 3: upsert each date's rows into mkt.OptionSnapshot
+    for snap_date, date_rows in sorted(rows_by_date.items()):
+        try:
+            df = pd.DataFrame(date_rows)
+            n  = upsert_option_snapshots(engine, symbol, snap_date, df)
+            total_rows += n
         except Exception as e:
-            logger.warning(f"Options sync failed for {symbol} on {snap_date}: {e}")
             errors.append(f"{snap_date}: {e}")
 
     log_sync(engine, "OptionSnapshot", to_date, total_rows, symbol,
              error="; ".join(errors) if errors else None)
 
     return {
-        "status":  "ok" if not errors else "partial",
-        "rows":    total_rows,
-        "dates":   len(missing),
-        "errors":  errors,
+        "status":    "ok" if not errors else "partial",
+        "rows":      total_rows,
+        "contracts": len(all_contracts),
+        "dates":     len(rows_by_date),
+        "errors":    errors[:10],
     }
 
 

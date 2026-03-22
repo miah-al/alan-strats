@@ -253,9 +253,10 @@ def upsert_option_snapshots(engine: Engine, symbol: str,
     df["ticker_id"]     = tid
     df["snapshot_date"] = snapshot_date
     df["contract_type"] = df["type"].str.upper().str[:1]   # C | P
-    bid = df["bid"] if "bid" in df.columns else 0
-    ask = df["ask"] if "ask" in df.columns else 0
-    df["mid"] = (pd.to_numeric(bid, errors="coerce").fillna(0) + pd.to_numeric(ask, errors="coerce").fillna(0)) / 2
+    _bid = pd.to_numeric(df["bid"], errors="coerce") if "bid" in df.columns else pd.Series(float("nan"), index=df.index)
+    _ask = pd.to_numeric(df["ask"], errors="coerce") if "ask" in df.columns else pd.Series(float("nan"), index=df.index)
+    # Mid is NULL when both sides are missing — don't substitute 0
+    df["mid"] = (_bid + _ask) / 2
 
     for col in ["bid","ask","mid","last","iv","delta","gamma","theta","vega"]:
         if col not in df.columns:

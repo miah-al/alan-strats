@@ -216,6 +216,10 @@ def equity_curve(equity_df: pd.DataFrame) -> go.Figure:
         x=equity_df.index, y=bah,
         name="Buy & Hold", line=dict(color=COLORS["spy"], width=1.5, dash="dot"),
     ))
+    fig.update_layout(legend=dict(
+        orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1,
+        bgcolor="rgba(14,17,23,0.7)", borderwidth=0,
+    ))
     return _apply(fig, "Equity Curve vs Buy-and-Hold", 420)
 
 
@@ -237,7 +241,8 @@ def trade_pnl_scatter(trades_df: pd.DataFrame) -> go.Figure:
     if trades_df.empty:
         return go.Figure()
 
-    colors = trades_df["pnl"].apply(lambda v: COLORS["bull"] if v > 0 else COLORS["bear"])
+    _type_col = next((c for c in ["spread_type", "trade_type", "exit_reason"] if c in trades_df.columns), None)
+    _type_vals = trades_df[_type_col] if _type_col else trades_df.index.astype(str)
     fig = go.Figure(go.Scatter(
         x=trades_df["entry_date"],
         y=trades_df["pnl"],
@@ -249,7 +254,7 @@ def trade_pnl_scatter(trades_df: pd.DataFrame) -> go.Figure:
             showscale=True,
             colorbar=dict(title="P&L $", thickness=10),
         ),
-        text=trades_df["spread_type"],
+        text=_type_vals,
         hovertemplate="Date: %{x}<br>P&L: $%{y:.2f}<br>Type: %{text}<extra></extra>",
     ))
     fig.add_hline(y=0, line=dict(color="#aaa", dash="dash", width=1))
@@ -263,15 +268,23 @@ def pnl_histogram(trades_df: pd.DataFrame) -> go.Figure:
 
     wins   = trades_df[trades_df["pnl"] > 0]["pnl"]
     losses = trades_df[trades_df["pnl"] <= 0]["pnl"]
+    all_pnl = trades_df["pnl"].dropna()
+    # Auto bin size: ~15 bins across the range
+    _range  = all_pnl.max() - all_pnl.min() if len(all_pnl) > 1 else 100
+    _bin    = max(1.0, round(_range / 15, 1))
     fig = go.Figure()
     fig.add_trace(go.Histogram(x=losses, name="Losses",
                                marker_color=COLORS["bear"], opacity=0.75,
-                               xbins=dict(size=50)))
+                               xbins=dict(size=_bin)))
     fig.add_trace(go.Histogram(x=wins, name="Wins",
                                marker_color=COLORS["bull"], opacity=0.75,
-                               xbins=dict(size=50)))
+                               xbins=dict(size=_bin)))
     fig.add_vline(x=0, line=dict(color="#aaa", dash="dash"))
-    fig.update_layout(barmode="overlay")
+    fig.update_layout(
+        barmode="overlay",
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1,
+                    bgcolor="rgba(14,17,23,0.7)", borderwidth=0),
+    )
     return _apply(fig, "P&L Distribution", 340)
 
 
@@ -894,26 +907,30 @@ def vol_surface_3d(
         ))
 
     # ── layout ───────────────────────────────────────────────────────────────
+    atm_label = f"  ATM ≈ ${spot_price:.2f}" if spot_price else ""
     _ax = dict(
         gridcolor="#2a3050", backgroundcolor="#0c1020",
         color="#e0e0e0", showbackground=True,
-        tickfont=dict(color="#c0c8d8", size=10),
+        tickfont=dict(color="#c0c8d8", size=13),
     )
     fig.update_layout(
         paper_bgcolor="#0e1117",
-        font=dict(color="#e0e0e0", family="monospace"),
-        title=dict(text="Volatility Surface  ·  <span style='color:#69f0ae'>green = ATM</span>", font=dict(size=15, color="#e0e0e0")),
+        font=dict(color="#e0e0e0", family="monospace", size=13),
+        title=dict(
+            text=f"Volatility Surface{atm_label}  ·  <span style='color:#69f0ae'>green = ATM</span>",
+            font=dict(size=16, color="#e0e0e0"),
+        ),
         scene=dict(
-            xaxis=dict(**_ax, title=dict(text="Strike ($)", font=dict(color="#e0e0e0"))),
-            yaxis=dict(**_ax, title=dict(text="DTE",        font=dict(color="#e0e0e0"))),
-            zaxis=dict(**_ax, title=dict(text="IV (%)",     font=dict(color="#e0e0e0"))),
+            xaxis=dict(**_ax, title=dict(text="Strike ($)", font=dict(color="#e0e0e0", size=14))),
+            yaxis=dict(**_ax, title=dict(text="DTE (days)", font=dict(color="#e0e0e0", size=14))),
+            zaxis=dict(**_ax, title=dict(text="IV (%)",     font=dict(color="#e0e0e0", size=14))),
             bgcolor="#0c1020",
             camera=dict(eye=dict(x=1.55, y=-1.55, z=0.85)),
             aspectmode="manual",
             aspectratio=dict(x=1.6, y=1.0, z=0.7),
         ),
         height=880,
-        margin=dict(l=0, r=0, t=50, b=0),
+        margin=dict(l=0, r=0, t=60, b=0),
     )
     return fig
 

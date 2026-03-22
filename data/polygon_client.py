@@ -67,12 +67,23 @@ class PolygonClient:
         df = df.set_index("date")[["open", "high", "low", "close", "volume", "vwap"]]
         return df
 
-    def get_options_chain(self, underlying: str, expiration_date: str = None,
-                          snapshot_date: str = None) -> pd.DataFrame:
+    def get_options_chain(
+        self,
+        underlying: str,
+        expiration_date: str = None,
+        snapshot_date: str = None,
+        expiration_date_gte: str = None,
+        expiration_date_lte: str = None,
+        strike_price_gte: float = None,
+        strike_price_lte: float = None,
+    ) -> pd.DataFrame:
         """
         Fetch options chain.
-        snapshot_date: historical EOD snapshot date (YYYY-MM-DD). Omit for today.
-        expiration_date: filter by specific expiry (optional).
+        snapshot_date:        historical EOD snapshot (YYYY-MM-DD); omit for today.
+        expiration_date:      exact expiry filter.
+        expiration_date_gte/lte: date range filter — use these to limit DTE window
+                              and avoid fetching thousands of contracts.
+        strike_price_gte/lte: strike range filter — pass spot ± N% to stay near-the-money.
         """
         results = []
         url = f"/v3/snapshot/options/{underlying}"
@@ -81,6 +92,14 @@ class PolygonClient:
             params["expiration_date"] = expiration_date
         if snapshot_date:
             params["date"] = snapshot_date
+        if expiration_date_gte:
+            params["expiration_date.gte"] = expiration_date_gte
+        if expiration_date_lte:
+            params["expiration_date.lte"] = expiration_date_lte
+        if strike_price_gte is not None:
+            params["strike_price.gte"] = strike_price_gte
+        if strike_price_lte is not None:
+            params["strike_price.lte"] = strike_price_lte
         while url:
             data = self._get(url, params)
             results.extend(data.get("results", []))
@@ -90,23 +109,48 @@ class PolygonClient:
         if not results:
             return pd.DataFrame()
 
+        # DTE must be relative to the snapshot date, not today — otherwise historical
+        # rows get wrong DTE (e.g. a 30-DTE option fetched 2 years ago would show -700).
+        snap_ts = pd.Timestamp(snapshot_date) if snapshot_date else pd.Timestamp.today()
+        snap_ts = snap_ts.normalize()
         rows = []
         for r in results:
             d = r.get("details", {})
-            g = r.get("greeks", {})
+            g = r.get("greeks", {}) or {}
+            exp_str = d.get("expiration_date")
+            try:
+                dte = (pd.Timestamp(exp_str) - snap_ts).days if exp_str else None
+            except Exception:
+                dte = None
+            lq  = r.get("last_quote", {}) or {}
+            day = r.get("day", {}) or {}
+            bid = lq.get("bid")
+            ask = lq.get("ask")
+            # Historical snapshots (date= param) don't populate last_quote bid/ask —
+            # fall back to day.vwap → day.close as the mid price proxy.
+            if bid is None and ask is None:
+                mid_proxy = day.get("vwap") or day.get("close")
+                if mid_proxy is not None:
+                    iv_val = r.get("implied_volatility")
+                    # Estimate a realistic spread: wider for low-priced / illiquid options
+                    spread_pct = 0.04 if mid_proxy < 1 else 0.02
+                    spread = max(0.01, float(mid_proxy) * spread_pct)
+                    bid = float(mid_proxy) - spread / 2
+                    ask = float(mid_proxy) + spread / 2
             rows.append({
-                "strike": d.get("strike_price"),
-                "type": d.get("contract_type"),
-                "expiration": d.get("expiration_date"),
-                "bid": r.get("last_quote", {}).get("bid"),
-                "ask": r.get("last_quote", {}).get("ask"),
-                "iv": r.get("implied_volatility"),
-                "delta": g.get("delta"),
-                "gamma": g.get("gamma"),
-                "theta": g.get("theta"),
-                "vega": g.get("vega"),
-                "open_interest": r.get("open_interest"),
-                "volume": r.get("day", {}).get("volume"),
+                "strike":       d.get("strike_price"),
+                "type":         d.get("contract_type"),
+                "expiration":   exp_str,
+                "dte":          dte,
+                "bid":          float(bid) if bid is not None else float("nan"),
+                "ask":          float(ask) if ask is not None else float("nan"),
+                "iv":           r.get("implied_volatility"),
+                "delta":        g.get("delta"),
+                "gamma":        g.get("gamma"),
+                "theta":        g.get("theta"),
+                "vega":         g.get("vega"),
+                "open_interest":r.get("open_interest"),
+                "volume":       r.get("day", {}).get("volume"),
             })
         return pd.DataFrame(rows)
 

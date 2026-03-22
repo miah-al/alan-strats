@@ -15,7 +15,18 @@
       "Bash(C:/Users/alomg/AppData/Local/Programs/Python/Python313/python.exe -c \"from alan_trader.strategies.registry import get_strategy; s = get_strategy\\(''options_spread''\\); print\\(''OK:'', s\\)\")",
       "Bash(C:/Users/alomg/AppData/Local/Programs/Python/Python313/python.exe -m py_compile alan_trader/dashboard/tabs/strategy_guide.py)",
       "Bash(grep -rn \"Backtest failed\\\\|float division\\\\|ZeroDivisionError\" d:/Work/ClaudeCodeTest/alan_trader/ --include=*.py)",
-      "Bash(python -c \"import ast; ast.parse\\(open\\(''data/loader.py'', encoding=''utf-8''\\).read\\(\\)\\); print\\(''OK''\\)\")"
+      "Bash(python -c \"import ast; ast.parse\\(open\\(''data/loader.py'', encoding=''utf-8''\\).read\\(\\)\\); print\\(''OK''\\)\")",
+      "Bash(python -c \"from alan_trader.strategies.vol_arbitrage import VolArbitrageStrategy; s = VolArbitrageStrategy\\(\\); print\\(''params:'', s.get_params\\(\\)\\); print\\(''ui_params keys:'', [p[''key''] for p in s.get_backtest_ui_params\\(\\)]\\)\")",
+      "Bash(python -c \"import sys; sys.path.insert\\(0,''src''\\) if __import__\\(''os''\\).path.exists\\(''src''\\) else None; sys.path.insert\\(0,''.''\\); from strategies.vol_arbitrage import VolArbitrageStrategy; s=VolArbitrageStrategy\\(\\); print\\(''OK''\\); print\\([p[''key''] for p in s.get_backtest_ui_params\\(\\)]\\)\")",
+      "Bash(python -c \"import py_compile; py_compile.compile\\(''dashboard/tabs/screener.py'', doraise=True\\); print\\(''screener OK''\\)\")",
+      "Bash(python -c \"import py_compile; py_compile.compile\\(''dashboard/tabs/screener.py'', doraise=True\\); py_compile.compile\\(''data/polygon_client.py'', doraise=True\\); print\\(''Both OK''\\)\")",
+      "Bash(python -c \"import py_compile; py_compile.compile\\(''strategies/vol_arbitrage.py'', doraise=True\\); py_compile.compile\\(''data/simulator.py'', doraise=True\\); print\\(''Both OK''\\)\")",
+      "Bash(python -c \"import py_compile; [py_compile.compile\\(f, doraise=True\\) for f in [''strategies/vol_arbitrage.py'',''dashboard/app.py'',''dashboard/tabs/market_data.py'']]; print\\(''All OK''\\)\")",
+      "Bash(python -c \"import py_compile; py_compile.compile\\(''strategies/vol_arbitrage.py'', doraise=True\\); print\\(''OK''\\)\")",
+      "Bash(grep -n \"def render_\" /d/Work/ClaudeCodeTest/alan_trader/dashboard/tabs/*.py)",
+      "Bash(grep -n \"^def render\" /d/Work/ClaudeCodeTest/alan_trader/dashboard/tabs/*.py)",
+      "Bash(wc -l /d/Work/ClaudeCodeTest/alan_trader/dashboard/tabs/*.py)",
+      "Bash(grep -rn \"pass\\\\|NotImplemented\\\\|stub\\\\|placeholder\\\\|TODO\" /d/Work/ClaudeCodeTest/alan_trader/strategies/*.py)"
     ]
   }
 }

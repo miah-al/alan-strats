@@ -1,108 +1,205 @@
-## Volatility Arbitrage — Put-Call Parity
+# Volatility Arbitrage — How We Made Money on HOOD
 
-**In plain English:** There's a mathematical law governing options prices called "put-call parity." It says the price of a call, a put, the stock, and the risk-free rate must all be in precise balance with each other. When they're not — due to temporary market imbalances — there's a risk-free profit available. This strategy detects these violations and trades to capture them.
-
----
-
-### Put-Call Parity: The Law
-
-For European options (no early exercise):
-> **C − P = S·e^(−qT) − K·e^(−rT)**
-
-Where:
-- C = call price, P = put price
-- S = stock price, K = strike price
-- r = risk-free rate, q = dividend yield, T = time to expiry
-
-**In plain numbers:** If SPY is at $575, the risk-free rate is 5%, dividend yield is 1.3%, and we look at 30-DTE $575 options:
-- S·e^(−qT) = $575 × e^(−0.013 × 30/365) = $573.37
-- K·e^(−rT) = $575 × e^(−0.05 × 30/365) = $572.64
-- Parity says: Call − Put should = $573.37 − $572.64 = **$0.73**
-- If call = $8.50 and put = $7.60, then C − P = $0.90 — **$0.17 above parity**
-
-That $0.17 discrepancy is a violation. In theory, you can construct a risk-free arbitrage.
+**The core idea:** Retail traders overpay for HOOD puts. We sell those overpriced puts, hedge our direction exposure with short stock, and wait 2–3 days for the mispricing to correct. That's it.
 
 ---
 
-### Two Arbitrage Structures
+## Why HOOD Puts Are Overpriced (The Opportunity)
 
-**Conversion (call overpriced / C − P > theoretical):**
-- Buy stock + buy put + sell call
-- Locks in riskless payoff regardless of stock move
-- Profit = actual (C−P) − theoretical (C−P)
+HOOD is a meme-adjacent retail brokerage stock. Retail traders use HOOD options to speculate and hedge — and they overwhelmingly buy puts. This creates a structural imbalance:
 
-**Reversal (put overpriced / C − P < theoretical):**
-- Short stock + sell put + buy call
-- Locks in riskless payoff regardless of stock move
-- Profit = theoretical (C−P) − actual (C−P)
+- **Put/Call OI ratio:** 1.5–2.5× (puts dominate)
+- **Result:** Put IV runs 10–50 vol points *above* call IV at the same strike
 
----
+This is called **IV skew**. A 20 vol-point skew means the market is pricing puts as if HOOD is 20% more volatile to the downside than to the upside. That's often an overreaction.
 
-### Real Trade Walkthrough
-
-> **Date:** Oct 22, 2024 · **SPY:** $575.40 · **Nov 15 expiry (24 DTE)**
-> Risk-free rate: 5.2% · Dividend yield: 1.3%
-
-**Parity calculation:**
-- Theoretical C − P = $575.40 × e^(−0.013 × 24/365) − $575 × e^(−0.052 × 24/365)
-- = $575.40 × 0.99915 − $575 × 0.99657
-- = $574.91 − $572.93 = **$1.98**
-
-**Market prices:**
-- Nov 15 $575 call: $9.85
-- Nov 15 $575 put: $7.70
-- Actual C − P = $9.85 − $7.70 = **$2.15**
-
-**Violation: $2.15 actual vs $1.98 theoretical = +$0.17 — call overpriced (conversion signal)**
-
-**The conversion:**
-- Buy 100 shares SPY at $575.40
-- Buy Nov 15 $575 put at $7.70
-- Sell Nov 15 $575 call at $9.85
-- Net cash outflow: $575.40 + $7.70 − $9.85 = **$573.25 per share**
-
-**At Nov 15 expiry — what happens regardless of SPY price:**
-- If SPY at $590: Call assigned, shares sold at $575. You also receive $1.68 dividend. Net: $575 − $573.25 + $1.68 = **+$3.43** (plus dividend adjustment)
-- If SPY at $555: Exercise put, sell shares at $575. Net: $575 − $573.25 = **+$1.75**
-
-In both cases, you lock in approximately $1.75–$3.43 per share regardless of direction.
-
-**The reality:** Transaction costs (commissions, bid-ask spreads) consume most of this. With $0.03/share commission × 3 legs + bid-ask slippage of $0.10 per leg = ~$0.39 total cost. The net profit is **$0.17 − $0.39 = −$0.22** — a loss.
-
-**This is why pure parity arb is mostly institutional.** But the *secondary signal* (IV skew) is more tradeable:
+When skew is high, puts are expensive relative to calls. We sell the expensive put, buy the cheap call, and delta-hedge the stock exposure. **We don't bet on direction — we bet that the overpricing corrects.**
 
 ---
 
-### The Tradeable Version: IV Skew
+## The Three Ways We Made Money
 
-When OTM puts are much more expensive than equivalent OTM calls (which is normal — the "skew" or "smirk"), and that skew becomes extreme, a different opportunity appears:
-- 25-delta SPY put: 18% implied vol
-- 25-delta SPY call: 13% implied vol
-- Skew: 5 vol points (normal: ~3–4 points)
-- **When skew > 7 points:** Sell the expensive puts, buy the cheap calls, delta-hedge the difference
+### 1. Put IV Compresses (Primary Source — ~60% of wins)
+
+The most common win: we enter when put IV is, say, 68% vs call IV at 55% (skew = 13 vp). Two days later, retail fear subsides, and put IV falls back toward call IV (say, 60%). The put we sold loses value faster than expected → we buy it back cheaper → profit.
+
+**Example — Trade A (Feb 2025, +$904):**
+- HOOD @ $60.44, K=$69, DTE=10
+- Put IV 67.6% vs Call IV 54.5% → **Skew = 13.0 vol pts**
+- Sold 6 puts @ $9.20, bought 6 calls @ $0.39, shorted 565 shares to hedge delta
+- Net credit collected: $5,286
+- 2 days later: put IV compressed toward call IV → bought back put cheaper
+- **P&L: +$904**
+
+### 2. Stock Moves in Our Favor (Secondary Source — amplifies big wins)
+
+We short stock to hedge delta when we sell the put. If the stock falls, the short stock position profits. This can be larger than the options P&L on big down-moves.
+
+**Example — Trade B (Feb 2025, +$2,126 — Best Trade):**
+- HOOD @ $56.06, K=$61, DTE=8
+- Put IV 63.7% vs Call IV 51.4% → **Skew = 12.3 vol pts**
+- Sold 7 puts @ $5.75, bought 7 calls @ $0.53, shorted 661 shares
+- Stock then fell sharply → short stock position gained **$4,051**
+- The sold put lost some value (stock moved toward strike), but the hedge more than covered it
+- **P&L: +$2,126**
+
+### 3. Time Decay (Background — every trade)
+
+We collect premium by selling the put and paying a small debit for the call. Even if IV doesn't compress at all, theta decay works in our favor over the 2–3 day hold — especially with DTE < 15 where time decay accelerates.
 
 ---
 
-### Entry Conditions
+## When We Lost Money
 
-For parity violation:
-- Violation > 0.15% of stock price (gross of costs)
-- Verify dividend schedule (undeclared dividends distort parity)
-- Trade only in the innermost 30-delta range (ATM has tightest bid-ask)
+### Skew Widened Instead of Compressing
 
-For IV skew:
-- 25-delta put IV minus 25-delta call IV > 7 vol points
-- VIX > 20 (skew wider during elevated vol)
-- Market neutral: delta-hedge the net position
+If a macro event hits or retail panic spikes, put IV can jump from 70% to 100%+ while we're holding. The put we sold is now worth more than we collected — we buy it back at a loss.
+
+**Example — Trade D (Feb 2026, -$2,970 — Worst Trade):**
+- Entered with skew = 24.2 vol pts
+- Macro shock hit → put IV spiked instead of compressing
+- **P&L: -$2,970**
+
+### Entered at Extreme Skew (Danger Zone > 40 vp)
+
+Counterintuitively, very high skew is *not* a better entry. When skew is 45 vp, it usually means the market knows something — earnings, a macro event, a sector catalyst. The skew is high *for a reason* and may not revert within 2–3 days.
+
+**Example — Trade C (Dec 2024, -$580):**
+- HOOD @ $40.20, K=$48, DTE=7
+- Put IV 112.1% vs Call IV 67.0% → **Skew = 45.1 vol pts** (extreme)
+- Skew widened further instead of compressing
+- **P&L: -$580**
 
 ---
 
-### Common Mistakes
+## Full HOOD Backtest — Dec 2024 to Mar 2026
 
-1. **Not accounting for dividends.** Parity formula must include the expected dividend. If SPY goes ex-div during the option's life, the formula changes significantly. Ignoring this turns an apparent arbitrage into a loss.
+**Period:** Dec 2024 – Jul 2025 + Feb–Mar 2026 (7-month gap excluded — no HOOD option volume)
+**Capital:** $100,000 starting
 
-2. **Assuming the violation will persist.** Parity violations are usually corrected within minutes by institutional arbitrageurs. By the time you see the violation and execute, it may be gone. High-frequency trading has made pure parity arb nearly extinct at retail speed.
+| Metric | Value |
+|--------|-------|
+| Total Return | **+21.9%** |
+| Sharpe Ratio | 0.32 |
+| Max Drawdown | -10.1% |
+| Win Rate | **74.4%** (64W / 22L / 2 no-data) |
+| Avg Win | $548 |
+| Avg Loss | -$597 |
+| Profit Factor | **2.67** |
+| Avg Hold | 2–4 days |
+| Total Trades | 88 |
 
-3. **Early assignment on short calls.** American options (including SPY) can be exercised early. Short calls near ex-dividend dates are frequently exercised early, disrupting the conversion structure. Monitor aggressively near ex-dates.
+**What 2.67 profit factor means:** For every $1 lost on losing trades, we made $2.67 on winners. Even with similar avg win ($548) and avg loss (-$597), the 74% win rate creates a strong edge.
 
-4. **Forgetting the short stock borrowing cost (for reversals).** When you short stock in a reversal, you pay a borrow rate. If SPY borrow is 0.3% annualized, that eats into the thin arbitrage profit.
+---
+
+## What Worked vs What Didn't
+
+| Condition | Result | Why |
+|-----------|--------|-----|
+| Skew 10–25 vp, DTE 7–15 | ✅ Best trades | Sweet spot — real mispricing, fast reversion |
+| Skew > 40 vp | ❌ Underperformed | Market pricing a real event; reversion slow or absent |
+| Stock fell sharply | ✅ Big wins | Short stock hedge amplified profit |
+| Stock rallied sharply | ❌ Big losses | Short stock hedge amplified loss |
+| Macro shock during hold | ❌ Worst losses | Put IV spike overwhelms skew compression |
+| 2-day exit | ✅ Consistent | Most exits at day 2; waiting longer doesn't help |
+
+---
+
+## How to Verify This Independently
+
+Everything in this backtest uses real HOOD option IV data from Polygon (per-contract OHLC + Black-Scholes IV inversion). You can verify:
+
+1. **Open the Backtest tab** → select HOOD → run Vol Arb strategy
+2. **Check the Data Quality banner** — ✅ means real per-contract IV; ⚠️ means IV-only (skew arb still valid, parity arb disabled)
+3. **Click any trade row** → expander shows entry/exit details, P&L breakdown by component (put P&L, call P&L, hedge P&L)
+4. **Cross-check against Data Manager** → HOOD options sync from Polygon `/v2/aggs/ticker/O:.../range/1/day/` endpoint
+
+The model parameters (skew threshold, DTE range, hold days) are all editable in the Backtest sidebar — adjust and re-run to stress-test the results.
+
+---
+
+## Entry Checklist
+
+- [ ] IV Rank ≥ 40 (HOOD-specific — lower rank means smaller violations)
+- [ ] DTE 7–15 — fast theta decay; avoid < 7 (gamma risk) and > 20 (too slow to revert)
+- [ ] IV skew ≥ 8 vol pts at same strike (sweet spot: 10–25 vp)
+- [ ] Skew < 35 vp — extreme skew signals real event risk
+- [ ] No earnings within hold period — binary event destroys the arb
+- [ ] Bid-ask spread < 0.5% of mid — confirms executable entry
+
+---
+
+## Risk Management
+
+**Max loss scenarios:**
+
+1. **Macro event during hold** → put IV spikes, short stock hedge may not cover
+   - *Mitigate:* Hold ≤ 3 days, check macro calendar before entry
+
+2. **Stock gaps up through strike** → short stock and long call create unpredictable delta
+   - *Mitigate:* Position size ≤ 6% of capital per trade
+
+3. **Spread widens on exit** → can't close at theoretical mid
+   - *Mitigate:* Use limit orders; exit early if bid-ask doubles
+
+**Position sizing:**
+```
+Max contracts = (Capital × 6%) / (Spot × 100 × 20% margin)
+```
+
+---
+
+## Strategy Parameters
+
+| Parameter | SPY Default | HOOD |
+|-----------|-------------|------|
+| IV skew threshold | 8 vol pts | 8 vol pts |
+| Max skew entry | 30 vp | 35 vp |
+| Min IV rank | 30 | 40 |
+| DTE window | 14–45 | 7–20 |
+| Hold days | 3 | 2–3 |
+| Max position size | 8% | 6% |
+
+---
+
+## Common Mistakes
+
+❌ **Entering at extreme skew (> 40 vp)** — looks like a bigger opportunity; it's usually a trap. Market knows something you don't.
+
+❌ **Ignoring the macro calendar** — a Fed announcement or sector news during a 2-day hold can spike put IV 30+ points overnight.
+
+❌ **Skipping the delta hedge** — selling puts naked gives you unlimited downside on a gap move. The short stock hedge is not optional.
+
+❌ **Over-sizing** — HOOD's wide bid-ask and high IV mean slippage is real. At 6% sizing, two concurrent positions = 12% at risk.
+
+❌ **Waiting for "full compression"** — exits at day 2 capture most of the reversion. Holding to day 4–5 adds event risk with minimal additional return.
+
+---
+
+## ⚠️ Data Requirements & Backtest Validity
+
+### Real Bid/Ask Quotes vs IV-Only Data
+
+| Data Available | Parity Arb | Skew Arb | Quality |
+|----------------|------------|----------|---------|
+| Real bid/ask | ✅ Active | ✅ Active | Full backtest |
+| IV-only (no quotes) | ❌ Disabled | ✅ Active | Skew arb only |
+
+**Why parity arb is disabled on IV-only data:**
+
+When both call and put prices are reconstructed from stored IVs using Black-Scholes, the apparent "parity violation" is a circular artifact — just the IV skew expressed in dollars. You cannot actually trade at Black-Scholes theoretical prices.
+
+### HOOD-Specific Data Findings
+
+Analysis of 503 trading days (2024-03-18 to 2026-03-19) on live HOOD data:
+- **ATM put skew: 10–27 vol points persistent** — this is structural downside demand, not temporary mispricing
+- Skew never fully collapses to zero; mean-reversion is partial (to ~5–8 pts)
+- Best opportunities: skew spikes above 20 pts (earnings, market stress) and reverts within 2–3 days
+- Deep OTM options with IV > 300% are noise — filtered automatically
+
+### Fixing IV-Only Data
+
+1. Go to **Data Manager → Sync Options** for your ticker
+2. The sync fetches per-contract OHLC and inverts to real IV using Black-Scholes
+3. After re-sync, re-run the backtest

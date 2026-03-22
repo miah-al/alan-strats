@@ -486,11 +486,8 @@ def _do_backtest(slug, params, ticker, n_days):
     macro = data["macro"]
     news  = data["news"]
 
-    from alan_trader.data.simulator import simulate_dividend_events
-    divs = simulate_dividend_events(spy)
-
     aux = {"vix": vix, "rate2y": r2, "rate10y": r10, "macro": macro,
-           "news": news, "dividends": divs}
+           "news": news}
 
     # Load TLT price bars for strategies that need them
     meta_for_slug = STRATEGY_METADATA.get(slug, {})
@@ -507,6 +504,78 @@ def _do_backtest(slug, params, ticker, n_days):
         except Exception as _e:
             logger.warning(f"Could not load TLT data: {_e}")
             aux["tlt"] = pd.DataFrame()
+
+    # Load real saved option chains for vol_arbitrage from mkt.OptionSnapshot
+    if slug == "vol_arbitrage":
+        try:
+            from alan_trader.db.options_loader import _load_chain
+            from alan_trader.db.client import get_engine as _ge_va, get_ticker_id as _gtid_va
+            _eng_va   = _ge_va()
+            # Always load full 2-year history — don't limit by n_days so we get all available chains
+            _opt_from = (datetime.date.today() - datetime.timedelta(days=730))
+            _opt_to   = datetime.date.today()
+            _tid_va   = _gtid_va(_eng_va, ticker or "SPY")
+            if _tid_va:
+                _raw = _load_chain(_eng_va, _tid_va, _opt_from, _opt_to, min_dte=7, max_dte=60)
+                if not _raw.empty:
+                    _raw["dte"] = (_raw["expiration_date"] - _raw["snapshot_date"]).apply(
+                        lambda td: td.days if hasattr(td, "days") else int(td)
+                    )
+                    _raw = _raw.rename(columns={"contract_type": "type"})
+                    _raw["type"] = _raw["type"].str.lower().map(
+                        {"c": "call", "call": "call", "p": "put", "put": "put"}
+                    )
+                    # Load historical spot prices for BS repricing
+                    from alan_trader.db.client import get_price_bars as _gpb_va
+                    from alan_trader.db.sync import bs_price_chain as _bspc
+                    _spots_df = _gpb_va(_eng_va, ticker, _opt_from, _opt_to)
+                    _spot_map = {}
+                    if not _spots_df.empty:
+                        for _, _sr in _spots_df.iterrows():
+                            _sd = _sr["date"].date() if hasattr(_sr["date"], "date") else _sr["date"]
+                            _spot_map[_sd] = float(_sr["close"])
+
+                    _chains_va = {}
+                    for snap_date, grp in _raw.groupby("snapshot_date"):
+                        import datetime as _dt
+                        _key = snap_date if isinstance(snap_date, _dt.date) else pd.Timestamp(snap_date).date()
+                        _chain = grp[["strike", "type", "bid", "ask", "iv", "delta", "dte"]].reset_index(drop=True)
+                        # Reprice with historical spot so prices reflect each date's market level
+                        _S = _spot_map.get(_key)
+                        if _S:
+                            _chain = _bspc(_chain, _S)
+                        _chains_va[_key] = _chain
+                    aux["options_chains"] = _chains_va
+                    # Candidate suitability assessment
+                    try:
+                        from alan_trader.strategies.vol_arbitrage import VolArbitrageStrategy as _VAS
+                        _va_tmp = _VAS(iv_skew_threshold=0.05)
+                        aux["candidate_assessment"] = _va_tmp.assess_candidate(
+                            _chains_va, df,
+                            dte_min=7, dte_max=60,
+                        )
+                    except Exception as _e_ca:
+                        logger.debug(f"Candidate assessment failed: {_e_ca}")
+                    # Check bid/ask quality — detect BS-reconstructed prices.
+                    # Real market data varies day-to-day; BS-reconstructed data
+                    # from a single Polygon snapshot has near-constant bid values.
+                    _bid_filled = _raw["bid"].notna() & (_raw["bid"] > 0)
+                    if _bid_filled.any():
+                        # Check bid price variance across dates for the same contract
+                        _bid_std = _raw.groupby(["strike", "type"])["bid"].std().dropna()
+                        _pct_static = (_bid_std < 0.001).sum() / max(len(_bid_std), 1)
+                        _is_bs = _pct_static > 0.80   # >80% contracts show no day-to-day price change
+                    else:
+                        _is_bs = True
+                    aux["option_data_quality"] = "bs_reconstructed" if _is_bs else "real_quotes"
+                    logger.info(
+                        f"vol_arbitrage: loaded {len(_chains_va)} chain snapshots for {ticker} "
+                        f"[{'BS-reconstructed' if _is_bs else 'real bid/ask'}]"
+                    )
+                else:
+                    logger.info(f"vol_arbitrage: no saved option chain for {ticker} — backtest will raise ValueError")
+        except Exception as _e_va:
+            logger.warning(f"vol_arbitrage: could not load option chain from DB: {_e_va}")
 
     # Load real option chains for the options rotation strategy
     if slug == "rates_spy_rotation_options":
@@ -534,7 +603,15 @@ def _do_backtest(slug, params, ticker, n_days):
     strat = get_strategy(slug)
     if not strat.is_ready():
         raise ValueError(f"Strategy {slug} is not ready.")
-    return strat.backtest(spy, aux, starting_capital=100_000, **params)
+
+    # For vol arb: always skip parity arb when using DB data — all bid/ask are
+    # BS-reconstructed from IV, so parity violations are circular artifacts, not
+    # real market mispricings. Only skew arb is valid on this data.
+    extra_params = {}
+    if slug == "vol_arbitrage":
+        extra_params["skip_parity_arb"] = True
+
+    return strat.backtest(spy, aux, starting_capital=100_000, **params, **extra_params)
 
 
 def _rebuild_portfolio_report():
@@ -543,10 +620,15 @@ def _rebuild_portfolio_report():
     if not results:
         return {}, pd.DataFrame()
     try:
-        from alan_trader.data.simulator import simulate_price
         from alan_trader.portfolio.manager import PortfolioManager
-        spy      = simulate_price(ticker="SPY", n_days=504)
-        spy_rets = spy["close"].pct_change().dropna()
+        from alan_trader.db.client import get_engine as _pm_eng, get_price_bars as _pm_bars
+        import datetime as _pm_dt
+        _spy_raw  = _pm_bars(_pm_eng(), "SPY",
+                             _pm_dt.date.today() - _pm_dt.timedelta(days=730),
+                             _pm_dt.date.today())
+        if _spy_raw.empty:
+            return {}, pd.DataFrame()
+        spy_rets = _spy_raw.set_index("date")["close"].pct_change().dropna()
         spy_rets.index = pd.to_datetime(spy_rets.index)
         pm       = PortfolioManager(total_capital=100_000, kelly_fraction=0.25,
                                     max_strategy_weight=0.40, min_strategy_weight=0.02)
@@ -1015,7 +1097,7 @@ def _render_backtest(slug: str):
     # Date range
     today = datetime.date.today()
     dr1, dr2 = st.columns(2)
-    bt_start = dr1.date_input("Start", value=today - datetime.timedelta(days=365),
+    bt_start = dr1.date_input("Start", value=today - datetime.timedelta(days=730),
                                max_value=today - datetime.timedelta(days=60),
                                key=f"bt_{slug}_start")
     bt_end   = dr2.date_input("End",   value=today - datetime.timedelta(days=1),
@@ -1064,6 +1146,53 @@ def _render_backtest(slug: str):
         st.info("Configure settings above and press **▶ Run Backtest**.")
         return
 
+    # Data quality warning for vol arb (IV-only data means no real bid/ask)
+    if slug == "vol_arbitrage":
+        _dq = (res.extra or {}).get("data_quality", "unknown")
+        if _dq in ("iv_only", "bs_reconstructed"):
+            st.warning(
+                "⚠️ **BS-reconstructed prices** — Polygon does not provide historical bid/ask quotes on this plan. "
+                "Option prices are calculated from IV using Black-Scholes. "
+                "**Parity arb is disabled** (circular artifact when prices are reconstructed from IV). "
+                "Only **IV Skew Arb** trades run. "
+                "P&L is computed from delta + theta effects (BS price change as spot moves and time passes). "
+                "To enable parity arb, connect to a provider with real historical quotes (IBKR, Tradier).",
+            )
+        elif _dq == "real_quotes":
+            st.success("✅ Real bid/ask quotes — full parity violation + skew arb detection active.")
+
+        # Show chain coverage diagnostics
+        _ex = res.extra or {}
+        _nc = _ex.get("n_chain_dates", "?")
+        _np = _ex.get("n_price_dates", "?")
+        _nm = _ex.get("n_chain_matches", "?")
+        if _nc != "?":
+            st.caption(
+                f"Chain coverage: **{_nc}** snapshot dates in DB  ·  "
+                f"**{_np}** price bars  ·  "
+                f"**{_nm}** dates with both price + chain data (potential trade days)"
+            )
+
+        # Candidate suitability panel
+        _ca = _ex.get("candidate_assessment")
+        if _ca:
+            _score   = _ca["score"]
+            _verdict = _ca["verdict"]
+            _color   = _ca["color"]
+            _mets    = _ca.get("metrics", {})
+            _color_map = {"green": "🟢", "orange": "🟡", "red": "🔴", "gray": "⚫"}
+            _icon = _color_map.get(_color, "⚪")
+            with st.expander(f"{_icon} **Ticker suitability: {_verdict}** — Score {_score}/100", expanded=(_score >= 45)):
+                _ca1, _ca2, _ca3, _ca4, _ca5 = st.columns(5)
+                _ca1.metric("Score",         f"{_score}/100")
+                _ca2.metric("Avg IV Skew",   f"{_mets.get('avg_iv_skew_pts', '?')} vp")
+                _ca3.metric("Avg ATM IV",    f"{_mets.get('avg_atm_iv_pct', '?')}%")
+                _ca4.metric("$/lot premium", f"${_mets.get('avg_dollar_prem', '?'):.0f}" if _mets.get('avg_dollar_prem') else "?")
+                _trend = _mets.get("price_trend_pct")
+                _ca5.metric("Price trend",   f"{_trend:+.1f}%" if _trend is not None else "?")
+                for _r in _ca.get("reasons", []):
+                    st.markdown(_r)
+
     m = res.metrics
     c1, c2, c3, c4, c5 = st.columns(5)
     c1.metric("Total Return",  f"{m.get('total_return_pct', 0):+.1f}%")
@@ -1082,9 +1211,11 @@ def _render_backtest(slug: str):
         st.info("No trades were executed. Try lowering Min Confidence or widening the date range.")
     else:
         n_total   = len(trades)
-        n_winners = int((trades["pnl"] > 0).sum()) if "pnl" in trades.columns else 0
-        n_losers  = n_total - n_winners
-        st.subheader(f"Trades — {n_winners} winners / {n_losers} losers / {n_total} total")
+        n_winners = int((trades["pnl"] > 0).sum())  if "pnl" in trades.columns else 0
+        n_losers  = int((trades["pnl"] < 0).sum())  if "pnl" in trades.columns else 0
+        n_flat    = n_total - n_winners - n_losers
+        _flat_str = f" / {n_flat} no-data" if n_flat > 0 else ""
+        st.subheader(f"Trades — {n_winners} winners / {n_losers} losers / {n_total} total{_flat_str}")
         if "long_strike" in trades.columns:
             st.caption("Long/short leg prices are per-share option prices at entry. "
                        "Spread cost = long leg − short leg + slippage.")
@@ -1094,37 +1225,184 @@ def _render_backtest(slug: str):
             disp["price_error"] = (disp["predicted_spread_price"] - disp["entry_cost"]).round(4)
         if "pnl" in disp.columns:
             disp["cum_pnl"] = disp["pnl"].cumsum().round(2)
+        # Convert IV columns to % for display (stored as decimals 0–1)
+        for _iv_col in ["iv_call", "iv_put", "iv_skew"]:
+            if _iv_col in disp.columns:
+                disp[_iv_col] = (disp[_iv_col] * 100).round(2)
 
-        show_cols = [c for c in ["entry_date", "exit_date", "spread_type",
-                                  "long_strike", "long_leg_price",
-                                  "short_strike", "short_leg_price",
-                                  "entry_cost", "exit_value",
-                                  "predicted_spread_price",
-                                  "price_error", "pnl", "cum_pnl", "exit_reason"]
-                     if c in disp.columns]
-        col_cfg = {
-            "pnl":                    st.column_config.NumberColumn("P&L ($)",         format="$%.2f"),
-            "cum_pnl":                st.column_config.NumberColumn("Cum. P&L ($)",    format="$%.2f"),
-            "entry_cost":             st.column_config.NumberColumn("Entry Value ($)",  format="$%.2f"),
-            "exit_value":             st.column_config.NumberColumn("Exit Value ($)",   format="$%.2f"),
-            "predicted_spread_price": st.column_config.NumberColumn("Predicted ($)",   format="$%.4f"),
-            "price_error":            st.column_config.NumberColumn("Price Error ($)",  format="$%.4f"),
-            "long_strike":            st.column_config.NumberColumn("Long Strike",      format="$%.0f"),
-            "short_strike":           st.column_config.NumberColumn("Short Strike",     format="$%.0f"),
-            "long_leg_price":         st.column_config.NumberColumn("Long Leg ($)",     format="$%.4f"),
-            "short_leg_price":        st.column_config.NumberColumn("Short Leg ($)",    format="$%.4f"),
-        }
-        if "pnl" in disp.columns:
-            color_cols = [c for c in ["pnl", "cum_pnl"] if c in disp.columns]
-            styled = disp[show_cols].style.map(
-                lambda v: ("color:#26a69a;font-weight:600" if isinstance(v, (int, float)) and v > 0
-                           else "color:#ef5350" if isinstance(v, (int, float)) and v < 0
-                           else ""),
-                subset=color_cols,
-            )
+        # Strategy-aware column selection
+        if "description" in disp.columns:
+            # Vol Arb: actual net premium cash flows (not margin)
+            if "call_price_entry" in disp.columns and "put_price_entry" in disp.columns:
+                # Net debit to enter: call_bought − put_sold (positive = net debit)
+                disp["total_in"]  = ((disp["call_price_entry"] - disp["put_price_entry"])
+                                     * disp["contracts"] * 100).round(2)
+                if "pnl" in disp.columns:
+                    disp["total_out"] = (disp["total_in"] + disp["pnl"]).round(2)
+            elif "entry_cost" in disp.columns:
+                disp["total_in"]  = (disp["entry_cost"] * disp["contracts"] * 100).round(2)
+                if "exit_value" in disp.columns:
+                    disp["total_out"] = (disp["exit_value"] * disp["contracts"] * 100).round(2)
+            # Vol Arb — lead with description so user can follow the trade
+            # (drop violation/signal_strength — always 0/1 for skew_arb, adds no info)
+            show_cols = [c for c in [
+                "W/L", "entry_date", "exit_date",
+                "contracts", "trade_type",
+                "iv_call", "iv_put", "iv_skew",
+                "total_in", "total_out",
+                "put_pnl", "call_pnl", "hedge_pnl", "commission",
+                "pnl", "cum_pnl", "exit_reason",
+            ] if c in disp.columns]
         else:
-            styled = disp[show_cols]
-        st.dataframe(styled, width="stretch", column_config=col_cfg, hide_index=True)
+            show_cols = [c for c in [
+                "entry_date", "exit_date", "spread_type",
+                "long_strike", "long_leg_price",
+                "short_strike", "short_leg_price",
+                "entry_cost", "exit_value",
+                "predicted_spread_price", "price_error",
+                "pnl", "cum_pnl", "exit_reason",
+            ] if c in disp.columns]
+
+        col_cfg = {
+            "pnl":                    st.column_config.NumberColumn("P&L ($)",           format="$%.2f"),
+            "cum_pnl":                st.column_config.NumberColumn("Cum. P&L ($)",      format="$%.2f"),
+            "expected_pnl":           st.column_config.NumberColumn("Expected P&L ($)",  format="$%.2f"),
+            "entry_cost":             st.column_config.NumberColumn("Entry Cost ($)",     format="$%.4f"),
+            "exit_value":             st.column_config.NumberColumn("Exit Value ($)",     format="$%.4f"),
+            "predicted_spread_price": st.column_config.NumberColumn("Predicted ($)",     format="$%.4f"),
+            "price_error":            st.column_config.NumberColumn("Price Error ($)",    format="$%.4f"),
+            "long_strike":            st.column_config.NumberColumn("Long Strike",        format="$%.0f"),
+            "short_strike":           st.column_config.NumberColumn("Short Strike",       format="$%.0f"),
+            "long_leg_price":         st.column_config.NumberColumn("Long Leg ($)",       format="$%.4f"),
+            "short_leg_price":        st.column_config.NumberColumn("Short Leg ($)",      format="$%.4f"),
+            "spot":                   st.column_config.NumberColumn("Spot",               format="$%.2f"),
+            "strike":                 st.column_config.NumberColumn("Strike",             format="$%.1f"),
+            "total_in":               st.column_config.NumberColumn("Total In ($)",       format="$%.2f"),
+            "total_out":              st.column_config.NumberColumn("Total Out ($)",      format="$%.2f"),
+            "put_pnl":                st.column_config.NumberColumn("Put P&L ($)",        format="$%.2f"),
+            "call_pnl":               st.column_config.NumberColumn("Call P&L ($)",       format="$%.2f"),
+            "hedge_pnl":              st.column_config.NumberColumn("Hedge P&L ($)",      format="$%.2f"),
+            "commission":             st.column_config.NumberColumn("Commiss. ($)",        format="$%.2f"),
+            "iv_call":                st.column_config.NumberColumn("Call IV (%)",        format="%.2f%%"),
+            "iv_put":                 st.column_config.NumberColumn("Put IV (%)",         format="%.2f%%"),
+            "iv_skew":                st.column_config.NumberColumn("IV Skew (%)",        format="%.2f%%"),
+            "violation":              st.column_config.NumberColumn("Parity Viol.",       format="%.4f"),
+            "signal_strength":        st.column_config.NumberColumn("Signal",             format="%.3f"),
+            "W/L":                    st.column_config.TextColumn("", width="small"),
+        }
+
+        # Add visual columns
+        disp = disp.copy()
+        if "pnl" in disp.columns:
+            disp.insert(0, "W/L", disp["pnl"].apply(
+                lambda v: "🟢" if isinstance(v, (int, float)) and v > 0
+                else ("🔴" if isinstance(v, (int, float)) and v < 0 else "⚪")
+            ))
+
+        def _render_trade_detail(row):
+            pnl       = row.get("pnl", None)
+            cum_pnl   = row.get("cum_pnl", None)
+            pnl_color = "#26a69a" if isinstance(pnl, (int, float)) and pnl > 0 else "#ef5350"
+
+            # Header
+            st.markdown(
+                f"### {row.get('entry_date', '')} → {row.get('exit_date', '')}"
+                f"&nbsp;&nbsp;&nbsp;<span style='color:{pnl_color};font-size:1.3em;font-weight:700'>"
+                f"{f'${pnl:+,.2f}' if isinstance(pnl,(int,float)) else ''}</span>",
+                unsafe_allow_html=True,
+            )
+            st.divider()
+
+            # Metrics row
+            m1, m2, m3, m4, m5 = st.columns(5)
+            m1.metric("Contracts",  row.get("contracts", "—"))
+            m2.metric("Call IV",    f"{row.get('iv_call', 0):.1f}%" if row.get('iv_call') else "—")
+            m3.metric("Put IV",     f"{row.get('iv_put',  0):.1f}%" if row.get('iv_put')  else "—")
+            m4.metric("IV Skew",    f"{row.get('iv_skew', 0):.1f}vp" if row.get('iv_skew') else "—")
+            m5.metric("Exit",       str(row.get("exit_reason", "—")))
+
+            # P&L breakdown
+            st.markdown("#### P&L Breakdown")
+            p1, p2, p3, p4, p5 = st.columns(5)
+            def _fmt(v): return f"${v:+,.2f}" if isinstance(v, (int, float)) and v == v else "—"
+            p1.metric("Put P&L",    _fmt(row.get("put_pnl")))
+            p2.metric("Call P&L",   _fmt(row.get("call_pnl")))
+            p3.metric("Hedge P&L",  _fmt(row.get("hedge_pnl")))
+            p4.metric("Commission", _fmt(row.get("commission")))
+            p5.metric("Net P&L",    _fmt(pnl))
+
+            # IV Skew scenario
+            _exp_pnl = row.get("expected_pnl")
+            _iv_sk   = row.get("iv_skew")
+            _n_c     = row.get("contracts", 1) or 1
+            if isinstance(_exp_pnl, (int, float)) and _exp_pnl == _exp_pnl and isinstance(_iv_sk, (int, float)):
+                st.divider()
+                st.markdown("#### IV Skew Scenario")
+                sc1, sc2, sc3 = st.columns(3)
+                sc1.metric("Skew at Entry",        f"{_iv_sk:.1f} vp")
+                sc2.metric("Expected P&L (full compression)", f"${_exp_pnl:+,.0f}")
+                _per_vp = _exp_pnl / _iv_sk if _iv_sk else 0
+                sc3.metric("$ per vol pt compressed", f"${_per_vp:+,.0f}")
+
+            st.divider()
+
+            # Position — structured from trade fields
+            st.markdown("#### Position")
+            _K        = row.get("strike") or row.get("long_strike")
+            _dte      = row.get("dte", "?")
+            _spot     = row.get("spot", "?")
+            _n        = row.get("contracts", "?")
+            _put_p    = row.get("put_price_entry")
+            _call_p   = row.get("call_price_entry")
+            _cost     = row.get("total_in") or row.get("cost")
+            _iv_c     = row.get("iv_call")
+            _iv_p     = row.get("iv_put")
+            _iv_sk    = row.get("iv_skew")
+            _pos_lines = []
+            if _K:      _pos_lines.append(f"**Strike:** ${_K}  |  **DTE:** {_dte}d  |  **Spot at entry:** ${_spot}  |  **Size:** {_n} contracts")
+            if _put_p:  _pos_lines.append(f"**Sell put** @ ${_put_p:.3f}  ·  **Buy call** @ ${_call_p:.3f}" if _call_p else f"**Sell put** @ ${_put_p:.3f}")
+            if _cost:   _pos_lines.append(f"**Net {'credit' if _cost < 0 else 'debit'}:** ${abs(_cost):,.2f}")
+            if _iv_c:   _pos_lines.append(f"**Call IV:** {_iv_c:.1f}%  ·  **Put IV:** {_iv_p:.1f}%  ·  **Skew:** {_iv_sk:.1f} vol pts" if _iv_p and _iv_sk else f"**Call IV:** {_iv_c:.1f}%")
+            st.info("\n\n".join(_pos_lines) if _pos_lines else str(row.get("description", "—")))
+
+            st.markdown("#### Rationale")
+            _comment = str(row.get("comment") or "—")
+            _comment_lines = "\n\n".join(s.strip() for s in _comment.split(". ") if s.strip())
+            st.success(_comment_lines)
+
+            if isinstance(cum_pnl, (int, float)):
+                st.caption(f"Cumulative P&L at exit: ${cum_pnl:+,.2f}")
+
+        # Center dialog vertically via CSS
+        st.markdown("""
+<style>
+div[data-testid="stDialog"] > div[role="dialog"] {
+    margin-top: auto !important;
+    margin-bottom: auto !important;
+    top: 50% !important;
+    transform: translateY(-50%) !important;
+    position: fixed !important;
+}
+</style>""", unsafe_allow_html=True)
+
+        _tbl_df = disp[show_cols]
+        st.caption("Click any row to view Details")
+        _sel = st.dataframe(
+            _tbl_df,
+            width="stretch",
+            column_config=col_cfg,
+            hide_index=True,
+            on_select="rerun",
+            selection_mode="single-row",
+            key=f"bt_{slug}_trades_tbl",
+        )
+        _sel_rows = (_sel.selection or {}).get("rows", [])
+        if _sel_rows:
+            _row = disp.iloc[_sel_rows[0]]
+            _pnl = _row.get("pnl")
+            _pnl_str = f"  ${_pnl:+,.2f}" if isinstance(_pnl, (int, float)) and _pnl == _pnl else ""
+            with st.expander(f"Trade Detail — {_row.get('entry_date','')} → {_row.get('exit_date','')}{_pnl_str}", expanded=True):
+                _render_trade_detail(_row)
 
     st.markdown("---")
 
@@ -1340,15 +1618,403 @@ def _render_live(slug: str):
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# STRATEGY PERFORMANCE — live P&L from portfolio tables, filtered by slug
+# STRATEGY PERFORMANCE — last backtest + live P&L from portfolio tables
 # ══════════════════════════════════════════════════════════════════════════════
 
 def _render_strategy_performance(slug: str):
     import plotly.graph_objects as go
+    import plotly.express as px
     import pandas as pd
+    import streamlit.column_config as cc
 
-    meta = _meta(slug)
+    meta         = _meta(slug)
     display_name = meta["display_name"]
+    bt_res       = st.session_state.get("bt_results", {}).get(slug)
+
+    _DARK = dict(
+        paper_bgcolor="#0e1117", plot_bgcolor="#0e1117",
+        font=dict(color="#b0b8c8"),
+        xaxis=dict(gridcolor="#1e2130"),
+        yaxis=dict(gridcolor="#1e2130"),
+        margin=dict(l=0, r=0, t=40, b=0),
+    )
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # SECTION 1 — LAST BACKTEST RESULTS
+    # ══════════════════════════════════════════════════════════════════════════
+    st.markdown("### 📊 Last Backtest")
+
+    if bt_res is None:
+        st.info("No backtest run yet for this strategy. Go to **Backtest** tab and run one first.")
+    else:
+        m = bt_res.metrics if bt_res.metrics else {}
+        trades_df = bt_res.trades if bt_res.trades is not None else pd.DataFrame()
+        equity    = bt_res.equity_curve
+        extra     = bt_res.extra or {}
+
+        # ── Metrics rows ─────────────────────────────────────────────────────
+        total_ret  = (equity.iloc[-1] / equity.iloc[0] - 1) * 100 if len(equity) > 1 else 0
+        sharpe     = m.get("sharpe_ratio", m.get("sharpe", float("nan")))
+        sortino    = m.get("sortino_ratio", m.get("sortino", float("nan")))
+        max_dd     = m.get("max_drawdown", m.get("max_drawdown_pct", float("nan")))
+        ann_ret    = m.get("cagr", m.get("annualized_return", float("nan")))
+        n_trades   = len(trades_df)
+        wins       = int((trades_df["pnl"] > 0).sum()) if "pnl" in trades_df.columns else 0
+        losses     = int((trades_df["pnl"] < 0).sum()) if "pnl" in trades_df.columns else 0
+        win_rate   = 100 * wins / (wins + losses) if (wins + losses) > 0 else 0
+        total_pnl  = trades_df["pnl"].sum()  if "pnl" in trades_df.columns else 0
+        avg_win    = trades_df.loc[trades_df["pnl"] > 0,  "pnl"].mean() if wins    > 0 else 0
+        avg_loss   = trades_df.loc[trades_df["pnl"] <= 0, "pnl"].mean() if losses  > 0 else 0
+        best_trade = trades_df["pnl"].max() if n_trades else 0
+        worst_trade= trades_df["pnl"].min() if n_trades else 0
+        profit_fac = m.get("profit_factor", abs(avg_win * wins / (avg_loss * losses))
+                           if avg_loss != 0 and losses > 0 else float("nan"))
+        avg_hold   = (
+            (pd.to_datetime(trades_df["exit_date"]) - pd.to_datetime(trades_df["entry_date"]))
+            .dt.days.mean()
+            if "entry_date" in trades_df.columns and "exit_date" in trades_df.columns and n_trades > 0
+            else float("nan")
+        )
+
+        r1c1, r1c2, r1c3, r1c4, r1c5, r1c6, r1c7, r1c8 = st.columns(8)
+        r1c1.metric("Total Return",    f"{total_ret:+.1f}%")
+        r1c2.metric("Total P&L",       f"${total_pnl:,.0f}")
+        r1c3.metric("Ann. Return",     f"{ann_ret*100:+.1f}%" if ann_ret == ann_ret else "—")
+        r1c4.metric("Sharpe",          f"{sharpe:.2f}"         if sharpe  == sharpe  else "—")
+        r1c5.metric("Sortino",         f"{sortino:.2f}"        if sortino == sortino else "—")
+        r1c6.metric("Max Drawdown",    f"{max_dd:.1f}%"        if max_dd  == max_dd  else "—")
+        r1c7.metric("Win Rate",        f"{win_rate:.1f}%")
+        r1c8.metric("Profit Factor",   f"{profit_fac:.2f}"     if profit_fac == profit_fac else "—")
+
+        r2c1, r2c2, r2c3, r2c4, r2c5, r2c6 = st.columns(6)
+        r2c1.metric("# Trades",        str(n_trades))
+        r2c2.metric("Winners",         f"{wins} ({win_rate:.0f}%)")
+        r2c3.metric("Losers",          str(losses))
+        r2c4.metric("Avg Win",         f"${avg_win:,.2f}"   if avg_win  else "—")
+        r2c5.metric("Avg Loss",        f"${avg_loss:,.2f}"  if avg_loss else "—")
+        r2c6.metric("Avg Hold (days)", f"{avg_hold:.1f}"    if avg_hold == avg_hold else "—")
+
+        # ── Equity curve ─────────────────────────────────────────────────────
+        fig_eq = go.Figure()
+        # SPY buy-and-hold benchmark
+        spy_rets = extra.get("spy_returns")
+        if spy_rets is not None:
+            spy_eq = (1 + spy_rets.fillna(0)).cumprod() * equity.iloc[0]
+            fig_eq.add_trace(go.Scatter(
+                x=spy_eq.index, y=spy_eq.values,
+                mode="lines", name="SPY B&H",
+                line=dict(color="#546e7a", width=1, dash="dot"),
+                hovertemplate="%{x|%Y-%m-%d}: $%{y:,.0f}<extra>SPY</extra>",
+            ))
+        fig_eq.add_trace(go.Scatter(
+            x=equity.index, y=equity.values,
+            mode="lines", name=display_name,
+            line=dict(color="#5c6bc0", width=2),
+            fill="tozeroy", fillcolor="rgba(92,107,192,0.08)",
+            hovertemplate="%{x|%Y-%m-%d}: $%{y:,.0f}<extra></extra>",
+        ))
+        fig_eq.update_layout(title="Equity Curve", height=320,
+                             legend=dict(orientation="h", y=1.1), **_DARK)
+        st.plotly_chart(fig_eq, width="stretch")
+
+        # ── Styler helpers (used by both regime and trade-type tables) ────────
+        def _pnl_color(v):
+            if not isinstance(v, (int, float)) or v != v: return ""
+            return "color: #4caf50; font-weight:600" if v > 0 else ("color: #ef5350; font-weight:600" if v < 0 else "")
+        def _wr_color(v):
+            if not isinstance(v, (int, float)) or v != v: return ""
+            return "color: #4caf50" if v >= 50 else "color: #ef5350"
+
+        # ── Strategy-specific extras ──────────────────────────────────────────
+        regime_series = extra.get("regime_series")
+        spy_weights   = extra.get("spy_weights")
+
+        if regime_series is not None and spy_weights is not None:
+            st.markdown("#### Regime Breakdown")
+
+            # Allocation over time
+            fig_alloc = go.Figure()
+            fig_alloc.add_trace(go.Scatter(
+                x=spy_weights.index, y=(spy_weights * 100).values,
+                mode="lines", fill="tozeroy",
+                fillcolor="rgba(92,107,192,0.15)",
+                line=dict(color="#5c6bc0", width=1.5),
+                hovertemplate="%{x|%Y-%m-%d}: %{y:.0f}% SPY<extra></extra>",
+                name="SPY Allocation %",
+            ))
+            fig_alloc.update_layout(
+                title="SPY Allocation Over Time", height=220,
+                yaxis=dict(gridcolor="#1e2130", title="% SPY", range=[0, 105]),
+                xaxis=dict(gridcolor="#1e2130"),
+                paper_bgcolor="#0e1117", plot_bgcolor="#0e1117",
+                font=dict(color="#b0b8c8"),
+                margin=dict(l=0, r=0, t=36, b=0),
+            )
+            st.plotly_chart(fig_alloc, width="stretch")
+
+            # P&L by regime from trades
+            if not trades_df.empty and "spread_type" in trades_df.columns:
+                regime_grp = (
+                    trades_df.groupby("spread_type")["pnl"]
+                    .agg(total_pnl="sum", trades="count",
+                         win_rate=lambda x: 100 * (x > 0).sum() / len(x),
+                         avg_pnl="mean")
+                    .reset_index()
+                    .rename(columns={"spread_type": "Regime"})
+                    .sort_values("total_pnl", ascending=False)
+                )
+
+                col_tbl, col_bar = st.columns([2, 3])
+                with col_tbl:
+                    _rdisp = regime_grp.rename(columns={
+                        "total_pnl": "Total P&L", "win_rate": "Win %",
+                        "avg_pnl": "Avg P&L", "trades": "# Trades",
+                    })
+                    _rstyled = (
+                        _rdisp.style
+                        .map(_pnl_color, subset=["Total P&L", "Avg P&L"])
+                        .map(_wr_color,  subset=["Win %"])
+                        .format({"Total P&L": "${:,.0f}", "Avg P&L": "${:,.0f}",
+                                 "Win %": "{:.1f}%", "# Trades": "{:d}"})
+                    )
+                    st.dataframe(_rstyled, hide_index=True, width="stretch")
+                with col_bar:
+                    colors = ["#4caf50" if v >= 0 else "#ef5350"
+                              for v in regime_grp["total_pnl"]]
+                    fig_rg = go.Figure(go.Bar(
+                        x=regime_grp["Regime"], y=regime_grp["total_pnl"],
+                        marker_color=colors,
+                        hovertemplate="%{x}<br>P&L: $%{y:,.0f}<extra></extra>",
+                    ))
+                    fig_rg.add_hline(y=0, line=dict(color="#546e7a", width=1, dash="dot"))
+                    fig_rg.update_layout(
+                        title="P&L by Regime", height=260,
+                        xaxis=dict(gridcolor="#1e2130", tickangle=-20),
+                        yaxis=dict(gridcolor="#1e2130", title="P&L ($)"),
+                        paper_bgcolor="#0e1117", plot_bgcolor="#0e1117",
+                        font=dict(color="#b0b8c8"),
+                        margin=dict(l=0, r=0, t=36, b=0),
+                    )
+                    st.plotly_chart(fig_rg, width="stretch")
+
+            # Regime time distribution
+            regime_days = regime_series.value_counts().reset_index()
+            regime_days.columns = ["Regime", "Days"]
+            fig_pie = px.pie(regime_days, names="Regime", values="Days",
+                             title="Time in Each Regime",
+                             color_discrete_sequence=px.colors.qualitative.Set2)
+            fig_pie.update_layout(height=280, paper_bgcolor="#0e1117",
+                                  font=dict(color="#b0b8c8"),
+                                  margin=dict(l=0, r=0, t=40, b=0))
+            st.plotly_chart(fig_pie, width="stretch")
+
+        # ── Per-trade bars + distribution ────────────────────────────────────
+        if not trades_df.empty and "pnl" in trades_df.columns:
+            date_col = "exit_date" if "exit_date" in trades_df.columns else trades_df.columns[1]
+
+            # Trade type breakdown (vol arb has trade_type; others have spread_type)
+            type_col = next((c for c in ["trade_type", "spread_type"] if c in trades_df.columns), None)
+            if type_col:
+                st.markdown("#### Performance by Trade Type")
+                type_grp = (
+                    trades_df.groupby(type_col)["pnl"]
+                    .agg(
+                        total_pnl ="sum",
+                        trades    ="count",
+                        win_rate  =lambda x: 100 * (x > 0).sum() / len(x),
+                        avg_pnl   ="mean",
+                        best      ="max",
+                        worst     ="min",
+                    )
+                    .reset_index()
+                    .rename(columns={type_col: "Type"})
+                    .sort_values("total_pnl", ascending=False)
+                )
+                tg_l, tg_r = st.columns([2, 3])
+                with tg_l:
+                    _disp = type_grp.rename(columns={
+                        "total_pnl": "Total P&L", "win_rate": "Win %",
+                        "avg_pnl": "Avg P&L", "best": "Best", "worst": "Worst",
+                        "trades": "# Trades",
+                    })
+                    _styled = (
+                        _disp.style
+                        .map(_pnl_color, subset=["Total P&L", "Avg P&L"])
+                        .map(lambda v: "color: #4caf50; font-weight:600", subset=["Best"])
+                        .map(lambda v: "color: #ef5350; font-weight:600", subset=["Worst"])
+                        .map(_wr_color, subset=["Win %"])
+                        .format({"Total P&L": "${:,.0f}", "Avg P&L": "${:,.2f}",
+                                 "Win %": "{:.1f}%", "Best": "${:,.2f}",
+                                 "Worst": "${:,.2f}", "# Trades": "{:d}"})
+                    )
+                    st.dataframe(_styled, hide_index=True, width="stretch")
+                with tg_r:
+                    _colors = ["#4caf50" if v >= 0 else "#ef5350" for v in type_grp["total_pnl"]]
+                    fig_tg = go.Figure(go.Bar(
+                        x=type_grp["Type"], y=type_grp["total_pnl"],
+                        marker_color=_colors,
+                        hovertemplate="%{x}<br>P&L: $%{y:,.2f}<extra></extra>",
+                    ))
+                    fig_tg.add_hline(y=0, line=dict(color="#546e7a", width=1, dash="dot"))
+                    fig_tg.update_layout(title="P&L by Type", height=240,
+                                         xaxis=dict(gridcolor="#1e2130"),
+                                         yaxis=dict(title="P&L ($)", gridcolor="#1e2130"),
+                                         paper_bgcolor="#0e1117", plot_bgcolor="#0e1117",
+                                         font=dict(color="#b0b8c8"),
+                                         margin=dict(l=0, r=0, t=36, b=0))
+                    st.plotly_chart(fig_tg, width="stretch")
+
+            col_left, col_right = st.columns(2)
+            with col_left:
+                colors = ["#4caf50" if v >= 0 else "#ef5350" for v in trades_df["pnl"]]
+                fig_bars = go.Figure(go.Bar(
+                    x=trades_df[date_col], y=trades_df["pnl"],
+                    marker_color=colors,
+                    hovertemplate="<b>%{x}</b><br>P&L: $%{y:,.2f}<extra></extra>",
+                ))
+                fig_bars.add_hline(y=0, line=dict(color="#546e7a", width=1, dash="dot"))
+                fig_bars.update_layout(title="Per-Trade P&L", height=280,
+                                       yaxis=dict(title="P&L ($)", gridcolor="#1e2130"),
+                                       xaxis=dict(gridcolor="#1e2130"),
+                                       paper_bgcolor="#0e1117", plot_bgcolor="#0e1117",
+                                       font=dict(color="#b0b8c8"),
+                                       margin=dict(l=0, r=0, t=36, b=0))
+                st.plotly_chart(fig_bars, width="stretch")
+
+            with col_right:
+                _all_pnl = trades_df["pnl"].dropna()
+                _range   = _all_pnl.max() - _all_pnl.min() if len(_all_pnl) > 1 else 100
+                _bin     = max(1.0, round(_range / 15, 1))
+                wins_v   = trades_df[trades_df["pnl"] > 0]["pnl"]
+                loss_v   = trades_df[trades_df["pnl"] <= 0]["pnl"]
+                fig_hist = go.Figure()
+                if not wins_v.empty:
+                    fig_hist.add_trace(go.Histogram(x=wins_v, name="Wins",
+                                                    marker_color="#4caf50", opacity=0.8,
+                                                    xbins=dict(size=_bin)))
+                if not loss_v.empty:
+                    fig_hist.add_trace(go.Histogram(x=loss_v, name="Losses",
+                                                    marker_color="#ef5350", opacity=0.8,
+                                                    xbins=dict(size=_bin)))
+                fig_hist.update_layout(
+                    title="P&L Distribution", barmode="overlay", height=280,
+                    xaxis=dict(title="P&L ($)", gridcolor="#1e2130"),
+                    yaxis=dict(gridcolor="#1e2130"),
+                    paper_bgcolor="#0e1117", plot_bgcolor="#0e1117",
+                    font=dict(color="#b0b8c8"),
+                    legend=dict(orientation="h", y=1.1),
+                    margin=dict(l=0, r=0, t=36, b=0),
+                )
+                st.plotly_chart(fig_hist, width="stretch")
+
+            # Cumulative P&L line
+            _cum = trades_df[["exit_date", "pnl"]].copy()
+            _cum["exit_date"] = pd.to_datetime(_cum["exit_date"])
+            _cum = _cum.sort_values("exit_date")
+            _cum["cum_pnl"] = _cum["pnl"].cumsum()
+            fig_cum = go.Figure()
+            fig_cum.add_trace(go.Scatter(
+                x=_cum["exit_date"], y=_cum["cum_pnl"],
+                mode="lines+markers", name="Cum. P&L",
+                line=dict(color="#5c6bc0", width=2),
+                fill="tozeroy", fillcolor="rgba(92,107,192,0.08)",
+                hovertemplate="%{x|%Y-%m-%d}: $%{y:,.2f}<extra></extra>",
+            ))
+            fig_cum.add_hline(y=0, line=dict(color="#546e7a", width=1, dash="dot"))
+            fig_cum.update_layout(title="Cumulative P&L by Trade", height=260,
+                                  xaxis=dict(gridcolor="#1e2130"),
+                                  yaxis=dict(title="P&L ($)", gridcolor="#1e2130"),
+                                  paper_bgcolor="#0e1117", plot_bgcolor="#0e1117",
+                                  font=dict(color="#b0b8c8"),
+                                  margin=dict(l=0, r=0, t=36, b=0))
+            st.plotly_chart(fig_cum, width="stretch")
+
+            # Monthly returns heatmap (if enough data)
+            if len(equity) > 30:
+                eq_df_perf = pd.DataFrame({"equity": equity})
+                try:
+                    st.plotly_chart(C.monthly_returns_heatmap(eq_df_perf),
+                                    width="stretch", key=f"perf_{slug}_mr")
+                except Exception:
+                    pass
+
+            # Trade table — vol arb shows full position detail
+            st.markdown("#### All Trades")
+            _td = trades_df.copy()
+            if "pnl" in _td.columns:
+                _td["cum_pnl"] = _td["pnl"].cumsum().round(2)
+            for _iv_col in ["iv_call", "iv_put", "iv_skew"]:
+                if _iv_col in _td.columns:
+                    _td[_iv_col] = (_td[_iv_col] * 100).round(2)
+            if "call_price_entry" in _td.columns and "put_price_entry" in _td.columns:
+                _td["total_in"]  = ((_td["call_price_entry"] - _td["put_price_entry"])
+                                    * _td["contracts"] * 100).round(2)
+                if "pnl" in _td.columns:
+                    _td["total_out"] = (_td["total_in"] + _td["pnl"]).round(2)
+            elif "entry_cost" in _td.columns:
+                _td["total_in"]  = (_td["entry_cost"] * _td["contracts"] * 100).round(2)
+                if "exit_value" in _td.columns:
+                    _td["total_out"] = (_td["exit_value"] * _td["contracts"] * 100).round(2)
+
+            if "description" in _td.columns:
+                perf_show = [c for c in [
+                    "entry_date", "exit_date", "description", "comment",
+                    "contracts", "trade_type",
+                    "iv_call", "iv_put", "iv_skew",
+                    "total_in", "total_out",
+                    "pnl", "cum_pnl", "exit_reason",
+                ] if c in _td.columns]
+            else:
+                perf_show = [c for c in [
+                    "entry_date", "exit_date", "spread_type",
+                    "entry_cost", "exit_value", "pnl", "cum_pnl", "exit_reason",
+                ] if c in _td.columns]
+
+            st.markdown("""
+<style>
+div[data-testid="stDataFrame"] .ag-cell,
+div[data-testid="element-container"] .ag-cell {
+    white-space: normal !important;
+    word-break: break-word !important;
+    line-height: 1.45 !important;
+    overflow: visible !important;
+}
+div[data-testid="stDataFrame"] .ag-row,
+div[data-testid="element-container"] .ag-row {
+    height: auto !important;
+    min-height: 30px !important;
+}
+</style>""", unsafe_allow_html=True)
+            st.dataframe(
+                _td[perf_show].sort_values(date_col, ascending=False),
+                hide_index=True, width="stretch",
+                column_config={
+                    "entry_date":   cc.DateColumn("Entry"),
+                    "exit_date":    cc.DateColumn("Exit"),
+                    "spread_type":  cc.TextColumn("Regime / Type"),
+                    "description":  cc.TextColumn("Position",  width="large"),
+                    "comment":      cc.TextColumn("Rationale", width="large"),
+                    "entry_cost":   cc.NumberColumn("Entry/sh",     format="$%.4f"),
+                    "exit_value":   cc.NumberColumn("Exit/sh",      format="$%.4f"),
+                    "total_in":     cc.NumberColumn("Total In ($)",  format="$%.2f"),
+                    "total_out":    cc.NumberColumn("Total Out ($)", format="$%.2f"),
+                    "expected_pnl": cc.NumberColumn("Exp. P&L",     format="$%.2f"),
+                    "pnl":          cc.NumberColumn("P&L ($)",       format="$%.2f"),
+                    "cum_pnl":      cc.NumberColumn("Cum. P&L ($)",  format="$%.2f"),
+                    "iv_call":      cc.NumberColumn("Call IV (%)",   format="%.2f%%"),
+                    "iv_put":       cc.NumberColumn("Put IV (%)",    format="%.2f%%"),
+                    "iv_skew":      cc.NumberColumn("IV Skew (%)",   format="%.2f%%"),
+                    "violation":    cc.NumberColumn("Viol.",         format="%.4f"),
+                    "exit_reason":  cc.TextColumn("Exit Reason"),
+                },
+            )
+
+    st.divider()
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # SECTION 2 — LIVE / PAPER TRADING P&L (from DB)
+    # ══════════════════════════════════════════════════════════════════════════
+    st.markdown("### 💹 Live / Paper Trades")
 
     try:
         from alan_trader.db.client import get_engine
@@ -1358,118 +2024,61 @@ def _render_strategy_performance(slug: str):
         st.warning(f"DB not available: {e}")
         return
 
-    # Try slug first, fall back to display_name (handles both paper trading and trade log entries)
     closed = pc.get_closed_positions(engine, strategy_name=slug)
     if closed.empty:
         closed = pc.get_closed_positions(engine, strategy_name=display_name)
 
     if closed.empty:
-        st.info(f"No closed trades recorded for **{display_name}** yet.\n\n"
-                "Trades are recorded when you execute from the Paper Trading tab or log them in Portfolio → Log Trade.")
+        st.info("No executed trades recorded yet. Trades appear here after you execute from "
+                "Paper Trading or log them in Portfolio → Log Trade.")
         return
 
     closed["CloseDate"] = pd.to_datetime(closed["CloseDate"])
     closed = closed.sort_values("CloseDate")
 
-    # ── Summary metrics ──────────────────────────────────────────────────────
-    total_pnl  = closed["RealizedPnL"].sum()
-    wins       = (closed["RealizedPnL"] > 0).sum()
-    losses     = (closed["RealizedPnL"] <= 0).sum()
-    n_trades   = len(closed)
-    win_rate   = 100 * wins / n_trades if n_trades else 0
-    avg_pnl    = closed["RealizedPnL"].mean()
-    best       = closed["RealizedPnL"].max()
-    worst      = closed["RealizedPnL"].min()
+    total_pnl = closed["RealizedPnL"].sum()
+    wins      = (closed["RealizedPnL"] > 0).sum()
+    n_trades  = len(closed)
+    win_rate  = 100 * wins / n_trades if n_trades else 0
+    avg_pnl   = closed["RealizedPnL"].mean()
+    best      = closed["RealizedPnL"].max()
+    worst     = closed["RealizedPnL"].min()
 
     c1, c2, c3, c4, c5, c6 = st.columns(6)
-    c1.metric("Total P&L",  f"${total_pnl:,.2f}")
-    c2.metric("Trades",      str(n_trades))
-    c3.metric("Win Rate",   f"{win_rate:.1f}%")
-    c4.metric("Avg P&L",    f"${avg_pnl:,.2f}")
-    c5.metric("Best Trade", f"${best:,.2f}")
-    c6.metric("Worst Trade",f"${worst:,.2f}")
+    c1.metric("Total P&L",   f"${total_pnl:,.2f}")
+    c2.metric("Trades",       str(n_trades))
+    c3.metric("Win Rate",    f"{win_rate:.1f}%")
+    c4.metric("Avg P&L",     f"${avg_pnl:,.2f}")
+    c5.metric("Best Trade",  f"${best:,.2f}")
+    c6.metric("Worst Trade", f"${worst:,.2f}")
 
-    # ── Cumulative P&L chart ─────────────────────────────────────────────────
     closed["CumPnL"] = closed["RealizedPnL"].cumsum()
-    fig_cum = go.Figure()
-    fig_cum.add_trace(go.Scatter(
+    fig_live = go.Figure()
+    fig_live.add_trace(go.Scatter(
         x=closed["CloseDate"], y=closed["CumPnL"],
         mode="lines+markers", name="Cumulative P&L",
-        line=dict(color="#5c6bc0", width=2),
-        fill="tozeroy", fillcolor="rgba(92,107,192,0.1)",
+        line=dict(color="#26a69a", width=2),
+        fill="tozeroy", fillcolor="rgba(38,166,154,0.1)",
         hovertemplate="<b>%{x|%Y-%m-%d}</b><br>Cumulative: $%{y:,.2f}<extra></extra>",
     ))
-    fig_cum.add_hline(y=0, line=dict(color="#546e7a", width=1, dash="dot"))
-    fig_cum.update_layout(
-        title=f"Cumulative P&L — {display_name}", height=320,
-        paper_bgcolor="#0e1117", plot_bgcolor="#0e1117",
-        font=dict(color="#b0b8c8"),
-        xaxis=dict(gridcolor="#1e2130"),
-        yaxis=dict(gridcolor="#1e2130", title="P&L ($)"),
-        margin=dict(l=0, r=0, t=40, b=0),
-    )
-    st.plotly_chart(fig_cum, width="stretch")
+    fig_live.add_hline(y=0, line=dict(color="#546e7a", width=1, dash="dot"))
+    fig_live.update_layout(title="Cumulative Live P&L", height=300, **_DARK)
+    st.plotly_chart(fig_live, width="stretch")
 
-    # ── Per-trade bars + P&L distribution ───────────────────────────────────
-    col_left, col_right = st.columns(2)
-
-    with col_left:
-        colors = ["#4caf50" if v >= 0 else "#ef5350" for v in closed["RealizedPnL"]]
-        fig_bars = go.Figure(go.Bar(
-            x=closed["CloseDate"], y=closed["RealizedPnL"],
-            marker_color=colors, name="Trade P&L",
-            hovertemplate="<b>%{x|%Y-%m-%d}</b><br>P&L: $%{y:,.2f}<extra></extra>",
-        ))
-        fig_bars.add_hline(y=0, line=dict(color="#546e7a", width=1, dash="dot"))
-        fig_bars.update_layout(
-            title="Per-Trade P&L", height=280,
-            paper_bgcolor="#0e1117", plot_bgcolor="#0e1117",
-            font=dict(color="#b0b8c8"),
-            xaxis=dict(gridcolor="#1e2130"),
-            yaxis=dict(gridcolor="#1e2130", title="P&L ($)"),
-            margin=dict(l=0, r=0, t=36, b=0),
-        )
-        st.plotly_chart(fig_bars, width="stretch")
-
-    with col_right:
-        win_vals  = closed[closed["RealizedPnL"] > 0]["RealizedPnL"]
-        loss_vals = closed[closed["RealizedPnL"] <= 0]["RealizedPnL"]
-        fig_hist = go.Figure()
-        if not win_vals.empty:
-            fig_hist.add_trace(go.Histogram(x=win_vals,   name="Wins",
-                                            marker_color="#4caf50", opacity=0.8))
-        if not loss_vals.empty:
-            fig_hist.add_trace(go.Histogram(x=loss_vals,  name="Losses",
-                                            marker_color="#ef5350", opacity=0.8))
-        fig_hist.update_layout(
-            title="P&L Distribution", barmode="overlay", height=280,
-            paper_bgcolor="#0e1117", plot_bgcolor="#0e1117",
-            font=dict(color="#b0b8c8"),
-            xaxis=dict(gridcolor="#1e2130", title="P&L ($)"),
-            yaxis=dict(gridcolor="#1e2130"),
-            legend=dict(orientation="h", y=1.1),
-            margin=dict(l=0, r=0, t=36, b=0),
-        )
-        st.plotly_chart(fig_hist, width="stretch")
-
-    # ── Trade table ──────────────────────────────────────────────────────────
-    st.markdown("#### Trade history")
     show_cols = [c for c in ["CloseDate", "Symbol", "PositionType", "Direction",
                               "Quantity", "AvgEntryPrice", "AvgExitPrice",
-                              "RealizedPnL", "HoldDays", "Outcome", "Regime", "Tags"]
+                              "RealizedPnL", "HoldDays", "Regime", "Tags"]
                  if c in closed.columns]
-    import streamlit as _st
-    import streamlit.column_config as cc
     st.dataframe(
         closed[show_cols].sort_values("CloseDate", ascending=False),
         width="stretch", hide_index=True,
         column_config={
             "CloseDate":     cc.DateColumn("Close Date"),
-            "RealizedPnL":   cc.NumberColumn("P&L",        format="$%.2f"),
-            "AvgEntryPrice": cc.NumberColumn("Entry",       format="$%.4f"),
-            "AvgExitPrice":  cc.NumberColumn("Exit",        format="$%.4f"),
-            "Quantity":      cc.NumberColumn("Qty",         format="%.2f"),
-            "HoldDays":      cc.NumberColumn("Hold Days",   format="%d d"),
+            "RealizedPnL":   cc.NumberColumn("P&L",     format="$%.2f"),
+            "AvgEntryPrice": cc.NumberColumn("Entry",   format="$%.4f"),
+            "AvgExitPrice":  cc.NumberColumn("Exit",    format="$%.4f"),
+            "Quantity":      cc.NumberColumn("Qty",     format="%.2f"),
+            "HoldDays":      cc.NumberColumn("Hold Days", format="%d d"),
         },
     )
 

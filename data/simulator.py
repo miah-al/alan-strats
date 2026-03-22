@@ -59,6 +59,24 @@ TICKER_PROFILES: dict[str, dict] = {
              "category": "energy",      "sector_peers": ["CVX", "COP", "SLB", "EOG", "OXY"]},
     "USO":  {"start_price":  75.0, "annual_vol": 0.38, "annual_drift": 0.04,
              "category": "commodity",   "sector_peers": ["XOM", "CVX", "XLE", "OXY", "COP"]},
+    # Crypto ETFs
+    "BITO": {"start_price":  25.0, "annual_vol": 0.85, "annual_drift": 0.20,
+             "category": "crypto_etf",  "sector_peers": ["BITB", "FBTC", "IBIT", "GBTC"]},
+    "IBIT": {"start_price":  45.0, "annual_vol": 0.80, "annual_drift": 0.20,
+             "category": "crypto_etf",  "sector_peers": ["BITO", "BITB", "FBTC", "GBTC"]},
+    "GBTC": {"start_price":  65.0, "annual_vol": 0.85, "annual_drift": 0.20,
+             "category": "crypto_etf",  "sector_peers": ["BITO", "IBIT", "FBTC", "BITB"]},
+    # Meme / retail-heavy
+    "HOOD": {"start_price":  25.0, "annual_vol": 0.75, "annual_drift": 0.15,
+             "category": "fintech",     "sector_peers": ["COIN", "SoFi", "MSTR", "IBKR"]},
+    "COIN": {"start_price":  220.0, "annual_vol": 0.90, "annual_drift": 0.18,
+             "category": "crypto",      "sector_peers": ["HOOD", "MSTR", "BITO", "IBIT"]},
+    "MSTR": {"start_price":  350.0, "annual_vol": 1.20, "annual_drift": 0.25,
+             "category": "crypto",      "sector_peers": ["COIN", "HOOD", "BITO", "IBIT"]},
+    "GME":  {"start_price":  20.0, "annual_vol": 1.10, "annual_drift": -0.05,
+             "category": "meme",        "sector_peers": ["AMC", "BBBY", "HOOD", "PLTR"]},
+    "PLTR": {"start_price":  85.0, "annual_vol": 0.70, "annual_drift": 0.20,
+             "category": "tech",        "sector_peers": ["HOOD", "COIN", "RKLB", "SOFI"]},
 }
 
 DEFAULT_PROFILE: dict = {
@@ -548,6 +566,7 @@ def simulate_options_chain_with_violations(
     T = dte / 252
     atm = round(S / strike_spacing) * strike_spacing
     strikes = [atm + i * strike_spacing for i in range(-(n_strikes // 2), n_strikes // 2 + 1)]
+    strikes = [k for k in strikes if k > 0]  # guard: K=0 causes log(S/K) ZeroDivisionError
 
     # Realistic IV skew: OTM puts carry more vol than OTM calls
     def _strike_iv(K):

@@ -39,6 +39,44 @@ def _fetch_live_vol_surface(ticker: str, api_key: str, spot_price: float,
         return None, str(e)
 
 
+def _fetch_db_vol_surface(ticker: str, as_of: "datetime.date",
+                          min_dte: int = 7, max_dte: int = 180) -> "tuple[pd.DataFrame | None, str]":
+    """Load vol surface from mkt.OptionSnapshot for a specific snapshot date."""
+    try:
+        import datetime as _dt
+        from alan_trader.db.client import get_engine, get_ticker_id
+        from alan_trader.db.options_loader import _load_chain
+
+        eng = get_engine()
+        tid = get_ticker_id(eng, ticker)
+        if tid is None:
+            return None, f"Ticker '{ticker}' not found in DB — sync it first via Data Manager."
+
+        df = _load_chain(eng, tid, as_of, as_of, min_dte=min_dte, max_dte=max_dte)
+        if df.empty:
+            return None, (
+                f"No option snapshot for {ticker} on {as_of}. "
+                "Try a different date or sync options via Data Manager."
+            )
+
+        # Normalise contract_type to 'call'/'put'
+        df["type"] = df["contract_type"].str.upper().map(
+            {"C": "call", "CALL": "call", "P": "put", "PUT": "put"}
+        )
+        df["dte"] = (pd.to_datetime(df["expiration_date"]) - pd.Timestamp(as_of)).dt.days
+
+        # Use calls for the surface (same convention as live API)
+        calls = df[(df["type"] == "call") & df["iv"].notna() & (df["iv"] > 0) & (df["iv"] < 3.0)]
+        if calls.empty:
+            # Fall back to all contracts if no calls
+            calls = df[df["iv"].notna() & (df["iv"] > 0) & (df["iv"] < 3.0)]
+
+        result = calls[["strike", "dte", "iv", "bid", "ask", "delta"]].copy()
+        return result, ""
+    except Exception as e:
+        return None, str(e)
+
+
 def _fetch_live_movers(api_key: str) -> "pd.DataFrame":
     """Fetch real top gainers + losers from Polygon. Returns movers_df or empty DataFrame."""
     try:
@@ -379,7 +417,6 @@ def render(ticker: str = "SPY", api_key: str = ""):
 
     from alan_trader.data.simulator import (
         TICKER_PROFILES, DEFAULT_PROFILE,
-        simulate_price,
         simulate_iv_smile,
         simulate_top_movers,
         simulate_gex,
@@ -393,7 +430,7 @@ def render(ticker: str = "SPY", api_key: str = ""):
     import numpy as np
 
     # ── Price Chart (FIRST, default open) ────────────────────────────────────
-    with st.expander(f"Price Chart — {ticker}", expanded=True):
+    with st.expander(f"📈 Price Chart — {ticker}", expanded=True):
 
         # Live quote strip at the top of the chart section
         if api_key:
@@ -401,6 +438,8 @@ def render(ticker: str = "SPY", api_key: str = ""):
                 q = _fetch_live_quote(ticker, api_key)
             if q.get("price"):
                 default_S = q["price"]
+                # Force the spot price widget to refresh when ticker changes
+                st.session_state[f"md_spot_price_{ticker}"] = default_S
                 lq1, lq2, lq3, lq4, lq5 = st.columns(5)
                 lq1.metric("Price",  f"${q['price']:,.2f}")
                 lq2.metric("Change", f"${q.get('change', 0):+.2f}",
@@ -437,11 +476,11 @@ def render(ticker: str = "SPY", api_key: str = ""):
                 bars_df = None
 
         if bars_df is None or bars_df.empty:
-            bars_df = simulate_price(ticker=ticker, n_days=504)
-            if api_key:
-                st.caption("⚠️ Showing simulated data — live bars unavailable.")
-            else:
-                st.caption("Simulated data — enter API key in sidebar for real bars.")
+            st.warning(
+                f"No price bars found for **{ticker}**. "
+                "Go to **Tools → Data Manager → Sync Price Bars** to download data."
+            )
+            return
 
         # ── Date range slice ─────────────────────────────────────────────────
         import datetime as _dt
@@ -463,7 +502,7 @@ def render(ticker: str = "SPY", api_key: str = ""):
                         width="stretch", key="md_candle")
 
     # ── Treasury Term Structure ───────────────────────────────────────────────
-    with st.expander("Treasury Term Structure", expanded=False):
+    with st.expander("📐 Treasury Term Structure", expanded=False):
         _render_term_structure()
 
     # ── Shared controls (used by Vol Surface + GEX below) ────────────────────
@@ -472,11 +511,11 @@ def render(ticker: str = "SPY", api_key: str = ""):
     spot_price = ctrl1.number_input(
         f"{ticker} Price ($)", value=float(default_S),
         min_value=1.0, max_value=10_000.0, step=max(1.0, default_S * 0.01),
-        key="md_spot_price",
+        key=f"md_spot_price_{ticker}",
     )
     iv_base = ctrl2.slider(
         "Base IV (%)", min_value=5, max_value=120, value=int(profile["annual_vol"] * 100),
-        key="md_iv_base",
+        key=f"md_iv_base_{ticker}",
     ) / 100.0
     gex_n_strikes = ctrl3.slider(
         "GEX strikes shown", min_value=10, max_value=30, value=20,
@@ -485,27 +524,56 @@ def render(ticker: str = "SPY", api_key: str = ""):
     st.markdown("---")
 
     # ── Volatility Surface ───────────────────────────────────────────────────
-    with st.expander("Volatility Surface", expanded=False):
-        zc1, zc2 = st.columns(2)
-        dte_lo = zc1.slider("Min DTE",  1,  60,   7, 1,  key="vs_dte_lo")
-        dte_hi = zc2.slider("Max DTE", 30, 365, 180, 10, key="vs_dte_hi")
+    with st.expander("🌊 Volatility Surface", expanded=False):
+        import datetime as _vs_dt
 
-        live_surf = None
-        if api_key:
-            with st.spinner("Fetching live options chain (calls, 5 % strike steps)…"):
-                live_surf, surf_err = _fetch_live_vol_surface(
-                    ticker, api_key, spot_price, min_dte=dte_lo, max_dte=dte_hi
+        # ── Controls row ──────────────────────────────────────────────────
+        vc1, vc2, vc3, vc4 = st.columns([2, 2, 2, 3])
+        dte_lo   = vc1.slider("Min DTE",  1,  60,   7, 1,  key="vs_dte_lo")
+        dte_hi   = vc2.slider("Max DTE", 30, 365, 180, 10, key="vs_dte_hi")
+        src_mode = vc3.radio("Source", ["API (live)", "DB (historical)"],
+                             horizontal=True, key="vs_src_mode")
+        use_db   = src_mode == "DB (historical)"
+
+        # As Of date — only relevant for DB mode
+        _db_min  = _vs_dt.date(2020, 1, 1)
+        _db_max  = _vs_dt.date.today()
+        _db_def  = _vs_dt.date.today() - _vs_dt.timedelta(days=1)
+        as_of    = vc4.date_input("As Of", value=_db_def,
+                                  min_value=_db_min, max_value=_db_max,
+                                  key="vs_as_of",
+                                  disabled=not use_db)
+
+        surf_df  = None
+        surf_src = ""
+
+        if use_db:
+            with st.spinner(f"Loading {ticker} chain from DB for {as_of}…"):
+                surf_df, surf_err = _fetch_db_vol_surface(
+                    ticker, as_of, min_dte=dte_lo, max_dte=dte_hi
                 )
-        if not api_key:
-            st.info("Enter your Polygon API key in the sidebar to load the real volatility surface.")
-        elif live_surf is None or live_surf.empty:
+            surf_src = f"📦 DB snapshot — {ticker} as of {as_of}"
+        else:
+            if api_key:
+                with st.spinner("Fetching live options chain (calls, 5 % strike steps)…"):
+                    surf_df, surf_err = _fetch_live_vol_surface(
+                        ticker, api_key, spot_price, min_dte=dte_lo, max_dte=dte_hi
+                    )
+                surf_src = f"📡 Live IV surface — {ticker}"
+            else:
+                surf_err = ""
+
+        if not use_db and not api_key:
+            st.info("Enter your Polygon API key in the sidebar to load the live surface, or switch to **DB (historical)**.")
+        elif surf_df is None or surf_df.empty:
             msg = surf_err or (
-                f"Live IV surface unavailable for {ticker}. "
-                "The `implied_volatility` field requires a Polygon Options add-on plan. "
-                "The IV smile below uses simulated data."
+                f"IV surface unavailable for {ticker}. "
+                + ("Try a different date or sync options via Data Manager." if use_db
+                   else "The `implied_volatility` field requires a Polygon Options add-on plan.")
             )
             st.warning(msg)
         else:
+            live_surf = surf_df
             strikes_z = np.array(sorted(live_surf["strike"].unique()))
             dtes_z    = np.array(sorted(live_surf["dte"].unique()))
             iv_z  = np.full((len(dtes_z), len(strikes_z)), np.nan)
@@ -527,13 +595,12 @@ def render(ticker: str = "SPY", api_key: str = ""):
                     iv_linear = griddata(pts, iv_z[valid], all_pts, method="linear").reshape(iv_z.shape)
                     iv_z = np.where(np.isnan(iv_linear), iv_nearest, iv_linear)
                 except Exception:
-                    # Degenerate geometry (e.g. all points share one DTE) — nearest is fine
                     iv_z = iv_nearest
 
             n_strikes = strikes_z.size
             n_dtes    = dtes_z.size
             if n_strikes >= 2 and n_dtes >= 2:
-                st.caption(f"📡 Live IV surface — {n_strikes} strikes × {n_dtes} expirations")
+                st.caption(f"{surf_src} — {n_strikes} strikes × {n_dtes} expirations")
                 st.plotly_chart(C.vol_surface_3d(strikes_z, dtes_z, iv_z, spot_price=spot_price),
                                 width="stretch", key="md_vol_surface")
             elif n_strikes >= 2 and n_dtes == 1:
@@ -544,18 +611,35 @@ def render(ticker: str = "SPY", api_key: str = ""):
                     line=dict(color="#00d4ff", width=2), marker=dict(size=6),
                 ))
                 fig_smile.update_layout(
-                    title=f"📡 IV Smile — {ticker} ({dte_val} DTE)",
+                    title=f"IV Smile — {ticker} ({dte_val} DTE)",
                     xaxis_title="Strike", yaxis_title="IV",
                     template="plotly_dark", height=320,
                     margin=dict(t=40, b=40, l=50, r=20),
                 )
-                st.caption("Single expiry with live IV — showing IV smile. Outside market hours Polygon only populates IV for the nearest active expiry. Try again during trading hours for 3D view.")
+                st.caption(surf_src + " — single expiry, showing IV smile.")
                 st.plotly_chart(fig_smile, width="stretch", key="md_vol_surface")
             else:
                 st.warning(
                     f"Not enough data for {ticker}: {n_strikes} strike(s) × {n_dtes} expiry(s). "
-                    "Try widening the DTE range or strike range."
+                    "Try widening the DTE range."
                 )
+
+            # Raw data table (DB mode — useful for auditing)
+            if use_db:
+                with st.expander("📋 Raw chain data", expanded=False):
+                    show_cols = [c for c in ["strike", "dte", "iv", "bid", "ask", "delta"] if c in surf_df.columns]
+                    st.dataframe(
+                        surf_df[show_cols].sort_values(["dte", "strike"]),
+                        hide_index=True, width="stretch",
+                        column_config={
+                            "strike": st.column_config.NumberColumn("Strike",  format="$%.1f"),
+                            "dte":    st.column_config.NumberColumn("DTE",     format="%d"),
+                            "iv":     st.column_config.NumberColumn("IV",      format="%.1f%%"),
+                            "bid":    st.column_config.NumberColumn("Bid",     format="$%.3f"),
+                            "ask":    st.column_config.NumberColumn("Ask",     format="$%.3f"),
+                            "delta":  st.column_config.NumberColumn("Delta",   format="%.3f"),
+                        },
+                    )
 
         sm1, sm2 = st.columns([3, 1])
         with sm1:
@@ -570,7 +654,7 @@ def render(ticker: str = "SPY", api_key: str = ""):
                     st.metric(f"{dte_val} DTE", f"{float(atm_row['iv'].iloc[0]) * 100:.1f}%")
 
     # ── Top Movers + Dealer GEX ──────────────────────────────────────────────
-    with st.expander("Market Activity", expanded=False):
+    with st.expander("🔥 Market Activity", expanded=False):
         ma1, ma2 = st.columns(2)
 
         # ── Top Movers ────────────────────────────────────────────────────────
@@ -642,7 +726,7 @@ def render(ticker: str = "SPY", api_key: str = ""):
                   help="Distance of spot above/below the gamma flip.")
 
     # ── Momentum Indicators ──────────────────────────────────────────────────
-    with st.expander(f"Momentum Indicators — {ticker}", expanded=False):
+    with st.expander(f"⚡ Momentum Indicators — {ticker}", expanded=False):
         mom_days = st.slider(
             "History (trading days)", min_value=60, max_value=504, value=252, step=20,
             key="md_mom_days",
@@ -681,3 +765,123 @@ def render(ticker: str = "SPY", api_key: str = ""):
             "MACD Cross",
             "Bullish" if float(latest["macd_line"]) > float(latest["signal_line"]) else "Bearish",
         )
+
+    # ── Correlation Analysis ──────────────────────────────────────────────────
+    with st.expander("📊 Correlation Analysis", expanded=False):
+        st.caption("Compare price and returns between two tickers — scatter, rolling correlation, return distribution, and cumulative performance.")
+        cor1, cor2, cor3 = st.columns(3)
+        comp_ticker = cor1.text_input("Compare with ticker", value="SPY", key=f"corr_comp_{ticker}").upper().strip() or "SPY"
+        corr_days   = cor2.slider("Lookback (trading days)", 30, 504, 252, step=21, key=f"corr_days_{ticker}")
+        corr_window = cor3.slider("Rolling corr window (days)", 10, 60, 21, step=5, key=f"corr_window_{ticker}")
+
+        if st.button("Run Correlation", key=f"corr_run_{ticker}"):
+            import numpy as np
+            import plotly.graph_objects as go
+            from plotly.subplots import make_subplots
+
+            with st.spinner(f"Fetching {ticker} and {comp_ticker} price history…"):
+                df_a = _fetch_live_bars(ticker,      api_key, n_days=corr_days) if api_key else pd.DataFrame()
+                df_b = _fetch_live_bars(comp_ticker, api_key, n_days=corr_days) if api_key else pd.DataFrame()
+
+            if df_a.empty or df_b.empty:
+                st.warning(f"Could not fetch price data for one or both tickers. Check API key and ticker symbols.")
+            else:
+                # Align on common dates
+                df_a = df_a.set_index("date")["close"].rename(ticker)      if "date" in df_a.columns else df_a["close"].rename(ticker)
+                df_b = df_b.set_index("date")["close"].rename(comp_ticker) if "date" in df_b.columns else df_b["close"].rename(comp_ticker)
+                prices = pd.concat([df_a, df_b], axis=1).dropna()
+                if len(prices) < 10:
+                    st.warning("Not enough overlapping trading days to compute correlation.")
+                else:
+                    rets = prices.pct_change().dropna()
+                    overall_corr = float(rets[ticker].corr(rets[comp_ticker]))
+                    beta         = float(np.cov(rets[ticker], rets[comp_ticker])[0, 1] / np.var(rets[comp_ticker]))
+                    roll_corr    = rets[ticker].rolling(corr_window).corr(rets[comp_ticker]).dropna()
+
+                    # Normalised cumulative return
+                    cum_a = (1 + rets[ticker]).cumprod()
+                    cum_b = (1 + rets[comp_ticker]).cumprod()
+
+                    m1, m2, m3, m4 = st.columns(4)
+                    m1.metric("Pearson Corr",   f"{overall_corr:.3f}")
+                    m2.metric("Beta",           f"{beta:.3f}",           help=f"{ticker} β vs {comp_ticker}")
+                    m3.metric(f"{ticker} Vol",  f"{rets[ticker].std()*16:.1f}%",      help="Annualised daily vol × √252 / √16≈252/16 daily approx")
+                    m4.metric(f"{comp_ticker} Vol", f"{rets[comp_ticker].std()*16:.1f}%")
+
+                    _L = dict(template="plotly_dark", margin=dict(l=40, r=20, t=45, b=35), height=320)
+
+                    row1_l, row1_r = st.columns(2)
+                    row2_l, row2_r = st.columns(2)
+
+                    # ── Top-left: Cumulative return ───────────────────────────
+                    with row1_l:
+                        fig = go.Figure()
+                        fig.add_trace(go.Scatter(x=cum_a.index.astype(str), y=cum_a.values,
+                                                 name=ticker, line=dict(color="#00cc96", width=2)))
+                        fig.add_trace(go.Scatter(x=cum_b.index.astype(str), y=cum_b.values,
+                                                 name=comp_ticker, line=dict(color="#ab63fa", width=2)))
+                        fig.update_layout(title=f"Cumulative Return",
+                                          xaxis_title="Date", yaxis_title="Growth of $1", **_L)
+                        st.plotly_chart(fig, width="stretch", key=f"corr_cum_{ticker}")
+
+                    # ── Top-right: Scatter + regression ──────────────────────
+                    with row1_r:
+                        m_coef = np.polyfit(rets[comp_ticker].values, rets[ticker].values, 1)
+                        x_line = np.linspace(rets[comp_ticker].min(), rets[comp_ticker].max(), 100)
+                        fig2 = go.Figure()
+                        fig2.add_trace(go.Scatter(
+                            x=rets[comp_ticker].values, y=rets[ticker].values,
+                            mode="markers", name="Daily returns",
+                            marker=dict(size=4, color="#00b4d8", opacity=0.55),
+                        ))
+                        fig2.add_trace(go.Scatter(
+                            x=x_line, y=np.polyval(m_coef, x_line),
+                            mode="lines", name=f"β={beta:.2f}",
+                            line=dict(color="#ff6b6b", width=2, dash="dash"),
+                        ))
+                        fig2.update_layout(
+                            title=f"Return Scatter  ρ={overall_corr:.2f}  β={beta:.2f}",
+                            xaxis_title=f"{comp_ticker} return",
+                            yaxis_title=f"{ticker} return",
+                            xaxis_tickformat=".1%", yaxis_tickformat=".1%", **_L,
+                        )
+                        st.plotly_chart(fig2, width="stretch", key=f"corr_sc_{ticker}")
+
+                    # ── Bottom-left: Rolling correlation ─────────────────────
+                    with row2_l:
+                        fig3 = go.Figure()
+                        fig3.add_trace(go.Scatter(
+                            x=roll_corr.index.astype(str), y=roll_corr.values,
+                            mode="lines", name=f"{corr_window}d ρ",
+                            line=dict(color="#ffd166", width=2),
+                            fill="tozeroy", fillcolor="rgba(255,209,102,0.12)",
+                        ))
+                        fig3.add_hline(y=overall_corr, line_dash="dash", line_color="#888",
+                                       annotation_text=f"  avg {overall_corr:.2f}")
+                        fig3.add_hline(y=0, line_color="#444")
+                        fig3.update_layout(
+                            title=f"{corr_window}-day Rolling Correlation",
+                            xaxis_title="Date", yaxis_title="ρ",
+                            yaxis=dict(range=[-1.1, 1.1]), **_L,
+                        )
+                        st.plotly_chart(fig3, width="stretch", key=f"corr_roll_{ticker}")
+
+                    # ── Bottom-right: Return distribution ────────────────────
+                    with row2_r:
+                        fig4 = go.Figure()
+                        fig4.add_trace(go.Histogram(
+                            x=rets[ticker].values, name=ticker,
+                            nbinsx=50, opacity=0.7,
+                            marker_color="#00cc96", histnorm="probability",
+                        ))
+                        fig4.add_trace(go.Histogram(
+                            x=rets[comp_ticker].values, name=comp_ticker,
+                            nbinsx=50, opacity=0.7,
+                            marker_color="#ab63fa", histnorm="probability",
+                        ))
+                        fig4.update_layout(
+                            title="Return Distribution",
+                            xaxis_title="Daily Return", yaxis_title="Probability",
+                            xaxis_tickformat=".1%", barmode="overlay", **_L,
+                        )
+                        st.plotly_chart(fig4, width="stretch", key=f"corr_dist_{ticker}")
