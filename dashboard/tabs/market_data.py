@@ -371,6 +371,7 @@ def _load_yield_curve_live() -> "pd.DataFrame | None":
 def _render_term_structure():
     import plotly.graph_objects as go
     import numpy as np
+    import pandas as pd
 
     with st.spinner("Loading yield curve from FRED…"):
         df = _load_yield_curve_live()
@@ -519,6 +520,7 @@ def _render_term_structure():
 
     # ── 3D Yield Surface ──────────────────────────────────────────────────────
     elif chart_type == "3D Surface":
+      try:
         # Maturity in years for each tenor
         _TENOR_YEARS = [
             ("3M",  0.25,  "rate_3m"),
@@ -541,76 +543,43 @@ def _render_term_structure():
         tenor_cols = [col for _, _, col in avail_tenors]
         tenor_lbls = [lbl for lbl, _, _ in avail_tenors]
 
-        # Z matrix: rows = dates, cols = tenors (as numpy array)
-        z_mat   = surf_df[tenor_cols].values.astype(float)
+        # Monthly sample (~24 rows) — weekly causes too many traces and hangs browser
+        surf_df = surf_df.iloc[::21]
+        dates_z    = surf_df.index.tolist()
+        date_strs  = [str(d) for d in dates_z]
+
+        z_mat = surf_df[tenor_cols].values.astype(float)
+        # Fill NaNs via forward-fill so Surface renders cleanly
+        for col_i in range(z_mat.shape[1]):
+            mask = np.isnan(z_mat[:, col_i])
+            if mask.any() and not mask.all():
+                idx = np.where(~mask)[0]
+                z_mat[mask, col_i] = np.interp(np.where(mask)[0], idx, z_mat[idx, col_i])
+
         n_dates = len(dates_z)
-        n_ten   = len(maturities)
-
-        date_strs = [str(d) for d in dates_z]
-        z_min, z_max = float(np.nanmin(z_mat)), float(np.nanmax(z_mat))
-
-        WIRE_COLOR = "#3a5a8a"
-
-        fig3d = go.Figure()
-
-        # Grid lines along maturity axis (one line per date)
-        for i, d_str in enumerate(date_strs):
-            fig3d.add_trace(go.Scatter3d(
-                x=maturities,
-                y=[i] * n_ten,
-                z=z_mat[i].tolist(),
-                mode="lines",
-                line=dict(color=WIRE_COLOR, width=2),
-                showlegend=False,
-                hovertemplate=f"{d_str} — %{{x}}Y — %{{z:.2f}}%<extra></extra>",
-            ))
-
-        # Grid lines along date axis (one line per tenor)
-        for j, (lbl, mat) in enumerate(zip(tenor_lbls, maturities)):
-            fig3d.add_trace(go.Scatter3d(
-                x=[mat] * n_dates,
-                y=list(range(n_dates)),
-                z=z_mat[:, j].tolist(),
-                mode="lines",
-                line=dict(color=WIRE_COLOR, width=2),
-                showlegend=False,
-                hovertemplate=f"{lbl} — %{{z:.2f}}%<extra></extra>",
-            ))
-
-        # Vertex markers colored by yield
-        xv, yv, zv, cv = [], [], [], []
-        for i in range(n_dates):
-            for j in range(n_ten):
-                val = z_mat[i, j]
-                if not np.isnan(val):
-                    xv.append(maturities[j])
-                    yv.append(i)
-                    zv.append(float(val))
-                    cv.append(float(val))
-
-        fig3d.add_trace(go.Scatter3d(
-            x=xv, y=yv, z=zv,
-            mode="markers",
-            marker=dict(
-                size=3,
-                color=cv,
-                colorscale="Viridis",
-                cmin=z_min, cmax=z_max,
-                showscale=True,
-                colorbar=dict(
-                    title=dict(text="Yield %", font=dict(color="#e0e0e0", size=12)),
-                    thickness=14, len=0.7,
-                    tickfont=dict(color="#e0e0e0", size=11),
-                ),
-            ),
-            showlegend=False,
-            hovertemplate="%{z:.2f}%<extra></extra>",
-        ))
-
-        # Date tick labels on y-axis
-        tick_step = max(1, n_dates // 10)
+        tick_step = max(1, n_dates // 8)
         tick_vals = list(range(0, n_dates, tick_step))
         tick_text = [date_strs[i] for i in tick_vals]
+
+        # Single go.Surface with hidesurface + contour lines = efficient wireframe
+        fig3d = go.Figure(data=[go.Surface(
+            x=maturities,
+            y=list(range(n_dates)),
+            z=z_mat.tolist(),
+            hidesurface=True,
+            contours=dict(
+                x=dict(show=True, color="#3a6a9a", width=3, highlightcolor="#69c0ff", highlightwidth=4),
+                y=dict(show=True, color="#3a6a9a", width=3, highlightcolor="#69c0ff", highlightwidth=4),
+            ),
+            colorscale="Viridis",
+            showscale=True,
+            colorbar=dict(
+                title=dict(text="Yield %", font=dict(color="#e0e0e0", size=12)),
+                thickness=14, len=0.7,
+                tickfont=dict(color="#e0e0e0", size=11),
+            ),
+            hovertemplate="Maturity: %{x}Y<br>Yield: %{z:.2f}%<extra></extra>",
+        )])
 
         _ax = dict(
             gridcolor="#2a3050", backgroundcolor="#0c1020",
@@ -640,12 +609,14 @@ def _render_term_structure():
                 bgcolor="#0c1020",
                 camera=dict(eye=dict(x=1.8, y=-1.6, z=0.8)),
                 aspectmode="manual",
-                aspectratio=dict(x=1.4, y=1.8, z=0.7),
+                aspectratio=dict(x=1.2, y=2.0, z=0.7),
             ),
             height=880,
             margin=dict(l=0, r=0, t=60, b=0),
         )
         st.plotly_chart(fig3d, width="stretch", key="ts_3d_surface")
+      except Exception as _e3d:
+        st.error(f"3D surface error: {_e3d}")
 
 
 def render(ticker: str = "SPY", api_key: str = ""):
