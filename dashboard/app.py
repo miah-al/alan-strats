@@ -1550,7 +1550,8 @@ div[data-testid="stDialog"] > div[role="dialog"] {
                 # Combined equity curve
                 if not _wf_eq.empty:
                     from alan_trader.visualization import charts as _C2
-                    _wf_eq_df = pd.DataFrame({"equity": _wf_eq})
+                    _wf_start = float(_wf_eq.iloc[0])
+                    _wf_eq_df = pd.DataFrame({"equity": _wf_eq, "price": _wf_start})
                     st.plotly_chart(_C2.equity_curve(_wf_eq_df), use_container_width=True, key=f"wf_{slug}_eq")
 
                 st.caption(
