@@ -542,8 +542,9 @@ def _render_term_structure():
                                  key="ts_3d_start")
 
         surf_df = df.set_index("date").sort_index()
+        surf_df.index = pd.to_datetime(surf_df.index)
         surf_df = surf_df[[col for _, _, col in avail_tenors]].dropna(how="all")
-        surf_df = surf_df[surf_df.index >= pd.Timestamp(ts_start).normalize()]
+        surf_df = surf_df[surf_df.index >= pd.Timestamp(ts_start)]
         surf_df = surf_df.iloc[::21]  # monthly sample
 
         dates_z    = surf_df.index.tolist()
