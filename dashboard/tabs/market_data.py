@@ -536,7 +536,7 @@ def _render_term_structure():
         import datetime as _ts_dt
         _ts_max     = pd.to_datetime(df["date"].max()).date()
         _ts_cap_min = _ts_max - _ts_dt.timedelta(days=730)   # cap at 2 years back
-        _ts_default = _ts_max - _ts_dt.timedelta(days=365)
+        _ts_default = _ts_cap_min  # default = 2 years back
         ts_start = st.date_input("Start Date", value=_ts_default,
                                  min_value=_ts_cap_min, max_value=_ts_max,
                                  key="ts_3d_start")
