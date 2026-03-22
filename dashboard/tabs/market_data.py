@@ -460,7 +460,7 @@ def _render_term_structure():
     tc1, tc2 = st.columns([3, 1])
     compare_dates_labels = ["Today only", "vs 1M ago", "vs 3M ago", "vs 1Y ago", "All 4"]
     compare_mode = tc1.selectbox("Compare", compare_dates_labels, index=4, key="ts_compare")
-    chart_type   = tc2.radio("View", ["Curve", "History"], key="ts_chart_type", horizontal=True)
+    chart_type   = tc2.radio("View", ["Curve", "History", "3D Surface"], key="ts_chart_type", horizontal=True)
 
     # ── Term Structure Snapshot Chart ─────────────────────────────────────────
     if chart_type == "Curve":
@@ -514,7 +514,7 @@ def _render_term_structure():
         st.plotly_chart(fig, width="stretch", key="ts_curve_chart")
 
     # ── Historical Yield Chart ────────────────────────────────────────────────
-    else:
+    elif chart_type == "History":
         plot_tenors = st.multiselect(
             "Tenors to plot", labels_avail,
             default=["2Y", "10Y", "30Y"],
@@ -553,6 +553,93 @@ def _render_term_structure():
         )
         fig.add_hline(y=0, line_dash="dot", line_color="gray", opacity=0.4)
         st.plotly_chart(fig, width="stretch", key="ts_hist_chart")
+
+    # ── 3D Yield Surface ──────────────────────────────────────────────────────
+    elif chart_type == "3D Surface":
+        # Maturity in years for each tenor
+        _TENOR_YEARS = [
+            ("3M",  0.25,  "rate_3m"),
+            ("6M",  0.5,   "rate_6m"),
+            ("1Y",  1.0,   "rate_1y"),
+            ("2Y",  2.0,   "rate_2y"),
+            ("5Y",  5.0,   "rate_5y"),
+            ("10Y", 10.0,  "rate_10y"),
+            ("30Y", 30.0,  "rate_30y"),
+        ]
+        avail_tenors = [(lbl, yrs, col) for lbl, yrs, col in _TENOR_YEARS if col in df.columns]
+
+        # Weekly sample — 2 years of daily data → ~104 rows
+        surf_df = df.set_index("date").sort_index()
+        surf_df = surf_df[[col for _, _, col in avail_tenors]].dropna(how="all")
+        surf_df = surf_df.iloc[::5]  # every 5 trading days ≈ weekly
+
+        dates_z    = surf_df.index.tolist()
+        maturities = [yrs for _, yrs, _ in avail_tenors]
+        tenor_cols = [col for _, _, col in avail_tenors]
+        tenor_lbls = [lbl for lbl, _, _ in avail_tenors]
+
+        # Z matrix: rows = dates, cols = tenors
+        z_matrix = surf_df[tenor_cols].values.tolist()
+
+        # Date labels for hover (convert to string)
+        date_strs = [str(d) for d in dates_z]
+
+        fig3d = go.Figure(data=[go.Surface(
+            x=maturities,
+            y=list(range(len(dates_z))),
+            z=z_matrix,
+            colorscale=[
+                [0.0,  "#1a237e"],
+                [0.25, "#1565c0"],
+                [0.5,  "#00acc1"],
+                [0.75, "#ffb300"],
+                [1.0,  "#e53935"],
+            ],
+            colorbar=dict(title="Yield (%)", thickness=15, len=0.7),
+            hovertemplate=(
+                "Maturity: %{x}Y<br>"
+                "Yield: %{z:.2f}%<extra></extra>"
+            ),
+            showscale=True,
+        )])
+
+        # Annotate y-axis with date labels (sample every 10 weeks)
+        tick_step = max(1, len(dates_z) // 10)
+        tick_vals = list(range(0, len(dates_z), tick_step))
+        tick_text = [date_strs[i] for i in tick_vals]
+
+        fig3d.update_layout(
+            title="Treasury Yield Surface — Maturity × Time",
+            scene=dict(
+                xaxis=dict(
+                    title="Maturity (years)",
+                    tickvals=maturities,
+                    ticktext=tenor_lbls,
+                    gridcolor="#2a2f3f",
+                    backgroundcolor="#0e1117",
+                ),
+                yaxis=dict(
+                    title="Date",
+                    tickvals=tick_vals,
+                    ticktext=tick_text,
+                    gridcolor="#2a2f3f",
+                    backgroundcolor="#0e1117",
+                ),
+                zaxis=dict(
+                    title="Yield (%)",
+                    tickformat=".2f",
+                    gridcolor="#2a2f3f",
+                    backgroundcolor="#0e1117",
+                ),
+                camera=dict(eye=dict(x=1.8, y=-1.6, z=0.8)),
+                bgcolor="#0e1117",
+            ),
+            paper_bgcolor="#0e1117",
+            font=dict(color="#e0e0e0"),
+            height=600,
+            margin=dict(t=50, b=20, l=20, r=20),
+        )
+        st.plotly_chart(fig3d, width="stretch", key="ts_3d_surface")
 
 
 def render(ticker: str = "SPY", api_key: str = ""):
