@@ -182,43 +182,6 @@ def _fetch_live_vol_surface(ticker: str, api_key: str, spot_price: float,
         return None, str(e)
 
 
-def _fetch_db_vol_surface(ticker: str, as_of: "datetime.date",
-                          min_dte: int = 7, max_dte: int = 180) -> "tuple[pd.DataFrame | None, str]":
-    """Load vol surface from mkt.OptionSnapshot for a specific snapshot date."""
-    try:
-        import datetime as _dt
-        from alan_trader.db.client import get_engine, get_ticker_id
-        from alan_trader.db.options_loader import _load_chain
-
-        eng = get_engine()
-        tid = get_ticker_id(eng, ticker)
-        if tid is None:
-            return None, f"Ticker '{ticker}' not found in DB — sync it first via Data Manager."
-
-        df = _load_chain(eng, tid, as_of, as_of, min_dte=min_dte, max_dte=max_dte)
-        if df.empty:
-            return None, (
-                f"No option snapshot for {ticker} on {as_of}. "
-                "Try a different date or sync options via Data Manager."
-            )
-
-        # Normalise contract_type to 'call'/'put'
-        df["type"] = df["contract_type"].str.upper().map(
-            {"C": "call", "CALL": "call", "P": "put", "PUT": "put"}
-        )
-        df["dte"] = (pd.to_datetime(df["expiration_date"]) - pd.Timestamp(as_of)).dt.days
-
-        # Use calls for the surface (same convention as live API)
-        calls = df[(df["type"] == "call") & df["iv"].notna() & (df["iv"] > 0) & (df["iv"] < 3.0)]
-        if calls.empty:
-            # Fall back to all contracts if no calls
-            calls = df[df["iv"].notna() & (df["iv"] > 0) & (df["iv"] < 3.0)]
-
-        result = calls[["strike", "dte", "iv", "bid", "ask", "delta"]].copy()
-        return result, ""
-    except Exception as e:
-        return None, str(e)
-
 
 def _fetch_live_movers(api_key: str) -> "pd.DataFrame":
     """Fetch real top gainers + losers from Polygon. Returns movers_df or empty DataFrame."""
@@ -843,22 +806,20 @@ def render(ticker: str = "SPY", api_key: str = ""):
                     "Try widening the DTE range."
                 )
 
-            # Raw data table (DB mode — useful for auditing)
-            if use_db:
-                with st.expander("📋 Raw chain data", expanded=False):
-                    show_cols = [c for c in ["strike", "dte", "iv", "bid", "ask", "delta"] if c in surf_df.columns]
-                    st.dataframe(
-                        surf_df[show_cols].sort_values(["dte", "strike"]),
-                        hide_index=True, width="stretch",
-                        column_config={
-                            "strike": st.column_config.NumberColumn("Strike",  format="$%.1f"),
-                            "dte":    st.column_config.NumberColumn("DTE",     format="%d"),
-                            "iv":     st.column_config.NumberColumn("IV",      format="%.1f%%"),
-                            "bid":    st.column_config.NumberColumn("Bid",     format="$%.3f"),
-                            "ask":    st.column_config.NumberColumn("Ask",     format="$%.3f"),
-                            "delta":  st.column_config.NumberColumn("Delta",   format="%.3f"),
-                        },
-                    )
+            with st.expander("📋 Raw chain data", expanded=False):
+                show_cols = [c for c in ["strike", "dte", "iv", "bid", "ask", "delta"] if c in surf_df.columns]
+                st.dataframe(
+                    surf_df[show_cols].sort_values(["dte", "strike"]),
+                    hide_index=True, width="stretch",
+                    column_config={
+                        "strike": st.column_config.NumberColumn("Strike",  format="$%.1f"),
+                        "dte":    st.column_config.NumberColumn("DTE",     format="%d"),
+                        "iv":     st.column_config.NumberColumn("IV",      format="%.1f%%"),
+                        "bid":    st.column_config.NumberColumn("Bid",     format="$%.3f"),
+                        "ask":    st.column_config.NumberColumn("Ask",     format="$%.3f"),
+                        "delta":  st.column_config.NumberColumn("Delta",   format="%.3f"),
+                    },
+                )
 
         sm1, sm2 = st.columns([3, 1])
         with sm1:
