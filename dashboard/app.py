@@ -489,6 +489,18 @@ def _do_backtest(slug, params, ticker, n_days):
     aux = {"vix": vix, "rate2y": r2, "rate10y": r10, "macro": macro,
            "news": news}
 
+    # Load dividends for strategies that need them
+    if slug in ("dividend_arb", "conversion_arb"):
+        try:
+            from alan_trader.db.client import get_engine as _ge_div, get_dividends
+            _div_from = datetime.date.today() - datetime.timedelta(days=n_days * 2)
+            aux["dividends"] = get_dividends(_ge_div(), ticker, _div_from, datetime.date.today())
+            aux["ticker"] = ticker   # needed by conversion_arb for option chain lookups
+            logger.info(f"{slug}: loaded {len(aux['dividends'])} dividend rows for {ticker}")
+        except Exception as _e_div:
+            logger.warning(f"Could not load dividends for {ticker}: {_e_div}")
+            aux["dividends"] = pd.DataFrame()
+
     # Load TLT price bars for strategies that need them
     meta_for_slug = STRATEGY_METADATA.get(slug, {})
     if "tlt" in meta_for_slug.get("required_data", []):
@@ -1253,6 +1265,13 @@ def _render_backtest(slug: str):
                 "put_pnl", "call_pnl", "hedge_pnl", "commission",
                 "pnl", "cum_pnl", "exit_reason",
             ] if c in disp.columns]
+        elif slug == "conversion_arb":
+            show_cols = [c for c in [
+                "W/L", "entry_date", "exit_date",
+                "strike", "contracts", "dte",
+                "actual_div", "implied_div", "edge",
+                "total_in", "pnl", "return_pct", "cum_pnl",
+            ] if c in disp.columns]
         else:
             show_cols = [c for c in [
                 "entry_date", "exit_date", "spread_type",
@@ -1277,7 +1296,8 @@ def _render_backtest(slug: str):
             "short_leg_price":        st.column_config.NumberColumn("Short Leg ($)",      format="$%.4f"),
             "spot":                   st.column_config.NumberColumn("Spot",               format="$%.2f"),
             "strike":                 st.column_config.NumberColumn("Strike",             format="$%.1f"),
-            "total_in":               st.column_config.NumberColumn("Total In ($)",       format="$%.2f"),
+            "total_in":               st.column_config.NumberColumn("Capital In ($)",     format="$%.2f"),
+            "return_pct":             st.column_config.NumberColumn("Return on Capital",  format="%.2f%%"),
             "total_out":              st.column_config.NumberColumn("Total Out ($)",      format="$%.2f"),
             "put_pnl":                st.column_config.NumberColumn("Put P&L ($)",        format="$%.2f"),
             "call_pnl":               st.column_config.NumberColumn("Call P&L ($)",       format="$%.2f"),
@@ -1313,36 +1333,52 @@ def _render_backtest(slug: str):
             )
             st.divider()
 
-            # Metrics row
-            m1, m2, m3, m4, m5 = st.columns(5)
-            m1.metric("Contracts",  row.get("contracts", "—"))
-            m2.metric("Call IV",    f"{row.get('iv_call', 0):.1f}%" if row.get('iv_call') else "—")
-            m3.metric("Put IV",     f"{row.get('iv_put',  0):.1f}%" if row.get('iv_put')  else "—")
-            m4.metric("IV Skew",    f"{row.get('iv_skew', 0):.1f}vp" if row.get('iv_skew') else "—")
-            m5.metric("Exit",       str(row.get("exit_reason", "—")))
-
-            # P&L breakdown
-            st.markdown("#### P&L Breakdown")
-            p1, p2, p3, p4, p5 = st.columns(5)
             def _fmt(v): return f"${v:+,.2f}" if isinstance(v, (int, float)) and v == v else "—"
-            p1.metric("Put P&L",    _fmt(row.get("put_pnl")))
-            p2.metric("Call P&L",   _fmt(row.get("call_pnl")))
-            p3.metric("Hedge P&L",  _fmt(row.get("hedge_pnl")))
-            p4.metric("Commission", _fmt(row.get("commission")))
-            p5.metric("Net P&L",    _fmt(pnl))
 
-            # IV Skew scenario
-            _exp_pnl = row.get("expected_pnl")
-            _iv_sk   = row.get("iv_skew")
-            _n_c     = row.get("contracts", 1) or 1
-            if isinstance(_exp_pnl, (int, float)) and _exp_pnl == _exp_pnl and isinstance(_iv_sk, (int, float)):
-                st.divider()
-                st.markdown("#### IV Skew Scenario")
-                sc1, sc2, sc3 = st.columns(3)
-                sc1.metric("Skew at Entry",        f"{_iv_sk:.1f} vp")
-                sc2.metric("Expected P&L (full compression)", f"${_exp_pnl:+,.0f}")
-                _per_vp = _exp_pnl / _iv_sk if _iv_sk else 0
-                sc3.metric("$ per vol pt compressed", f"${_per_vp:+,.0f}")
+            if row.get("spread_type") == "conversion":
+                # ── Conversion Arb metrics ─────────────────────────────────────
+                m1, m2, m3, m4, m5 = st.columns(5)
+                m1.metric("Contracts",    row.get("contracts", "—"))
+                m2.metric("Strike",       f"${row.get('strike', 0):.2f}" if row.get('strike') else "—")
+                m3.metric("Actual Div",   f"${row.get('actual_div', 0):.4f}" if row.get('actual_div') else "—")
+                m4.metric("Implied Div",  f"${row.get('implied_div', 0):.4f}" if row.get('implied_div') is not None else "—")
+                m5.metric("Edge/sh",      f"${row.get('edge', 0):.4f}" if row.get('edge') is not None else "—")
+
+                st.markdown("#### P&L Breakdown")
+                p1, p2, p3, p4, p5, p6 = st.columns(6)
+                p1.metric("Stock P&L",      _fmt(row.get("stock_pnl")))
+                p2.metric("Put P&L",        _fmt(row.get("put_pnl")))
+                p3.metric("Call P&L",       _fmt(row.get("call_pnl")))
+                p4.metric("Div Received",   _fmt(row.get("div_received")))
+                p5.metric("Commissions",    _fmt(row.get("commissions")))
+                p6.metric("Net P&L",        _fmt(pnl))
+            else:
+                # ── Vol Arb / Spread metrics ───────────────────────────────────
+                m1, m2, m3, m4, m5 = st.columns(5)
+                m1.metric("Contracts",  row.get("contracts", "—"))
+                m2.metric("Call IV",    f"{row.get('iv_call', 0):.1f}%" if row.get('iv_call') else "—")
+                m3.metric("Put IV",     f"{row.get('iv_put',  0):.1f}%" if row.get('iv_put')  else "—")
+                m4.metric("IV Skew",    f"{row.get('iv_skew', 0):.1f}vp" if row.get('iv_skew') else "—")
+                m5.metric("Exit",       str(row.get("exit_reason", "—")))
+
+                st.markdown("#### P&L Breakdown")
+                p1, p2, p3, p4, p5 = st.columns(5)
+                p1.metric("Put P&L",    _fmt(row.get("put_pnl")))
+                p2.metric("Call P&L",   _fmt(row.get("call_pnl")))
+                p3.metric("Hedge P&L",  _fmt(row.get("hedge_pnl")))
+                p4.metric("Commission", _fmt(row.get("commission")))
+                p5.metric("Net P&L",    _fmt(pnl))
+
+                _exp_pnl = row.get("expected_pnl")
+                _iv_sk   = row.get("iv_skew")
+                if isinstance(_exp_pnl, (int, float)) and _exp_pnl == _exp_pnl and isinstance(_iv_sk, (int, float)):
+                    st.divider()
+                    st.markdown("#### IV Skew Scenario")
+                    sc1, sc2, sc3 = st.columns(3)
+                    sc1.metric("Skew at Entry",        f"{_iv_sk:.1f} vp")
+                    sc2.metric("Expected P&L (full compression)", f"${_exp_pnl:+,.0f}")
+                    _per_vp = _exp_pnl / _iv_sk if _iv_sk else 0
+                    sc3.metric("$ per vol pt compressed", f"${_per_vp:+,.0f}")
 
             st.divider()
 
@@ -1362,13 +1398,46 @@ def _render_backtest(slug: str):
             if _K:      _pos_lines.append(f"**Strike:** ${_K}  |  **DTE:** {_dte}d  |  **Spot at entry:** ${_spot}  |  **Size:** {_n} contracts")
             if _put_p:  _pos_lines.append(f"**Sell put** @ ${_put_p:.3f}  ·  **Buy call** @ ${_call_p:.3f}" if _call_p else f"**Sell put** @ ${_put_p:.3f}")
             if _cost:   _pos_lines.append(f"**Net {'credit' if _cost < 0 else 'debit'}:** ${abs(_cost):,.2f}")
-            if _iv_c:   _pos_lines.append(f"**Call IV:** {_iv_c:.1f}%  ·  **Put IV:** {_iv_p:.1f}%  ·  **Skew:** {_iv_sk:.1f} vol pts" if _iv_p and _iv_sk else f"**Call IV:** {_iv_c:.1f}%")
+            if _iv_c:   _pos_lines.append(f"**Call IV:** {_iv_c:.2f}%  ·  **Put IV:** {_iv_p:.2f}%" if _iv_p else f"**Call IV:** {_iv_c:.2f}%")
             st.info("\n\n".join(_pos_lines) if _pos_lines else str(row.get("description", "—")))
 
-            st.markdown("#### Rationale")
-            _comment = str(row.get("comment") or "—")
-            _comment_lines = "\n\n".join(s.strip() for s in _comment.split(". ") if s.strip())
-            st.success(_comment_lines)
+            # 3-leg breakdown for conversion arb
+            if row.get("spread_type") == "conversion":
+                st.markdown("#### Trade Legs")
+                _n   = row.get("contracts", 1)
+                _sh  = _n * 100
+                _leg_df = pd.DataFrame([
+                    {"Leg": f"① Long Stock ({_sh:,} sh)", "Side": "Buy",
+                     "Entry": f"${row.get('entry_price',0):,.2f}",
+                     "Exit":  f"${row.get('exit_price',0):,.2f}",
+                     "P&L":   f"${row.get('stock_pnl',0):+,.2f}"},
+                    {"Leg": f"② Long Put ({_n} cts)", "Side": "Buy",
+                     "Entry": f"${row.get('put_entry_px',0):.3f}",
+                     "Exit":  f"${row.get('put_exit_px',0):.3f}",
+                     "P&L":   f"${row.get('put_pnl',0):+,.2f}"},
+                    {"Leg": f"③ Short Call ({_n} cts)", "Side": "Sell",
+                     "Entry": f"${row.get('call_entry_px',0):.3f}",
+                     "Exit":  f"${row.get('call_exit_px',0):.3f}",
+                     "P&L":   f"${row.get('call_pnl',0):+,.2f}"},
+                ])
+                st.dataframe(_leg_df, hide_index=True, width="stretch")
+                st.markdown(
+                    f"**Dividend received:** ${row.get('div_received',0):+,.2f} &nbsp;·&nbsp; "
+                    f"**Carry:** −${row.get('carry_cost',0):,.2f} &nbsp;·&nbsp; "
+                    f"**Commission:** −${row.get('commissions',0):,.2f} &nbsp;·&nbsp; "
+                    f"**Net P&L: ${row.get('pnl',0):+,.2f}**"
+                )
+                st.caption(f"Actual div: ${row.get('actual_div',0):.4f}  ·  "
+                           f"Implied div: ${row.get('implied_div',0):.4f}  ·  "
+                           f"Edge: ${row.get('edge',0):.4f}/sh  ·  "
+                           f"Risk-free: {row.get('risk_free_rate',0):.2f}%")
+                st.divider()
+
+            if row.get("spread_type") != "conversion":
+                st.markdown("#### Rationale")
+                _comment = str(row.get("comment") or "—")
+                _comment_lines = "\n\n".join(s.strip() for s in _comment.split(". ") if s.strip())
+                st.success(_comment_lines)
 
             if isinstance(cum_pnl, (int, float)):
                 st.caption(f"Cumulative P&L at exit: ${cum_pnl:+,.2f}")
@@ -1385,24 +1454,309 @@ div[data-testid="stDialog"] > div[role="dialog"] {
 }
 </style>""", unsafe_allow_html=True)
 
-        _tbl_df = disp[show_cols]
-        st.caption("Click any row to view Details")
-        _sel = st.dataframe(
-            _tbl_df,
-            width="stretch",
-            column_config=col_cfg,
-            hide_index=True,
-            on_select="rerun",
-            selection_mode="single-row",
-            key=f"bt_{slug}_trades_tbl",
+        # ── Tabulator master-detail via CDN ──────────────────────────────────
+        import json as _json
+
+        def _detail_rows_for(row):
+            if slug == "conversion_arb":
+                n = int(row.get("contracts", 1)); sh = n * 100
+                def _f(v): return round(float(v or 0), 4)
+                return [
+                    {"leg": f"① Stock ({sh:,} sh)", "side": "Buy",
+                     "entry": _f(row.get("entry_price")), "exit": _f(row.get("exit_price")),
+                     "pnl":  round(float(row.get("stock_pnl",   0) or 0), 2)},
+                    {"leg": f"② Put ({n} cts)",     "side": "Buy",
+                     "entry": _f(row.get("put_entry_px")), "exit": _f(row.get("put_exit_px")),
+                     "pnl":  round(float(row.get("put_pnl",     0) or 0), 2)},
+                    {"leg": f"③ Call ({n} cts)",    "side": "Sell",
+                     "entry": _f(row.get("call_entry_px")), "exit": _f(row.get("call_exit_px")),
+                     "pnl":  round(float(row.get("call_pnl",    0) or 0), 2)},
+                    {"leg": "Dividend",    "side": "—", "entry": None, "exit": None,
+                     "pnl":  round(float(row.get("div_received", 0) or 0), 2)},
+                    {"leg": "Carry",       "side": "—", "entry": None, "exit": None,
+                     "pnl": -round(float(row.get("carry_cost",   0) or 0), 2)},
+                    {"leg": "Commissions", "side": "—", "entry": None, "exit": None,
+                     "pnl": -round(float(row.get("commissions",  0) or 0), 2)},
+                ]
+            elif slug == "dividend_arb":
+                n = int(row.get("contracts", 1)); sh = n * 100
+                def _f(v): return round(float(v or 0), 4)
+                _put_total = float(row.get("put_cost", 0) or 0)
+                _put_prem  = _put_total / max(sh, 1)
+                return [
+                    {"leg": f"① Stock ({sh:,} sh)", "side": "Buy",
+                     "entry": _f(row.get("entry_cost")), "exit": _f(row.get("exit_value")),
+                     "pnl":  round(float(row.get("equity_pnl", 0) or 0), 2)},
+                    {"leg": f"② Put hedge ({n} cts)", "side": "Buy",
+                     "entry": round(_put_prem, 4), "exit": None,
+                     "pnl": -round(_put_total, 2)},
+                    {"leg": "Dividend", "side": "—", "entry": None, "exit": None,
+                     "pnl":  round(float(row.get("div_income", 0) or 0), 2)},
+                ]
+            elif slug == "vol_arbitrage":
+                n = int(row.get("contracts", 1))
+                def _fv(v): return round(float(v), 4) if v is not None and v == v else None
+                tt  = str(row.get("trade_type", ""))
+                cpe = _fv(row.get("call_price_entry")); ppe = _fv(row.get("put_price_entry"))
+                cex = _fv(row.get("call_price_exit"));  pex = _fv(row.get("put_price_exit"))
+                cpnl = round(float(row.get("call_pnl", 0) or 0), 2)
+                ppnl = round(float(row.get("put_pnl",  0) or 0), 2)
+                if tt == "skew_arb":
+                    rows = [
+                        {"leg": f"① Short Put  ({n} cts)", "side": "Sell",
+                         "entry": ppe, "exit": pex, "pnl": ppnl},
+                        {"leg": f"② Long Call  ({n} cts)", "side": "Buy",
+                         "entry": cpe, "exit": cex, "pnl": cpnl},
+                    ]
+                    if row.get("hedge_puts") and float(row.get("hedge_puts", 0)) > 0:
+                        rows.append({"leg": "③ Delta Hedge", "side": "—", "entry": None, "exit": None,
+                                     "pnl": round(float(row.get("hedge_pnl", 0) or 0), 2)})
+                    if row.get("commission"):
+                        rows.append({"leg": "Commission", "side": "—", "entry": None, "exit": None,
+                                     "pnl": -round(float(row.get("commission", 0) or 0), 2)})
+                    return rows
+                elif tt == "conversion":
+                    return [
+                        {"leg": f"① Long Call  ({n} cts)", "side": "Buy",  "entry": cpe, "exit": cex, "pnl": cpnl},
+                        {"leg": f"② Short Put  ({n} cts)", "side": "Sell", "entry": ppe, "exit": pex, "pnl": ppnl},
+                    ]
+                else:  # reversal
+                    return [
+                        {"leg": f"① Short Call ({n} cts)", "side": "Sell", "entry": cpe, "exit": cex, "pnl": cpnl},
+                        {"leg": f"② Long Put   ({n} cts)", "side": "Buy",  "entry": ppe, "exit": pex, "pnl": ppnl},
+                    ]
+            else:
+                # Generic: show any numeric P&L component fields present in the row
+                _known_pnl_fields = [
+                    ("Put P&L",    "put_pnl"),    ("Call P&L",   "call_pnl"),
+                    ("Hedge P&L",  "hedge_pnl"),  ("Stock P&L",  "stock_pnl"),
+                    ("Dividend",   "div_income"),  ("Carry",     "carry_cost"),
+                    ("Commission", "commission"),  ("Commission", "commissions"),
+                ]
+                seen = set()
+                out = []
+                for k, v in _known_pnl_fields:
+                    if v in seen or row.get(v) is None: continue
+                    seen.add(v)
+                    mult = -1 if v in ("carry_cost","commission","commissions") else 1
+                    out.append({"leg": k, "side": "—", "entry": None, "exit": None,
+                                "pnl": round(mult * float(row.get(v) or 0), 2)})
+                return out
+
+        # ── Pure HTML <details>/<summary> — no JS library, browser handles expand ──
+        _col_labels = {
+            "W/L":"W/L","entry_date":"Entry","exit_date":"Exit",
+            "strike":"Strike","contracts":"Cts","dte":"DTE",
+            "actual_div":"Actual Div","implied_div":"Impl Div","edge":"Edge $",
+            "total_in":"Invested","pnl":"P&L","return_pct":"Ret%","cum_pnl":"Cum P&L",
+            "spread_type":"Type","trade_type":"Type","entry_cost":"Cost",
+            "exit_reason":"Exit","iv_call":"Call IV","iv_put":"Put IV",
+        }
+        _visible = [c for c in show_cols if c in disp.columns]
+
+        def _fmt(col, val):
+            if val is None or (isinstance(val, float) and np.isnan(val)):
+                return "—"
+            if col == "W/L":
+                c = "#22c55e" if val == "W" else "#ef4444"
+                return f'<span style="color:{c};font-weight:700">{val}</span>'
+            if col in ("pnl", "cum_pnl"):
+                v = float(val)
+                c = "#22c55e" if v >= 0 else "#ef4444"
+                return f'<span style="color:{c};font-weight:600">${v:+,.2f}</span>'
+            if col == "return_pct":
+                return f"{float(val):.2%}"
+            if col in ("actual_div","implied_div","edge"):
+                return f"${float(val):.4f}"
+            if col == "total_in":
+                return f"${float(val):,.0f}"
+            if col == "strike":
+                return f"${float(val):.2f}"
+            return str(val)
+
+        CB = "#2d3748"; CH = "#1a2035"; BG0 = "#0f1623"; BG1 = "#141c2e"; DET = "#0a1120"
+        BORD = "1px solid #2d3748"
+
+        def _pc(v):   # P&L colored
+            c = "#22c55e" if float(v or 0) >= 0 else "#ef4444"
+            return f'<span style="color:{c};font-weight:600;font-family:monospace">${float(v or 0):+,.2f}</span>'
+
+        def _badge(label, val, color="#9ca3af"):
+            return (f'<span style="display:inline-flex;flex-direction:column;margin-right:20px;margin-bottom:4px;">'
+                    f'<span style="font-size:10px;color:#6b7280;text-transform:uppercase;letter-spacing:.06em;margin-bottom:2px">{label}</span>'
+                    f'<span style="color:{color};font-size:13px;font-weight:600;font-family:monospace">{val}</span></span>')
+
+        def _leg_row(d):
+            muted = d.get("side") == "—"
+            tc = "#6b7280" if muted else "#d1d5db"
+            pv = float(d.get("pnl") or 0)
+            pc = "#22c55e" if pv >= 0 else "#ef4444"
+            ent = f'${float(d["entry"]):.4f}' if d.get("entry") is not None else "—"
+            ext = f'${float(d["exit"]):.4f}'  if d.get("exit")  is not None else "—"
+            return (f'<tr style="border-bottom:{BORD};">'
+                    f'<td style="padding:6px 14px;color:{tc}">{d["leg"]}</td>'
+                    f'<td style="padding:6px 14px;color:{tc}">{d.get("side","")}</td>'
+                    f'<td style="padding:6px 14px;color:{tc};font-family:monospace">{ent}</td>'
+                    f'<td style="padding:6px 14px;color:{tc};font-family:monospace">{ext}</td>'
+                    f'<td style="padding:6px 14px;color:{pc};font-weight:600;font-family:monospace">${pv:+,.2f}</td></tr>')
+
+        def _build_detail(tr):
+            det  = _detail_rows_for(tr)
+            legs = [d for d in det if d.get("side") not in ("—",)]
+            attr = [d for d in det if d.get("side") == "—"]
+
+            html = f'<td colspan="99" style="padding:0;"><div style="background:{DET};padding:14px 20px 16px;border-top:{BORD};font-family:sans-serif;">'
+
+            # Arb Setup
+            if slug in ("conversion_arb", "dividend_arb", "vol_arbitrage"):
+                _n_ct = int(tr.get("contracts", 1)); _n_sh = _n_ct * 100
+                html += '<div style="display:flex;flex-wrap:wrap;gap:16px 0;margin-bottom:14px;padding-bottom:12px;border-bottom:1px solid #1e293b;">'
+                html += '<div style="width:100%;font-size:10px;color:#4b5563;text-transform:uppercase;letter-spacing:.1em;margin-bottom:4px;font-weight:600">Arbitrage Setup</div>'
+                if slug == "vol_arbitrage":
+                    _tt   = str(tr.get("trade_type", "—"))
+                    _tt_label = {"skew_arb": "Skew Arb (risk-reversal)", "conversion": "Conversion", "reversal": "Reversal"}.get(_tt, _tt)
+                    _ivc  = tr.get("iv_call");  _ivp = tr.get("iv_put");  _ivsk = tr.get("iv_skew")
+                    _viol = tr.get("violation"); _exp = tr.get("expected_pnl"); _sig = tr.get("signal_strength")
+                    _spot = tr.get("spot");      _dte = tr.get("dte");         _cost = tr.get("cost")
+                    _cpe  = tr.get("call_price_entry"); _ppe = tr.get("put_price_entry")
+                    html += _badge("Type",         _tt_label, "#a5b4fc")
+                    if _spot: html += _badge("Spot at entry", f"${float(_spot):.2f}", "#e2e8f0")
+                    if _dte:  html += _badge("DTE",           f"{int(_dte)}d", "#e2e8f0")
+                    if _ivc:  html += _badge("IV Call",       f"{float(_ivc)*100:.1f}%", "#e2e8f0")
+                    if _ivp:  html += _badge("IV Put",        f"{float(_ivp)*100:.1f}%", "#e2e8f0")
+                    if _ivsk:
+                        _sc2 = "#f87171" if float(_ivsk) > 0 else "#4ade80"
+                        html += _badge("IV Skew (put−call)", f"{float(_ivsk)*100:+.1f} pts", _sc2)
+                    if _viol:
+                        _vc = "#4ade80" if float(_viol) > 0 else "#f87171"
+                        html += _badge("Parity violation", f"${float(_viol):.4f}", _vc)
+                    if _exp:  html += _badge("Expected P&L", f"${float(_exp):+,.2f}", "#4ade80")
+                    if _sig:  html += _badge("Signal strength", f"{float(_sig):.3f}", "#e2e8f0")
+                    if _cpe:  html += _badge("Call entry px", f"${float(_cpe):.4f}", "#e2e8f0")
+                    if _ppe:  html += _badge("Put entry px",  f"${float(_ppe):.4f}", "#e2e8f0")
+                    if _cost: html += _badge("Net cost",      f"${float(_cost):,.2f}", "#e2e8f0")
+                elif slug == "conversion_arb":
+                    adiv = tr.get("actual_div"); idiv = tr.get("implied_div"); edge = tr.get("edge")
+                    rfr  = tr.get("risk_free_rate"); dte = tr.get("dte")
+                    inv  = tr.get("total_in") or (float(tr.get("entry_cost", 0)) * _n_sh)
+                    if adiv: html += _badge("Actual div",  f"${float(adiv):.4f}/sh", "#e2e8f0")
+                    if idiv: html += _badge("Implied div", f"${float(idiv):.4f}/sh", "#e2e8f0")
+                    if edge:
+                        ec = "#4ade80" if float(edge) > 0 else "#f87171"
+                        html += _badge("Edge", f"${float(edge):.4f}/sh", ec)
+                    if rfr: html += _badge("Risk-free", f"{float(rfr):.2f}%", "#e2e8f0")
+                    if dte: html += _badge("DTE", f"{int(dte)}d", "#e2e8f0")
+                    if inv: html += _badge("Invested", f"${float(inv):,.0f}", "#e2e8f0")
+                else:
+                    _div_total  = float(tr.get("div_income", 0) or 0)
+                    _div_per_sh = _div_total / max(_n_sh, 1)
+                    _entry_px   = float(tr.get("entry_cost", 0) or 0)
+                    _put_total  = float(tr.get("put_cost", 0) or 0)
+                    html += _badge("Div/share",  f"${_div_per_sh:.4f}", "#e2e8f0")
+                    html += _badge("Total div",  f"${_div_total:,.2f}", "#e2e8f0")
+                    html += _badge("Put cost",   f"${_put_total:,.2f}", "#e2e8f0")
+                    html += _badge("Invested",   f"${_entry_px * _n_sh:,.0f}", "#e2e8f0")
+                    html += _badge("Size",       f"{_n_ct} cts · {_n_sh:,} sh", "#e2e8f0")
+                html += '</div>'
+
+            # Trade Legs
+            if legs:
+                html += '<div style="margin-bottom:14px;">'
+                html += '<div style="font-size:10px;color:#4b5563;text-transform:uppercase;letter-spacing:.1em;font-weight:600;margin-bottom:6px">Trade Legs</div>'
+                html += '<table style="width:100%;border-collapse:collapse;font-size:12.5px;">'
+                html += (f'<tr style="background:#111827;border-bottom:2px solid #374151;">'
+                         f'<th style="padding:5px 14px;text-align:left;color:#6b7280;font-weight:500;font-size:11px;text-transform:uppercase;letter-spacing:.05em">Leg</th>'
+                         f'<th style="padding:5px 14px;text-align:left;color:#6b7280;font-weight:500;font-size:11px;text-transform:uppercase;letter-spacing:.05em">Side</th>'
+                         f'<th style="padding:5px 14px;text-align:right;color:#6b7280;font-weight:500;font-size:11px;text-transform:uppercase;letter-spacing:.05em">Entry px</th>'
+                         f'<th style="padding:5px 14px;text-align:right;color:#6b7280;font-weight:500;font-size:11px;text-transform:uppercase;letter-spacing:.05em">Exit px</th>'
+                         f'<th style="padding:5px 14px;text-align:right;color:#6b7280;font-weight:500;font-size:11px;text-transform:uppercase;letter-spacing:.05em">P&L</th></tr>')
+                for d in legs:
+                    html += _leg_row(d)
+                html += '</table></div>'
+
+            # P&L Attribution
+            if attr:
+                pnl_total = float(tr.get("pnl") or 0)
+                ptc = "#4ade80" if pnl_total >= 0 else "#f87171"
+                html += (f'<div style="display:flex;flex-wrap:wrap;align-items:center;gap:6px 0;'
+                         f'padding-top:10px;border-top:1px solid #1e293b;">'
+                         f'<div style="width:100%;font-size:10px;color:#4b5563;text-transform:uppercase;'
+                         f'letter-spacing:.1em;font-weight:600;margin-bottom:4px">P&L Attribution</div>')
+                for d in attr:
+                    pv = float(d.get("pnl") or 0)
+                    pc = "#4ade80" if pv >= 0 else "#f87171"
+                    html += (f'<span style="margin-right:24px;white-space:nowrap;">'
+                             f'<span style="color:#6b7280;font-size:12px">{d["leg"]} </span>'
+                             f'<span style="color:{pc};font-weight:600;font-family:monospace">${pv:+,.2f}</span></span>')
+                html += (f'<span style="margin-left:auto;padding:4px 12px;background:#111827;'
+                         f'border-radius:4px;border:1px solid #374151;white-space:nowrap;">'
+                         f'<span style="color:#9ca3af;font-size:12px">Net P&L </span>'
+                         f'<span style="color:{ptc};font-weight:700;font-size:14px;font-family:monospace">${pnl_total:+,.2f}</span></span>')
+                html += '</div>'
+
+            html += '</div>'
+            return html
+
+        # ── CSS Grid <details> — same grid-template-columns = perfect alignment ─
+        _sum_cols = [c for c in ["entry_date","exit_date","strike","contracts","dte","edge","pnl","return_pct","cum_pnl"] if c in disp.columns]
+        _sum_labels = {"entry_date":"Entry","exit_date":"Exit","strike":"Strike","contracts":"Cts","dte":"DTE","edge":"Edge $/sh","pnl":"P&L","return_pct":"Return %","cum_pnl":"Cum P&L"}
+        _col_w = {"entry_date":"120px","exit_date":"120px","strike":"80px","contracts":"55px","dte":"55px","edge":"100px","pnl":"115px","return_pct":"95px","cum_pnl":"115px"}
+        _grid = "36px " + " ".join(_col_w.get(c,"100px") for c in _sum_cols)
+
+        def _sc(col, val):
+            if val is None or (isinstance(val, float) and np.isnan(val)): return "—"
+            if col in ("pnl","cum_pnl"): return _pc(val)
+            if col == "return_pct":
+                v = float(val); c = "#4ade80" if v >= 0 else "#f87171"
+                return f'<span style="color:{c};font-weight:600">{v:+.2f}%</span>'
+            if col == "edge":
+                v = float(val); c = "#4ade80" if v > 0 else "#f87171"
+                return f'<span style="color:{c};font-weight:600;font-family:monospace">${v:.4f}</span>'
+            if col == "strike": return f"${float(val):.2f}"
+            return str(val)
+
+        _hdr_cells = (
+            f'<div style="display:grid;grid-template-columns:{_grid};background:{CH};'
+            f'border-bottom:2px solid #374151;font-family:sans-serif;">'
+            f'<div style="padding:8px 10px;"></div>'
+            + "".join(
+                f'<div style="padding:8px 14px;font-size:11px;color:#6b7280;font-weight:600;'
+                f'text-transform:uppercase;letter-spacing:.07em;border-left:{BORD};white-space:nowrap;">'
+                f'{_sum_labels.get(c,c)}</div>'
+                for c in _sum_cols
+            ) + '</div>'
         )
-        _sel_rows = (_sel.selection or {}).get("rows", [])
-        if _sel_rows:
-            _row = disp.iloc[_sel_rows[0]]
-            _pnl = _row.get("pnl")
-            _pnl_str = f"  ${_pnl:+,.2f}" if isinstance(_pnl, (int, float)) and _pnl == _pnl else ""
-            with st.expander(f"Trade Detail — {_row.get('entry_date','')} → {_row.get('exit_date','')}{_pnl_str}", expanded=True):
-                _render_trade_detail(_row)
+
+        _row_groups = []
+        for _i, (_, _tr) in enumerate(disp.iterrows()):
+            _bg  = BG0 if _i % 2 == 0 else BG1
+            _det = _build_detail(_tr)
+            _cells = "".join(
+                f'<div style="padding:9px 14px;font-size:13px;color:#e2e8f0;'
+                f'border-left:{BORD};white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">'
+                f'{_sc(c, _tr.get(c))}</div>'
+                for c in _sum_cols
+            )
+            _row_groups.append(
+                f'<details style="border-top:{BORD};">'
+                f'<summary style="display:grid;grid-template-columns:{_grid};list-style:none;'
+                f'cursor:pointer;background:{_bg};align-items:center;" '
+                f'onmouseover="this.style.background=\'#1a2840\'" onmouseout="this.style.background=\'{_bg}\'">'
+                f'<div style="padding:9px 10px;text-align:center;">'
+                f'<span style="font-size:10px;color:#6b7280;display:inline-block;'
+                f'transition:transform .2s;">&#9654;</span></div>'
+                f'{_cells}</summary>'
+                f'<div style="background:{DET};border-top:{BORD};">{_det}</div>'
+                f'</details>'
+            )
+
+        _html = (
+            f'<style>details[open]>summary>div>span{{transform:rotate(90deg);}}'
+            f'details>summary::-webkit-details-marker{{display:none;}}</style>'
+            f'<div style="border:{BORD};border-radius:6px;overflow:hidden;font-family:sans-serif;">'
+            f'{_hdr_cells}{"".join(_row_groups)}</div>'
+        )
+        st.markdown(_html, unsafe_allow_html=True)
 
     st.markdown("---")
 
@@ -2069,7 +2423,7 @@ def _render_strategy_performance(slug: str):
                 except Exception:
                     pass
 
-            # Trade table — vol arb shows full position detail
+            # Trade table — expandable rows with leg detail
             st.markdown("#### All Trades")
             _td = trades_df.copy()
             if "pnl" in _td.columns:
@@ -2087,13 +2441,13 @@ def _render_strategy_performance(slug: str):
                 if "exit_value" in _td.columns:
                     _td["total_out"] = (_td["exit_value"] * _td["contracts"] * 100).round(2)
 
-            if "pnl" in _td.columns:
-                _td = _td.copy()
-                _td.insert(0, "W/L", _td["pnl"].apply(
-                    lambda v: "🟢" if isinstance(v, (int, float)) and v > 0
-                    else ("🔴" if isinstance(v, (int, float)) and v < 0 else "⚪")
-                ))
-            if "description" in _td.columns:
+            # strategies with description column (but NOT vol_arb) → plain dataframe
+            if "description" in _td.columns and slug != "vol_arbitrage":
+                if "pnl" in _td.columns:
+                    _td.insert(0, "W/L", _td["pnl"].apply(
+                        lambda v: "🟢" if isinstance(v, (int, float)) and v > 0
+                        else ("🔴" if isinstance(v, (int, float)) and v < 0 else "⚪")
+                    ))
                 perf_show = [c for c in [
                     "W/L", "entry_date", "exit_date", "description", "comment",
                     "contracts", "trade_type",
@@ -2101,51 +2455,305 @@ def _render_strategy_performance(slug: str):
                     "total_in", "total_out",
                     "pnl", "cum_pnl", "exit_reason",
                 ] if c in _td.columns]
+                st.dataframe(
+                    _td[perf_show].sort_values(date_col, ascending=False),
+                    hide_index=True, width="stretch",
+                    column_config={
+                        "W/L":          cc.TextColumn("", width="small"),
+                        "description":  cc.TextColumn("Position",  width="large"),
+                        "comment":      cc.TextColumn("Rationale", width="large"),
+                        "total_in":     cc.NumberColumn("Total In ($)",  format="$%.2f"),
+                        "total_out":    cc.NumberColumn("Total Out ($)", format="$%.2f"),
+                        "iv_call":      cc.NumberColumn("Call IV (%)",   format="%.2f%%"),
+                        "iv_put":       cc.NumberColumn("Put IV (%)",    format="%.2f%%"),
+                        "iv_skew":      cc.NumberColumn("IV Skew (%)",   format="%.2f%%"),
+                        "pnl":          cc.NumberColumn("P&L ($)",       format="$%.2f"),
+                        "cum_pnl":      cc.NumberColumn("Cum. P&L ($)",  format="$%.2f"),
+                        "exit_reason":  cc.TextColumn("Exit Reason"),
+                    },
+                )
             else:
-                perf_show = [c for c in [
-                    "W/L", "entry_date", "exit_date", "spread_type",
-                    "entry_cost", "exit_value", "pnl", "cum_pnl", "exit_reason",
-                ] if c in _td.columns]
+                # ── expandable HTML table for arb strategies ──────────────────
+                _sorted_td = _td.sort_values(date_col, ascending=False).copy()
 
-            st.markdown("""
-<style>
-div[data-testid="stDataFrame"] .ag-cell,
-div[data-testid="element-container"] .ag-cell {
-    white-space: normal !important;
-    word-break: break-word !important;
-    line-height: 1.45 !important;
-    overflow: visible !important;
-}
-div[data-testid="stDataFrame"] .ag-row,
-div[data-testid="element-container"] .ag-row {
-    height: auto !important;
-    min-height: 30px !important;
-}
-</style>""", unsafe_allow_html=True)
-            st.dataframe(
-                _td[perf_show].sort_values(date_col, ascending=False),
-                hide_index=True, width="stretch",
-                column_config={
-                    "W/L":          cc.TextColumn("", width="small"),
-                    "entry_date":   cc.DateColumn("Entry"),
-                    "exit_date":    cc.DateColumn("Exit"),
-                    "spread_type":  cc.TextColumn("Regime / Type"),
-                    "description":  cc.TextColumn("Position",  width="large"),
-                    "comment":      cc.TextColumn("Rationale", width="large"),
-                    "entry_cost":   cc.NumberColumn("Entry/sh",     format="$%.4f"),
-                    "exit_value":   cc.NumberColumn("Exit/sh",      format="$%.4f"),
-                    "total_in":     cc.NumberColumn("Total In ($)",  format="$%.2f"),
-                    "total_out":    cc.NumberColumn("Total Out ($)", format="$%.2f"),
-                    "expected_pnl": cc.NumberColumn("Exp. P&L",     format="$%.2f"),
-                    "pnl":          cc.NumberColumn("P&L ($)",       format="$%.2f"),
-                    "cum_pnl":      cc.NumberColumn("Cum. P&L ($)",  format="$%.2f"),
-                    "iv_call":      cc.NumberColumn("Call IV (%)",   format="%.2f%%"),
-                    "iv_put":       cc.NumberColumn("Put IV (%)",    format="%.2f%%"),
-                    "iv_skew":      cc.NumberColumn("IV Skew (%)",   format="%.2f%%"),
-                    "violation":    cc.NumberColumn("Viol.",         format="%.4f"),
-                    "exit_reason":  cc.TextColumn("Exit Reason"),
-                },
-            )
+                def _perf_detail_rows(row):
+                    if slug == "conversion_arb":
+                        n = int(row.get("contracts", 1)); sh = n * 100
+                        def _f(v): return round(float(v or 0), 4)
+                        return [
+                            {"leg": f"① Stock ({sh:,} sh)", "side": "Buy",
+                             "entry": _f(row.get("entry_price")), "exit": _f(row.get("exit_price")),
+                             "pnl":  round(float(row.get("stock_pnl",   0) or 0), 2)},
+                            {"leg": f"② Put ({n} cts)",     "side": "Buy",
+                             "entry": _f(row.get("put_entry_px")), "exit": _f(row.get("put_exit_px")),
+                             "pnl":  round(float(row.get("put_pnl",     0) or 0), 2)},
+                            {"leg": f"③ Call ({n} cts)",    "side": "Sell",
+                             "entry": _f(row.get("call_entry_px")), "exit": _f(row.get("call_exit_px")),
+                             "pnl":  round(float(row.get("call_pnl",    0) or 0), 2)},
+                            {"leg": "Dividend",    "side": "—", "entry": None, "exit": None,
+                             "pnl":  round(float(row.get("div_received", 0) or 0), 2)},
+                            {"leg": "Carry",       "side": "—", "entry": None, "exit": None,
+                             "pnl": -round(float(row.get("carry_cost",   0) or 0), 2)},
+                            {"leg": "Commissions", "side": "—", "entry": None, "exit": None,
+                             "pnl": -round(float(row.get("commissions",  0) or 0), 2)},
+                        ]
+                    elif slug == "dividend_arb":
+                        n = int(row.get("contracts", 1)); sh = n * 100
+                        def _f(v): return round(float(v or 0), 4)
+                        _put_total = float(row.get("put_cost", 0) or 0)
+                        _put_prem  = _put_total / max(sh, 1)
+                        return [
+                            {"leg": f"① Stock ({sh:,} sh)", "side": "Buy",
+                             "entry": _f(row.get("entry_cost")), "exit": _f(row.get("exit_value")),
+                             "pnl":  round(float(row.get("equity_pnl", 0) or 0), 2)},
+                            {"leg": f"② Put hedge ({n} cts)", "side": "Buy",
+                             "entry": round(_put_prem, 4), "exit": None,
+                             "pnl": -round(_put_total, 2)},
+                            {"leg": "Dividend", "side": "—", "entry": None, "exit": None,
+                             "pnl":  round(float(row.get("div_income", 0) or 0), 2)},
+                        ]
+                    elif slug == "vol_arbitrage":
+                        n = int(row.get("contracts", 1))
+                        def _fv(v): return round(float(v), 4) if v is not None and str(v) not in ("", "nan", "None") else None
+                        tt  = str(row.get("trade_type", ""))
+                        cpe = _fv(row.get("call_price_entry")); ppe = _fv(row.get("put_price_entry"))
+                        cex = _fv(row.get("call_price_exit"));  pex = _fv(row.get("put_price_exit"))
+                        if tt == "skew_arb":
+                            rows2 = [
+                                {"leg": f"① Short Put  ({n} cts)", "side": "Sell", "entry": ppe, "exit": pex,
+                                 "pnl": round(float(row.get("put_pnl",  0) or 0), 2)},
+                                {"leg": f"② Long Call  ({n} cts)", "side": "Buy",  "entry": cpe, "exit": cex,
+                                 "pnl": round(float(row.get("call_pnl", 0) or 0), 2)},
+                            ]
+                            if row.get("hedge_puts") and float(row.get("hedge_puts", 0)) > 0:
+                                rows2.append({"leg": "③ Delta Hedge", "side": "—", "entry": None, "exit": None,
+                                              "pnl": round(float(row.get("hedge_pnl", 0) or 0), 2)})
+                            if row.get("commission"):
+                                rows2.append({"leg": "Commission", "side": "—", "entry": None, "exit": None,
+                                              "pnl": -round(float(row.get("commission", 0) or 0), 2)})
+                            return rows2
+                        elif tt == "conversion":
+                            return [
+                                {"leg": f"① Long Call  ({n} cts)", "side": "Buy",  "entry": cpe, "exit": cex,
+                                 "pnl": round(float(row.get("call_pnl", 0) or 0), 2)},
+                                {"leg": f"② Short Put  ({n} cts)", "side": "Sell", "entry": ppe, "exit": pex,
+                                 "pnl": round(float(row.get("put_pnl",  0) or 0), 2)},
+                            ]
+                        else:  # reversal
+                            return [
+                                {"leg": f"① Short Call ({n} cts)", "side": "Sell", "entry": cpe, "exit": cex,
+                                 "pnl": round(float(row.get("call_pnl", 0) or 0), 2)},
+                                {"leg": f"② Long Put   ({n} cts)", "side": "Buy",  "entry": ppe, "exit": pex,
+                                 "pnl": round(float(row.get("put_pnl",  0) or 0), 2)},
+                            ]
+                    else:
+                        _known_pnl_fields2 = [
+                            ("Put P&L",    "put_pnl"),    ("Call P&L",   "call_pnl"),
+                            ("Hedge P&L",  "hedge_pnl"),  ("Stock P&L",  "stock_pnl"),
+                            ("Dividend",   "div_income"),  ("Carry",     "carry_cost"),
+                            ("Commission", "commission"),  ("Commission", "commissions"),
+                        ]
+                        seen2 = set(); out2 = []
+                        for k, v in _known_pnl_fields2:
+                            if v in seen2 or row.get(v) is None: continue
+                            seen2.add(v)
+                            mult = -1 if v in ("carry_cost","commission","commissions") else 1
+                            out2.append({"leg": k, "side": "—", "entry": None, "exit": None,
+                                         "pnl": round(mult * float(row.get(v) or 0), 2)})
+                        return out2
+
+                _PCB = "#2d3748"; _PCH = "#1a2035"; _PBG0 = "#0f1623"; _PBG1 = "#141c2e"; _PDET = "#0a1120"
+                _PBORD = "1px solid #2d3748"
+
+                def _ppc(v):
+                    c = "#4ade80" if float(v or 0) >= 0 else "#f87171"
+                    return f'<span style="color:{c};font-weight:600;font-family:monospace">${float(v or 0):+,.2f}</span>'
+
+                def _pbadge(label, val, color="#e2e8f0"):
+                    return (f'<span style="display:inline-flex;flex-direction:column;margin-right:20px;margin-bottom:4px;">'
+                            f'<span style="font-size:10px;color:#6b7280;text-transform:uppercase;letter-spacing:.06em;margin-bottom:2px">{label}</span>'
+                            f'<span style="color:{color};font-size:13px;font-weight:600;font-family:monospace">{val}</span></span>')
+
+                def _pleg_row(d):
+                    muted = d.get("side") == "—"
+                    tc = "#6b7280" if muted else "#d1d5db"
+                    pv = float(d.get("pnl") or 0)
+                    pc = "#4ade80" if pv >= 0 else "#f87171"
+                    ent = f'${float(d["entry"]):.4f}' if d.get("entry") is not None else "—"
+                    ext = f'${float(d["exit"]):.4f}'  if d.get("exit")  is not None else "—"
+                    return (f'<tr style="border-bottom:{_PBORD};">'
+                            f'<td style="padding:6px 14px;color:{tc}">{d["leg"]}</td>'
+                            f'<td style="padding:6px 14px;color:{tc}">{d.get("side","")}</td>'
+                            f'<td style="padding:6px 14px;color:{tc};font-family:monospace">{ent}</td>'
+                            f'<td style="padding:6px 14px;color:{tc};font-family:monospace">{ext}</td>'
+                            f'<td style="padding:6px 14px;color:{pc};font-weight:600;font-family:monospace">${pv:+,.2f}</td></tr>')
+
+                def _pbuild_detail(tr):
+                    det  = _perf_detail_rows(tr)
+                    legs = [d for d in det if d.get("side") not in ("—",)]
+                    attr = [d for d in det if d.get("side") == "—"]
+
+                    html = f'<td colspan="99" style="padding:0;"><div style="background:{_PDET};padding:14px 20px 16px;border-top:{_PBORD};font-family:sans-serif;">'
+
+                    # Arb Setup
+                    if slug in ("conversion_arb", "dividend_arb", "vol_arbitrage"):
+                        _n_ct2 = int(tr.get("contracts", 1)); _n_sh2 = _n_ct2 * 100
+                        html += '<div style="display:flex;flex-wrap:wrap;gap:16px 0;margin-bottom:14px;padding-bottom:12px;border-bottom:1px solid #1e293b;">'
+                        html += '<div style="width:100%;font-size:10px;color:#4b5563;text-transform:uppercase;letter-spacing:.1em;margin-bottom:4px;font-weight:600">Arbitrage Setup</div>'
+                        if slug == "vol_arbitrage":
+                            _tt2  = str(tr.get("trade_type", "—"))
+                            _tt2_label = {"skew_arb": "Skew Arb (risk-reversal)", "conversion": "Conversion", "reversal": "Reversal"}.get(_tt2, _tt2)
+                            _ivc2  = tr.get("iv_call");  _ivp2 = tr.get("iv_put");  _ivsk2 = tr.get("iv_skew")
+                            _viol2 = tr.get("violation"); _exp2 = tr.get("expected_pnl"); _sig2 = tr.get("signal_strength")
+                            _spot2 = tr.get("spot");      _dte2 = tr.get("dte");          _cost2 = tr.get("cost")
+                            _cpe2  = tr.get("call_price_entry"); _ppe2 = tr.get("put_price_entry")
+                            _desc2 = tr.get("description")
+                            html += _pbadge("Type",          _tt2_label, "#a5b4fc")
+                            if _spot2: html += _pbadge("Spot at entry",  f"${float(_spot2):.2f}")
+                            if _dte2:  html += _pbadge("DTE",            f"{int(_dte2)}d")
+                            if _ivc2:  html += _pbadge("IV Call",        f"{float(_ivc2)*100:.1f}%")
+                            if _ivp2:  html += _pbadge("IV Put",         f"{float(_ivp2)*100:.1f}%")
+                            if _ivsk2:
+                                _psc3 = "#f87171" if float(_ivsk2) > 0 else "#4ade80"
+                                html += _pbadge("IV Skew (put−call)", f"{float(_ivsk2)*100:+.1f} pts", _psc3)
+                            if _viol2:
+                                _pvc = "#4ade80" if float(_viol2) > 0 else "#f87171"
+                                html += _pbadge("Parity violation", f"${float(_viol2):.4f}", _pvc)
+                            if _exp2:  html += _pbadge("Expected P&L",   f"${float(_exp2):+,.2f}", "#4ade80")
+                            if _sig2:  html += _pbadge("Signal strength", f"{float(_sig2):.3f}")
+                            if _cpe2:  html += _pbadge("Call entry px",  f"${float(_cpe2):.4f}")
+                            if _ppe2:  html += _pbadge("Put entry px",   f"${float(_ppe2):.4f}")
+                            if _cost2: html += _pbadge("Net cost",       f"${float(_cost2):,.2f}")
+                            if _desc2:
+                                html += (f'<div style="width:100%;margin-top:8px;padding-top:8px;border-top:1px solid #1e293b;'
+                                         f'font-size:12px;color:#94a3b8;line-height:1.5;">{str(_desc2)}</div>')
+                        elif slug == "conversion_arb":
+                            adiv = tr.get("actual_div"); idiv = tr.get("implied_div"); edge = tr.get("edge")
+                            rfr  = tr.get("risk_free_rate"); dte = tr.get("dte")
+                            inv  = tr.get("total_in") or (float(tr.get("entry_cost", 0)) * _n_sh2)
+                            if adiv: html += _pbadge("Actual div",  f"${float(adiv):.4f}/sh")
+                            if idiv: html += _pbadge("Implied div", f"${float(idiv):.4f}/sh")
+                            if edge:
+                                ec = "#4ade80" if float(edge) > 0 else "#f87171"
+                                html += _pbadge("Edge", f"${float(edge):.4f}/sh", ec)
+                            if rfr: html += _pbadge("Risk-free", f"{float(rfr):.2f}%")
+                            if dte: html += _pbadge("DTE", f"{int(dte)}d")
+                            if inv: html += _pbadge("Invested", f"${float(inv):,.0f}")
+                        else:
+                            _div_total  = float(tr.get("div_income", 0) or 0)
+                            _div_per_sh = _div_total / max(_n_sh2, 1)
+                            _entry_px   = float(tr.get("entry_cost", 0) or 0)
+                            _put_total  = float(tr.get("put_cost", 0) or 0)
+                            html += _pbadge("Div/share",  f"${_div_per_sh:.4f}")
+                            html += _pbadge("Total div",  f"${_div_total:,.2f}")
+                            html += _pbadge("Put cost",   f"${_put_total:,.2f}")
+                            html += _pbadge("Invested",   f"${_entry_px * _n_sh2:,.0f}")
+                            html += _pbadge("Size",       f"{_n_ct2} cts · {_n_sh2:,} sh")
+                        html += '</div>'
+
+                    # Trade Legs
+                    if legs:
+                        html += '<div style="margin-bottom:14px;">'
+                        html += '<div style="font-size:10px;color:#4b5563;text-transform:uppercase;letter-spacing:.1em;font-weight:600;margin-bottom:6px">Trade Legs</div>'
+                        html += '<table style="width:100%;border-collapse:collapse;font-size:12.5px;">'
+                        html += (f'<tr style="background:#111827;border-bottom:2px solid #374151;">'
+                                 f'<th style="padding:5px 14px;text-align:left;color:#6b7280;font-weight:500;font-size:11px;text-transform:uppercase;letter-spacing:.05em">Leg</th>'
+                                 f'<th style="padding:5px 14px;text-align:left;color:#6b7280;font-weight:500;font-size:11px;text-transform:uppercase;letter-spacing:.05em">Side</th>'
+                                 f'<th style="padding:5px 14px;text-align:right;color:#6b7280;font-weight:500;font-size:11px;text-transform:uppercase;letter-spacing:.05em">Entry px</th>'
+                                 f'<th style="padding:5px 14px;text-align:right;color:#6b7280;font-weight:500;font-size:11px;text-transform:uppercase;letter-spacing:.05em">Exit px</th>'
+                                 f'<th style="padding:5px 14px;text-align:right;color:#6b7280;font-weight:500;font-size:11px;text-transform:uppercase;letter-spacing:.05em">P&L</th></tr>')
+                        for d in legs:
+                            html += _pleg_row(d)
+                        html += '</table></div>'
+
+                    # P&L Attribution
+                    if attr:
+                        pnl_total = float(tr.get("pnl") or 0)
+                        ptc = "#4ade80" if pnl_total >= 0 else "#f87171"
+                        html += (f'<div style="display:flex;flex-wrap:wrap;align-items:center;gap:6px 0;'
+                                 f'padding-top:10px;border-top:1px solid #1e293b;">'
+                                 f'<div style="width:100%;font-size:10px;color:#4b5563;text-transform:uppercase;'
+                                 f'letter-spacing:.1em;font-weight:600;margin-bottom:4px">P&L Attribution</div>')
+                        for d in attr:
+                            pv = float(d.get("pnl") or 0)
+                            pc = "#4ade80" if pv >= 0 else "#f87171"
+                            html += (f'<span style="margin-right:24px;white-space:nowrap;">'
+                                     f'<span style="color:#6b7280;font-size:12px">{d["leg"]} </span>'
+                                     f'<span style="color:{pc};font-weight:600;font-family:monospace">${pv:+,.2f}</span></span>')
+                        html += (f'<span style="margin-left:auto;padding:4px 12px;background:#111827;'
+                                 f'border-radius:4px;border:1px solid #374151;white-space:nowrap;">'
+                                 f'<span style="color:#9ca3af;font-size:12px">Net P&L </span>'
+                                 f'<span style="color:{ptc};font-weight:700;font-size:14px;font-family:monospace">${pnl_total:+,.2f}</span></span>')
+                        html += '</div>'
+
+                    html += '</div></td>'
+                    return html
+
+                # Summary columns
+                _psum_cols = [c for c in ["entry_date","exit_date","strike","contracts","dte","edge","pnl","return_pct","cum_pnl"] if c in _sorted_td.columns]
+                _psum_labels = {"entry_date":"Entry","exit_date":"Exit","strike":"Strike","contracts":"Cts","dte":"DTE","edge":"Edge $/sh","pnl":"P&L","return_pct":"Return %","cum_pnl":"Cum P&L"}
+                # Fallback for strategies without standard arb columns
+                if not _psum_cols:
+                    _psum_cols = [c for c in ["entry_date","exit_date","spread_type","entry_cost","pnl","cum_pnl","exit_reason"] if c in _sorted_td.columns]
+                    _psum_labels.update({"spread_type":"Type","entry_cost":"Cost/sh","exit_reason":"Exit"})
+
+                def _psc(col, val):
+                    if val is None or (isinstance(val, float) and np.isnan(val)): return "—"
+                    if col in ("pnl","cum_pnl"): return _ppc(val)
+                    if col == "return_pct":
+                        v = float(val); c = "#4ade80" if v >= 0 else "#f87171"
+                        return f'<span style="color:{c};font-weight:600">{v:+.2f}%</span>'
+                    if col == "edge":
+                        v = float(val); c = "#4ade80" if v > 0 else "#f87171"
+                        return f'<span style="color:{c};font-weight:600;font-family:monospace">${v:.4f}</span>'
+                    if col == "strike": return f"${float(val):.2f}"
+                    return str(val)
+
+                _pcol_w = {"entry_date":"120px","exit_date":"120px","strike":"80px","contracts":"55px","dte":"55px","edge":"100px","pnl":"115px","return_pct":"95px","cum_pnl":"115px","spread_type":"120px","entry_cost":"100px","exit_reason":"120px"}
+                _pgrid = "36px " + " ".join(_pcol_w.get(c,"100px") for c in _psum_cols)
+
+                _phdr_cells = (
+                    f'<div style="display:grid;grid-template-columns:{_pgrid};background:{_PCH};'
+                    f'border-bottom:2px solid #374151;font-family:sans-serif;">'
+                    f'<div style="padding:8px 10px;"></div>'
+                    + "".join(
+                        f'<div style="padding:8px 14px;font-size:11px;color:#6b7280;font-weight:600;'
+                        f'text-transform:uppercase;letter-spacing:.07em;border-left:{_PBORD};white-space:nowrap;">'
+                        f'{_psum_labels.get(c,c)}</div>'
+                        for c in _psum_cols
+                    ) + '</div>'
+                )
+
+                _pdet_groups = []
+                for _pi, (_, _ptr) in enumerate(_sorted_td.iterrows()):
+                    _pbg  = _PBG0 if _pi % 2 == 0 else _PBG1
+                    _pdet = _pbuild_detail(_ptr)
+                    _pcells = "".join(
+                        f'<div style="padding:9px 14px;font-size:13px;color:#e2e8f0;'
+                        f'border-left:{_PBORD};white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">'
+                        f'{_psc(c, _ptr.get(c))}</div>'
+                        for c in _psum_cols
+                    )
+                    _pdet_groups.append(
+                        f'<details style="border-top:{_PBORD};">'
+                        f'<summary style="display:grid;grid-template-columns:{_pgrid};list-style:none;'
+                        f'cursor:pointer;background:{_pbg};align-items:center;" '
+                        f'onmouseover="this.style.background=\'#1a2840\'" onmouseout="this.style.background=\'{_pbg}\'">'
+                        f'<div style="padding:9px 10px;text-align:center;">'
+                        f'<span style="font-size:10px;color:#6b7280;display:inline-block;'
+                        f'transition:transform .2s;">&#9654;</span></div>'
+                        f'{_pcells}</summary>'
+                        f'<div style="background:{_PDET};border-top:{_PBORD};">{_pdet}</div>'
+                        f'</details>'
+                    )
+
+                _phtml = (
+                    f'<style>details[open]>summary>div>span{{transform:rotate(90deg);}}'
+                    f'details>summary::-webkit-details-marker{{display:none;}}</style>'
+                    f'<div style="border:{_PBORD};border-radius:6px;overflow:hidden;font-family:sans-serif;">'
+                    f'{_phdr_cells}{"".join(_pdet_groups)}</div>'
+                )
+                st.markdown(_phtml, unsafe_allow_html=True)
 
     st.divider()
 

@@ -61,7 +61,8 @@ def sync_price_bars(
         df = client.get_aggregates(symbol, str(from_date), str(to_date))
         if df.empty:
             log_sync(engine, "PriceBar", to_date, 0, symbol)
-            return {"status": "no_data", "rows": 0}
+            return {"status": "no_data", "rows": 0,
+                    "detail": f"Polygon returned 0 bars for {symbol} ({from_date} → {to_date})"}
 
         df = df.reset_index()  # date becomes a column
         if progress_cb:

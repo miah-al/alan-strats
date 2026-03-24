@@ -993,10 +993,12 @@ class VolArbitrageStrategy(BaseStrategy):
             skew_pnl = put_pnl + call_pnl - commission
             profit   = skew_pnl + hedge_pnl
             extra    = {
-                "put_pnl":    round(put_pnl,    2),
-                "call_pnl":   round(call_pnl,   2),
-                "hedge_pnl":  round(hedge_pnl,  2),
-                "commission": round(commission,  2),
+                "put_pnl":         round(put_pnl,    2),
+                "call_pnl":        round(call_pnl,   2),
+                "hedge_pnl":       round(hedge_pnl,  2),
+                "commission":      round(commission,  2),
+                "call_price_exit": round(c_mid_exit,  4),
+                "put_price_exit":  round(p_mid_exit,  4),
             }
 
         elif tr.get("trade_type") == "conversion":
@@ -1007,7 +1009,13 @@ class VolArbitrageStrategy(BaseStrategy):
             put_pnl  = (put_entry  - p_mid_exit) * 100 * n
             call_pnl = (c_mid_exit - call_entry) * 100 * n
             profit   = put_pnl + call_pnl - commission
-            extra    = {}
+            extra    = {
+                "put_pnl":         round(put_pnl,    2),
+                "call_pnl":        round(call_pnl,   2),
+                "commission":      round(commission,  2),
+                "call_price_exit": round(c_mid_exit,  4),
+                "put_price_exit":  round(p_mid_exit,  4),
+            }
 
         else:   # reversal
             # Short call, long put (+ short stock):
@@ -1016,7 +1024,13 @@ class VolArbitrageStrategy(BaseStrategy):
             put_pnl  = (p_mid_exit - put_entry)  * 100 * n
             call_pnl = (call_entry - c_mid_exit) * 100 * n
             profit   = put_pnl + call_pnl - commission
-            extra    = {}
+            extra    = {
+                "put_pnl":         round(put_pnl,    2),
+                "call_pnl":        round(call_pnl,   2),
+                "commission":      round(commission,  2),
+                "call_price_exit": round(c_mid_exit,  4),
+                "put_price_exit":  round(p_mid_exit,  4),
+            }
 
         return round(tr["cost"] + profit, 2), extra
 

@@ -8,3 +8,4 @@ vaderSentiment>=3.3.2
 matplotlib>=3.7.0
 plotly>=5.18.0
 streamlit>=1.35.0
+streamlit-aggrid>=1.0.0

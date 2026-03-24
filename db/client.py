@@ -208,6 +208,31 @@ def get_macro_bars(engine: Engine, from_date: date, to_date: date) -> pd.DataFra
     return df
 
 
+# ── Dividends ─────────────────────────────────────────────────────────────────
+
+def get_dividends(engine: Engine, symbol: str,
+                  from_date: date, to_date: date) -> pd.DataFrame:
+    """Return dividend history for symbol — ex_date and div_per_share."""
+    tid = get_ticker_id(engine, symbol)
+    if tid is None:
+        return pd.DataFrame()
+    query = text("""
+        SELECT ExDate AS ex_date, CashAmount AS div_per_share
+        FROM   mkt.Dividend
+        WHERE  TickerId = :tid
+          AND  ExDate BETWEEN :from_d AND :to_d
+        ORDER  BY ExDate
+    """)
+    with get_conn(engine) as conn:
+        result = conn.execute(query, {"tid": tid, "from_d": from_date, "to_d": to_date})
+        df = pd.DataFrame(result.fetchall(), columns=result.keys())
+    if not df.empty:
+        df["ex_date"] = pd.to_datetime(df["ex_date"]).dt.date
+        df["div_per_share"] = pd.to_numeric(df["div_per_share"], errors="coerce")
+        df = df.dropna(subset=["div_per_share"])
+    return df
+
+
 # ── OptionSnapshot ────────────────────────────────────────────────────────────
 
 def get_option_snapshots(engine: Engine, symbol: str,

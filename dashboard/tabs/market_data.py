@@ -8,6 +8,25 @@ import streamlit as st
 import pandas as pd
 
 
+def _fetch_ticker_details(ticker: str, api_key: str) -> dict:
+    """Fetch market cap, shares, description from Polygon reference endpoint."""
+    try:
+        from alan_trader.data.polygon_client import PolygonClient
+        client = PolygonClient(api_key=api_key)
+        data = client._get(f"/v3/reference/tickers/{ticker}", {})
+        res = data.get("results", {})
+        return {
+            "market_cap":   res.get("market_cap"),
+            "shares":       res.get("weighted_shares_outstanding") or res.get("share_class_shares_outstanding"),
+            "name":         res.get("name", ticker),
+            "description":  res.get("description", ""),
+            "sic_desc":     res.get("sic_description", ""),
+            "locale":       res.get("locale", ""),
+        }
+    except Exception:
+        return {}
+
+
 def _fetch_live_bars(ticker: str, api_key: str, n_days: int = 252) -> "pd.DataFrame":
     """Return OHLCV bars from Polygon.io, or empty DataFrame on failure."""
     import pandas as pd
@@ -272,13 +291,14 @@ def _fetch_live_quote(ticker: str, api_key: str) -> dict:
 
 
 _MATURITIES = [
-    ("3M",  "rate_3m"),
-    ("6M",  "rate_6m"),
-    ("1Y",  "rate_1y"),
-    ("2Y",  "rate_2y"),
-    ("5Y",  "rate_5y"),
-    ("10Y", "rate_10y"),
-    ("30Y", "rate_30y"),
+    ("SOFR", "sofr"),
+    ("3M",   "rate_3m"),
+    ("6M",   "rate_6m"),
+    ("1Y",   "rate_1y"),
+    ("2Y",   "rate_2y"),
+    ("5Y",   "rate_5y"),
+    ("10Y",  "rate_10y"),
+    ("30Y",  "rate_30y"),
 ]
 
 
@@ -545,7 +565,7 @@ def _render_term_structure():
         surf_df.index = pd.to_datetime(surf_df.index)
         surf_df = surf_df[[col for _, _, col in avail_tenors]].dropna(how="all")
         surf_df = surf_df[surf_df.index >= pd.Timestamp(ts_start)]
-        surf_df = surf_df.iloc[::21]  # monthly sample
+        surf_df = surf_df.iloc[::5]   # weekly sample (~100 rows over 2 years)
 
         maturities = [yrs for _, yrs, _ in avail_tenors]
         tenor_cols = [col for _, _, col in avail_tenors]
@@ -568,27 +588,40 @@ def _render_term_structure():
         tick_text = [date_strs[i] for i in tick_vals]
 
         # Use evenly spaced indices for x (tenor) — avoids 10→30Y gap distortion
-        tenor_indices = list(range(len(maturities)))
+        n_tenors = len(maturities)
+        tenor_indices = list(range(n_tenors))
 
-        # Single go.Surface with hidesurface + contour lines = efficient wireframe
-        fig3d = go.Figure(data=[go.Surface(
-            x=tenor_indices,
-            y=list(range(n_dates)),
-            z=z_mat.tolist(),
-            hidesurface=True,
-            contours=dict(
-                x=dict(show=True, color="#3a6a9a", width=3, highlightcolor="#69c0ff", highlightwidth=4),
-                y=dict(show=True, color="#3a6a9a", width=3, highlightcolor="#69c0ff", highlightwidth=4),
-            ),
-            colorscale="Viridis",
-            showscale=True,
-            colorbar=dict(
-                title=dict(text="Yield %", font=dict(color="#e0e0e0", size=12)),
-                thickness=14, len=0.7,
-                tickfont=dict(color="#e0e0e0", size=11),
-            ),
-            hovertemplate="Yield: %{z:.2f}%<extra></extra>",
-        )])
+        y_idx = list(range(n_dates))
+        _line = dict(color="#3a6a9a", width=2)
+
+        traces = []
+        # One line per tenor (across all dates) — guaranteed full coverage
+        for ti in range(n_tenors):
+            z_col = z_mat[:, ti].tolist()
+            traces.append(go.Scatter3d(
+                x=[ti] * n_dates, y=y_idx, z=z_col,
+                mode="lines", line=_line, showlegend=False,
+                hovertemplate=f"{tenor_lbls[ti]}: %{{z:.2f}}%<extra></extra>",
+            ))
+
+        # Date slice lines (every ~10 dates for a clean cross-grid)
+        date_step = max(1, n_dates // 10)
+        for yi in range(0, n_dates, date_step):
+            z_row = z_mat[yi, :].tolist()
+            traces.append(go.Scatter3d(
+                x=tenor_indices, y=[yi] * n_tenors, z=z_row,
+                mode="lines", line=_line, showlegend=False,
+                hovertemplate=f"{date_strs[yi]}: %{{z:.2f}}%<extra></extra>",
+            ))
+        # Ensure last date is always included
+        if (n_dates - 1) % date_step != 0:
+            z_row = z_mat[-1, :].tolist()
+            traces.append(go.Scatter3d(
+                x=tenor_indices, y=[n_dates - 1] * n_tenors, z=z_row,
+                mode="lines", line=_line, showlegend=False,
+            ))
+
+        fig3d = go.Figure(data=traces)
 
         _ax = dict(
             gridcolor="#2a3050", backgroundcolor="#0c1020",
@@ -645,109 +678,132 @@ def render(ticker: str = "SPY", api_key: str = ""):
 
     import numpy as np
 
-    # ── Price Chart (FIRST, default open) ────────────────────────────────────
-    with st.expander(f"📈 Price Chart — {ticker}", expanded=True):
+    # ── Ticker snapshot strip (above chart) ──────────────────────────────────
+    q = {}
+    if api_key:
+        with st.spinner(f"Fetching {ticker}…"):
+            q = _fetch_live_quote(ticker, api_key)
+            details = _fetch_ticker_details(ticker, api_key)
+        if q.get("price"):
+            default_S = q["price"]
+            st.session_state[f"md_spot_price_{ticker}"] = default_S
 
-        # Live quote strip at the top of the chart section
-        if api_key:
-            with st.spinner(f"Fetching live quote for {ticker}…"):
-                q = _fetch_live_quote(ticker, api_key)
-            if q.get("price"):
-                default_S = q["price"]
-                # Force the spot price widget to refresh when ticker changes
-                st.session_state[f"md_spot_price_{ticker}"] = default_S
-                lq1, lq2, lq3, lq4, lq5 = st.columns(5)
-                lq1.metric("Price",  f"${q['price']:,.2f}")
-                lq2.metric("Change", f"${q.get('change', 0):+.2f}",
-                           delta=f"{q.get('change_pct', 0):+.2f}%")
-                lq3.metric("Volume", f"{int(q.get('volume') or 0):,}")
-                lq4.metric("High",   f"${q.get('high', 0):,.2f}")
-                lq5.metric("Low",    f"${q.get('low', 0):,.2f}")
-                st.markdown("---")
+        price    = q.get("price", 0)
+        chg      = q.get("change", 0) or 0
+        chg_pct  = q.get("change_pct", 0) or 0
+        volume   = int(q.get("volume") or 0)
+        hi       = q.get("high", 0) or 0
+        lo       = q.get("low", 0) or 0
+        vwap     = q.get("vwap", 0) or 0
+        mkt_cap  = details.get("market_cap")
+        shares   = details.get("shares")
 
-        bars_df = None
-        if api_key:
-            with st.spinner(f"Fetching {ticker} bars from Polygon.io…"):
-                bars_df = _fetch_live_bars(ticker, api_key, n_days=504)
-            if bars_df is not None and not bars_df.empty:
-                # Append today's partial bar from snapshot if missing
-                import datetime as _dt
-                today = _dt.date.today()
-                last_date = pd.to_datetime(bars_df.index[-1]).date() if hasattr(bars_df.index[-1], 'year') \
-                            else pd.to_datetime(bars_df["date"].iloc[-1]).date() \
-                            if "date" in bars_df.columns else None
-                if last_date and last_date < today and q.get("price"):
-                    today_bar = pd.DataFrame([{
-                        "date":   today,
-                        "open":   q.get("open") or q["price"],
-                        "high":   q.get("high") or q["price"],
-                        "low":    q.get("low")  or q["price"],
-                        "close":  q["price"],
-                        "volume": q.get("volume") or 0,
-                        "vwap":   q.get("vwap")   or q["price"],
-                    }]).set_index("date")
-                    bars_df = pd.concat([bars_df, today_bar])
-                st.caption(f"📡 Live data from Polygon.io — {len(bars_df)} bars (incl. today)")
-            else:
-                bars_df = None
+        def _fmt_large(v):
+            if v is None: return "—"
+            if v >= 1e12: return f"${v/1e12:.2f}T"
+            if v >= 1e9:  return f"${v/1e9:.2f}B"
+            if v >= 1e6:  return f"${v/1e6:.2f}M"
+            return f"${v:,.0f}"
 
-        if bars_df is None or bars_df.empty:
-            st.warning(
-                f"No price bars found for **{ticker}**. "
-                "Go to **Tools → Data Manager → Sync Price Bars** to download data."
-            )
-            return
+        # compute 52-week high/low from bars if available (filled later)
+        _52w_hi = _52w_lo = None
 
-        # ── Date range slice ─────────────────────────────────────────────────
-        import datetime as _dt
-        bar_dates = pd.to_datetime(bars_df.index).date
-        d_min, d_max = bar_dates.min(), bar_dates.max()
-        rng = st.slider(
-            "View range",
-            min_value=d_min, max_value=d_max,
-            value=(d_min, d_max),
-            format="YYYY-MM-DD",
-            key="md_candle_range",
+        r1, r2, r3, r4, r5, r6, r7, r8 = st.columns(8)
+        r1.metric("Price",    f"${price:,.2f}" if price else "—")
+        if price:
+            r2.metric("Change", f"{chg:+.2f}", delta=f"{chg_pct:+.2f}%")
+        else:
+            r2.metric("Change", "—")
+        r3.metric("Volume",   f"{volume:,}"   if volume else "—")
+        r4.metric("VWAP",     f"${vwap:,.2f}" if vwap else "—")
+        r5.metric("Day High", f"${hi:,.2f}"   if hi else "—")
+        r6.metric("Day Low",  f"${lo:,.2f}"   if lo else "—")
+        r7.metric("Mkt Cap",     _fmt_large(mkt_cap))
+        r8.metric("Shares Out",  _fmt_large(shares))
+
+        st.markdown("---")
+
+    # ── Price Chart ───────────────────────────────────────────────────────────
+    st.subheader(f"📈 {ticker} Price Chart")
+
+    bars_df = None
+    if api_key:
+        with st.spinner(f"Fetching {ticker} bars from Polygon.io…"):
+            bars_df = _fetch_live_bars(ticker, api_key, n_days=504)
+        if bars_df is not None and not bars_df.empty:
+            # Append today's partial bar from snapshot if missing
+            import datetime as _dt
+            today = _dt.date.today()
+            last_date = pd.to_datetime(bars_df.index[-1]).date() if hasattr(bars_df.index[-1], 'year') \
+                        else pd.to_datetime(bars_df["date"].iloc[-1]).date() \
+                        if "date" in bars_df.columns else None
+            if last_date and last_date < today and q.get("price"):
+                today_bar = pd.DataFrame([{
+                    "date":   today,
+                    "open":   q.get("open") or q["price"],
+                    "high":   q.get("high") or q["price"],
+                    "low":    q.get("low")  or q["price"],
+                    "close":  q["price"],
+                    "volume": q.get("volume") or 0,
+                    "vwap":   q.get("vwap")   or q["price"],
+                }]).set_index("date")
+                bars_df = pd.concat([bars_df, today_bar])
+            # Back-fill 52-week high/low into the snapshot strip
+            if api_key and q.get("price") and len(bars_df) >= 10:
+                _52w = bars_df["close"].tail(252)
+                _52w_hi = float(_52w.max())
+                _52w_lo = float(_52w.min())
+                r1, r2 = st.columns(2)
+                r1.metric("52W High", f"${_52w_hi:,.2f}")
+                r2.metric("52W Low",  f"${_52w_lo:,.2f}")
+            st.caption(f"📡 Live data from Polygon.io — {len(bars_df)} bars (incl. today)")
+        else:
+            bars_df = None
+
+    if bars_df is None or bars_df.empty:
+        st.warning(
+            f"No price bars found for **{ticker}**. "
+            "Go to **Tools → Data Manager → Sync Price Bars** to download data."
         )
-        slice_df = bars_df.loc[
-            (pd.to_datetime(bars_df.index).date >= rng[0]) &
-            (pd.to_datetime(bars_df.index).date <= rng[1])
-        ]
+        return
 
-        st.plotly_chart(C.candlestick_chart(slice_df, ticker=ticker),
-                        width="stretch", key="md_candle")
+    # ── Date range slice ─────────────────────────────────────────────────
+    import datetime as _dt
+    bar_dates = pd.to_datetime(bars_df.index).date
+    d_min, d_max = bar_dates.min(), bar_dates.max()
+    rng = st.slider(
+        "View range",
+        min_value=d_min, max_value=d_max,
+        value=(d_min, d_max),
+        format="YYYY-MM-DD",
+        key="md_candle_range",
+    )
+    slice_df = bars_df.loc[
+        (pd.to_datetime(bars_df.index).date >= rng[0]) &
+        (pd.to_datetime(bars_df.index).date <= rng[1])
+    ]
+
+    st.plotly_chart(C.candlestick_chart(slice_df, ticker=ticker),
+                    width="stretch", key="md_candle")
 
     # ── Treasury Term Structure ───────────────────────────────────────────────
     with st.expander("📐 Treasury Term Structure", expanded=False):
         _render_term_structure()
-
-    # ── Shared controls (used by Vol Surface + GEX below) ────────────────────
-    st.markdown("---")
-    ctrl1, ctrl2, ctrl3 = st.columns(3)
-    spot_price = ctrl1.number_input(
-        f"{ticker} Price ($)", value=float(default_S),
-        min_value=1.0, max_value=10_000.0, step=max(1.0, default_S * 0.01),
-        key=f"md_spot_price_{ticker}",
-    )
-    iv_base = ctrl2.slider(
-        "Base IV (%)", min_value=5, max_value=120, value=int(profile["annual_vol"] * 100),
-        key=f"md_iv_base_{ticker}",
-    ) / 100.0
-    gex_n_strikes = ctrl3.slider(
-        "GEX strikes shown", min_value=10, max_value=30, value=20,
-        key="md_gex_n_strikes",
-    )
-    st.markdown("---")
 
     # ── Volatility Surface ───────────────────────────────────────────────────
     with st.expander("🌊 Volatility Surface", expanded=False):
         import datetime as _vs_dt
 
         # ── Controls row ──────────────────────────────────────────────────
-        vc1, vc2, vc3 = st.columns([2, 2, 2])
-        dte_lo = vc1.slider("Min DTE",  1,  60,   7, 1,  key="vs_dte_lo")
-        dte_hi = vc2.slider("Max DTE", 30, 365, 180, 10, key="vs_dte_hi")
-        as_of  = vc3.date_input("As Of", value=_vs_dt.date.today(),
+        vc1, vc2, vc3, vc4 = st.columns([2, 2, 2, 2])
+        spot_price = vc1.number_input(
+            f"{ticker} Price ($)", value=float(default_S),
+            min_value=1.0, max_value=10_000.0, step=max(1.0, default_S * 0.01),
+            key=f"md_spot_price_{ticker}",
+        )
+        dte_lo = vc2.slider("Min DTE",  1,  60,   7, 1,  key="vs_dte_lo")
+        dte_hi = vc3.slider("Max DTE", 30, 365, 180, 10, key="vs_dte_hi")
+        as_of  = vc4.date_input("As Of", value=_vs_dt.date.today(),
                                 min_value=_vs_dt.date(2020, 1, 1),
                                 max_value=_vs_dt.date.today(), key="vs_as_of")
 
@@ -844,6 +900,11 @@ def render(ticker: str = "SPY", api_key: str = ""):
                     },
                 )
 
+        iv_base = st.slider(
+            "Base IV (%)", min_value=5, max_value=120, value=int(profile["annual_vol"] * 100),
+            key=f"md_iv_base_{ticker}",
+        ) / 100.0
+
         sm1, sm2 = st.columns([3, 1])
         with sm1:
             smile_df = simulate_iv_smile(S=spot_price, iv_base=iv_base)
@@ -855,6 +916,9 @@ def render(ticker: str = "SPY", api_key: str = ""):
                 if not grp.empty:
                     atm_row = grp.iloc[(grp["moneyness"] - 1).abs().argsort()[:1]]
                     st.metric(f"{dte_val} DTE", f"{float(atm_row['iv'].iloc[0]) * 100:.1f}%")
+
+    # spot_price may not be set if Vol Surface expander was never opened
+    spot_price = st.session_state.get(f"md_spot_price_{ticker}", default_S)
 
     # ── Top Movers + Dealer GEX ──────────────────────────────────────────────
     with st.expander("🔥 Market Activity", expanded=False):
@@ -901,6 +965,7 @@ def render(ticker: str = "SPY", api_key: str = ""):
                 elif "md_live_gex" in st.session_state:
                     st.caption("⚠️ Live GEX unavailable — showing simulated data.")
 
+            gex_n_strikes = st.slider("Strikes shown", min_value=10, max_value=30, value=20, key="md_gex_n_strikes")
             if gex_df.empty:
                 gex_df = simulate_gex(S=spot_price, n_strikes=gex_n_strikes)
                 if not api_key:

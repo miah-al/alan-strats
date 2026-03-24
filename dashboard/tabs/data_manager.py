@@ -188,7 +188,8 @@ def render(api_key: str = ""):
                 if s == "up_to_date":
                     result_el.success(f"{label} — already up to date")
                 elif s in ("no_data", "no_calendar"):
-                    result_el.warning(f"{label} — no data returned")
+                    detail = r.get("detail", "")
+                    result_el.warning(f"{label} — no data returned" + (f": {detail}" if detail else ""))
                 else:
                     result_el.success(f"{label} — {rows:,} rows inserted")
             except Exception as e:

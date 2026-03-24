@@ -26,6 +26,24 @@ STRATEGY_METADATA: dict[str, dict] = {
         "requires_ticker": True,     # needs equity price data
         "required_data": ["price", "vix", "rates", "news"],
     },
+    "conversion_arb": {
+        "display_name": "Conversion Arb (Div)",
+        "type": "rule",
+        "status": "active",
+        "icon": "⚖️",
+        "description": (
+            "True dividend arb via put-call parity. Enters conversion (long stock + long put + short call) "
+            "when implied dividend < actual dividend. Delta-neutral. Edge = actual div − implied div."
+        ),
+        "asset_class": "equities_options",
+        "typical_holding_days": 5,
+        "target_sharpe": 1.1,
+        "class_path": "alan_trader.strategies.conversion_arb.ConversionArbStrategy",
+        "requires_training": False,
+        "uses_ml": False,
+        "requires_ticker": True,
+        "required_data": ["price", "vix", "dividends"],
+    },
     "dividend_arb": {
         "display_name": "Dividend Arbitrage",
         "type": "rule",

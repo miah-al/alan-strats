@@ -764,7 +764,7 @@ def max_drawdown_comparison(metrics_by_strategy: dict) -> go.Figure:
 
 def candlestick_chart(bars_df: pd.DataFrame, ticker: str = "") -> go.Figure:
     """
-    OHLCV candlestick with volume bars below.
+    OHLCV candlestick with EMA 20/50, Bollinger Bands, RSI(14), and volume.
     bars_df must have columns: date (or DatetimeIndex), open, high, low, close, volume.
     """
     df = bars_df.copy()
@@ -772,12 +772,29 @@ def candlestick_chart(bars_df: pd.DataFrame, ticker: str = "") -> go.Figure:
         df = df.reset_index().rename(columns={"index": "date"})
     df["date"] = pd.to_datetime(df["date"])
 
+    # ── Indicators ────────────────────────────────────────────────────────────
+    c = df["close"]
+    df["ema20"] = c.ewm(span=20, adjust=False).mean()
+    df["ema50"] = c.ewm(span=50, adjust=False).mean()
+    df["bb_mid"] = c.rolling(20).mean()
+    df["bb_std"] = c.rolling(20).std()
+    df["bb_hi"]  = df["bb_mid"] + 2 * df["bb_std"]
+    df["bb_lo"]  = df["bb_mid"] - 2 * df["bb_std"]
+
+    delta = c.diff()
+    gain = delta.clip(lower=0).rolling(14).mean()
+    loss = (-delta.clip(upper=0)).rolling(14).mean()
+    rs   = gain / loss.replace(0, np.nan)
+    df["rsi"] = 100 - 100 / (1 + rs)
+
+    # ── Layout: candle (65%) | RSI (20%) | volume (15%) ──────────────────────
     fig = make_subplots(
-        rows=2, cols=1, shared_xaxes=True,
-        row_heights=[0.75, 0.25],
+        rows=3, cols=1, shared_xaxes=True,
+        row_heights=[0.65, 0.20, 0.15],
         vertical_spacing=0.02,
     )
 
+    # Row 1 — Candlestick
     fig.add_trace(go.Candlestick(
         x=df["date"],
         open=df["open"], high=df["high"], low=df["low"], close=df["close"],
@@ -788,23 +805,71 @@ def candlestick_chart(bars_df: pd.DataFrame, ticker: str = "") -> go.Figure:
         decreasing_fillcolor=COLORS["bear"],
     ), row=1, col=1)
 
-    colors = [COLORS["bull"] if c >= o else COLORS["bear"]
-              for c, o in zip(df["close"], df["open"])]
+    # Bollinger Bands — shaded band
+    fig.add_trace(go.Scatter(
+        x=df["date"], y=df["bb_hi"], name="BB Upper",
+        line=dict(color="#546e7a", width=1, dash="dot"), showlegend=False,
+    ), row=1, col=1)
+    fig.add_trace(go.Scatter(
+        x=df["date"], y=df["bb_lo"], name="BB Lower",
+        line=dict(color="#546e7a", width=1, dash="dot"),
+        fill="tonexty", fillcolor="rgba(84,110,122,0.10)", showlegend=False,
+    ), row=1, col=1)
+
+    # EMAs
+    fig.add_trace(go.Scatter(
+        x=df["date"], y=df["ema20"], name="EMA 20",
+        line=dict(color="#ffa726", width=1.5),
+    ), row=1, col=1)
+    fig.add_trace(go.Scatter(
+        x=df["date"], y=df["ema50"], name="EMA 50",
+        line=dict(color="#ab47bc", width=1.5),
+    ), row=1, col=1)
+
+    # VWAP if present
+    if "vwap" in df.columns:
+        fig.add_trace(go.Scatter(
+            x=df["date"], y=df["vwap"], name="VWAP",
+            line=dict(color="#26c6da", width=1.2, dash="dot"),
+        ), row=1, col=1)
+
+    # Row 2 — RSI
+    fig.add_trace(go.Scatter(
+        x=df["date"], y=df["rsi"], name="RSI 14",
+        line=dict(color="#69f0ae", width=1.5), showlegend=False,
+    ), row=2, col=1)
+    fig.add_hrect(y0=70, y1=100, row=2, col=1,
+                  fillcolor="rgba(239,83,80,0.08)", line_width=0)
+    fig.add_hrect(y0=0, y1=30, row=2, col=1,
+                  fillcolor="rgba(38,166,154,0.08)", line_width=0)
+    fig.add_hline(y=70, row=2, col=1, line=dict(color="#ef5350", width=1, dash="dot"))
+    fig.add_hline(y=30, row=2, col=1, line=dict(color="#26a69a", width=1, dash="dot"))
+
+    # Row 3 — Volume
+    vol_colors = [COLORS["bull"] if c >= o else COLORS["bear"]
+                  for c, o in zip(df["close"], df["open"])]
     if "volume" in df.columns:
         fig.add_trace(go.Bar(
             x=df["date"], y=df["volume"], name="Volume",
-            marker_color=colors, opacity=0.6,
-        ), row=2, col=1)
+            marker_color=vol_colors, opacity=0.6, showlegend=False,
+        ), row=3, col=1)
 
     fig.update_layout(
         **_LAYOUT,
-        title=f"{ticker} — Price History" if ticker else "Price History",
-        height=480,
+        title=f"{ticker} — Price & Indicators" if ticker else "Price & Indicators",
+        height=600,
         xaxis_rangeslider_visible=False,
-        showlegend=False,
+        legend=dict(
+            orientation="h", x=0, y=1.02,
+            font=dict(size=11, color="#c0c8d8"),
+        ),
+        hovermode="x unified",
     )
     fig.update_yaxes(gridcolor=COLORS["grid"])
     fig.update_xaxes(gridcolor=COLORS["grid"])
+    fig.update_yaxes(title_text="RSI", row=2, col=1, range=[0, 100],
+                     tickvals=[30, 50, 70])
+    fig.update_yaxes(title_text="Vol", row=3, col=1)
     return fig
 
 
