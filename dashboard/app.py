@@ -1508,9 +1508,22 @@ div[data-testid="stDialog"] > div[role="dialog"] {
                         {"leg": f"② Long Call  ({n} cts)", "side": "Buy",
                          "entry": cpe, "exit": cex, "pnl": cpnl},
                     ]
-                    if row.get("hedge_puts") and float(row.get("hedge_puts", 0)) > 0:
-                        rows.append({"leg": "③ Delta Hedge", "side": "—", "entry": None, "exit": None,
-                                     "pnl": round(float(row.get("hedge_pnl", 0) or 0), 2)})
+                    h_sk = row.get("hedge_short_strike"); h_lk = row.get("hedge_long_strike")
+                    h_se = row.get("hedge_short_entry");  h_le = row.get("hedge_long_entry")
+                    h_sx = row.get("hedge_short_exit");   h_lx = row.get("hedge_long_exit")
+                    if h_sk is not None:
+                        h_se_f = float(h_se) if h_se is not None else None
+                        h_le_f = float(h_le) if h_le is not None else None
+                        h_sx_f = float(h_sx) if h_sx is not None else None
+                        h_lx_f = float(h_lx) if h_lx is not None else None
+                        rows.append({"leg": f"③ Short Call ({n} cts, K=${float(h_sk):.1f})", "side": "Sell",
+                                     "entry": h_se_f, "exit": h_sx_f,
+                                     "pnl": round((h_se_f - h_sx_f) * 100 * n, 2) if h_se_f and h_sx_f else 0})
+                        rows.append({"leg": f"④ Long Call  ({n} cts, K=${float(h_lk):.1f})", "side": "Buy",
+                                     "entry": h_le_f, "exit": h_lx_f,
+                                     "pnl": round((h_lx_f - h_le_f) * 100 * n, 2) if h_le_f and h_lx_f else 0})
+                    rows.append({"leg": "Hedge Spread", "side": "—", "entry": None, "exit": None,
+                                 "pnl": round(float(row.get("hedge_pnl", 0) or 0), 2)})
                     if row.get("commission"):
                         rows.append({"leg": "Commission", "side": "—", "entry": None, "exit": None,
                                      "pnl": -round(float(row.get("commission", 0) or 0), 2)})
@@ -2530,9 +2543,22 @@ def _render_strategy_performance(slug: str):
                                 {"leg": f"② Long Call  ({n} cts)", "side": "Buy",  "entry": cpe, "exit": cex,
                                  "pnl": round(float(row.get("call_pnl", 0) or 0), 2)},
                             ]
-                            if row.get("hedge_puts") and float(row.get("hedge_puts", 0)) > 0:
-                                rows2.append({"leg": "③ Delta Hedge", "side": "—", "entry": None, "exit": None,
-                                              "pnl": round(float(row.get("hedge_pnl", 0) or 0), 2)})
+                            h_sk2 = row.get("hedge_short_strike"); h_lk2 = row.get("hedge_long_strike")
+                            h_se2 = row.get("hedge_short_entry");  h_le2 = row.get("hedge_long_entry")
+                            h_sx2 = row.get("hedge_short_exit");   h_lx2 = row.get("hedge_long_exit")
+                            if h_sk2 is not None:
+                                h_se2_f = float(h_se2) if h_se2 is not None else None
+                                h_le2_f = float(h_le2) if h_le2 is not None else None
+                                h_sx2_f = float(h_sx2) if h_sx2 is not None else None
+                                h_lx2_f = float(h_lx2) if h_lx2 is not None else None
+                                rows2.append({"leg": f"③ Short Call ({n} cts, K=${float(h_sk2):.1f})", "side": "Sell",
+                                              "entry": h_se2_f, "exit": h_sx2_f,
+                                              "pnl": round((h_se2_f - h_sx2_f) * 100 * n, 2) if h_se2_f and h_sx2_f else 0})
+                                rows2.append({"leg": f"④ Long Call  ({n} cts, K=${float(h_lk2):.1f})", "side": "Buy",
+                                              "entry": h_le2_f, "exit": h_lx2_f,
+                                              "pnl": round((h_lx2_f - h_le2_f) * 100 * n, 2) if h_le2_f and h_lx2_f else 0})
+                            rows2.append({"leg": "Hedge Spread", "side": "—", "entry": None, "exit": None,
+                                          "pnl": round(float(row.get("hedge_pnl", 0) or 0), 2)})
                             if row.get("commission"):
                                 rows2.append({"leg": "Commission", "side": "—", "entry": None, "exit": None,
                                               "pnl": -round(float(row.get("commission", 0) or 0), 2)})

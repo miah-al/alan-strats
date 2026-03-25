@@ -164,19 +164,21 @@ class VolArbitrageStrategy(BaseStrategy):
         commission_per_contract: float = 0.65,
         slippage_pct:            float = 0.001,
         delta_hedge:             bool  = True,
+        hedge_spread_width:      float = 2.0,   # dollars above ATM for long call cap
     ):
-        self.min_viol     = min_violation_pct
-        self.max_viol     = max_violation_pct
-        self.skew_thresh  = iv_skew_threshold
-        self.iv_rank_min  = iv_rank_min
-        self.dte_min      = dte_min
-        self.dte_max      = dte_max
-        self.div_yield    = dividend_yield
-        self.pos_size_pct = position_size_pct
-        self.hold_days    = hold_days
-        self.commission   = commission_per_contract
-        self.slippage     = slippage_pct
-        self.delta_hedge  = delta_hedge
+        self.min_viol           = min_violation_pct
+        self.max_viol           = max_violation_pct
+        self.skew_thresh        = iv_skew_threshold
+        self.iv_rank_min        = iv_rank_min
+        self.dte_min            = dte_min
+        self.dte_max            = dte_max
+        self.div_yield          = dividend_yield
+        self.pos_size_pct       = position_size_pct
+        self.hold_days          = hold_days
+        self.commission         = commission_per_contract
+        self.slippage           = slippage_pct
+        self.delta_hedge        = delta_hedge
+        self.hedge_spread_width = hedge_spread_width
 
     # ── Live signal ──────────────────────────────────────────────────────────
 
@@ -234,8 +236,9 @@ class VolArbitrageStrategy(BaseStrategy):
         iv_rank_min:      float | None = None,
         dte_min:          int   | None = None,
         dte_max:          int   | None = None,
-        skip_parity_arb:  bool  = False,
-        delta_hedge:      bool | None = None,
+        skip_parity_arb:    bool  = False,
+        delta_hedge:        bool | None = None,
+        hedge_spread_width: float | None = None,
         **kwargs,
     ) -> BacktestResult:
 
@@ -245,8 +248,9 @@ class VolArbitrageStrategy(BaseStrategy):
         ivr_min  = iv_rank_min        if iv_rank_min        is not None else self.iv_rank_min
         dte_lo   = dte_min            if dte_min            is not None else self.dte_min
         dte_hi   = dte_max            if dte_max            is not None else self.dte_max
-        self._skip_parity_arb = skip_parity_arb
-        self._use_delta_hedge = delta_hedge if delta_hedge is not None else self.delta_hedge
+        self._skip_parity_arb   = skip_parity_arb
+        self._use_delta_hedge   = delta_hedge if delta_hedge is not None else self.delta_hedge
+        self._hedge_spread_width = hedge_spread_width if hedge_spread_width is not None else self.hedge_spread_width
 
         price_data = price_data.copy()
         _idx = pd.to_datetime(price_data.index)
@@ -342,7 +346,7 @@ class VolArbitrageStrategy(BaseStrategy):
                     del self._tmp_dte_min,  self._tmp_dte_max
 
                     for v in violations[:1]:
-                        tr = self._open_trade(v, S, capital, today_date)
+                        tr = self._open_trade(v, S, capital, today_date, chain=chain)
                         if tr:
                             capital -= tr["cost"]
                             open_trades.append(tr)
@@ -572,9 +576,12 @@ class VolArbitrageStrategy(BaseStrategy):
             {"key": "dte_max",            "label": "DTE maximum",
              "type": "slider",  "min": 20,  "max": 90,   "default": 60,   "step": 5,
              "col": 2, "row": 1, "help": "Skip contracts with more DTE (too little premium decay)"},
-            {"key": "delta_hedge",        "label": "Delta hedge (short stock)",
+            {"key": "delta_hedge",        "label": "Bear call spread hedge",
              "type": "checkbox", "default": True,
-             "col": 0, "row": 2, "help": "Short stock equal to net delta of the risk reversal. Isolates pure IV skew P&L from directional moves. No theta cost."},
+             "col": 0, "row": 2, "help": "Hedge net delta using a bear call spread (short ATM call + long OTM call). RH-compliant defined-risk hedge."},
+            {"key": "hedge_spread_width", "label": "Hedge spread width ($)",
+             "type": "slider", "min": 1.0, "max": 10.0, "default": 2.0, "step": 0.5,
+             "col": 1, "row": 2, "help": "Width of the bear call spread in dollars (e.g. $2 = short ATM call, long ATM+$2 call)"},
         ]
 
     def get_params(self) -> dict:
@@ -588,8 +595,9 @@ class VolArbitrageStrategy(BaseStrategy):
             "dividend_yield":     self.div_yield,
             "position_size_pct":  self.pos_size_pct,
             "hold_days":          self.hold_days,
-            "slippage_pct":       self.slippage,
-            "delta_hedge":        self.delta_hedge,
+            "slippage_pct":        self.slippage,
+            "delta_hedge":         self.delta_hedge,
+            "hedge_spread_width":  self.hedge_spread_width,
         }
 
     # ── Core: scan chain ─────────────────────────────────────────────────────
@@ -767,16 +775,43 @@ class VolArbitrageStrategy(BaseStrategy):
     # ── Trade management ─────────────────────────────────────────────────────
 
     def _open_trade(self, v: ParityViolation, S: float,
-                    capital: float, today) -> Optional[dict]:
+                    capital: float, today, chain=None) -> Optional[dict]:
         margin_per_contract = S * 100 * 0.20
         budget              = capital * self.pos_size_pct
         n_contracts         = max(1, int(budget / margin_per_contract))
 
+        # Bear call spread hedge params (skew_arb only) — compute before commission
+        use_hedge  = getattr(self, "_use_delta_hedge", self.delta_hedge)
+        spread_w   = getattr(self, "_hedge_spread_width", self.hedge_spread_width)
+        hedge_short_strike = None
+        hedge_long_strike  = None
+        hedge_short_entry  = None
+        hedge_long_entry   = None
+
+        if v.trade_type == "skew_arb" and use_hedge and chain is not None:
+            _calls = chain[chain["type"] == "call"] if "type" in chain.columns else pd.DataFrame()
+            # Filter to same DTE range as main trade
+            if "dte" in _calls.columns and v.expiry_days:
+                _calls = _calls[_calls["dte"].between(v.expiry_days - 7, v.expiry_days + 7)]
+            if not _calls.empty:
+                def _cmid(row):
+                    b = float(row["bid"].iloc[0]) if "bid" in row.columns else float("nan")
+                    a = float(row["ask"].iloc[0]) if "ask" in row.columns else float("nan")
+                    return (b + a) / 2 if (b == b and a == a and b > 0 and a > 0) else None
+                _atm_row = _calls.iloc[(_calls["strike"] - S).abs().argsort().iloc[:1]]
+                hedge_short_strike = float(_atm_row["strike"].iloc[0])
+                hedge_short_entry  = _cmid(_atm_row)
+                _otm_row = _calls.iloc[(_calls["strike"] - (S + spread_w)).abs().argsort().iloc[:1]]
+                hedge_long_strike = float(_otm_row["strike"].iloc[0])
+                hedge_long_entry  = _cmid(_otm_row)
+
+        hedge_legs    = 2 if (v.trade_type == "skew_arb" and use_hedge and
+                              hedge_short_strike is not None) else 0
         slippage_cost = S * self.slippage * n_contracts * 100
-        commission    = self.commission * n_contracts * 3
+        commission    = self.commission * n_contracts * (2 + hedge_legs)
 
         if v.trade_type == "skew_arb":
-            # Risk-reversal: sell put, buy call, delta-hedge
+            # Risk-reversal: sell put, buy call, bear call spread hedge
             gross   = abs(v.iv_skew or 0) * S * 0.10 * n_contracts * 100
         else:
             gross   = abs(v.violation) * n_contracts * 100
@@ -806,18 +841,9 @@ class VolArbitrageStrategy(BaseStrategy):
         else:
             skew_pts  = f"{(v.iv_skew or 0)*100:.1f}"
             net_debit = (v.call_price - v.put_price) * 100 * n_contracts
-            # Delta hedge: net delta of risk reversal = call_delta + |put_delta|
-            # Offset with long puts (negative delta) sized to neutralize
-            use_hedge  = getattr(self, "_use_delta_hedge", self.delta_hedge)
-            c_d        = v.call_delta if (v.call_delta and 0 < v.call_delta <= 1) else 0.5
-            p_d        = abs(v.put_delta) if (v.put_delta and -1 <= v.put_delta < 0) else 0.5
-            net_delta  = c_d + p_d          # both legs contribute positive delta
-            # Number of long ATM puts needed: net_delta / 0.5 (ATM put delta ≈ -0.5)
-            hedge_puts = round(net_delta * n_contracts / 0.5) if use_hedge else 0
-            # Express hedge as equivalent short-stock shares (net_delta * n * 100)
-            hedge_shares = round(net_delta * n_contracts * 100)
-            hedge_str  = f"  +Short {hedge_shares} shares (Δ-hedge)" if hedge_shares > 0 else ""
-            desc = (f"SKEW ARB{'[Δ-HEDGED]' if hedge_puts else ''}  K=${v.strike:.1f}  "
+            hedge_str = (f"  +Bear Call Spread K=${hedge_short_strike:.1f}/${hedge_long_strike:.1f}"
+                         if hedge_short_strike else "")
+            desc = (f"SKEW ARB{'[BCS-HEDGED]' if hedge_short_strike else ''}  K=${v.strike:.1f}  "
                     f"DTE={v.expiry_days}  Spot=${S:.2f}  {n_contracts}x  |  "
                     f"Sell put @${v.put_price:.3f}  Buy call @${v.call_price:.3f}"
                     f"{hedge_str}  |  "
@@ -827,13 +853,16 @@ class VolArbitrageStrategy(BaseStrategy):
         # Plain-English rationale and exit expectation
         if v.trade_type == "skew_arb":
             skew_pct  = abs(v.iv_skew or 0) * 100
-            use_hedge = getattr(self, "_use_delta_hedge", self.delta_hedge)
-            hedge_note = (
-                " Delta is neutralized via short stock — position profits from IV skew compression "
-                "independent of stock direction."
-            ) if use_hedge else (
-                " No delta hedge — position has net long delta and benefits from stock rising."
-            )
+            if hedge_short_strike:
+                hedge_note = (
+                    f" Delta is hedged via a bear call spread "
+                    f"(short K=${hedge_short_strike:.1f}, long K=${hedge_long_strike:.1f}) — "
+                    "defined-risk, RH-compliant hedge. Position profits from IV skew compression."
+                )
+            elif use_hedge:
+                hedge_note = " Bear call spread hedge enabled but no chain data available at entry."
+            else:
+                hedge_note = " No delta hedge — position has net long delta and benefits from stock rising."
             comment = (
                 f"Put IV is {skew_pct:.1f} vol pts above call IV at K=${v.strike:.0f} "
                 f"({v.expiry_days}d to expiry). "
@@ -858,32 +887,33 @@ class VolArbitrageStrategy(BaseStrategy):
             )
 
         return {
-            "entry_date":        today,
-            "spread_type":       f"vol_arb_{v.trade_type}",
-            "description":       desc,
-            "comment":           comment,
-            "spot":              round(S, 2),
-            "strike":            v.strike,
-            "dte":               v.expiry_days,
-            "long_strike":       v.strike,
-            "short_strike":      v.strike,
-            "entry_cost":        round(cost / (n_contracts * 100), 4),
-            "exit_value":        0.0,
-            "contracts":         n_contracts,
-            "expected_pnl":      round(net_profit, 2),
-            "violation":         round(v.violation, 4),
-            "cost":              cost,
-            "trade_type":        v.trade_type,
-            "iv_call":           round(v.iv_call, 4) if v.iv_call else None,
-            "iv_put":            round(v.iv_put, 4) if v.iv_put else None,
-            "iv_skew":           round(v.iv_skew, 4) if v.iv_skew else None,
-            "call_price_entry":  round(v.call_price, 4),
-            "put_price_entry":   round(v.put_price, 4),
-            "signal_strength":   round(v.signal_strength, 3),
-            # Delta hedge fields (only set for skew_arb with hedging enabled)
-            "hedge_puts":        hedge_puts if v.trade_type == "skew_arb" else 0,
-            "hedge_entry_spot":  round(S, 4) if v.trade_type == "skew_arb" else None,
-            "net_delta_entry":   round(net_delta, 3) if v.trade_type == "skew_arb" else None,
+            "entry_date":         today,
+            "spread_type":        f"vol_arb_{v.trade_type}",
+            "description":        desc,
+            "comment":            comment,
+            "spot":               round(S, 2),
+            "strike":             v.strike,
+            "dte":                v.expiry_days,
+            "long_strike":        v.strike,
+            "short_strike":       v.strike,
+            "entry_cost":         round(cost / (n_contracts * 100), 4),
+            "exit_value":         0.0,
+            "contracts":          n_contracts,
+            "expected_pnl":       round(net_profit, 2),
+            "violation":          round(v.violation, 4),
+            "cost":               cost,
+            "trade_type":         v.trade_type,
+            "iv_call":            round(v.iv_call, 4) if v.iv_call else None,
+            "iv_put":             round(v.iv_put, 4) if v.iv_put else None,
+            "iv_skew":            round(v.iv_skew, 4) if v.iv_skew else None,
+            "call_price_entry":   round(v.call_price, 4),
+            "put_price_entry":    round(v.put_price, 4),
+            "signal_strength":    round(v.signal_strength, 3),
+            # Bear call spread hedge fields (only set for skew_arb with hedging enabled)
+            "hedge_short_strike": hedge_short_strike,
+            "hedge_long_strike":  hedge_long_strike,
+            "hedge_short_entry":  round(hedge_short_entry, 4) if hedge_short_entry is not None else None,
+            "hedge_long_entry":   round(hedge_long_entry,  4) if hedge_long_entry  is not None else None,
         }
 
     def _close_trade(self, tr: dict, S_exit: float,
@@ -905,7 +935,8 @@ class VolArbitrageStrategy(BaseStrategy):
         import datetime as _cdt
 
         n          = tr["contracts"]
-        commission = self.commission * n * 3
+        _has_hedge = tr.get("hedge_short_strike") is not None
+        commission = self.commission * n * (4 if _has_hedge else 2)
         gross      = tr["expected_pnl"]
 
         # ── Find closest chain snapshot at or near close_date ─────────────────
@@ -977,28 +1008,40 @@ class VolArbitrageStrategy(BaseStrategy):
             put_pnl  = (put_entry  - p_mid_exit) * 100 * n
             call_pnl = (c_mid_exit - call_entry) * 100 * n
 
-            # Delta hedge: long ATM puts priced at exit using BS with exit spot
-            # Hedge gain = ATM put value increases when stock falls (negative delta)
-            hedge_pnl  = 0.0
-            hedge_puts = tr.get("hedge_puts", 0) or 0
-            if hedge_puts > 0:
-                S_entry = tr.get("hedge_entry_spot") or 0.0
-                net_d   = tr.get("net_delta_entry") or 1.0
-                # Delta hedge modeled as short stock (standard approach — no theta drag).
-                # Short stock = profit when price falls, loss when rises.
-                # Equivalent to short net_delta * n_contracts * 100 shares.
-                if S_entry > 0:
-                    hedge_pnl = -(S_exit - S_entry) * net_d * n * 100
+            # Bear call spread hedge P&L
+            hedge_pnl     = 0.0
+            h_short_K     = tr.get("hedge_short_strike")
+            h_long_K      = tr.get("hedge_long_strike")
+            h_short_en    = tr.get("hedge_short_entry")
+            h_long_en     = tr.get("hedge_long_entry")
+            h_short_ex    = float("nan")
+            h_long_ex     = float("nan")
+
+            if h_short_K is not None and h_short_en is not None and h_long_en is not None and close_chain is not None:
+                _hcalls = close_chain[close_chain["type"] == "call"] if "type" in close_chain.columns else pd.DataFrame()
+                if "dte" in _hcalls.columns:
+                    _hcalls = _hcalls[_hcalls["dte"].between(target_dte - 10, target_dte + 10)]
+                if not _hcalls.empty:
+                    _hs_row = _hcalls.iloc[(_hcalls["strike"] - h_short_K).abs().argsort().iloc[:1]]
+                    _hl_row = _hcalls.iloc[(_hcalls["strike"] - h_long_K).abs().argsort().iloc[:1]]
+                    h_short_ex = _mid(_hs_row)
+                    h_long_ex  = _mid(_hl_row)
+                    if h_short_ex == h_short_ex and h_long_ex == h_long_ex:
+                        # Short call P&L: sold at entry, bought back at exit → entry - exit
+                        # Long call P&L:  bought at entry, sold at exit      → exit - entry
+                        hedge_pnl = (h_short_en - h_short_ex + h_long_ex - h_long_en) * 100 * n
 
             skew_pnl = put_pnl + call_pnl - commission
             profit   = skew_pnl + hedge_pnl
             extra    = {
-                "put_pnl":         round(put_pnl,    2),
-                "call_pnl":        round(call_pnl,   2),
-                "hedge_pnl":       round(hedge_pnl,  2),
-                "commission":      round(commission,  2),
-                "call_price_exit": round(c_mid_exit,  4),
-                "put_price_exit":  round(p_mid_exit,  4),
+                "put_pnl":          round(put_pnl,    2),
+                "call_pnl":         round(call_pnl,   2),
+                "hedge_pnl":        round(hedge_pnl,  2),
+                "commission":       round(commission,  2),
+                "call_price_exit":  round(c_mid_exit,  4),
+                "put_price_exit":   round(p_mid_exit,  4),
+                "hedge_short_exit": round(h_short_ex, 4) if h_short_ex == h_short_ex else None,
+                "hedge_long_exit":  round(h_long_ex,  4) if h_long_ex  == h_long_ex  else None,
             }
 
         elif tr.get("trade_type") == "conversion":
