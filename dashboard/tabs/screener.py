@@ -856,46 +856,53 @@ def render(api_key: str = "", selected_strategies: list = None) -> None:
                              disabled=selected_rows.empty):
                     try:
                         from alan_trader.db.client import get_engine as _get_eng
-                        from alan_trader.db.portfolio_client import get_security_id
                         from sqlalchemy import text as _text
-                        import datetime as _dt
+                        import datetime as _dt, uuid as _uuid
                         _eng = _get_eng()
                         _today = _dt.date.today()
+                        _saved = 0
 
-                        # Check all tickers exist in mkt.Ticker before saving
-                        _missing = [
-                            _row["Ticker"] for _, _row in selected_rows.iterrows()
-                            if get_security_id(_eng, _row["Ticker"]) is None
-                        ]
-                        if _missing:
-                            st.error(
-                                f"⚠️ Ticker(s) **{', '.join(_missing)}** not found in `mkt.Ticker`. "
-                                f"Please sync these tickers first, then retry."
-                            )
-                        else:
-                            _saved = 0
-                            with _eng.begin() as _conn:
-                                for _, _row in selected_rows.iterrows():
-                                    _sec_id = get_security_id(_eng, _row["Ticker"])
-                                    _conn.execute(
-                                        _text("""
-                                            INSERT INTO portfolio.Position
-                                                (AccountId, SecurityId, PositionType, Direction, Quantity, OpenDate,
-                                                 Status, AvgEntryPrice, StrategyName, Source, Tags, Notes)
-                                            VALUES
-                                                (1, :sec_id, 'option_spread', 'Long', 1, :open_date,
-                                                 'Open', :entry_price, :strategy, 'Screener', :tags, :notes)
-                                        """),
-                                        {
-                                            "sec_id":      _sec_id,
-                                            "open_date":   _today,
-                                            "entry_price": float(_row["Price"]),
-                                            "strategy":    "IV Skew Premium Capture",
-                                            "tags":        f"{_row['Ticker']}|{_row['Signal']}|skew={_row['Best Skew (pts)']}pts|put_sw={_row['Put Spread $']}|hedge_sw={_row['Hedge Spread $']}",
-                                            "notes":       pt_notes or f"Screener signal: {_row['Signal']} on {_row['Ticker']} @ ${_row['Price']:.2f}",
-                                        }
-                                    )
-                                    _saved += 1
-                            st.success(f"✅ {_saved} trade(s) saved to Paper Trades — view in Paper Trading tab.")
+                        with _eng.begin() as _conn:
+                            for _, _row in selected_rows.iterrows():
+                                ticker = _row["Ticker"]
+
+                                # Ensure equity security exists in portfolio.Security
+                                _sec = _conn.execute(_text(
+                                    "SELECT SecurityId FROM portfolio.Security "
+                                    "WHERE Symbol = :sym AND SecurityType = 'equity'"
+                                ), {"sym": ticker}).fetchone()
+                                if _sec is None:
+                                    _conn.execute(_text(
+                                        "INSERT INTO portfolio.Security (Symbol, SecurityType, Multiplier) "
+                                        "VALUES (:sym, 'equity', 1)"
+                                    ), {"sym": ticker})
+                                    _sec = _conn.execute(_text(
+                                        "SELECT SecurityId FROM portfolio.Security "
+                                        "WHERE Symbol = :sym AND SecurityType = 'equity'"
+                                    ), {"sym": ticker}).fetchone()
+                                _sec_id = _sec[0]
+
+                                # One transaction row per screener signal (full leg detail added later)
+                                _tgid = str(_uuid.uuid4())
+                                _conn.execute(_text("""
+                                    INSERT INTO portfolio.[Transaction]
+                                        (BusinessDate, AccountId, TradeGroupId, StrategyName,
+                                         SecurityId, Direction, Quantity, TransactionPrice,
+                                         Commission, LegType, Source, Notes)
+                                    VALUES
+                                        (:bdate, 1, :tgid, :strategy,
+                                         :sec_id, 'Buy', 1, :price,
+                                         0, 'Screener', 'Screener', :notes)
+                                """), {
+                                    "bdate":    _today,
+                                    "tgid":     _tgid,
+                                    "strategy": "IV Skew Premium Capture",
+                                    "sec_id":   _sec_id,
+                                    "price":    float(_row["Price"]),
+                                    "notes":    pt_notes or f"{ticker}|{_row['Signal']}|skew={_row['Best Skew (pts)']}pts|put_sw={_row['Put Spread $']}|hedge_sw={_row['Hedge Spread $']}",
+                                })
+                                _saved += 1
+
+                        st.success(f"✅ {_saved} trade(s) saved to Paper Trades — view in Paper Trading tab.")
                     except Exception as _e:
                         st.error(f"DB save failed: {_e}")
