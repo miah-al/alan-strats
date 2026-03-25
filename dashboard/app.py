@@ -1604,6 +1604,11 @@ div[data-testid="stDialog"] > div[role="dialog"] {
             det  = _detail_rows_for(tr)
             legs = [d for d in det if d.get("side") not in ("—",)]
             attr = [d for d in det if d.get("side") == "—"]
+            if slug == "vol_arbitrage":
+                extras = []
+                if tr.get("put_pnl")  is not None: extras.append({"leg": "Short Put", "side": "—", "pnl": round(float(tr.get("put_pnl")  or 0), 2)})
+                if tr.get("call_pnl") is not None: extras.append({"leg": "Long Call",  "side": "—", "pnl": round(float(tr.get("call_pnl") or 0), 2)})
+                attr = extras + attr
 
             html = f'<td colspan="99" style="padding:0;"><div style="background:{DET};padding:14px 20px 16px;border-top:{BORD};font-family:sans-serif;">'
 
@@ -1622,11 +1627,11 @@ div[data-testid="stDialog"] > div[role="dialog"] {
                     html += _badge("Type",         _tt_label, "#a5b4fc")
                     if _spot: html += _badge("Spot at entry", f"${float(_spot):.2f}", "#e2e8f0")
                     if _dte:  html += _badge("DTE",           f"{int(_dte)}d", "#e2e8f0")
-                    if _ivc:  html += _badge("IV Call",       f"{float(_ivc)*100:.1f}%", "#e2e8f0")
-                    if _ivp:  html += _badge("IV Put",        f"{float(_ivp)*100:.1f}%", "#e2e8f0")
+                    if _ivc:  html += _badge("IV Call",       f"{float(_ivc):.1f}%", "#e2e8f0")
+                    if _ivp:  html += _badge("IV Put",        f"{float(_ivp):.1f}%", "#e2e8f0")
                     if _ivsk:
                         _sc2 = "#f87171" if float(_ivsk) > 0 else "#4ade80"
-                        html += _badge("IV Skew (put−call)", f"{float(_ivsk)*100:+.1f} pts", _sc2)
+                        html += _badge("IV Skew (put−call)", f"{float(_ivsk):+.1f} pts", _sc2)
                     if _viol:
                         _vc = "#4ade80" if float(_viol) > 0 else "#f87171"
                         html += _badge("Parity violation", f"${float(_viol):.4f}", _vc)
@@ -2611,11 +2616,11 @@ def _render_strategy_performance(slug: str):
                             html += _pbadge("Type",          _tt2_label, "#a5b4fc")
                             if _spot2: html += _pbadge("Spot at entry",  f"${float(_spot2):.2f}")
                             if _dte2:  html += _pbadge("DTE",            f"{int(_dte2)}d")
-                            if _ivc2:  html += _pbadge("IV Call",        f"{float(_ivc2)*100:.1f}%")
-                            if _ivp2:  html += _pbadge("IV Put",         f"{float(_ivp2)*100:.1f}%")
+                            if _ivc2:  html += _pbadge("IV Call",        f"{float(_ivc2):.1f}%")
+                            if _ivp2:  html += _pbadge("IV Put",         f"{float(_ivp2):.1f}%")
                             if _ivsk2:
                                 _psc3 = "#f87171" if float(_ivsk2) > 0 else "#4ade80"
-                                html += _pbadge("IV Skew (put−call)", f"{float(_ivsk2)*100:+.1f} pts", _psc3)
+                                html += _pbadge("IV Skew (put−call)", f"{float(_ivsk2):+.1f} pts", _psc3)
                             if _viol2:
                                 _pvc = "#4ade80" if float(_viol2) > 0 else "#f87171"
                                 html += _pbadge("Parity violation", f"${float(_viol2):.4f}", _pvc)
