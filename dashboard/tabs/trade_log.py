@@ -405,31 +405,37 @@ def render(api_key: str = ""):
 
     try:
         from alan_trader.db.client import get_engine
-        from alan_trader.db import portfolio_client as pc
+        from sqlalchemy import text as _text
         engine = get_engine()
     except Exception as e:
         st.error(f"Database not available: {e}")
-        st.info("Run `db/portfolio_schema.sql` to create the portfolio schema.")
         return
 
     try:
-        accounts = pc.get_accounts(engine)
+        with engine.connect() as _c:
+            accounts = pd.read_sql(_text(
+                "SELECT AccountId, AccountName AS Name FROM portfolio.Account WHERE Status = 'Active' ORDER BY AccountId"
+            ), _c)
     except Exception:
-        st.error("Portfolio schema not found. Run `db/portfolio_schema.sql` first.")
-        with st.expander("Show SQL to run"):
-            import pathlib
-            schema_path = pathlib.Path(__file__).parents[2] / "db" / "portfolio_schema.sql"
-            if schema_path.exists():
-                st.code(schema_path.read_text(), language="sql")
+        st.error("Portfolio schema not found. Run the migration in `db/migrations/rebuild_portfolio.sql` first.")
         return
 
     if accounts.empty:
-        pc.ensure_default_account(engine)
-        accounts = pc.get_accounts(engine)
+        st.error("No accounts found. Check the portfolio schema.")
+        return
 
     acct_options = {row["Name"]: row["AccountId"] for _, row in accounts.iterrows()}
     selected_acct_name = st.selectbox("Account", list(acct_options.keys()), key="tl_account")
     account_id = acct_options[selected_acct_name]
+
+    st.info("📌 Portfolio tracking has moved to the **Paper Trading** tab with the new schema. "
+            "The legacy Portfolio section below is being migrated.")
+
+    try:
+        from alan_trader.db import portfolio_client as pc
+    except Exception:
+        st.warning("portfolio_client not available — legacy Portfolio section disabled.")
+        return
 
     # KPI header
     kpis = pc.get_kpis(engine, account_id)
