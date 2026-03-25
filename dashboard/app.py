@@ -3082,8 +3082,8 @@ def _render_strategy_performance(slug: str):
 # ══════════════════════════════════════════════════════════════════════════════
 
 # ── Top-level tabs ─────────────────────────────────────────────────────────────
-tab_market, tab_screener, tab_paper, tab_portfolio, tab_strategies, tab_tools = st.tabs(
-    ["📡 Market", "🔍 Screener", "💹 Paper Trading", "📦 Portfolio", "📈 Strategies", "🛠 Tools"]
+tab_market, tab_screener, tab_paper, tab_strategies, tab_tools = st.tabs(
+    ["📡 Market", "🔍 Screener", "💹 Paper Trading", "📈 Strategies", "🛠 Tools"]
 )
 
 # ── MARKET (homepage) ─────────────────────────────────────────────────────────
@@ -3104,11 +3104,6 @@ with tab_screener:
 with tab_paper:
     from alan_trader.dashboard.tabs.paper_trading import render as render_paper_trading
     render_paper_trading()
-
-# ── PORTFOLIO / TRADE LOG ──────────────────────────────────────────────────────
-with tab_portfolio:
-    from alan_trader.dashboard.tabs.trade_log import render as render_tradelog
-    render_tradelog(api_key=st.session_state.get("polygon_api_key", ""))
 
 # ── STRATEGIES ────────────────────────────────────────────────────────────────
 with tab_strategies:

@@ -84,7 +84,7 @@ def _load_transactions(engine, account_id: int = 1) -> pd.DataFrame:
                     t.Source,
                     t.Notes,
                     t.CreatedAt
-                FROM portfolio.Transaction t
+                FROM portfolio.[Transaction] t
                 JOIN portfolio.Security s ON s.SecurityId = t.SecurityId
                 WHERE t.AccountId = :aid
                 ORDER BY t.BusinessDate DESC, t.CreatedAt DESC
@@ -1016,7 +1016,7 @@ def _render_etf_rotation(engine) -> None:
     """Render the legacy ETF rotation paper trading section."""
     try:
         from alan_trader.db.portfolio_client import (
-            ensure_default_account, get_holdings, get_balance_history,
+            get_holdings, get_balance_history,
             get_transactions, get_security_id, upsert_holding, upsert_balance
         )
     except Exception as e:
@@ -1024,7 +1024,12 @@ def _render_etf_rotation(engine) -> None:
         return
 
     try:
-        account_id = ensure_default_account(engine)
+        from sqlalchemy import text as _t
+        with engine.connect() as _c:
+            row = _c.execute(_t(
+                "SELECT TOP 1 AccountId FROM portfolio.Account WHERE Status='Active' ORDER BY AccountId"
+            )).fetchone()
+        account_id = row[0] if row else 1
         _seed_initial_deposit(engine, account_id)
     except Exception as e:
         st.warning(f"Could not initialise legacy account: {e}")
