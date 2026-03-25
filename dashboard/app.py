@@ -3000,19 +3000,36 @@ def _render_strategy_performance(slug: str):
 
     try:
         from alan_trader.db.client import get_engine
-        from alan_trader.db import portfolio_client as pc
+        from sqlalchemy import text as _text
         engine = get_engine()
     except Exception as e:
         st.warning(f"DB not available: {e}")
         return
 
-    closed = pc.get_closed_positions(engine, strategy_name=slug)
-    if closed.empty:
-        closed = pc.get_closed_positions(engine, strategy_name=display_name)
+    # Query closed trade groups from new schema
+    try:
+        with engine.connect() as _c:
+            closed = pd.read_sql(_text("""
+                SELECT
+                    t.TradeGroupId,
+                    s.Underlying AS Ticker,
+                    t.StrategyName,
+                    MIN(t.BusinessDate) AS OpenDate,
+                    MAX(t.BusinessDate) AS CloseDate,
+                    SUM(CASE WHEN t.Direction='Sell' THEN t.TransactionPrice * t.Quantity
+                             ELSE -t.TransactionPrice * t.Quantity END) AS RealizedPnL
+                FROM portfolio.[Transaction] t
+                JOIN portfolio.Security s ON s.SecurityId = t.SecurityId
+                WHERE t.StrategyName IN (:slug, :dname)
+                  AND t.Notes LIKE '%CLOSE%'
+                GROUP BY t.TradeGroupId, s.Underlying, t.StrategyName
+            """), _c, params={"slug": slug, "dname": display_name})
+    except Exception:
+        closed = pd.DataFrame()
 
     if closed.empty:
-        st.info("No executed trades recorded yet. Trades appear here after you execute from "
-                "Paper Trading or log them in Portfolio → Log Trade.")
+        st.info("No executed trades recorded yet. Trades appear here after you close positions in "
+                "the Paper Trading tab.")
         return
 
     closed["CloseDate"] = pd.to_datetime(closed["CloseDate"])
@@ -3047,20 +3064,15 @@ def _render_strategy_performance(slug: str):
     fig_live.update_layout(title="Cumulative Live P&L", height=300, **_DARK)
     st.plotly_chart(fig_live, width="stretch")
 
-    show_cols = [c for c in ["CloseDate", "Symbol", "PositionType", "Direction",
-                              "Quantity", "AvgEntryPrice", "AvgExitPrice",
-                              "RealizedPnL", "HoldDays", "Regime", "Tags"]
+    show_cols = [c for c in ["CloseDate", "Ticker", "StrategyName", "RealizedPnL", "OpenDate"]
                  if c in closed.columns]
     st.dataframe(
         closed[show_cols].sort_values("CloseDate", ascending=False),
         width="stretch", hide_index=True,
         column_config={
-            "CloseDate":     cc.DateColumn("Close Date"),
-            "RealizedPnL":   cc.NumberColumn("P&L",     format="$%.2f"),
-            "AvgEntryPrice": cc.NumberColumn("Entry",   format="$%.4f"),
-            "AvgExitPrice":  cc.NumberColumn("Exit",    format="$%.4f"),
-            "Quantity":      cc.NumberColumn("Qty",     format="%.2f"),
-            "HoldDays":      cc.NumberColumn("Hold Days", format="%d d"),
+            "CloseDate":    cc.DateColumn("Close Date"),
+            "OpenDate":     cc.DateColumn("Open Date"),
+            "RealizedPnL":  cc.NumberColumn("P&L", format="$%.2f"),
         },
     )
 
