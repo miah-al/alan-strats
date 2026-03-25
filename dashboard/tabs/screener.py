@@ -8,6 +8,7 @@ import time
 import datetime
 import logging
 
+import numpy as np
 import pandas as pd
 import streamlit as st
 import plotly.graph_objects as go
@@ -233,7 +234,7 @@ def _pc_chart(opts_df: pd.DataFrame) -> go.Figure:
 
 # ── Main render ───────────────────────────────────────────────────────────────
 
-def render(api_key: str = "") -> None:
+def render(api_key: str = "", selected_strategies: list = None) -> None:
     st.markdown("## Stock Screener")
 
     if not api_key:
@@ -260,10 +261,22 @@ def render(api_key: str = "") -> None:
 
     st.markdown("---")
 
-    # ── Tabs ──────────────────────────────────────────────────────────────────
-    t_movers, t_scan, t_options, t_tech, t_volarb = st.tabs([
-        "📈 Movers", "💧 Liquidity Scan", "🔀 Options Flow", "📐 Technicals", "⚡ Vol Arb Scan"
-    ])
+    # ── Tabs — fixed market tabs + one tab per selected strategy with has_screener=True ──
+    from alan_trader.strategies.registry import STRATEGY_METADATA as STRATEGY_REGISTRY
+    _active = set(selected_strategies or [])
+    _screener_strategies = [
+        (slug, meta) for slug, meta in STRATEGY_REGISTRY.items()
+        if meta.get("has_screener") and slug in _active
+    ]
+    _fixed_labels = ["📈 Movers", "💧 Liquidity Scan", "🔀 Options Flow", "📐 Technicals"]
+    _strat_labels = [
+        f"{meta.get('icon', '⚡')} {meta['display_name']}"
+        for _, meta in _screener_strategies
+    ]
+    _all_tabs = st.tabs(_fixed_labels + _strat_labels)
+    t_movers, t_scan, t_options, t_tech = _all_tabs[:4]
+    _strat_tabs = {slug: _all_tabs[4 + i] for i, (slug, _) in enumerate(_screener_strategies)}
+    t_volarb = _strat_tabs.get("vol_arbitrage")
 
     # ══════════════════════════════════════════════════════════════════════════
     # MOVERS
@@ -546,7 +559,8 @@ def render(api_key: str = "") -> None:
     # ══════════════════════════════════════════════════════════════════════════
     # VOL ARB SCAN — detect parity violations & IV skew opportunities
     # ══════════════════════════════════════════════════════════════════════════
-    with t_volarb:
+    if t_volarb is not None:
+      with t_volarb:
         st.caption(
             "Scans the selected universe for **put-call parity violations** and "
             "**IV skew arbitrage** opportunities. Works best on retail-heavy names "
@@ -563,6 +577,20 @@ def render(api_key: str = "") -> None:
         va_dte_min   = va_col3.slider("DTE min", 5, 30, 14, 1, key="va_dtl")
         va_dte_max   = va_col4.slider("DTE max", 20, 90, 45, 5, key="va_dth")
 
+        va_col5, va_col6, va_col7, va_col8 = st.columns(4)
+        va_put_width  = va_col5.slider("Put spread width ($)", 1.0, 10.0, 2.0, 0.5,
+                                       key="va_pw",
+                                       help="Bull put spread width — long put at K minus this value")
+        va_hedge_width = va_col6.slider("Hedge spread width ($)", 1.0, 10.0, 2.0, 0.5,
+                                        key="va_hw",
+                                        help="Bear call spread width — long call at ATM plus this value")
+        va_iv_rank    = va_col7.slider("Min IV rank (0–1)", 0.0, 0.80, 0.0, 0.05,
+                                       key="va_ivr",
+                                       help="Only show tickers where current IV rank exceeds this threshold")
+        va_div_yield  = va_col8.slider("Div yield (%)", 0.0, 5.0, 1.3, 0.1,
+                                       key="va_dy",
+                                       help="Continuous dividend yield used in put-call parity calculation") / 100
+
         va_tickers = st.multiselect(
             "Tickers to scan",
             options=sorted({t for lst in UNIVERSES.values() for t in lst}),
@@ -570,7 +598,7 @@ def render(api_key: str = "") -> None:
             key="va_tickers",
         )
 
-        if st.button("⚡ Run Vol Arb Scan", width="stretch", key="va_btn"):
+        if st.button("⚡ Run IV Skew Scan", width="stretch", key="va_btn"):
             if not api_key:
                 st.warning("Enter a Polygon API key in the sidebar.")
             elif not va_tickers:
@@ -592,7 +620,8 @@ def render(api_key: str = "") -> None:
                     except Exception:
                         return None
 
-                def _scan_ticker(ticker, client, min_viol_pct, skew_thr, dte_lo, dte_hi):
+                def _scan_ticker(ticker, client, min_viol_pct, skew_thr, dte_lo, dte_hi,
+                                 put_spread_width=2.0, hedge_spread_width=2.0, div_yield=0.013):
                     import datetime as _dt
                     snap  = client.get_snapshot(ticker)
                     S     = (snap.get("day", {}).get("c") or
@@ -680,7 +709,7 @@ def render(api_key: str = "") -> None:
                             if c_mid <= 0 or p_mid <= 0:
                                 continue
 
-                            theory   = S * np.exp(-0.013 * T) - K * np.exp(-r_rate * T)
+                            theory   = S * np.exp(-div_yield * T) - K * np.exp(-r_rate * T)
                             obs      = c_mid - p_mid
                             viol     = obs - theory
                             viol_pct = abs(viol) / S * 100
@@ -712,16 +741,18 @@ def render(api_key: str = "") -> None:
                         signal = "Skew Arb"
 
                     return [{
-                        "Ticker":        ticker,
-                        "Price":         round(S, 2),
-                        "Avg IV":        round(avg_iv * 100, 1) if avg_iv == avg_iv else None,
-                        "P/C OI":        pc_oi,
-                        "P/C Vol":       pc_vol,
+                        "Ticker":           ticker,
+                        "Price":            round(S, 2),
+                        "Avg IV":           round(avg_iv * 100, 1) if avg_iv == avg_iv else None,
+                        "P/C OI":           pc_oi,
+                        "P/C Vol":          pc_vol,
                         "Best Violation %": round(max((abs(x[2]) / S * 100 for x in parity_viols), default=0), 3),
                         "Best Skew (pts)":  round(max((x[4] for x in skew_viols), default=0), 1),
-                        "# Parity":      len(parity_viols),
-                        "# Skew":        len(skew_viols),
-                        "Signal":        signal,
+                        "# Parity":         len(parity_viols),
+                        "# Skew":           len(skew_viols),
+                        "Signal":           signal,
+                        "Put Spread $":     put_spread_width,
+                        "Hedge Spread $":   hedge_spread_width,
                     }]
 
                 client = PolygonClient(api_key=api_key)
@@ -731,7 +762,9 @@ def render(api_key: str = "") -> None:
                     prog.progress((i + 1) / len(va_tickers), text=f"Scanning {tkr}…")
                     try:
                         results.extend(_scan_ticker(
-                            tkr, client, va_min_viol, va_skew_thr, va_dte_min, va_dte_max
+                            tkr, client, va_min_viol, va_skew_thr, va_dte_min, va_dte_max,
+                            put_spread_width=va_put_width, hedge_spread_width=va_hedge_width,
+                            div_yield=va_div_yield,
                         ))
                     except Exception as exc:
                         logger.warning(f"Vol arb scan {tkr}: {exc}")
@@ -741,60 +774,128 @@ def render(api_key: str = "") -> None:
                     st.info("No violations found. Try widening thresholds or check API key.")
                 else:
                     df_va = pd.DataFrame(results)
+                    df_va = df_va[~df_va["Signal"].isin(["Conversion", "Reversal"])]
                     df_va = df_va.sort_values("Best Violation %", ascending=False)
+                    st.session_state["va_scan_results"] = df_va
 
-                    # Highlight rows with signals
-                    signal_tickers = df_va[df_va["Signal"] != "—"]["Ticker"].tolist()
-                    if signal_tickers:
-                        st.success(f"**Opportunities found:** {', '.join(signal_tickers)}")
+        # ── Results (rendered from session_state so they survive button clicks) ──
+        if "va_scan_results" in st.session_state:
+            df_va = st.session_state["va_scan_results"]
 
-                    st.dataframe(
-                        df_va, hide_index=True, width="stretch",
-                        column_config={
-                            "Price":               cc.NumberColumn("Price",       format="$%.2f"),
-                            "Avg IV":              cc.NumberColumn("Avg IV",      format="%.1f%%"),
-                            "P/C OI":              cc.NumberColumn("P/C OI",      format="%.2f"),
-                            "P/C Vol":             cc.NumberColumn("P/C Vol",     format="%.2f"),
-                            "Best Violation %":    cc.NumberColumn("Best Viol %", format="%.3f%%"),
-                            "Best Skew (pts)":     cc.NumberColumn("Best Skew",   format="%.1f pt"),
-                            "# Parity":            cc.NumberColumn("# Parity",    format="%d"),
-                            "# Skew":              cc.NumberColumn("# Skew",      format="%d"),
-                            "Signal":              cc.TextColumn("Signal"),
-                        },
-                    )
+            signal_tickers = df_va[df_va["Signal"] != "—"]["Ticker"].tolist()
+            if signal_tickers:
+                st.success(f"**Opportunities found:** {', '.join(signal_tickers)}")
 
-                    # Bar: violations by ticker
-                    opp = df_va[(df_va["Best Violation %"] > 0) | (df_va["Best Skew (pts)"] > 0)]
-                    if not opp.empty:
-                        fig_va = go.Figure()
-                        fig_va.add_trace(go.Bar(
-                            name="Parity Violation %", x=opp["Ticker"],
-                            y=opp["Best Violation %"],
-                            marker_color="#ef9a9a",
-                            hovertemplate="%{x}: %{y:.3f}%<extra>Parity</extra>",
-                        ))
-                        fig_va.add_trace(go.Bar(
-                            name="IV Skew (pts)", x=opp["Ticker"],
-                            y=opp["Best Skew (pts)"] / 10,  # scale to same axis
-                            marker_color="#80cbc4",
-                            hovertemplate="%{x}: %{y:.1f} pts (÷10)<extra>Skew</extra>",
-                        ))
-                        fig_va.update_layout(
-                            title="Vol Arb Opportunities by Ticker",
-                            barmode="group", height=300,
-                            paper_bgcolor="#0e1117", plot_bgcolor="#0e1117",
-                            font=dict(color="#b0b8c8"),
-                            xaxis=dict(gridcolor="#1e2130"),
-                            yaxis=dict(gridcolor="#1e2130", title="Violation % / Skew÷10"),
-                            legend=dict(orientation="h", y=1.1),
-                            margin=dict(l=0, r=0, t=40, b=0),
-                        )
-                        st.plotly_chart(fig_va, width="stretch")
+            st.dataframe(
+                df_va, hide_index=True, width="stretch",
+                column_config={
+                    "Price":               cc.NumberColumn("Price",       format="$%.2f"),
+                    "Avg IV":              cc.NumberColumn("Avg IV",      format="%.1f%%"),
+                    "P/C OI":              cc.NumberColumn("P/C OI",      format="%.2f"),
+                    "P/C Vol":             cc.NumberColumn("P/C Vol",     format="%.2f"),
+                    "Best Violation %":    cc.NumberColumn("Best Viol %", format="%.3f%%"),
+                    "Best Skew (pts)":     cc.NumberColumn("Best Skew",   format="%.1f pt"),
+                    "# Parity":            cc.NumberColumn("# Parity",    format="%d"),
+                    "# Skew":              cc.NumberColumn("# Skew",      format="%d"),
+                    "Signal":              cc.TextColumn("Signal"),
+                },
+            )
 
-                    st.caption(
-                        "**Parity Violation %** = |C − P − theoretical| / S × 100.  "
-                        "**IV Skew** = put IV − call IV at same strike (vol points).  "
-                        "**P/C OI > 1.5** = put-heavy flow (typical for HOOD, COIN).  "
-                        "Signal: *Conversion* = calls overpriced; *Reversal* = puts overpriced; "
-                        "*Skew Arb* = risk-reversal opportunity."
-                    )
+            # Bar: violations by ticker
+            opp = df_va[(df_va["Best Violation %"] > 0) | (df_va["Best Skew (pts)"] > 0)]
+            if not opp.empty:
+                fig_va = go.Figure()
+                fig_va.add_trace(go.Bar(
+                    name="Parity Violation %", x=opp["Ticker"],
+                    y=opp["Best Violation %"],
+                    marker_color="#ef9a9a",
+                    hovertemplate="%{x}: %{y:.3f}%<extra>Parity</extra>",
+                ))
+                fig_va.add_trace(go.Bar(
+                    name="IV Skew (pts)", x=opp["Ticker"],
+                    y=opp["Best Skew (pts)"] / 10,
+                    marker_color="#80cbc4",
+                    hovertemplate="%{x}: %{y:.1f} pts (÷10)<extra>Skew</extra>",
+                ))
+                fig_va.update_layout(
+                    title="IV Skew Premium Capture — Opportunities by Ticker",
+                    barmode="group", height=300,
+                    paper_bgcolor="#0e1117", plot_bgcolor="#0e1117",
+                    font=dict(color="#b0b8c8"),
+                    xaxis=dict(gridcolor="#1e2130"),
+                    yaxis=dict(gridcolor="#1e2130", title="Violation % / Skew÷10"),
+                    legend=dict(orientation="h", y=1.1),
+                    margin=dict(l=0, r=0, t=40, b=0),
+                )
+                st.plotly_chart(fig_va, width="stretch")
+
+            st.caption(
+                "**Parity Violation %** = |C − P − theoretical| / S × 100.  "
+                "**IV Skew** = put IV − call IV at same strike (vol points).  "
+                "**P/C OI > 1.5** = put-heavy flow (typical for HOOD, COIN).  "
+                "*Skew Arb* = risk-reversal opportunity."
+            )
+
+            # ── Paper Trade selector ──────────────────────────────────────────
+            st.markdown("---")
+            signal_rows = df_va[df_va["Signal"].isin(["Parity + Skew Arb", "Skew Arb"])].copy()
+            if signal_rows.empty:
+                st.info("No IV skew signals to paper trade.")
+            else:
+                st.markdown("**Select trades to paper trade:**")
+                signal_rows.insert(0, "Save", False)
+                edited = st.data_editor(
+                    signal_rows[["Save", "Ticker", "Price", "Best Skew (pts)", "Signal", "Put Spread $", "Hedge Spread $"]],
+                    column_config={"Save": cc.CheckboxColumn("Save", default=False)},
+                    hide_index=True, width="stretch", key="va_trade_select",
+                )
+                selected_rows = edited[edited["Save"] == True]
+                pt_notes = st.text_input("Notes (optional)", placeholder="e.g. High IV environment, HOOD skew trade",
+                                         key="va_pt_notes")
+                if st.button("📥 Save to Paper Trades (DB)", key="va_pt_btn", type="primary",
+                             disabled=selected_rows.empty):
+                    try:
+                        from alan_trader.db.client import get_engine as _get_eng
+                        from alan_trader.db.portfolio_client import get_security_id
+                        from sqlalchemy import text as _text
+                        import datetime as _dt
+                        _eng = _get_eng()
+                        _today = _dt.date.today()
+
+                        # Check all tickers exist in mkt.Ticker before saving
+                        _missing = [
+                            _row["Ticker"] for _, _row in selected_rows.iterrows()
+                            if get_security_id(_eng, _row["Ticker"]) is None
+                        ]
+                        if _missing:
+                            st.error(
+                                f"⚠️ Ticker(s) **{', '.join(_missing)}** not found in `mkt.Ticker`. "
+                                f"Please sync these tickers first, then retry."
+                            )
+                        else:
+                            _saved = 0
+                            with _eng.begin() as _conn:
+                                for _, _row in selected_rows.iterrows():
+                                    _sec_id = get_security_id(_eng, _row["Ticker"])
+                                    _conn.execute(
+                                        _text("""
+                                            INSERT INTO portfolio.Position
+                                                (AccountId, SecurityId, PositionType, Direction, Quantity, OpenDate,
+                                                 Status, AvgEntryPrice, StrategyName, Source, Tags, Notes)
+                                            VALUES
+                                                (1, :sec_id, 'option_spread', 'Long', 1, :open_date,
+                                                 'Open', :entry_price, :strategy, 'Screener', :tags, :notes)
+                                        """),
+                                        {
+                                            "sec_id":      _sec_id,
+                                            "open_date":   _today,
+                                            "entry_price": float(_row["Price"]),
+                                            "strategy":    "IV Skew Premium Capture",
+                                            "tags":        f"{_row['Ticker']}|{_row['Signal']}|skew={_row['Best Skew (pts)']}pts|put_sw={_row['Put Spread $']}|hedge_sw={_row['Hedge Spread $']}",
+                                            "notes":       pt_notes or f"Screener signal: {_row['Signal']} on {_row['Ticker']} @ ${_row['Price']:.2f}",
+                                        }
+                                    )
+                                    _saved += 1
+                            st.success(f"✅ {_saved} trade(s) saved to Paper Trades — view in Paper Trading tab.")
+                    except Exception as _e:
+                        st.error(f"DB save failed: {_e}")

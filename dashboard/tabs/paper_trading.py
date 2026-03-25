@@ -6,6 +6,7 @@ import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
+import streamlit.column_config as cc
 
 _INITIAL_CASH = 100_000.0
 _COMMISSION   = 1.0   # per trade
@@ -441,6 +442,35 @@ def render() -> None:
     except Exception as e:
         st.error(f"Cannot connect to database: {e}")
         return
+
+    # ── Screener Open Positions ───────────────────────────────────────────────
+    st.subheader("Open Screener Positions")
+    try:
+        from sqlalchemy import text as _text
+        with engine.connect() as _conn:
+            _open = pd.read_sql(_text("""
+                SELECT PositionId, StrategyName, Tags, Notes, OpenDate, AvgEntryPrice, Status
+                FROM portfolio.Position
+                WHERE Status = 'Open'
+                ORDER BY OpenDate DESC
+            """), _conn)
+
+        if _open.empty:
+            st.info("No open screener positions. Run a scan and save signals to start tracking.")
+        else:
+            _open["Ticker"]  = _open["Tags"].str.split("|").str[0]
+            _open["Signal"]  = _open["Tags"].str.split("|").str[1]
+            _open["Strategy"] = _open["StrategyName"]
+            disp = _open[["Ticker", "Strategy", "Signal", "OpenDate", "AvgEntryPrice", "Notes"]].rename(
+                columns={"AvgEntryPrice": "Entry Price $", "OpenDate": "Opened"}
+            )
+            st.dataframe(disp, hide_index=True, width="stretch",
+                         column_config={"Entry Price $": cc.NumberColumn(format="$%.2f")})
+            st.caption(f"{len(_open)} open position(s)")
+    except Exception as _ex:
+        st.warning(f"Could not load screener positions: {_ex}")
+
+    st.markdown("---")
 
     from alan_trader.db.portfolio_client import (
         ensure_default_account, get_holdings, get_balance_history,

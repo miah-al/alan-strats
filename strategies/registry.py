@@ -60,13 +60,13 @@ STRATEGY_METADATA: dict[str, dict] = {
         "required_data": ["price", "vix", "dividends"],
     },
     "vol_arbitrage": {
-        "display_name": "Vol Arbitrage",
+        "display_name": "IV Skew Premium Capture",
         "type": "rule",
         "status": "active",
         "icon": "📊",
         "description": (
-            "Scans options chain for put-call parity violations. "
-            "Executes conversions when calls are overpriced and reversals when puts are overpriced."
+            "Harvests structural put IV overpricing via a fully defined-risk, RH-compliant spread. "
+            "Bull put spread at skew strike + long call + bear call spread hedge. 5 legs, max loss defined at entry."
         ),
         "asset_class": "equities_options",
         "typical_holding_days": 3,
@@ -76,6 +76,7 @@ STRATEGY_METADATA: dict[str, dict] = {
         "uses_ml": False,
         "requires_ticker": True,
         "required_data": ["price", "options_chain"],
+        "has_screener": True,
     },
 
     # ── VIX strategies ─────────────────────────────────────────────────────

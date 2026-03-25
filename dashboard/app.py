@@ -1228,6 +1228,17 @@ def _render_backtest(slug: str):
         n_flat    = n_total - n_winners - n_losers
         _flat_str = f" / {n_flat} no-data" if n_flat > 0 else ""
         st.subheader(f"Trades — {n_winners} winners / {n_losers} losers / {n_total} total{_flat_str}")
+
+        # Total $ In / $ Out / Net P&L summary
+        if "cost" in trades.columns and "pnl" in trades.columns:
+            _total_in  = trades["cost"].sum()
+            _total_pnl = trades["pnl"].sum()
+            _total_out = _total_in + _total_pnl
+            _sm1, _sm2, _sm3, _sm4 = st.columns(4)
+            _sm1.metric("Total $ In",  f"${_total_in:,.0f}")
+            _sm2.metric("Total $ Out", f"${_total_out:,.0f}")
+            _sm3.metric("Net P&L",     f"${_total_pnl:+,.0f}")
+            _sm4.metric("Avg P&L / Trade", f"${_total_pnl / max(n_total, 1):+,.0f}")
         if "long_strike" in trades.columns:
             st.caption("Long/short leg prices are per-share option prices at entry. "
                        "Spread cost = long leg − short leg + slippage.")
@@ -1502,12 +1513,20 @@ div[data-testid="stDialog"] > div[role="dialog"] {
                 cpnl = round(float(row.get("call_pnl", 0) or 0), 2)
                 ppnl = round(float(row.get("put_pnl",  0) or 0), 2)
                 if tt == "skew_arb":
+                    tr_K  = row.get("strike", 0)
+                    lp_k  = row.get("long_put_strike"); lp_e = row.get("long_put_entry"); lp_x = row.get("long_put_exit")
+                    lp_pnl = round(float(row.get("long_put_pnl", 0) or 0), 2)
                     rows = [
-                        {"leg": f"① Short Put  ({n} cts)", "side": "Sell",
+                        {"leg": f"① Short Put  ({n} cts, K=${float(tr_K):.1f})", "side": "Sell",
                          "entry": ppe, "exit": pex, "pnl": ppnl},
-                        {"leg": f"② Long Call  ({n} cts)", "side": "Buy",
-                         "entry": cpe, "exit": cex, "pnl": cpnl},
                     ]
+                    if lp_k is not None:
+                        rows.append({"leg": f"② Long Put   ({n} cts, K=${float(lp_k):.1f})", "side": "Buy",
+                                     "entry": float(lp_e) if lp_e else None,
+                                     "exit":  float(lp_x) if lp_x else None,
+                                     "pnl":   lp_pnl})
+                    rows.append({"leg": f"③ Long Call  ({n} cts, K=${float(tr_K):.1f})", "side": "Buy",
+                                 "entry": cpe, "exit": cex, "pnl": cpnl})
                     h_sk = row.get("hedge_short_strike"); h_lk = row.get("hedge_long_strike")
                     h_se = row.get("hedge_short_entry");  h_le = row.get("hedge_long_entry")
                     h_sx = row.get("hedge_short_exit");   h_lx = row.get("hedge_long_exit")
@@ -1516,10 +1535,10 @@ div[data-testid="stDialog"] > div[role="dialog"] {
                         h_le_f = float(h_le) if h_le is not None else None
                         h_sx_f = float(h_sx) if h_sx is not None else None
                         h_lx_f = float(h_lx) if h_lx is not None else None
-                        rows.append({"leg": f"③ Short Call ({n} cts, K=${float(h_sk):.1f})", "side": "Sell",
+                        rows.append({"leg": f"④ Short Call ({n} cts, K=${float(h_sk):.1f})", "side": "Sell",
                                      "entry": h_se_f, "exit": h_sx_f,
                                      "pnl": round((h_se_f - h_sx_f) * 100 * n, 2) if h_se_f and h_sx_f else 0})
-                        rows.append({"leg": f"④ Long Call  ({n} cts, K=${float(h_lk):.1f})", "side": "Buy",
+                        rows.append({"leg": f"⑤ Long Call  ({n} cts, K=${float(h_lk):.1f})", "side": "Buy",
                                      "entry": h_le_f, "exit": h_lx_f,
                                      "pnl": round((h_lx_f - h_le_f) * 100 * n, 2) if h_le_f and h_lx_f else 0})
                     rows.append({"leg": "Hedge Spread", "side": "—", "entry": None, "exit": None,
@@ -1613,14 +1632,166 @@ div[data-testid="stDialog"] > div[role="dialog"] {
                     f'<td style="padding:6px 14px;color:{tc};font-family:monospace">{ext}</td>'
                     f'<td style="padding:6px 14px;color:{pc};font-weight:600;font-family:monospace">${pv:+,.2f}</td></tr>')
 
+        def _payoff_svg(tr):
+            """Inline SVG payoff-at-expiry diagram for a vol_arb trade."""
+            try:
+                K      = float(tr.get("strike") or 0)
+                spot   = float(tr.get("spot")   or K)
+                put_en = float(tr.get("put_price_entry",  0) or 0)
+                cal_en = float(tr.get("call_price_entry", 0) or 0)
+                h_sk   = tr.get("hedge_short_strike"); h_lk = tr.get("hedge_long_strike")
+                h_se   = tr.get("hedge_short_entry");  h_le = tr.get("hedge_long_entry")
+                lp_k_svg = tr.get("long_put_strike")
+                lp_e_svg = tr.get("long_put_entry")
+                n      = int(tr.get("contracts", 1))
+
+                all_strikes = [K, spot] + ([float(h_sk)] if h_sk else []) + ([float(h_lk)] if h_lk else []) + ([float(lp_k_svg)] if lp_k_svg else [])
+                s_lo = min(all_strikes) * 0.65
+                s_hi = max(all_strikes) * 1.35
+                steps = 400
+                prices = [s_lo + (s_hi - s_lo) * i / (steps - 1) for i in range(steps)]
+
+                def total_pnl(S):
+                    p  = (put_en - max(K - S, 0)) * 100 * n
+                    p += (max(S - K, 0) - cal_en) * 100 * n
+                    if h_sk and h_se: p += (float(h_se) - max(S - float(h_sk), 0)) * 100 * n
+                    if h_lk and h_le: p += (max(S - float(h_lk), 0) - float(h_le)) * 100 * n
+                    if lp_k_svg and lp_e_svg: p += (max(float(lp_k_svg) - S, 0) - float(lp_e_svg)) * 100 * n
+                    return p
+
+                pnls  = [total_pnl(s) for s in prices]
+                p_min = min(pnls); p_max = max(pnls)
+                p_rng = max(p_max - p_min, 1)
+
+                # Canvas
+                W, H = 1400, 330
+                pl, pr, pt, pb = 72, 20, 16, 30
+                pw = W - pl - pr; ph = H - pt - pb
+
+                def sx(s): return pl + (s - s_lo) / (s_hi - s_lo) * pw
+                def sy(p): return pt + ph - (p - p_min) / p_rng * ph
+                y0 = sy(0)
+
+                # Build profit (green) and loss (red) filled polygons separately
+                def _fill_region(above_zero):
+                    pts = []
+                    for i, (s, p) in enumerate(zip(prices, pnls)):
+                        x = sx(s); y = sy(p)
+                        if above_zero and p >= 0:
+                            pts.append((x, y))
+                        elif not above_zero and p <= 0:
+                            pts.append((x, y))
+                        else:
+                            # Interpolate zero crossing
+                            if i > 0:
+                                p0 = pnls[i-1]; p1 = p
+                                if p0 != p1:
+                                    t = -p0 / (p1 - p0)
+                                    xc = sx(prices[i-1]) + t * (sx(s) - sx(prices[i-1]))
+                                    pts.append((xc, y0))
+                    if len(pts) < 2: return ""
+                    poly = " ".join(f"{x:.1f},{y:.1f}" for x, y in pts)
+                    # close at zero line
+                    fill = "#22c55e" if above_zero else "#ef4444"
+                    return f'<polygon points="{sx(prices[0]):.1f},{y0:.1f} {poly} {sx(prices[-1]):.1f},{y0:.1f}" fill="{fill}" fill-opacity="0.12" stroke="none"/>'
+
+                svg = (f'<svg width="{W}" height="{H}" xmlns="http://www.w3.org/2000/svg" '
+                       f'style="background:#0a1120;border-radius:4px;display:block;margin-top:8px;">')
+
+                # Clip region so nothing draws outside plot area
+                svg += (f'<defs><clipPath id="cp"><rect x="{pl}" y="{pt}" width="{pw}" height="{ph}"/></clipPath></defs>')
+
+                # Grid lines
+                for p_val in [p_min, p_min/2, 0, p_max/2, p_max]:
+                    yy = sy(p_val)
+                    if pt <= yy <= pt + ph:
+                        svg += f'<line x1="{pl}" y1="{yy:.1f}" x2="{pl+pw}" y2="{yy:.1f}" stroke="#1e293b" stroke-width="1"/>'
+
+                # Fills (clipped)
+                svg += f'<g clip-path="url(#cp)">'
+                svg += _fill_region(True)
+                svg += _fill_region(False)
+                # Zero line
+                svg += f'<line x1="{pl}" y1="{y0:.1f}" x2="{pl+pw}" y2="{y0:.1f}" stroke="#374151" stroke-width="1.5" stroke-dasharray="5,4"/>'
+                # Payoff line
+                path_d = f'M {sx(prices[0]):.1f} {sy(pnls[0]):.1f} ' + " ".join(f'L {sx(prices[i]):.1f} {sy(pnls[i]):.1f}' for i in range(1, steps))
+                svg += f'<path d="{path_d}" stroke="#93c5fd" stroke-width="2" fill="none"/>'
+                svg += '</g>'
+
+                # Axes
+                svg += f'<line x1="{pl}" y1="{pt}" x2="{pl}" y2="{pt+ph}" stroke="#4b5563" stroke-width="1"/>'
+                svg += f'<line x1="{pl}" y1="{pt+ph}" x2="{pl+pw}" y2="{pt+ph}" stroke="#4b5563" stroke-width="1"/>'
+
+                # Y-axis label (rotated)
+                mid_y = pt + ph / 2
+                svg += f'<text x="10" y="{mid_y:.0f}" text-anchor="middle" dominant-baseline="middle" font-size="9" fill="#6b7280" font-family="sans-serif" transform="rotate(-90,10,{mid_y:.0f})">P&amp;L ($)</text>'
+
+                # Y-axis tick labels
+                for p_val in [p_max, 0, p_min]:
+                    yy = sy(p_val)
+                    col = "#4ade80" if p_val > 0 else "#f87171" if p_val < 0 else "#9ca3af"
+                    lbl = f"${p_val:+,.0f}" if p_val != 0 else "$0"
+                    svg += f'<text x="{pl-5}" y="{yy:.1f}" text-anchor="end" dominant-baseline="middle" font-size="9" fill="{col}" font-family="monospace">{lbl}</text>'
+
+                # X-axis price ticks (8 evenly spaced)
+                n_xticks = 8
+                for i in range(n_xticks + 1):
+                    s_val = s_lo + (s_hi - s_lo) * i / n_xticks
+                    x = sx(s_val)
+                    svg += f'<line x1="{x:.1f}" y1="{pt+ph}" x2="{x:.1f}" y2="{pt+ph+4}" stroke="#4b5563" stroke-width="1"/>'
+                    svg += f'<text x="{x:.1f}" y="{pt+ph+14}" text-anchor="middle" font-size="9" fill="#6b7280" font-family="monospace">${s_val:.1f}</text>'
+
+                # Vertical strike markers — labels inside chart, staggered vertically
+                markers = sorted([
+                    (K,    f"K={K:.2f}",      "#a5b4fc"),
+                    (spot, f"S={spot:.2f}",   "#fbbf24"),
+                ] + ([(float(h_sk), f"Hs={float(h_sk):.1f}", "#f87171")] if h_sk else [])
+                  + ([(float(h_lk), f"Hl={float(h_lk):.1f}", "#fb923c")] if h_lk else [])
+                  + ([(float(lp_k_svg), f"LP={float(lp_k_svg):.1f}", "#818cf8")] if lp_k_svg else []),
+                  key=lambda m: m[0])
+
+                # Assign stagger row: bump row when too close to previous
+                rows = []; prev_x = -999; cur_row = 0
+                for val, lbl, col in markers:
+                    x = sx(val)
+                    cur_row = (cur_row + 1) % 4 if (x - prev_x) < 38 else 0
+                    rows.append(cur_row); prev_x = x
+
+                for i, (val, lbl, col) in enumerate(markers):
+                    x = sx(val)
+                    svg += f'<line x1="{x:.1f}" y1="{pt}" x2="{x:.1f}" y2="{pt+ph}" stroke="{col}" stroke-width="1" stroke-dasharray="3,3" opacity="0.7" clip-path="url(#cp)"/>'
+                    ty = pt + 10 + rows[i] * 14
+                    svg += (f'<rect x="{x+2:.1f}" y="{ty-9}" width="{len(lbl)*6+4}" height="12" fill="#0a1120" rx="2"/>'
+                            f'<text x="{x+4:.1f}" y="{ty}" font-size="9" fill="{col}" font-family="monospace">{lbl}</text>')
+
+                svg += '</svg>'
+
+                # Legend as HTML above the SVG
+                leg_html = '<div style="display:flex;gap:16px;flex-wrap:wrap;margin-top:10px;margin-bottom:4px;">'
+                leg_items = [("Short Put", "#a5b4fc")]
+                if lp_k_svg: leg_items.insert(1, ("Long Put", "#818cf8"))
+                leg_items += [("Long Call", "#a5b4fc")]
+                if h_sk: leg_items += [("Short Call (hedge)", "#f87171"), ("Long Call (hedge)", "#fb923c")]
+                leg_items += [("Profit", "#22c55e"), ("Loss", "#ef4444")]
+                for lbl, col in leg_items:
+                    leg_html += (f'<span style="display:flex;align-items:center;gap:5px;">'
+                                 f'<span style="width:10px;height:10px;background:{col};opacity:0.8;border-radius:2px;display:inline-block;"></span>'
+                                 f'<span style="font-size:10px;color:#9ca3af">{lbl}</span></span>')
+                leg_html += '</div>'
+
+                return leg_html + svg
+            except Exception:
+                return ""
+
         def _build_detail(tr):
             det  = _detail_rows_for(tr)
             legs = [d for d in det if d.get("side") not in ("—",)]
             attr = [d for d in det if d.get("side") == "—"]
             if slug == "vol_arbitrage":
                 extras = []
-                if tr.get("put_pnl")  is not None: extras.append({"leg": "Short Put", "side": "—", "pnl": round(float(tr.get("put_pnl")  or 0), 2)})
-                if tr.get("call_pnl") is not None: extras.append({"leg": "Long Call",  "side": "—", "pnl": round(float(tr.get("call_pnl") or 0), 2)})
+                if tr.get("put_pnl")      is not None: extras.append({"leg": "Short Put", "side": "—", "pnl": round(float(tr.get("put_pnl")      or 0), 2)})
+                if tr.get("long_put_pnl") is not None: extras.append({"leg": "Long Put",  "side": "—", "pnl": round(float(tr.get("long_put_pnl") or 0), 2)})
+                if tr.get("call_pnl")     is not None: extras.append({"leg": "Long Call",  "side": "—", "pnl": round(float(tr.get("call_pnl")    or 0), 2)})
                 attr = extras + attr
 
             html = f'<td colspan="99" style="padding:0;"><div style="background:{DET};padding:14px 20px 16px;border-top:{BORD};font-family:sans-serif;">'
@@ -1652,7 +1823,10 @@ div[data-testid="stDialog"] > div[role="dialog"] {
                     if _sig:  html += _badge("Signal strength", f"{float(_sig):.3f}", "#e2e8f0")
                     if _cpe:  html += _badge("Call entry px", f"${float(_cpe):.4f}", "#e2e8f0")
                     if _ppe:  html += _badge("Put entry px",  f"${float(_ppe):.4f}", "#e2e8f0")
-                    if _cost: html += _badge("Net cost",      f"${float(_cost):,.2f}", "#e2e8f0")
+                    if _cost: html += _badge("Net Entry Cost", f"${float(_cost):,.2f}", "#e2e8f0")
+                    _pnl_val = float(tr.get("pnl") or 0)
+                    _exit_val = float(_cost or 0) + _pnl_val
+                    if _cost: html += _badge("Net Exit Value", f"${_exit_val:,.2f}", "#4ade80" if _exit_val >= float(_cost or 0) else "#f87171")
                 elif slug == "conversion_arb":
                     adiv = tr.get("actual_div"); idiv = tr.get("implied_div"); edge = tr.get("edge")
                     rfr  = tr.get("risk_free_rate"); dte = tr.get("dte")
@@ -1712,18 +1886,32 @@ div[data-testid="stDialog"] > div[role="dialog"] {
                          f'<span style="color:{ptc};font-weight:700;font-size:14px;font-family:monospace">${pnl_total:+,.2f}</span></span>')
                 html += '</div>'
 
+            # Payoff diagram (vol_arb only)
+            if slug == "vol_arbitrage":
+                svg = _payoff_svg(tr)
+                if svg:
+                    html += (f'<div style="margin-top:14px;padding-top:12px;border-top:1px solid #1e293b;">'
+                             f'<div style="font-size:10px;color:#4b5563;text-transform:uppercase;letter-spacing:.1em;font-weight:600;margin-bottom:4px">Payoff at Expiry</div>'
+                             f'{svg}</div>')
+
             html += '</div>'
             return html
 
         # ── CSS Grid <details> — same grid-template-columns = perfect alignment ─
-        _sum_cols = [c for c in ["entry_date","exit_date","strike","contracts","dte","edge","pnl","return_pct","cum_pnl"] if c in disp.columns]
-        _sum_labels = {"entry_date":"Entry","exit_date":"Exit","strike":"Strike","contracts":"Cts","dte":"DTE","edge":"Edge $/sh","pnl":"P&L","return_pct":"Return %","cum_pnl":"Cum P&L"}
-        _col_w = {"entry_date":"120px","exit_date":"120px","strike":"80px","contracts":"55px","dte":"55px","edge":"100px","pnl":"115px","return_pct":"95px","cum_pnl":"115px"}
+        if "cost" in disp.columns:
+            disp["net_in"]  = disp["cost"].round(2)
+            disp["net_out"] = (disp["cost"] + disp.get("pnl", pd.Series(0, index=disp.index)).fillna(0)).round(2)
+        _sum_cols = [c for c in ["entry_date","exit_date","strike","contracts","dte","net_in","net_out","pnl","return_pct","cum_pnl"] if c in disp.columns]
+        _sum_labels = {"entry_date":"Entry","exit_date":"Exit","strike":"Strike","contracts":"Cts","dte":"DTE","net_in":"$ In","net_out":"$ Out","edge":"Edge $/sh","pnl":"P&L","return_pct":"Return %","cum_pnl":"Cum P&L"}
+        _col_w = {"entry_date":"120px","exit_date":"120px","strike":"80px","contracts":"55px","dte":"55px","net_in":"110px","net_out":"110px","edge":"100px","pnl":"115px","return_pct":"95px","cum_pnl":"115px"}
         _grid = "36px " + " ".join(_col_w.get(c,"100px") for c in _sum_cols)
 
         def _sc(col, val):
             if val is None or (isinstance(val, float) and np.isnan(val)): return "—"
             if col in ("pnl","cum_pnl"): return _pc(val)
+            if col in ("net_in", "net_out"):
+                v = float(val)
+                return f'<span style="font-family:monospace">${v:,.0f}</span>'
             if col == "return_pct":
                 v = float(val); c = "#4ade80" if v >= 0 else "#f87171"
                 return f'<span style="color:{c};font-weight:600">{v:+.2f}%</span>'
@@ -2493,6 +2681,9 @@ def _render_strategy_performance(slug: str):
             else:
                 # ── expandable HTML table for arb strategies ──────────────────
                 _sorted_td = _td.sort_values(date_col, ascending=False).copy()
+                if "cost" in _sorted_td.columns:
+                    _sorted_td["net_in"]  = _sorted_td["cost"].round(2)
+                    _sorted_td["net_out"] = (_sorted_td["cost"] + _sorted_td.get("pnl", pd.Series(0, index=_sorted_td.index)).fillna(0)).round(2)
 
                 def _perf_detail_rows(row):
                     if slug == "conversion_arb":
@@ -2537,12 +2728,20 @@ def _render_strategy_performance(slug: str):
                         cpe = _fv(row.get("call_price_entry")); ppe = _fv(row.get("put_price_entry"))
                         cex = _fv(row.get("call_price_exit"));  pex = _fv(row.get("put_price_exit"))
                         if tt == "skew_arb":
+                            tr_K2  = row.get("strike", 0)
+                            lp_k2  = row.get("long_put_strike"); lp_e2 = row.get("long_put_entry"); lp_x2 = row.get("long_put_exit")
+                            lp_pnl2 = round(float(row.get("long_put_pnl", 0) or 0), 2)
                             rows2 = [
-                                {"leg": f"① Short Put  ({n} cts)", "side": "Sell", "entry": ppe, "exit": pex,
+                                {"leg": f"① Short Put  ({n} cts, K=${float(tr_K2):.1f})", "side": "Sell", "entry": ppe, "exit": pex,
                                  "pnl": round(float(row.get("put_pnl",  0) or 0), 2)},
-                                {"leg": f"② Long Call  ({n} cts)", "side": "Buy",  "entry": cpe, "exit": cex,
-                                 "pnl": round(float(row.get("call_pnl", 0) or 0), 2)},
                             ]
+                            if lp_k2 is not None:
+                                rows2.append({"leg": f"② Long Put   ({n} cts, K=${float(lp_k2):.1f})", "side": "Buy",
+                                              "entry": float(lp_e2) if lp_e2 else None,
+                                              "exit":  float(lp_x2) if lp_x2 else None,
+                                              "pnl":   lp_pnl2})
+                            rows2.append({"leg": f"③ Long Call  ({n} cts, K=${float(tr_K2):.1f})", "side": "Buy",  "entry": cpe, "exit": cex,
+                                          "pnl": round(float(row.get("call_pnl", 0) or 0), 2)})
                             h_sk2 = row.get("hedge_short_strike"); h_lk2 = row.get("hedge_long_strike")
                             h_se2 = row.get("hedge_short_entry");  h_le2 = row.get("hedge_long_entry")
                             h_sx2 = row.get("hedge_short_exit");   h_lx2 = row.get("hedge_long_exit")
@@ -2551,10 +2750,10 @@ def _render_strategy_performance(slug: str):
                                 h_le2_f = float(h_le2) if h_le2 is not None else None
                                 h_sx2_f = float(h_sx2) if h_sx2 is not None else None
                                 h_lx2_f = float(h_lx2) if h_lx2 is not None else None
-                                rows2.append({"leg": f"③ Short Call ({n} cts, K=${float(h_sk2):.1f})", "side": "Sell",
+                                rows2.append({"leg": f"④ Short Call ({n} cts, K=${float(h_sk2):.1f})", "side": "Sell",
                                               "entry": h_se2_f, "exit": h_sx2_f,
                                               "pnl": round((h_se2_f - h_sx2_f) * 100 * n, 2) if h_se2_f and h_sx2_f else 0})
-                                rows2.append({"leg": f"④ Long Call  ({n} cts, K=${float(h_lk2):.1f})", "side": "Buy",
+                                rows2.append({"leg": f"⑤ Long Call  ({n} cts, K=${float(h_lk2):.1f})", "side": "Buy",
                                               "entry": h_le2_f, "exit": h_lx2_f,
                                               "pnl": round((h_lx2_f - h_le2_f) * 100 * n, 2) if h_le2_f and h_lx2_f else 0})
                             rows2.append({"leg": "Hedge Spread", "side": "—", "entry": None, "exit": None,
@@ -2654,7 +2853,10 @@ def _render_strategy_performance(slug: str):
                             if _sig2:  html += _pbadge("Signal strength", f"{float(_sig2):.3f}")
                             if _cpe2:  html += _pbadge("Call entry px",  f"${float(_cpe2):.4f}")
                             if _ppe2:  html += _pbadge("Put entry px",   f"${float(_ppe2):.4f}")
-                            if _cost2: html += _pbadge("Net cost",       f"${float(_cost2):,.2f}")
+                            if _cost2: html += _pbadge("Net Entry Cost", f"${float(_cost2):,.2f}")
+                            _pnl_val2 = float(tr.get("pnl") or 0)
+                            _exit_val2 = float(_cost2 or 0) + _pnl_val2
+                            if _cost2: html += _pbadge("Net Exit Value", f"${_exit_val2:,.2f}", "#4ade80" if _exit_val2 >= float(_cost2 or 0) else "#f87171")
                             if _desc2:
                                 html += (f'<div style="width:100%;margin-top:8px;padding-top:8px;border-top:1px solid #1e293b;'
                                          f'font-size:12px;color:#94a3b8;line-height:1.5;">{str(_desc2)}</div>')
@@ -2721,8 +2923,8 @@ def _render_strategy_performance(slug: str):
                     return html
 
                 # Summary columns
-                _psum_cols = [c for c in ["entry_date","exit_date","strike","contracts","dte","edge","pnl","return_pct","cum_pnl"] if c in _sorted_td.columns]
-                _psum_labels = {"entry_date":"Entry","exit_date":"Exit","strike":"Strike","contracts":"Cts","dte":"DTE","edge":"Edge $/sh","pnl":"P&L","return_pct":"Return %","cum_pnl":"Cum P&L"}
+                _psum_cols = [c for c in ["entry_date","exit_date","strike","contracts","dte","net_in","net_out","pnl","return_pct","cum_pnl"] if c in _sorted_td.columns]
+                _psum_labels = {"entry_date":"Entry","exit_date":"Exit","strike":"Strike","contracts":"Cts","dte":"DTE","net_in":"$ In","net_out":"$ Out","edge":"Edge $/sh","pnl":"P&L","return_pct":"Return %","cum_pnl":"Cum P&L"}
                 # Fallback for strategies without standard arb columns
                 if not _psum_cols:
                     _psum_cols = [c for c in ["entry_date","exit_date","spread_type","entry_cost","pnl","cum_pnl","exit_reason"] if c in _sorted_td.columns]
@@ -2731,6 +2933,9 @@ def _render_strategy_performance(slug: str):
                 def _psc(col, val):
                     if val is None or (isinstance(val, float) and np.isnan(val)): return "—"
                     if col in ("pnl","cum_pnl"): return _ppc(val)
+                    if col in ("net_in", "net_out"):
+                        v = float(val)
+                        return f'<span style="font-family:monospace">${v:,.0f}</span>'
                     if col == "return_pct":
                         v = float(val); c = "#4ade80" if v >= 0 else "#f87171"
                         return f'<span style="color:{c};font-weight:600">{v:+.2f}%</span>'
@@ -2740,7 +2945,7 @@ def _render_strategy_performance(slug: str):
                     if col == "strike": return f"${float(val):.2f}"
                     return str(val)
 
-                _pcol_w = {"entry_date":"120px","exit_date":"120px","strike":"80px","contracts":"55px","dte":"55px","edge":"100px","pnl":"115px","return_pct":"95px","cum_pnl":"115px","spread_type":"120px","entry_cost":"100px","exit_reason":"120px"}
+                _pcol_w = {"entry_date":"120px","exit_date":"120px","strike":"80px","contracts":"55px","dte":"55px","net_in":"110px","net_out":"110px","edge":"100px","pnl":"115px","return_pct":"95px","cum_pnl":"115px","spread_type":"120px","entry_cost":"100px","exit_reason":"120px"}
                 _pgrid = "36px " + " ".join(_pcol_w.get(c,"100px") for c in _psum_cols)
 
                 _phdr_cells = (
@@ -2878,7 +3083,10 @@ with tab_market:
 # ── SCREENER ──────────────────────────────────────────────────────────────────
 with tab_screener:
     from alan_trader.dashboard.tabs.screener import render as render_screener
-    render_screener(api_key=st.session_state.get("polygon_api_key", ""))
+    render_screener(
+        api_key=st.session_state.get("polygon_api_key", ""),
+        selected_strategies=st.session_state.get("selected_strategies", []),
+    )
 
 # ── PAPER TRADING ──────────────────────────────────────────────────────────────
 with tab_paper:
