@@ -16,79 +16,343 @@ import streamlit as st
 logger = logging.getLogger(__name__)
 
 st.set_page_config(
-    page_title="alan-strats",
+    page_title="AlanTrader",
     page_icon="📈",
     layout="wide",
-    initial_sidebar_state="collapsed",
+    initial_sidebar_state="expanded",
 )
 
 st.markdown("""
 <style>
-  /* ── App chrome ────────────────────────────────────────────────────── */
-  [data-testid="stAppViewContainer"] { background-color: #0e1117; }
-  [data-testid="stSidebar"]          { background-color: #0c1020; }
+  /* ── Google Fonts ────────────────────────────────────────────────────── */
+  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap');
 
-  /* ── Tabs — clean underline style ──────────────────────────────────── */
+  /* ── CSS Variables ───────────────────────────────────────────────────── */
+  :root {
+      --bg-base:        #0a0e1a;
+      --bg-card:        #111827;
+      --bg-elevated:    #161d2e;
+      --bg-hover:       #1a2235;
+      --accent:         #6366f1;
+      --accent-dim:     rgba(99,102,241,0.15);
+      --accent-glow:    rgba(99,102,241,0.08);
+      --success:        #10b981;
+      --success-dim:    rgba(16,185,129,0.15);
+      --danger:         #ef4444;
+      --danger-dim:     rgba(239,68,68,0.15);
+      --warning:        #f59e0b;
+      --warning-dim:    rgba(245,158,11,0.15);
+      --text-primary:   #f9fafb;
+      --text-secondary: #9ca3af;
+      --text-muted:     #6b7280;
+      --border:         #1f2937;
+      --border-bright:  #374151;
+  }
+
+  /* ── App chrome ────────────────────────────────────────────────────── */
+  html, body, [data-testid="stAppViewContainer"] {
+      background-color: var(--bg-base) !important;
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif !important;
+      color: var(--text-primary) !important;
+  }
+  [data-testid="stMain"] > div { background-color: var(--bg-base) !important; }
+  [data-testid="stSidebar"] {
+      background-color: #0c1120 !important;
+      border-right: 1px solid var(--border) !important;
+  }
+  [data-testid="stSidebar"] > div:first-child { padding-top: 0 !important; }
+
+  /* ── Number / code rendering ─────────────────────────────────────────── */
+  [data-testid="stMetricValue"],
+  [data-testid="stMetricDelta"],
+  .monospace, code, pre {
+      font-family: 'JetBrains Mono', 'Fira Code', monospace !important;
+  }
+
+  /* ── Scrollbar ──────────────────────────────────────────────────────── */
+  ::-webkit-scrollbar { width: 6px; height: 6px; }
+  ::-webkit-scrollbar-track { background: var(--bg-base); }
+  ::-webkit-scrollbar-thumb { background: var(--border-bright); border-radius: 3px; }
+  ::-webkit-scrollbar-thumb:hover { background: var(--text-muted); }
+
+  /* ── Top-level Tabs ─────────────────────────────────────────────────── */
   .stTabs [data-baseweb="tab-list"] {
       gap: 0;
-      border-bottom: 1px solid #1e2538;
+      border-bottom: 1px solid var(--border);
       background: transparent;
       flex-wrap: wrap;
+      padding: 0 8px;
   }
   .stTabs [data-baseweb="tab"] {
       background: transparent;
       border: none;
       border-bottom: 2px solid transparent;
       border-radius: 0;
-      padding: 8px 16px;
-      color: #546e7a;
+      padding: 10px 18px;
+      color: var(--text-muted);
       font-size: 13px;
       font-weight: 500;
-      letter-spacing: 0.02em;
-      transition: color 0.15s, border-color 0.15s;
+      letter-spacing: 0.025em;
+      transition: color 0.15s, border-color 0.15s, background 0.15s;
       margin-bottom: -1px;
+      font-family: 'Inter', sans-serif !important;
   }
   .stTabs [data-baseweb="tab"]:hover {
-      color: #b0c8e0 !important;
-      background: rgba(92,107,192,0.06) !important;
+      color: var(--text-primary) !important;
+      background: var(--accent-glow) !important;
   }
   .stTabs [aria-selected="true"] {
-      color: #e0e0e0 !important;
-      border-bottom: 2px solid #5c6bc0 !important;
-      background: transparent !important;
+      color: var(--text-primary) !important;
+      border-bottom: 2px solid var(--accent) !important;
+      background: var(--accent-dim) !important;
       font-weight: 600 !important;
   }
-  /* inner strategy sub-tabs — slightly different accent */
+  /* inner strategy sub-tabs — teal accent */
   .stTabs .stTabs [aria-selected="true"] {
-      border-bottom: 2px solid #26a69a !important;
+      border-bottom: 2px solid var(--success) !important;
+      background: var(--success-dim) !important;
   }
 
-  /* ── Typography ─────────────────────────────────────────────────────── */
-  h1, h2, h3 { color: #e0e0e0 !important; }
-  p, li       { color: #b0b8c8; }
+  /* ── Section headers ────────────────────────────────────────────────── */
+  h1 {
+      color: var(--text-primary) !important;
+      font-size: 1.6rem !important;
+      font-weight: 700 !important;
+      letter-spacing: -0.02em;
+  }
+  h2 {
+      color: var(--text-primary) !important;
+      font-size: 1.25rem !important;
+      font-weight: 600 !important;
+      padding-left: 12px;
+      border-left: 3px solid var(--accent);
+      margin-top: 24px !important;
+      margin-bottom: 16px !important;
+  }
+  h3 {
+      color: var(--text-primary) !important;
+      font-size: 1.05rem !important;
+      font-weight: 600 !important;
+      letter-spacing: 0.01em;
+  }
+  p, li { color: var(--text-secondary); line-height: 1.65; }
 
-  /* ── Metrics ────────────────────────────────────────────────────────── */
-  [data-testid="stMetricValue"] { color: #e0e0e0 !important; font-size: 1.15rem !important; }
-  [data-testid="stMetricLabel"] { color: #546e7a  !important; font-size: 0.78rem !important; }
+  /* ── Metric cards ────────────────────────────────────────────────────── */
+  [data-testid="stMetric"] {
+      background: var(--bg-card) !important;
+      border: 1px solid var(--border) !important;
+      border-radius: 10px !important;
+      padding: 14px 16px !important;
+      transition: border-color 0.2s, box-shadow 0.2s;
+  }
+  [data-testid="stMetric"]:hover {
+      border-color: var(--accent) !important;
+      box-shadow: 0 0 0 1px var(--accent-dim), 0 4px 16px rgba(0,0,0,0.3) !important;
+  }
+  [data-testid="stMetricValue"] {
+      color: var(--text-primary) !important;
+      font-size: 1.45rem !important;
+      font-weight: 700 !important;
+      font-family: 'JetBrains Mono', monospace !important;
+      letter-spacing: -0.02em;
+  }
+  [data-testid="stMetricLabel"] {
+      color: var(--text-muted) !important;
+      font-size: 0.72rem !important;
+      font-weight: 500 !important;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      margin-bottom: 4px;
+  }
+  [data-testid="stMetricDelta"] {
+      font-family: 'JetBrains Mono', monospace !important;
+      font-size: 0.8rem !important;
+  }
+  [data-testid="stMetricDeltaIcon"] { display: none !important; }
 
-  /* ── Buttons ────────────────────────────────────────────────────────── */
+  /* ── Buttons ─────────────────────────────────────────────────────────── */
   .stButton > button {
-      background: #1e2538; border: 1px solid #2a3550;
-      color: #b0b8c8; border-radius: 7px;
-      font-size: 12px; padding: 5px 12px;
-      transition: background 0.15s, border-color 0.15s;
+      background: var(--bg-elevated);
+      border: 1px solid var(--border-bright);
+      color: var(--text-secondary);
+      border-radius: 8px;
+      font-size: 13px;
+      font-weight: 500;
+      padding: 6px 16px;
+      font-family: 'Inter', sans-serif !important;
+      transition: all 0.15s;
+      letter-spacing: 0.01em;
   }
   .stButton > button:hover {
-      background: #252d45; border-color: #5c6bc0; color: #e0e0e0;
+      background: var(--bg-hover);
+      border-color: var(--accent);
+      color: var(--text-primary);
+      box-shadow: 0 0 0 1px var(--accent-dim);
+  }
+  .stButton > button[kind="primary"] {
+      background: var(--accent) !important;
+      border-color: var(--accent) !important;
+      color: #fff !important;
+      font-weight: 600 !important;
+  }
+  .stButton > button[kind="primary"]:hover {
+      background: #5254cc !important;
+      border-color: #5254cc !important;
+      box-shadow: 0 0 16px rgba(99,102,241,0.35) !important;
   }
 
-  /* ── Inputs ─────────────────────────────────────────────────────────── */
+  /* ── Inputs / Selects ────────────────────────────────────────────────── */
   div[data-testid="stTextInput"] input,
   div[data-testid="stNumberInput"] input {
-      background: #161b27 !important;
-      border: 1px solid #2a2f3f !important;
-      color: #e0e0e0 !important;
-      border-radius: 7px !important;
+      background: var(--bg-card) !important;
+      border: 1px solid var(--border-bright) !important;
+      color: var(--text-primary) !important;
+      border-radius: 8px !important;
+      font-family: 'Inter', sans-serif !important;
+      font-size: 13px !important;
+  }
+  div[data-testid="stTextInput"] input:focus,
+  div[data-testid="stNumberInput"] input:focus {
+      border-color: var(--accent) !important;
+      box-shadow: 0 0 0 2px var(--accent-dim) !important;
+  }
+  div[data-baseweb="select"] > div,
+  div[data-baseweb="input"] > div {
+      background: var(--bg-card) !important;
+      border-color: var(--border-bright) !important;
+      border-radius: 8px !important;
+      color: var(--text-primary) !important;
+  }
+  div[data-baseweb="popover"] { background: var(--bg-elevated) !important; }
+  li[role="option"]:hover { background: var(--accent-dim) !important; }
+
+  /* ── Sliders ─────────────────────────────────────────────────────────── */
+  [data-testid="stSlider"] [data-baseweb="slider"] div[role="slider"] {
+      background: var(--accent) !important;
+      border-color: var(--accent) !important;
+  }
+  [data-testid="stSlider"] > div > div > div:first-child {
+      background: var(--border-bright) !important;
+  }
+
+  /* ── Expanders ──────────────────────────────────────────────────────── */
+  [data-testid="stExpander"] {
+      background: var(--bg-card) !important;
+      border: 1px solid var(--border) !important;
+      border-radius: 10px !important;
+      margin-bottom: 8px !important;
+  }
+  [data-testid="stExpander"] summary {
+      color: var(--text-secondary) !important;
+      font-size: 13px !important;
+      font-weight: 500 !important;
+      padding: 12px 16px !important;
+  }
+  [data-testid="stExpander"] summary:hover { color: var(--text-primary) !important; }
+  [data-testid="stExpander"] > div > div {
+      padding: 8px 16px 16px !important;
+  }
+
+  /* ── Dataframes ─────────────────────────────────────────────────────── */
+  [data-testid="stDataFrame"] {
+      border: 1px solid var(--border) !important;
+      border-radius: 10px !important;
+      overflow: hidden;
+  }
+  [data-testid="stDataFrame"] th {
+      background: var(--bg-elevated) !important;
+      color: var(--text-muted) !important;
+      font-size: 11px !important;
+      font-weight: 600 !important;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      border-bottom: 1px solid var(--border-bright) !important;
+      padding: 8px 12px !important;
+  }
+  [data-testid="stDataFrame"] td {
+      color: var(--text-secondary) !important;
+      font-size: 13px !important;
+      padding: 7px 12px !important;
+      border-bottom: 1px solid var(--border) !important;
+      font-family: 'Inter', sans-serif;
+  }
+  [data-testid="stDataFrame"] tr:nth-child(even) td { background: var(--bg-elevated) !important; }
+  [data-testid="stDataFrame"] tr:hover td { background: var(--bg-hover) !important; }
+
+  /* ── Dividers ───────────────────────────────────────────────────────── */
+  hr { border-color: var(--border) !important; margin: 20px 0 !important; }
+
+  /* ── Info / Warning / Error banners ──────────────────────────────────── */
+  [data-testid="stAlert"] {
+      border-radius: 8px !important;
+      border-width: 1px !important;
+      font-size: 13px !important;
+  }
+  [data-testid="stAlert"][data-baseweb="notification"] {
+      background: var(--bg-card) !important;
+  }
+
+  /* ── Sidebar nav items ───────────────────────────────────────────────── */
+  [data-testid="stSidebar"] .stCheckbox label {
+      color: var(--text-secondary) !important;
+      font-size: 13px !important;
+      font-family: 'Inter', sans-serif !important;
+      padding: 4px 0;
+      transition: color 0.15s;
+  }
+  [data-testid="stSidebar"] .stCheckbox label:hover {
+      color: var(--text-primary) !important;
+  }
+  [data-testid="stSidebar"] [data-testid="stCaption"] {
+      color: var(--text-muted) !important;
+      font-size: 10px !important;
+      font-weight: 700 !important;
+      text-transform: uppercase !important;
+      letter-spacing: 0.1em !important;
+      margin-top: 12px !important;
+  }
+  [data-testid="stSidebar"] button {
+      width: 100%;
+  }
+
+  /* ── Progress bars ──────────────────────────────────────────────────── */
+  [data-testid="stProgressBar"] > div > div {
+      background: var(--accent) !important;
+  }
+
+  /* ── Spinner ────────────────────────────────────────────────────────── */
+  [data-testid="stSpinner"] { color: var(--accent) !important; }
+
+  /* ── Code blocks ────────────────────────────────────────────────────── */
+  code {
+      background: var(--bg-elevated) !important;
+      color: #a5b4fc !important;
+      border-radius: 4px;
+      padding: 1px 6px;
+      font-size: 12px;
+      font-family: 'JetBrains Mono', monospace !important;
+  }
+  pre code { color: var(--text-secondary) !important; }
+
+  /* ── Trade dialog centering ─────────────────────────────────────────── */
+  div[data-testid="stDialog"] > div[role="dialog"] {
+      margin-top: auto !important;
+      margin-bottom: auto !important;
+      top: 50% !important;
+      transform: translateY(-50%) !important;
+      position: fixed !important;
+      background: var(--bg-card) !important;
+      border: 1px solid var(--border-bright) !important;
+      border-radius: 12px !important;
+  }
+
+  /* ── Tooltips ───────────────────────────────────────────────────────── */
+  [data-baseweb="tooltip"] [role="tooltip"] {
+      background: var(--bg-elevated) !important;
+      border: 1px solid var(--border-bright) !important;
+      border-radius: 6px !important;
+      font-size: 12px !important;
+      color: var(--text-secondary) !important;
   }
 </style>
 """, unsafe_allow_html=True)
@@ -151,6 +415,7 @@ if "polygon_api_key" not in st.session_state:
 # ══════════════════════════════════════════════════════════════════════════════
 
 with st.sidebar:
+    # ── Brand header ──────────────────────────────────────────────────────
     _logo_path = os.path.join(os.path.dirname(__file__), "static", "logo.svg")
     if os.path.exists(_logo_path):
         import base64 as _b64
@@ -160,66 +425,143 @@ with st.sidebar:
             unsafe_allow_html=True,
         )
     else:
-        st.title("Project Dream")
+        st.markdown("""
+<div style="
+    padding: 18px 16px 14px;
+    border-bottom: 1px solid #1f2937;
+    margin-bottom: 4px;
+    background: linear-gradient(135deg, rgba(99,102,241,0.08) 0%, transparent 60%);
+">
+  <div style="display:flex;align-items:center;gap:10px;">
+    <div style="
+        width:34px;height:34px;border-radius:8px;
+        background:linear-gradient(135deg,#6366f1,#4f46e5);
+        display:flex;align-items:center;justify-content:center;
+        font-size:18px;flex-shrink:0;
+        box-shadow:0 0 16px rgba(99,102,241,0.4);
+    ">📈</div>
+    <div>
+      <div style="
+          color:#f9fafb;font-size:16px;font-weight:700;
+          font-family:'Inter',sans-serif;letter-spacing:-0.01em;
+          line-height:1.2;
+      ">AlanTrader</div>
+      <div style="
+          display:inline-flex;align-items:center;gap:4px;
+          margin-top:3px;
+      ">
+        <span style="
+            width:6px;height:6px;border-radius:50%;
+            background:#10b981;display:inline-block;
+            box-shadow:0 0 6px rgba(16,185,129,0.7);
+        "></span>
+        <span style="
+            color:#9ca3af;font-size:10px;font-weight:500;
+            font-family:'Inter',sans-serif;letter-spacing:0.06em;
+        ">v1.0 · LIVE</span>
+      </div>
+    </div>
+  </div>
+</div>
+""", unsafe_allow_html=True)
     st.markdown("---")
 
-    st.subheader("Strategies")
+    st.markdown("""
+<div style="
+    color:#6b7280;font-size:10px;font-weight:700;
+    text-transform:uppercase;letter-spacing:0.1em;
+    padding: 4px 2px 8px;font-family:'Inter',sans-serif;
+">Strategies</div>
+""", unsafe_allow_html=True)
 
-    # Group strategies by type for a cleaner selector
-    _groups: dict[str, list[str]] = {}
-    for _s in ACTIVE_SLUGS:
-        _group = _meta(_s).get("type", "other").replace("_", " ").title()
-        _groups.setdefault(_group, []).append(_s)
+    # Build label→slug map for multiselect
+    _slug_to_label = {
+        _s: f"{_meta(_s).get('icon','📌')} {_meta(_s)['display_name']}"
+        for _s in ACTIVE_SLUGS
+    }
+    _label_to_slug = {v: k for k, v in _slug_to_label.items()}
+    _all_labels = [_slug_to_label[_s] for _s in ACTIVE_SLUGS]
 
-    _current = set(st.session_state.get("selected_strategies", []))
-    _new_selected: list[str] = []
-    for _group_name, _slugs in _groups.items():
-        st.caption(_group_name)
-        for _s in _slugs:
-            _checked = st.checkbox(
-                f"{_meta(_s).get('icon','📌')} {_meta(_s)['display_name']}",
-                value=_s in _current,
-                key=f"strat_cb_{_s}",
-            )
-            if _checked:
-                _new_selected.append(_s)
-    selected = _new_selected
+    # Seed multiselect key once — Streamlit manages state after that
+    if "strat_ms" not in st.session_state:
+        _prev_selected = st.session_state.get("selected_strategies", [])
+        st.session_state["strat_ms"] = [
+            _slug_to_label[s] for s in _prev_selected if s in _slug_to_label
+        ]
+
+    st.multiselect(
+        "Select strategies",
+        options=_all_labels,
+        key="strat_ms",
+        label_visibility="collapsed",
+    )
+    selected = [_label_to_slug[lbl] for lbl in st.session_state["strat_ms"] if lbl in _label_to_slug]
     st.session_state["selected_strategies"] = selected
 
     st.markdown("---")
+    st.markdown("""
+<div style="
+    color:#6b7280;font-size:10px;font-weight:700;
+    text-transform:uppercase;letter-spacing:0.1em;
+    padding: 4px 2px 6px;font-family:'Inter',sans-serif;
+">Configuration</div>
+""", unsafe_allow_html=True)
     st.caption("Training & backtest data — local SQL Server")
     st.text_input("Polygon API key", type="password", placeholder="sk_...", key="polygon_api_key")
 
     st.markdown("---")
-    if st.button("🔄 Clear all results", width="stretch"):
+    if st.button("↺  Clear all results", use_container_width=True):
         st.cache_data.clear()
         for _k in list(_SS_DEFAULTS.keys()):
             if _k in st.session_state:
                 del st.session_state[_k]
         st.rerun()
 
-    st.markdown("---")
-    # Quick-summary of selected strategies
-    for s in selected:
-        m = _meta(s)
-        badges = []
-        if m.get("uses_ml"):         badges.append("ML")
-        if m.get("requires_training"): badges.append("Train")
-        badge_str = " · ".join(badges) if badges else "Rule-Based"
-        st.caption(f"{m.get('icon','📌')} **{m['display_name']}** — {badge_str}")
+    if selected:
+        st.markdown("---")
+        st.markdown("""
+<div style="
+    color:#6b7280;font-size:10px;font-weight:700;
+    text-transform:uppercase;letter-spacing:0.1em;
+    padding: 4px 2px 6px;font-family:'Inter',sans-serif;
+">Active</div>
+""", unsafe_allow_html=True)
+        # Quick-summary of selected strategies
+        for s in selected:
+            m = _meta(s)
+            badges = []
+            if m.get("uses_ml"):         badges.append("ML")
+            if m.get("requires_training"): badges.append("Train")
+            badge_str = " · ".join(badges) if badges else "Rule-Based"
+            _pill_color = "#6366f1" if m.get("uses_ml") else "#374151"
+            st.markdown(
+                f'<div style="display:flex;align-items:center;gap:8px;padding:5px 2px;">'
+                f'<span style="font-size:14px">{m.get("icon","📌")}</span>'
+                f'<span style="color:#d1d5db;font-size:12px;font-weight:500;flex:1;'
+                f'font-family:Inter,sans-serif;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'
+                f'{m["display_name"]}</span>'
+                f'<span style="background:{_pill_color};color:#e5e7eb;font-size:9px;font-weight:600;'
+                f'padding:1px 6px;border-radius:10px;letter-spacing:0.05em;white-space:nowrap">'
+                f'{badge_str}</span>'
+                f'</div>',
+                unsafe_allow_html=True,
+            )
 
 
 # ══════════════════════════════════════════════════════════════════════════════
 # HELPER: ticker selector row
 # ══════════════════════════════════════════════════════════════════════════════
 
-def _ticker_row(key_prefix: str) -> str:
+def _ticker_row(key_prefix: str, default: str = "") -> str:
     from alan_trader.data.simulator import TICKER_PROFILES, DEFAULT_PROFILE
     c1, c2 = st.columns([2, 7])
-    ticker = c1.text_input("Ticker", value="HOOD", key=f"{key_prefix}_ticker").upper().strip() or "HOOD"
+    raw = c1.text_input("Ticker", value=default, key=f"{key_prefix}_ticker",
+                        placeholder="e.g. AAPL").upper().strip()
+    ticker = raw or default
     prof = TICKER_PROFILES.get(ticker, DEFAULT_PROFILE)
     c2.caption(
         f"Est. vol: {prof['annual_vol']*100:.0f}% ann · {prof.get('category', 'equity')}"
+        if ticker else "Enter a ticker symbol above."
     )
     return ticker
 
@@ -272,7 +614,7 @@ def _render_ui_params(params_spec: list, key_prefix: str) -> dict:
 
 
 def _do_train(slug, seq_len, hidden_size, num_layers, dropout, lr, num_epochs,
-              ticker="SPY", forward_days=5, otm_pct=0.0, spread_type="bull_call",
+              ticker="", forward_days=5, otm_pct=0.0, spread_type="bull_call",
               enter_boost=2.0):
     import warnings; warnings.filterwarnings("ignore")
     from alan_trader.data.features import build_feature_matrix, FEATURE_COLS
@@ -281,12 +623,13 @@ def _do_train(slug, seq_len, hidden_size, num_layers, dropout, lr, num_epochs,
 
     data = load_training_data(ticker=ticker)
 
-    spy   = data["spy"]
-    vix   = data["vix"]
-    r2    = data["rate2y"]
-    r10   = data["rate10y"]
-    macro = data["macro"]
-    news  = data["news"]
+    # data["spy"] is the PRIMARY TICKER's price data (named "spy" for legacy reasons)
+    price_df = data["spy"]
+    vix      = data["vix"]
+    r2       = data["rate2y"]
+    r10      = data["rate10y"]
+    macro    = data["macro"]
+    news     = data["news"]
 
     spread_pnl_df = None
     spread_diagnostics = {}
@@ -306,7 +649,7 @@ def _do_train(slug, seq_len, hidden_size, num_layers, dropout, lr, num_epochs,
         spread_diagnostics["error"] = str(_e)
         spread_pnl_df = None
 
-    df      = build_feature_matrix(spy, vix, r2, r10, news, forward_days=forward_days,
+    df      = build_feature_matrix(price_df, vix, r2, r10, news, forward_days=forward_days,
                                     spread_type=spread_type, macro_df=macro,
                                     spread_pnl_df=spread_pnl_df)
 
@@ -479,7 +822,9 @@ def _do_backtest(slug, params, ticker, n_days):
     from alan_trader.db.loader import load_training_data
     data = load_training_data(ticker=ticker)
 
-    spy   = data["spy"]
+    # data["spy"] holds the PRIMARY TICKER's price data (named "spy" for legacy reasons;
+    # it is NOT necessarily SPY — it is whatever ticker was requested).
+    price_data = data["spy"]
     vix   = data["vix"]
     r2    = data["rate2y"]
     r10   = data["rate10y"]
@@ -500,6 +845,74 @@ def _do_backtest(slug, params, ticker, n_days):
         except Exception as _e_div:
             logger.warning(f"Could not load dividends for {ticker}: {_e_div}")
             aux["dividends"] = pd.DataFrame()
+
+    # Load earnings data for strategies that need them
+    if slug in ("earnings_iv_crush", "earnings_post_drift"):
+        try:
+            from alan_trader.db.client import get_engine as _ge_earn
+            from sqlalchemy import text as _earn_text
+            _eng_earn  = _ge_earn()
+            _earn_from = datetime.date.today() - datetime.timedelta(days=n_days * 2)
+            with _eng_earn.connect() as _ec:
+                _earn_rows = _ec.execute(_earn_text("""
+                    SELECT t.Symbol as ticker,
+                           COALESCE(e.FiledDate, e.PeriodOfReport) as date,
+                           e.EpsBasic    as eps_actual,
+                           e.EpsEstimate as eps_estimate,
+                           NULL          as implied_move_pct
+                    FROM mkt.Earnings e
+                    JOIN mkt.Ticker t ON t.TickerId = e.TickerId
+                    WHERE COALESCE(e.FiledDate, e.PeriodOfReport) >= :from_date
+                    ORDER BY COALESCE(e.FiledDate, e.PeriodOfReport)
+                """), {"from_date": str(_earn_from)}).fetchall()
+                _earn_total = _ec.execute(_earn_text(
+                    "SELECT COUNT(*), MIN(COALESCE(FiledDate, PeriodOfReport)), MAX(COALESCE(FiledDate, PeriodOfReport)) FROM mkt.Earnings"
+                )).fetchone()
+            _earn_df = pd.DataFrame(_earn_rows, columns=["ticker", "date", "eps_actual", "eps_estimate", "implied_move_pct"])
+            _earn_df["date"] = pd.to_datetime(_earn_df["date"])
+            aux["earnings"] = _earn_df
+            logger.info(f"{slug}: loaded {len(_earn_df)} earnings rows (total in DB: {_earn_total[0]}, range: {_earn_total[1]} → {_earn_total[2]})")
+            # Load per-ticker price bars for the earnings universe
+            _earn_tickers = _earn_df["ticker"].dropna().unique().tolist()
+            _stock_prices = {}
+            from alan_trader.db.client import get_engine as _ge_sp, get_price_bars as _gpb_sp
+            _eng_sp = _ge_sp()
+            for _sp_tkr in _earn_tickers:
+                try:
+                    _sp_df = _gpb_sp(_eng_sp, _sp_tkr, _earn_from, datetime.date.today())
+                    if _sp_df is not None and not _sp_df.empty:
+                        _sp_df = _sp_df.set_index(pd.to_datetime(_sp_df["date"])).drop(columns=["date"])
+                        _stock_prices[_sp_tkr] = _sp_df
+                except Exception as _sp_e:
+                    logger.debug(f"Could not load price bars for {_sp_tkr}: {_sp_e}")
+            aux["stock_prices"] = _stock_prices
+            logger.info(f"{slug}: loaded price bars for {list(_stock_prices.keys())}")
+            if _earn_df.empty:
+                raise ValueError(
+                    "mkt.Earnings table returned 0 rows for the selected date range. "
+                    "Go to Data Manager → Sync Earnings to populate it."
+                )
+        except Exception as _e_earn:
+            logger.warning(f"Could not load earnings data: {_e_earn}")
+            aux["earnings"] = pd.DataFrame()
+        _earn_check = aux.get("earnings", pd.DataFrame())
+        if _earn_check.empty:
+            # Pull diagnostic counts to help user understand what's in DB
+            try:
+                from alan_trader.db.client import get_engine as _ge_diag
+                from sqlalchemy import text as _dt
+                with _ge_diag().connect() as _dc:
+                    _diag = _dc.execute(_dt(
+                        "SELECT COUNT(*), MIN(COALESCE(FiledDate,PeriodOfReport)), MAX(COALESCE(FiledDate,PeriodOfReport)) FROM mkt.Earnings"
+                    )).fetchone()
+                _diag_msg = f"DB has {_diag[0]} total rows, date range {_diag[1]} → {_diag[2]}. Backtest window starts {_earn_from}."
+            except Exception as _de:
+                _diag_msg = f"Could not query mkt.Earnings: {_de}"
+            raise ValueError(
+                f"No earnings data found for the backtest window (from {_earn_from}).\n\n"
+                f"{_diag_msg}\n\n"
+                f"Sync earnings via Data Manager → Sync → Earnings for tickers like AAPL, MSFT, NVDA."
+            )
 
     # Load TLT price bars for strategies that need them
     meta_for_slug = STRATEGY_METADATA.get(slug, {})
@@ -526,7 +939,7 @@ def _do_backtest(slug, params, ticker, n_days):
             # Always load full 2-year history — don't limit by n_days so we get all available chains
             _opt_from = (datetime.date.today() - datetime.timedelta(days=730))
             _opt_to   = datetime.date.today()
-            _tid_va   = _gtid_va(_eng_va, ticker or "SPY")
+            _tid_va   = _gtid_va(_eng_va, ticker) if ticker else None
             if _tid_va:
                 _raw = _load_chain(_eng_va, _tid_va, _opt_from, _opt_to, min_dte=7, max_dte=60)
                 if not _raw.empty:
@@ -563,7 +976,7 @@ def _do_backtest(slug, params, ticker, n_days):
                         from alan_trader.strategies.vol_arbitrage import VolArbitrageStrategy as _VAS
                         _va_tmp = _VAS(iv_skew_threshold=0.05)
                         aux["candidate_assessment"] = _va_tmp.assess_candidate(
-                            _chains_va, df,
+                            _chains_va, spy,
                             dte_min=7, dte_max=60,
                         )
                     except Exception as _e_ca:
@@ -612,18 +1025,184 @@ def _do_backtest(slug, params, ticker, n_days):
             aux["spy_options"] = pd.DataFrame()
             aux["tlt_options"] = pd.DataFrame()
 
+    # ── Vol Calendar Spread: load chains + VIX + SPY from DB ─────────────────
+    if slug == "vol_calendar_spread":
+        try:
+            from alan_trader.db.client import (
+                get_engine as _ge_vc, get_ticker_id as _gtid_vc,
+                get_price_bars as _gpb_vc, get_vix_bars as _gvix_vc,
+                get_news as _gnews_vc, get_option_snapshots as _gopt_vc,
+            )
+            from sqlalchemy import text as _vc_text
+            _eng_vc   = _ge_vc()
+            _vc_from  = datetime.date.today() - datetime.timedelta(days=max(n_days * 2, 600))
+            _vc_to    = datetime.date.today()
+            _tid_vc   = _gtid_vc(_eng_vc, ticker)
+
+            # Price data for ticker
+            _px_vc = _gpb_vc(_eng_vc, ticker, _vc_from, _vc_to)
+            if _px_vc is not None and not _px_vc.empty:
+                _px_vc = _px_vc.set_index(pd.to_datetime(_px_vc["date"])).drop(columns=["date"])
+            aux["price_data"] = _px_vc
+
+            # Benchmark/market for correlation feature (broad-market context, not traded)
+            _bench_vc = st.session_state.get("benchmark_ticker", "SPY") or "SPY"
+            try:
+                _spy_vc = _gpb_vc(_eng_vc, _bench_vc, _vc_from, _vc_to)
+                if _spy_vc is not None and not _spy_vc.empty:
+                    _spy_vc = _spy_vc.set_index(pd.to_datetime(_spy_vc["date"])).drop(columns=["date"])
+                aux["spy_data"] = _spy_vc
+            except Exception:
+                aux["spy_data"] = None
+
+            # VIX series
+            _vix_vc = _gvix_vc(_eng_vc, _vc_from, _vc_to)
+            if not _vix_vc.empty:
+                _vix_vc.index = pd.to_datetime(_vix_vc.index)
+                _vcol = "close" if "close" in _vix_vc.columns else _vix_vc.columns[0]
+                aux["vix_data"] = _vix_vc[_vcol]
+            else:
+                aux["vix_data"] = None
+
+            # News — index on the date column so per-date filtering works
+            try:
+                _news_vc = _gnews_vc(_eng_vc, ticker, _vc_from, _vc_to)
+                if _news_vc is not None and not _news_vc.empty and "date" in _news_vc.columns:
+                    _news_vc = _news_vc.set_index(pd.to_datetime(_news_vc["date"])).drop(columns=["date"])
+                aux["news_data"] = _news_vc
+            except Exception:
+                aux["news_data"] = None
+
+            # Options chains: dict of date → DataFrame
+            if _tid_vc:
+                with _eng_vc.connect() as _c:
+                    _snap_dates_vc = [
+                        r[0] for r in _c.execute(_vc_text(
+                            "SELECT DISTINCT SnapshotDate FROM mkt.OptionSnapshot "
+                            "WHERE TickerId=:tid AND SnapshotDate BETWEEN :f AND :t "
+                            "ORDER BY SnapshotDate"
+                        ), {"tid": _tid_vc, "f": _vc_from, "t": _vc_to}).fetchall()
+                    ]
+                _chains_vc = {}
+                for _sd in _snap_dates_vc:
+                    _ch = _gopt_vc(_eng_vc, ticker, _sd)
+                    if _ch is not None and not _ch.empty:
+                        _key = _sd if isinstance(_sd, datetime.date) else pd.Timestamp(_sd).date()
+                        _chains_vc[_key] = _ch
+                aux["chains"] = _chains_vc
+                logger.info(f"vol_calendar_spread: loaded {len(_chains_vc)} chain snapshots for {ticker}")
+            else:
+                aux["chains"] = {}
+        except Exception as _e_vc:
+            logger.warning(f"vol_calendar_spread: data load failed: {_e_vc}")
+            aux.setdefault("chains", {})
+
+    # ── AI Options Strategies: load option_snapshots + spy_price from DB ────────
+    _AI_OPT_SLUGS = {
+        "oi_imbalance_put_fade",
+        "short_squeeze_vol_expansion",
+        "iv_skew_momentum",
+        "gamma_flip_breakout",
+        "vol_term_structure_regime",
+    }
+    if slug in _AI_OPT_SLUGS:
+        try:
+            from alan_trader.db.client import (
+                get_engine as _ge_ai, get_ticker_id as _gtid_ai,
+                get_price_bars as _gpb_ai,
+            )
+            from sqlalchemy import text as _ai_text
+            _eng_ai  = _ge_ai()
+            _ai_from = datetime.date.today() - datetime.timedelta(days=max(n_days * 2, 730))
+            _ai_to   = datetime.date.today()
+            _tid_ai  = _gtid_ai(_eng_ai, ticker) if ticker else None
+
+            # Load raw OptionSnapshot rows for the ticker
+            if _tid_ai:
+                with _eng_ai.connect() as _c_ai:
+                    _snap_rows = _c_ai.execute(_ai_text("""
+                        SELECT
+                            s.SnapshotDate,
+                            s.Strike         AS StrikePrice,
+                            s.ContractType   AS OptionType,
+                            s.ImpliedVol,
+                            s.OpenInterest,
+                            s.Delta,
+                            s.Gamma,
+                            s.Bid,
+                            s.Ask,
+                            DATEDIFF(day, s.SnapshotDate, s.ExpirationDate) AS DTE,
+                            s.ExpirationDate
+                        FROM mkt.OptionSnapshot s
+                        WHERE s.TickerId = :tid
+                          AND s.SnapshotDate BETWEEN :f AND :t
+                        ORDER BY s.SnapshotDate, s.ExpirationDate, s.Strike
+                    """), {"tid": _tid_ai, "f": _ai_from, "t": _ai_to}).fetchall()
+                _snap_cols = [
+                    "SnapshotDate", "StrikePrice", "OptionType", "ImpliedVol",
+                    "OpenInterest", "Delta", "Gamma", "Bid", "Ask", "DTE", "ExpirationDate",
+                ]
+                _snap_df = pd.DataFrame(_snap_rows, columns=_snap_cols)
+                aux["option_snapshots"] = _snap_df
+                logger.info(f"{slug}: loaded {len(_snap_df)} option snapshot rows for {ticker}")
+            else:
+                aux["option_snapshots"] = pd.DataFrame()
+                logger.warning(f"{slug}: ticker {ticker!r} not found in DB — option_snapshots empty")
+
+            # SPY/benchmark price for market-context features
+            _bench_ai = st.session_state.get("benchmark_ticker", "SPY") or "SPY"
+            try:
+                _spy_ai = _gpb_ai(_eng_ai, _bench_ai, _ai_from, _ai_to)
+                if _spy_ai is not None and not _spy_ai.empty:
+                    _spy_ai = _spy_ai.set_index(pd.to_datetime(_spy_ai["date"])).drop(columns=["date"])
+                aux["spy_price"] = _spy_ai
+            except Exception as _e_spy_ai:
+                logger.debug(f"{slug}: could not load benchmark price: {_e_spy_ai}")
+                aux["spy_price"] = None
+
+        except Exception as _e_ai:
+            logger.warning(f"{slug}: option_snapshots load failed: {_e_ai}")
+            aux.setdefault("option_snapshots", pd.DataFrame())
+
+        # Raise a clear error before entering strategy code
+        _snaps = aux.get("option_snapshots")
+        if _snaps is None or (isinstance(_snaps, pd.DataFrame) and _snaps.empty):
+            _reason = (
+                f"Ticker **{ticker!r}** not found in DB — sync it first."
+                if not _tid_ai
+                else f"No option snapshot rows found for **{ticker}** in the last {max(n_days*2,730)} days."
+            )
+            raise ValueError(
+                f"{slug} requires options data that is not yet in the database.\n\n"
+                f"{_reason}\n\n"
+                "Go to **🗄 Data → Sync from Polygon → Options Chain**, enter the ticker, "
+                "and run the sync. Then retry the backtest."
+            )
+
     strat = get_strategy(slug)
     if not strat.is_ready():
         raise ValueError(f"Strategy {slug} is not ready.")
 
-    # For vol arb: always skip parity arb when using DB data — all bid/ask are
-    # BS-reconstructed from IV, so parity violations are circular artifacts, not
-    # real market mispricings. Only skew arb is valid on this data.
+    # For vol arb: always skip parity arb when using DB data
     extra_params = {}
     if slug == "vol_arbitrage":
         extra_params["skip_parity_arb"] = True
 
-    return strat.backtest(spy, aux, starting_capital=100_000, **params, **extra_params)
+    # Vol calendar spread: pass data directly to backtest()
+    if slug == "vol_calendar_spread":
+        _vc_strat = strat
+        _vc_strat.load_model(ticker)
+        return _vc_strat.backtest(
+            price_data = aux.get("price_data", price_data),
+            ticker     = ticker,
+            chains     = aux.get("chains", {}),
+            vix_data   = aux.get("vix_data"),
+            news_data  = aux.get("news_data"),
+            spy_data   = aux.get("spy_data"),
+            **params,
+        )
+
+    return strat.backtest(price_data, aux, starting_capital=100_000, **params, **extra_params)
 
 
 def _rebuild_portfolio_report():
@@ -635,16 +1214,19 @@ def _rebuild_portfolio_report():
         from alan_trader.portfolio.manager import PortfolioManager
         from alan_trader.db.client import get_engine as _pm_eng, get_price_bars as _pm_bars
         import datetime as _pm_dt
-        _spy_raw  = _pm_bars(_pm_eng(), "SPY",
-                             _pm_dt.date.today() - _pm_dt.timedelta(days=730),
-                             _pm_dt.date.today())
-        if _spy_raw.empty:
+        # Benchmark ticker for portfolio comparison (broad-market context, not a trading instrument).
+        # Defaults to SPY; override via st.session_state["benchmark_ticker"].
+        _bench_ticker = st.session_state.get("benchmark_ticker", "SPY") or "SPY"
+        _bench_raw = _pm_bars(_pm_eng(), _bench_ticker,
+                              _pm_dt.date.today() - _pm_dt.timedelta(days=730),
+                              _pm_dt.date.today())
+        if _bench_raw.empty:
             return {}, pd.DataFrame()
-        spy_rets = _spy_raw.set_index("date")["close"].pct_change().dropna()
-        spy_rets.index = pd.to_datetime(spy_rets.index)
+        bench_rets = _bench_raw.set_index("date")["close"].pct_change().dropna()
+        bench_rets.index = pd.to_datetime(bench_rets.index)
         pm       = PortfolioManager(total_capital=100_000, kelly_fraction=0.25,
                                     max_strategy_weight=0.40, min_strategy_weight=0.02)
-        report   = pm.build_portfolio_report(results, spy_returns=spy_rets)
+        report   = pm.build_portfolio_report(results, spy_returns=bench_rets)
         window   = min(40, max(10, len(results[0].daily_returns) // 4))
         roll_w   = pm.rolling_weights(results, window=window)
         return report, roll_w
@@ -654,11 +1236,329 @@ def _rebuild_portfolio_report():
 
 
 # ══════════════════════════════════════════════════════════════════════════════
+# VOL CALENDAR SPREAD — dedicated training UI
+# ══════════════════════════════════════════════════════════════════════════════
+
+def _render_volcal_train():
+    """XGBoost training UI for the Vol Regime Calendar Spread strategy."""
+    from alan_trader.strategies.vol_calendar_spread import VolCalendarSpreadStrategy
+    from alan_trader.db.client import (
+        get_engine as _ge, get_price_bars as _gpb, get_vix_bars as _gvix,
+        get_news as _gnews, get_option_snapshots as _gopt, get_ticker_id as _gtid,
+    )
+    from sqlalchemy import text as _text
+    import datetime as _dt
+
+    st.subheader("Model Training — Vol Regime Calendar Spread")
+    st.caption(
+        "Builds a feature row per historical options-chain date, then trains an XGBoost "
+        "3-class classifier (COMPRESS / NEUTRAL / EXPAND) with walk-forward CV."
+    )
+
+    ticker = _ticker_row("volcal_train")
+
+    with st.expander("XGBoost Hyperparameters", expanded=True):
+        _h1, _h2, _h3 = st.columns(3)
+        _vc_n_est   = _h1.slider("Trees (n_estimators)", 50, 1000, 300, 50, key="vct_n_est")
+        _vc_depth   = _h2.slider("Max depth",             2,    8,   4,  1, key="vct_depth")
+        _vc_lr      = _h3.select_slider("Learning rate",
+                          options=[0.01, 0.02, 0.05, 0.1, 0.2], value=0.05,
+                          key="vct_lr")
+        _h4, _h5, _h6 = st.columns(3)
+        _vc_sub     = _h4.slider("Subsample",       0.5, 1.0, 0.8, 0.05, key="vct_sub")
+        _vc_col     = _h5.slider("Colsample_bytree",0.5, 1.0, 0.8, 0.05, key="vct_col")
+        _vc_oos     = _h6.slider("OOS holdout",     0.10, 0.40, 0.20, 0.05, key="vct_oos")
+        _h7, _h8    = st.columns(2)
+        _vc_lsig    = _h7.slider("Label σ threshold", 0.20, 1.0, 0.50, 0.05, key="vct_lsig")
+        _vc_lhz     = _h8.slider("Label horizon (days)", 2, 10, 5, key="vct_lhz")
+
+    if st.button("▶ Train Model", type="primary", key="btn_train_volcal"):
+        _api_key = st.session_state.get("polygon_api_key", "")
+        with st.spinner("Fetching data and building features…"):
+            try:
+                _eng   = _ge()
+                _today = _dt.date.today()
+                _from  = _today - _dt.timedelta(days=900)
+
+                # ── Price data ────────────────────────────────────────────
+                _price_df = _gpb(_eng, ticker, _from, _today)
+                if _price_df is None or len(_price_df) < 30:
+                    st.error(f"Not enough price data for {ticker}. Sync it first in the Data tab.")
+                    return
+                _price_df.index = pd.to_datetime(_price_df.index)
+
+                # ── Benchmark/market for correlation feature ──────────────
+                # Uses a configurable broad-market ticker (benchmark context, not traded).
+                _bench_for_corr = st.session_state.get("benchmark_ticker", "SPY") or "SPY"
+                try:
+                    _spy_df = _gpb(_eng, _bench_for_corr, _from, _today)
+                    if _spy_df is not None:
+                        _spy_df.index = pd.to_datetime(_spy_df.index)
+                except Exception:
+                    _spy_df = None
+
+                # ── VIX ───────────────────────────────────────────────────
+                _vix_df = _gvix(_eng, _from, _today)
+                _vix_df.index = pd.to_datetime(_vix_df.index) if not _vix_df.empty else _vix_df.index
+
+                # ── News ──────────────────────────────────────────────────
+                try:
+                    _news_df = _gnews(_eng, ticker, _from, _today)
+                    if _news_df is not None and not _news_df.empty:
+                        _news_df.index = pd.to_datetime(_news_df.index)
+                except Exception:
+                    _news_df = None
+
+                # ── All unique snapshot dates ─────────────────────────────
+                _tid = _gtid(_eng, ticker)
+                if _tid is None:
+                    st.error(f"Ticker {ticker} not found in DB.")
+                    return
+                with _eng.connect() as _c:
+                    _snap_dates = [
+                        r[0] for r in _c.execute(_text(
+                            "SELECT DISTINCT SnapshotDate FROM mkt.OptionSnapshot "
+                            "WHERE TickerId=:tid ORDER BY SnapshotDate"
+                        ), {"tid": _tid}).fetchall()
+                    ]
+
+                if not _snap_dates:
+                    st.error(f"No option snapshots found for {ticker}. Sync options first.")
+                    return
+
+                # ── Build feature rows ────────────────────────────────────
+                _strat = VolCalendarSpreadStrategy(
+                    n_estimators    = _vc_n_est,
+                    max_depth       = _vc_depth,
+                    learning_rate   = _vc_lr,
+                    subsample       = _vc_sub,
+                    colsample_bytree= _vc_col,
+                    oos_fraction    = _vc_oos,
+                    label_sigma_mult= _vc_lsig,
+                    label_horizon   = _vc_lhz,
+                )
+
+                _prog2  = st.progress(0, text="Building feature rows…")
+                _rows   = []
+                _front_iv_hist: list[float] = []
+                _back_iv_hist:  list[float] = []
+                _skip_reasons: dict[str, int] = {}
+
+                for _i, _snap_date in enumerate(_snap_dates):
+                    _prog2.progress((_i + 1) / len(_snap_dates),
+                                    text=f"Feature row {_i+1}/{len(_snap_dates)} — {_snap_date}")
+                    try:
+                        _chain = _gopt(_eng, ticker, _snap_date)
+                        if _chain is None or _chain.empty:
+                            _skip_reasons["empty_chain"] = _skip_reasons.get("empty_chain", 0) + 1
+                            continue
+
+                        # Price slice up to (and including) snap_date
+                        _snap_ts  = pd.Timestamp(_snap_date)
+                        _px_slice = _price_df[_price_df.index <= _snap_ts]
+                        if len(_px_slice) < 22:
+                            _skip_reasons["price_too_short"] = _skip_reasons.get("price_too_short", 0) + 1
+                            continue
+                        _spot = float(_px_slice["close"].iloc[-1])
+
+                        # SPY slice
+                        _spy_slice = None
+                        if _spy_df is not None:
+                            _spy_slice = _spy_df[_spy_df.index <= _snap_ts]
+
+                        # VIX series up to snap_date
+                        _vix_col = "close" if "close" in _vix_df.columns else (_vix_df.columns[0] if not _vix_df.empty else None)
+                        _vix_slice = (
+                            _vix_df.loc[_vix_df.index <= _snap_ts, _vix_col]
+                            if not _vix_df.empty and _vix_col
+                            else pd.Series(dtype=float)
+                        )
+
+                        # Rolling IV histories
+                        _front_iv_s = pd.Series(_front_iv_hist)
+                        _back_iv_s  = pd.Series(_back_iv_hist)
+
+                        _row = _strat._build_feature_row(
+                            date            = _snap_date,
+                            spot            = _spot,
+                            chain_df        = _chain,
+                            price_df        = _px_slice,
+                            vix_series      = _vix_slice,
+                            front_iv_history= _front_iv_s,
+                            back_iv_history = _back_iv_s,
+                            news_df         = _news_df,
+                            spy_price_df    = _spy_slice,
+                        )
+                        if _row is None:
+                            _skip_reasons["build_row_none"] = _skip_reasons.get("build_row_none", 0) + 1
+                            continue
+
+                        # Update rolling IV histories for next iteration
+                        _front_iv_hist.append(_row["front_iv"])
+                        _back_iv_hist.append(_row["back_iv"])
+                        _rows.append(_row)
+                    except Exception as _re:
+                        _key = f"exception:{type(_re).__name__}:{str(_re)[:60]}"
+                        _skip_reasons[_key] = _skip_reasons.get(_key, 0) + 1
+
+                _prog2.empty()
+
+                if _skip_reasons:
+                    with st.expander(f"⚠️ Skip reasons ({sum(_skip_reasons.values())} rows dropped)", expanded=True):
+                        for _reason, _cnt in sorted(_skip_reasons.items(), key=lambda x: -x[1]):
+                            st.write(f"**{_cnt}×** `{_reason}`")
+                        # Show a sample chain for the first snap date to aid diagnosis
+                        if _snap_dates:
+                            _sample = _gopt(_eng, ticker, _snap_dates[0])
+                            st.write(f"**Sample chain for {_snap_dates[0]}** ({len(_sample)} rows)")
+                            st.dataframe(_sample.head(5))
+
+                if len(_rows) < 30:
+                    st.error(
+                        f"Only {len(_rows)} feature rows built — need at least 30. "
+                        "Ensure options data is synced for enough dates."
+                    )
+                    return
+
+                _feat_df = pd.DataFrame(_rows).set_index("date")
+                st.info(f"Built **{len(_feat_df)}** feature rows from {_snap_dates[0]} to {_snap_dates[-1]}.")
+
+                # ── Train ─────────────────────────────────────────────────
+                _prog3 = st.progress(0, text="Training XGBoost…")
+                def _cb(frac, msg):
+                    _prog3.progress(frac, text=msg)
+
+                _result = _strat.train(_feat_df, progress_callback=_cb)
+                _prog3.empty()
+
+                _strat.save_model(ticker)
+                st.session_state["train_results"]["vol_calendar_spread"] = _result
+                st.session_state["volcal_last_trained_ticker"] = ticker
+
+                # ── Results ───────────────────────────────────────────────
+                st.success(
+                    f"Model saved for **{ticker}**. "
+                    f"OOS accuracy: **{_result['oos_accuracy']:.1%}**"
+                    + (f"  |  CV accuracy: **{_result['cv_accuracy']:.1%}**"
+                       if _result.get('cv_accuracy') else "")
+                )
+
+                _rc1, _rc2, _rc3 = st.columns(3)
+                _rc1.metric("Training rows",  _result["n_train"])
+                _rc2.metric("OOS rows",       _result["n_oos"])
+                _rc3.metric("OOS accuracy",   f"{_result['oos_accuracy']:.1%}")
+
+                # Classification report
+                _rep = _result.get("oos_report", {})
+                if _rep:
+                    _rep_rows = []
+                    for _cls in ["COMPRESS", "NEUTRAL", "EXPAND"]:
+                        if _cls in _rep:
+                            _r = _rep[_cls]
+                            _rep_rows.append({
+                                "Class": _cls,
+                                "Precision": f"{_r['precision']:.2f}",
+                                "Recall": f"{_r['recall']:.2f}",
+                                "F1": f"{_r['f1-score']:.2f}",
+                                "Support": int(_r['support']),
+                            })
+                    if _rep_rows:
+                        st.markdown("**Classification Report (OOS holdout)**")
+                        st.dataframe(pd.DataFrame(_rep_rows), hide_index=True)
+
+                # Feature importances
+                _fi = _result.get("feature_importances", {})
+                if _fi:
+                    _fi_df = pd.DataFrame(
+                        sorted(_fi.items(), key=lambda x: x[1], reverse=True),
+                        columns=["Feature", "Importance"]
+                    )
+                    st.markdown("**Feature Importances**")
+                    st.dataframe(_fi_df, hide_index=True, width="stretch")
+
+            except Exception as _ex:
+                import traceback
+                st.error(f"Training failed: {_ex}")
+                st.code(traceback.format_exc())
+
+    # ── Show previously saved result ──────────────────────────────────────────
+    _prev = st.session_state.get("train_results", {}).get("vol_calendar_spread")
+    if _prev and not st.session_state.get(f"btn_train_volcal"):
+        st.markdown("---")
+        st.caption(f"Last trained for: **{st.session_state.get('volcal_last_trained_ticker', '?')}**")
+        _pc1, _pc2 = st.columns(2)
+        _pc1.metric("OOS accuracy", f"{_prev['oos_accuracy']:.1%}")
+        if _prev.get("cv_accuracy"):
+            _pc2.metric("CV accuracy", f"{_prev['cv_accuracy']:.1%}")
+
+
+# ══════════════════════════════════════════════════════════════════════════════
 # PER-STRATEGY TAB RENDERERS
 # ══════════════════════════════════════════════════════════════════════════════
 
+_WALK_FORWARD_TRAIN_SLUGS = {
+    "oi_imbalance_put_fade",
+    "short_squeeze_vol_expansion",
+    "iv_skew_momentum",
+    "gamma_flip_breakout",
+    "vol_term_structure_regime",
+    "iron_condor_ai",   # walk-forward GBM, trains inline during backtest
+}
+
+
 def _render_train(slug: str):
     """Training sub-tab — only called for strategies with requires_training=True."""
+    # Strategies with their own XGBoost/non-LSTM training path
+    if slug == "vol_calendar_spread":
+        _render_volcal_train()
+        return
+
+    # Walk-forward AI strategies train inline during backtest — no separate training step
+    if slug in _WALK_FORWARD_TRAIN_SLUGS:
+        meta = _meta(slug)
+        st.subheader(f"Model Training — {meta['display_name']}")
+        st.info(
+            f"**{meta['display_name']}** uses walk-forward training: the model is "
+            "automatically re-trained on expanding historical data as the backtest runs. "
+            "There is no separate training step — go to the **📊 Backtest** tab and click "
+            "**▶ Run Backtest** to train and evaluate the model simultaneously.\n\n"
+            "**Data required:** option_snapshots must be synced for the ticker via "
+            "**🗄 Data → Sync from Polygon → Options Chain**."
+        )
+        # Show data availability check
+        ticker_check = _ticker_row(f"train_check_{slug}")
+        if st.button("🔍 Check options data availability", key=f"btn_chk_wf_{slug}"):
+            try:
+                from alan_trader.db.client import get_engine as _ge_wf, get_ticker_id as _gtid_wf
+                from sqlalchemy import text as _twf
+                _eng_wf = _ge_wf()
+                _tid_wf = _gtid_wf(_eng_wf, ticker_check)
+                if _tid_wf is None:
+                    st.warning(f"Ticker **{ticker_check}** not found in DB. Sync it first.")
+                else:
+                    with _eng_wf.connect() as _cwf:
+                        _r_wf = _cwf.execute(_twf("""
+                            SELECT COUNT(*) as cnt,
+                                   MIN(SnapshotDate) as earliest,
+                                   MAX(SnapshotDate) as latest,
+                                   COUNT(DISTINCT SnapshotDate) as unique_dates
+                            FROM mkt.OptionSnapshot WHERE TickerId = :tid
+                        """), {"tid": _tid_wf}).fetchone()
+                    if _r_wf and _r_wf[0] > 0:
+                        st.success(
+                            f"**{ticker_check}** has **{int(_r_wf[0]):,}** option rows "
+                            f"({int(_r_wf[3])} unique dates, {_r_wf[1]} → {_r_wf[2]}). "
+                            "Ready for walk-forward backtest."
+                        )
+                    else:
+                        st.warning(
+                            f"No option snapshot data found for **{ticker_check}**. "
+                            "Go to **🗄 Data → Sync from Polygon → Options Chain**."
+                        )
+            except Exception as _ex_wf:
+                st.error(f"DB check failed: {_ex_wf}")
+        return
+
     from alan_trader.visualization import charts as C
     meta    = _meta(slug)
     uses_ml = meta.get("uses_ml", False)
@@ -736,7 +1636,7 @@ def _render_train(slug: str):
         with st.spinner("Training… this may take a minute."):
             try:
                 result = _do_train(slug, seq_len, hidden, layers, dropout, lr, epochs,
-                                   ticker=ticker if needs_ticker else "SPY",
+                                   ticker=ticker,
                                    forward_days=forward_days, otm_pct=otm_pct_tr,
                                    spread_type=spread_type_tr,
                                    enter_boost=enter_boost_tr)
@@ -1127,10 +2027,14 @@ def _render_backtest(slug: str):
         else:
             st.caption("No configurable parameters for this strategy.")
 
+    if needs_ticker and not ticker:
+        st.warning("Enter a ticker symbol to run the backtest.")
+        return
+
     if st.button("▶ Run Backtest", type="primary", key=f"btn_bt_{slug}"):
         with st.spinner(f"Running {meta['display_name']} backtest…"):
             try:
-                res = _do_backtest(slug, params, ticker or "SPY", n_days)
+                res = _do_backtest(slug, params, ticker or "", n_days)
                 st.session_state["bt_results"][slug] = res
 
                 # Rebuild aggregate portfolio report
@@ -1808,11 +2712,20 @@ div[data-testid="stDialog"] > div[role="dialog"] {
                     _viol = tr.get("violation"); _exp = tr.get("expected_pnl"); _sig = tr.get("signal_strength")
                     _spot = tr.get("spot");      _dte = tr.get("dte");         _cost = tr.get("cost")
                     _cpe  = tr.get("call_price_entry"); _ppe = tr.get("put_price_entry")
-                    html += _badge("Type",         _tt_label, "#a5b4fc")
-                    if _spot: html += _badge("Spot at entry", f"${float(_spot):.2f}", "#e2e8f0")
-                    if _dte:  html += _badge("DTE",           f"{int(_dte)}d", "#e2e8f0")
-                    if _ivc:  html += _badge("IV Call",       f"{float(_ivc):.1f}%", "#e2e8f0")
-                    if _ivp:  html += _badge("IV Put",        f"{float(_ivp):.1f}%", "#e2e8f0")
+                    _spot_ex  = tr.get("spot_exit")
+                    _ivc_ex   = tr.get("iv_call_exit"); _ivp_ex = tr.get("iv_put_exit"); _ivsk_ex = tr.get("iv_skew_exit")
+                    _cpe_ex   = tr.get("call_price_exit"); _ppe_ex = tr.get("put_price_exit")
+                    _pnl_val  = float(tr.get("pnl") or 0)
+                    _exit_val = float(_cost or 0) + _pnl_val
+                    _row_style = 'style="width:100%;display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-bottom:6px;"'
+                    _lbl_style = 'style="font-size:9px;color:#6b7280;text-transform:uppercase;letter-spacing:.08em;min-width:36px;"'
+                    # ── Entry row ──
+                    html += f'<div {_row_style}><span {_lbl_style}>Entry</span>'
+                    html += _badge("Type",            _tt_label, "#a5b4fc")
+                    if _spot: html += _badge("Spot",  f"${float(_spot):.2f}", "#e2e8f0")
+                    if _dte:  html += _badge("DTE",   f"{int(_dte)}d", "#e2e8f0")
+                    if _ivc:  html += _badge("IV Call", f"{float(_ivc):.1f}%", "#e2e8f0")
+                    if _ivp:  html += _badge("IV Put",  f"{float(_ivp):.1f}%", "#e2e8f0")
                     if _ivsk:
                         _sc2 = "#f87171" if float(_ivsk) > 0 else "#4ade80"
                         html += _badge("IV Skew (put−call)", f"{float(_ivsk):+.1f} pts", _sc2)
@@ -1821,12 +2734,22 @@ div[data-testid="stDialog"] > div[role="dialog"] {
                         html += _badge("Parity violation", f"${float(_viol):.4f}", _vc)
                     if _exp:  html += _badge("Expected P&L", f"${float(_exp):+,.2f}", "#4ade80")
                     if _sig:  html += _badge("Signal strength", f"{float(_sig):.3f}", "#e2e8f0")
-                    if _cpe:  html += _badge("Call entry px", f"${float(_cpe):.4f}", "#e2e8f0")
-                    if _ppe:  html += _badge("Put entry px",  f"${float(_ppe):.4f}", "#e2e8f0")
-                    if _cost: html += _badge("Net Entry Cost", f"${float(_cost):,.2f}", "#e2e8f0")
-                    _pnl_val = float(tr.get("pnl") or 0)
-                    _exit_val = float(_cost or 0) + _pnl_val
-                    if _cost: html += _badge("Net Exit Value", f"${_exit_val:,.2f}", "#4ade80" if _exit_val >= float(_cost or 0) else "#f87171")
+                    if _cost: html += _badge("Net Cost", f"${float(_cost):,.2f}", "#e2e8f0")
+                    html += '</div>'
+                    # ── Exit row ──
+                    html += f'<div {_row_style}><span {_lbl_style}>Exit</span>'
+                    if _spot_ex:  html += _badge("Spot", f"${float(_spot_ex):.2f}",
+                                                 "#4ade80" if float(_spot_ex) >= float(_spot or _spot_ex) else "#f87171")
+                    if _ivc_ex:   html += _badge("IV Call", f"{float(_ivc_ex):.1f}%", "#e2e8f0")
+                    if _ivp_ex:   html += _badge("IV Put",  f"{float(_ivp_ex):.1f}%", "#e2e8f0")
+                    if _ivsk_ex is not None:
+                        _ivsk_ex_f = float(_ivsk_ex)
+                        _ivsk_entry_f = float(_ivsk) if _ivsk else 0.0
+                        _skew_color = "#4ade80" if _ivsk_ex_f < _ivsk_entry_f else "#f87171"
+                        html += _badge("IV Skew", f"{_ivsk_ex_f:+.1f} pts", _skew_color)
+                    if _cost:     html += _badge("Net Value", f"${_exit_val:,.2f}",
+                                                 "#4ade80" if _exit_val >= float(_cost) else "#f87171")
+                    html += '</div>'
                 elif slug == "conversion_arb":
                     adiv = tr.get("actual_div"); idiv = tr.get("implied_div"); edge = tr.get("edge")
                     rfr  = tr.get("risk_free_rate"); dte = tr.get("dte")
@@ -1968,6 +2891,13 @@ div[data-testid="stDialog"] > div[role="dialog"] {
 
     eq = res.equity_curve.copy()
     eq.index = pd.to_datetime(eq.index)
+
+    # Show backtest error if equity curve is empty
+    if eq.empty:
+        _bt_err = res.metrics.get("error") if res.metrics else None
+        st.error(f"Backtest returned no equity curve. {_bt_err or 'Check data availability.'}")
+        return
+
     starting_cap = float(res.equity_curve.iloc[0]) if not res.equity_curve.empty else 10_000
     eq_df = pd.DataFrame({"equity": eq, "price": eq * 0 + starting_cap})
 
@@ -2012,13 +2942,14 @@ div[data-testid="stDialog"] > div[role="dialog"] {
                     try:
                         from alan_trader.strategies.vol_arbitrage import VolArbitrageStrategy as _WFStrat
                         _wf_strat = _WFStrat()
-                        _wf_price = res.extra.get("spy_returns")  # reuse loaded data
+                        _wf_price = res.extra.get("benchmark_ret") or res.extra.get("spy_returns")  # reuse loaded data
 
                         # Re-load price + chains from session (already loaded for main backtest)
                         # We need the raw price_data (not returns) — reload from DB
                         from alan_trader.db.loader import load_training_data as _wf_ltd
-                        _wf_data   = _wf_ltd(ticker=ticker or "SPY")
-                        _wf_spy_df = _wf_data["spy"]
+                        _wf_ticker = ticker or ""
+                        _wf_data   = _wf_ltd(ticker=_wf_ticker)
+                        _wf_spy_df = _wf_data["spy"]   # primary ticker price data
 
                         # Reuse aux (vix, rate, chains) built during _do_backtest
                         # The chains are not in res.extra — need to rebuild aux from DB
@@ -2027,7 +2958,7 @@ div[data-testid="stDialog"] > div[role="dialog"] {
                         from alan_trader.db.sync import bs_price_chain as _wf_bspc
                         from alan_trader.db.client import get_price_bars as _wf_gpb
                         _wf_eng  = _wf_ge()
-                        _wf_tid  = _wf_gtid(_wf_eng, ticker or "SPY")
+                        _wf_tid  = _wf_gtid(_wf_eng, _wf_ticker) if _wf_ticker else None
                         _wf_from = (datetime.date.today() - datetime.timedelta(days=730))
                         _wf_raw  = _wf_lc(_wf_eng, _wf_tid, _wf_from, datetime.date.today(), min_dte=7, max_dte=60) if _wf_tid else pd.DataFrame()
 
@@ -2040,7 +2971,7 @@ div[data-testid="stDialog"] > div[role="dialog"] {
                             _wf_raw["type"] = _wf_raw["type"].str.lower().map(
                                 {"c": "call", "call": "call", "p": "put", "put": "put"}
                             )
-                            _wf_spots_df = _wf_gpb(_wf_eng, ticker or "SPY", _wf_from, datetime.date.today())
+                            _wf_spots_df = _wf_gpb(_wf_eng, _wf_ticker, _wf_from, datetime.date.today())
                             _wf_spot_map = {}
                             if not _wf_spots_df.empty:
                                 for _, _wf_sr in _wf_spots_df.iterrows():
@@ -2126,6 +3057,136 @@ div[data-testid="stDialog"] > div[role="dialog"] {
     if slug in ("rates_spy_rotation", "rates_spy_rotation_options") and res.extra:
         _render_regime_chart(slug, res)
 
+    # ── Vol Calendar Spread — Signal Ledger (find winning conditions) ──────
+    if slug == "vol_calendar_spread" and res.extra:
+        _sl = res.extra.get("signal_ledger")
+        if _sl is not None and not _sl.empty:
+            st.markdown("---")
+            st.subheader("📡 Signal Ledger — All OOS Predictions vs Actual")
+            st.caption(
+                "Every model prediction made during the OOS window, whether a trade was taken or not. "
+                "Filter to find conditions where the model was consistently right."
+            )
+
+            # Summary accuracy by class
+            _sl_valid = _sl[_sl["actual"] != "UNKNOWN"].copy()
+            if not _sl_valid.empty:
+                _sa1, _sa2, _sa3, _sa4 = st.columns(4)
+                _overall_acc = _sl_valid["correct"].mean()
+                _c_rows = _sl_valid[_sl_valid["predicted"] == "COMPRESS"]
+                _e_rows = _sl_valid[_sl_valid["predicted"] == "EXPAND"]
+                _n_rows = _sl_valid[_sl_valid["predicted"] == "NEUTRAL"]
+                _sa1.metric("Overall Accuracy",  f"{_overall_acc:.0%}")
+                _sa2.metric("COMPRESS accuracy", f"{_c_rows['correct'].mean():.0%}" if len(_c_rows) else "—",
+                            delta=f"{len(_c_rows)} signals")
+                _sa3.metric("EXPAND accuracy",   f"{_e_rows['correct'].mean():.0%}" if len(_e_rows) else "—",
+                            delta=f"{len(_e_rows)} signals")
+                _sa4.metric("NEUTRAL accuracy",  f"{_n_rows['correct'].mean():.0%}" if len(_n_rows) else "—",
+                            delta=f"{len(_n_rows)} signals")
+
+            # Filter controls
+            _fc1, _fc2, _fc3 = st.columns(3)
+            _filt_pred = _fc1.multiselect(
+                "Predicted label", ["COMPRESS", "NEUTRAL", "EXPAND"],
+                default=["COMPRESS", "EXPAND"], key="sl_pred_filter"
+            )
+            _filt_correct = _fc2.selectbox(
+                "Outcome", ["All", "Correct only", "Wrong only"], key="sl_correct_filter"
+            )
+            _filt_traded = _fc3.selectbox(
+                "Trade taken?", ["All", "Trade taken", "Not taken"], key="sl_traded_filter"
+            )
+
+            _filt = _sl.copy()
+            if _filt_pred:
+                _filt = _filt[_filt["predicted"].isin(_filt_pred)]
+            if _filt_correct == "Correct only":
+                _filt = _filt[_filt["correct"] == True]
+            elif _filt_correct == "Wrong only":
+                _filt = _filt[_filt["correct"] == False]
+            if _filt_traded == "Trade taken":
+                _filt = _filt[_filt["trade_taken"] == True]
+            elif _filt_traded == "Not taken":
+                _filt = _filt[_filt["trade_taken"] == False]
+
+            if _filt.empty:
+                st.info("No rows match the current filters.")
+            else:
+                # Visual indicator columns
+                _filt = _filt.copy()
+                _filt.insert(0, "✓", _filt["correct"].map({True: "✅", False: "❌"}))
+                _filt.insert(1, "Trade", _filt["trade_taken"].map({True: "💼", False: "—"}))
+
+                # Add realized_vol for VRP context
+                _show_cols = ["✓", "Trade", "date", "predicted", "actual", "confidence",
+                              "front_ivr", "term_slope", "vrp", "vrp_zscore",
+                              "vix", "front_iv", "news_sentiment"]
+                # include realized_vol_20d if present in ledger
+                if "realized_vol_20d" in _filt.columns:
+                    _show_cols.insert(_show_cols.index("vrp"), "realized_vol_20d")
+
+                st.dataframe(
+                    _filt[[c for c in _show_cols if c in _filt.columns]],
+                    hide_index=True,
+                    width="stretch",
+                    height=350,
+                    column_config={
+                        "confidence":       st.column_config.NumberColumn("Conf", format="%.2f"),
+                        "front_ivr":        st.column_config.NumberColumn("Front IVR", format="%.3f"),
+                        "term_slope":       st.column_config.NumberColumn("Term Slope", format="%.4f"),
+                        "realized_vol_20d": st.column_config.NumberColumn("RVol20d", format="%.1f"),
+                        "vrp":              st.column_config.NumberColumn("VRP", format="%.3f"),
+                        "vrp_zscore":       st.column_config.NumberColumn("VRP z", format="%.2f"),
+                        "vix":              st.column_config.NumberColumn("VIX", format="%.1f"),
+                        "front_iv":         st.column_config.NumberColumn("Front IV", format="%.1f"),
+                        "news_sentiment":   st.column_config.NumberColumn("Sentiment", format="%.3f"),
+                    },
+                )
+
+                st.caption(
+                    f"Showing {len(_filt)} of {len(_sl)} total OOS signal days. "
+                    "**Tip:** Filter to 'COMPRESS + Correct only' and look for high VRP, high front_ivr (>0.6). "
+                    "Filter to 'EXPAND + Correct only' and look for low front_ivr (<0.4), steep term_slope."
+                )
+
+                # Feature distribution: winners vs losers for non-neutral signals
+                _tradeable = _sl[_sl["predicted"].isin(["COMPRESS", "EXPAND"])].copy()
+                if len(_tradeable) >= 4:
+                    st.markdown("---")
+                    st.subheader("Feature Distributions: Correct vs Incorrect Predictions")
+                    st.caption("For COMPRESS + EXPAND signals only. Look for features that separate wins from losses.")
+                    _win_rows  = _tradeable[_tradeable["correct"] == True]
+                    _lose_rows = _tradeable[_tradeable["correct"] == False]
+
+                    import plotly.graph_objects as _pgo
+                    _feat_pairs = [
+                        ("front_ivr", "Front IVR"),
+                        ("term_slope", "Term Slope"),
+                        ("vrp", "VRP"),
+                        ("vix", "VIX"),
+                    ]
+                    _fig_cols = st.columns(2)
+                    for _fi, (_fcol, _flabel) in enumerate(_feat_pairs):
+                        _fig_d = _pgo.Figure()
+                        if len(_win_rows) > 0:
+                            _fig_d.add_trace(_pgo.Histogram(
+                                x=_win_rows[_fcol].dropna().tolist(),
+                                name="Correct", marker_color="#26a69a", opacity=0.7, nbinsx=12,
+                            ))
+                        if len(_lose_rows) > 0:
+                            _fig_d.add_trace(_pgo.Histogram(
+                                x=_lose_rows[_fcol].dropna().tolist(),
+                                name="Wrong", marker_color="#ef5350", opacity=0.7, nbinsx=12,
+                            ))
+                        _fig_d.update_layout(
+                            title=_flabel, height=240, barmode="overlay",
+                            paper_bgcolor="#0c1020", plot_bgcolor="#0c1020",
+                            font=dict(color="#e0e0e0"), margin=dict(t=40, b=20, l=20, r=10),
+                            legend=dict(orientation="h", y=1.1),
+                        )
+                        with _fig_cols[_fi % 2]:
+                            st.plotly_chart(_fig_d, use_container_width=True,
+                                            key=f"sl_dist_{_fcol}")
 
 
 def _render_live(slug: str):
@@ -2387,8 +3448,8 @@ def _render_strategy_performance(slug: str):
 
         # ── Equity curve ─────────────────────────────────────────────────────
         fig_eq = go.Figure()
-        # SPY buy-and-hold benchmark
-        spy_rets = extra.get("spy_returns")
+        # Buy-and-hold benchmark (ticker-agnostic; key may be "spy_returns" or "benchmark_ret")
+        spy_rets = extra.get("spy_returns") or extra.get("benchmark_ret")
         if spy_rets is not None:
             spy_eq = (1 + spy_rets.fillna(0)).cumprod() * equity.iloc[0]
             fig_eq.add_trace(go.Scatter(
@@ -2837,26 +3898,45 @@ def _render_strategy_performance(slug: str):
                             _viol2 = tr.get("violation"); _exp2 = tr.get("expected_pnl"); _sig2 = tr.get("signal_strength")
                             _spot2 = tr.get("spot");      _dte2 = tr.get("dte");          _cost2 = tr.get("cost")
                             _cpe2  = tr.get("call_price_entry"); _ppe2 = tr.get("put_price_entry")
-                            _desc2 = tr.get("description")
-                            html += _pbadge("Type",          _tt2_label, "#a5b4fc")
-                            if _spot2: html += _pbadge("Spot at entry",  f"${float(_spot2):.2f}")
-                            if _dte2:  html += _pbadge("DTE",            f"{int(_dte2)}d")
-                            if _ivc2:  html += _pbadge("IV Call",        f"{float(_ivc2):.1f}%")
-                            if _ivp2:  html += _pbadge("IV Put",         f"{float(_ivp2):.1f}%")
+                            _spot2_ex  = tr.get("spot_exit")
+                            _ivc2_ex   = tr.get("iv_call_exit"); _ivp2_ex = tr.get("iv_put_exit"); _ivsk2_ex = tr.get("iv_skew_exit")
+                            _cpe2_ex   = tr.get("call_price_exit"); _ppe2_ex = tr.get("put_price_exit")
+                            _pnl_val2  = float(tr.get("pnl") or 0)
+                            _exit_val2 = float(_cost2 or 0) + _pnl_val2
+                            _row2_style = 'style="width:100%;display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-bottom:6px;"'
+                            _lbl2_style = 'style="font-size:9px;color:#6b7280;text-transform:uppercase;letter-spacing:.08em;min-width:36px;"'
+                            # ── Entry row ──
+                            html += f'<div {_row2_style}><span {_lbl2_style}>Entry</span>'
+                            html += _pbadge("Type",           _tt2_label, "#a5b4fc")
+                            if _spot2: html += _pbadge("Spot", f"${float(_spot2):.2f}")
+                            if _dte2:  html += _pbadge("DTE",  f"{int(_dte2)}d")
+                            if _ivc2:  html += _pbadge("IV Call", f"{float(_ivc2):.1f}%")
+                            if _ivp2:  html += _pbadge("IV Put",  f"{float(_ivp2):.1f}%")
                             if _ivsk2:
                                 _psc3 = "#f87171" if float(_ivsk2) > 0 else "#4ade80"
                                 html += _pbadge("IV Skew (put−call)", f"{float(_ivsk2):+.1f} pts", _psc3)
                             if _viol2:
                                 _pvc = "#4ade80" if float(_viol2) > 0 else "#f87171"
                                 html += _pbadge("Parity violation", f"${float(_viol2):.4f}", _pvc)
-                            if _exp2:  html += _pbadge("Expected P&L",   f"${float(_exp2):+,.2f}", "#4ade80")
-                            if _sig2:  html += _pbadge("Signal strength", f"{float(_sig2):.3f}")
-                            if _cpe2:  html += _pbadge("Call entry px",  f"${float(_cpe2):.4f}")
-                            if _ppe2:  html += _pbadge("Put entry px",   f"${float(_ppe2):.4f}")
-                            if _cost2: html += _pbadge("Net Entry Cost", f"${float(_cost2):,.2f}")
-                            _pnl_val2 = float(tr.get("pnl") or 0)
-                            _exit_val2 = float(_cost2 or 0) + _pnl_val2
-                            if _cost2: html += _pbadge("Net Exit Value", f"${_exit_val2:,.2f}", "#4ade80" if _exit_val2 >= float(_cost2 or 0) else "#f87171")
+                            if _exp2:  html += _pbadge("Expected P&L",    f"${float(_exp2):+,.2f}", "#4ade80")
+                            if _sig2:  html += _pbadge("Signal strength",  f"{float(_sig2):.3f}")
+                            if _cost2: html += _pbadge("Net Cost", f"${float(_cost2):,.2f}")
+                            html += '</div>'
+                            # ── Exit row ──
+                            html += f'<div {_row2_style}><span {_lbl2_style}>Exit</span>'
+                            if _spot2_ex:  html += _pbadge("Spot", f"${float(_spot2_ex):.2f}",
+                                                            "#4ade80" if float(_spot2_ex) >= float(_spot2 or _spot2_ex) else "#f87171")
+                            if _ivc2_ex:   html += _pbadge("IV Call", f"{float(_ivc2_ex):.1f}%")
+                            if _ivp2_ex:   html += _pbadge("IV Put",  f"{float(_ivp2_ex):.1f}%")
+                            if _ivsk2_ex is not None:
+                                _ivsk2_ex_f    = float(_ivsk2_ex)
+                                _ivsk2_entry_f = float(_ivsk2) if _ivsk2 else 0.0
+                                _skew2_color   = "#4ade80" if _ivsk2_ex_f < _ivsk2_entry_f else "#f87171"
+                                html += _pbadge("IV Skew", f"{_ivsk2_ex_f:+.1f} pts", _skew2_color)
+                            if _cost2:     html += _pbadge("Net Value", f"${_exit_val2:,.2f}",
+                                                           "#4ade80" if _exit_val2 >= float(_cost2) else "#f87171")
+                            html += '</div>'
+                            _desc2 = tr.get("description")
                             if _desc2:
                                 html += (f'<div style="width:100%;margin-top:8px;padding-top:8px;border-top:1px solid #1e293b;'
                                          f'font-size:12px;color:#94a3b8;line-height:1.5;">{str(_desc2)}</div>')
@@ -3089,7 +4169,7 @@ tab_market, tab_screener, tab_paper, tab_strategies, tab_tools = st.tabs(
 # ── MARKET (homepage) ─────────────────────────────────────────────────────────
 with tab_market:
     from alan_trader.dashboard.tabs.market_data import render as render_market
-    mkt_ticker = _ticker_row("mkt")
+    mkt_ticker = _ticker_row("mkt", default="SPY")
     render_market(ticker=mkt_ticker, api_key=st.session_state.get("polygon_api_key", ""))
 
 # ── SCREENER ──────────────────────────────────────────────────────────────────
@@ -3097,7 +4177,7 @@ with tab_screener:
     from alan_trader.dashboard.tabs.screener import render as render_screener
     render_screener(
         api_key=st.session_state.get("polygon_api_key", ""),
-        selected_strategies=st.session_state.get("selected_strategies", []),
+        selected_strategies=[],  # global screener shows fixed tabs only; strategy screeners live in each strategy's tab
     )
 
 # ── PAPER TRADING ──────────────────────────────────────────────────────────────
@@ -3120,13 +4200,22 @@ with tab_strategies:
 
         for slug, stab in zip(selected, strategy_tabs):
             with stab:
-                inner_names = []
+                inner_names = ["🔍 Screener"]
                 if _cap(slug, "requires_training"):
                     inner_names.append("🧠 Train")
-                inner_names += ["📊 Backtest", "🔴 Live", "📈 Performance"]
+                inner_names += ["📊 Backtest", "🔴 Simulator", "📈 Performance", "📖 Guide"]
 
                 inner_tabs = st.tabs(inner_names)
                 idx = 0
+
+                with inner_tabs[idx]:
+                    from alan_trader.dashboard.tabs.strategy_screener import render as _render_strat_screener
+                    _render_strat_screener(
+                        slug=slug,
+                        api_key=st.session_state.get("polygon_api_key", ""),
+                        key_prefix=f"{slug}_",
+                    )
+                idx += 1
 
                 if _cap(slug, "requires_training"):
                     with inner_tabs[idx]:
@@ -3143,11 +4232,26 @@ with tab_strategies:
 
                 with inner_tabs[idx]:
                     _render_strategy_performance(slug)
+                idx += 1
+
+                with inner_tabs[idx]:
+                    import pathlib as _pl
+                    _guide_path = (
+                        _pl.Path(__file__).parent
+                        / "tabs" / "guide_articles" / f"{slug}.md"
+                    )
+                    if _guide_path.exists():
+                        st.markdown(_guide_path.read_text(encoding="utf-8"))
+                    else:
+                        st.info(
+                            f"No documentation article found for **{slug}**. "
+                            "Add a file at `dashboard/tabs/guide_articles/{slug}.md` to populate this tab."
+                        )
 
 # ── TOOLS ─────────────────────────────────────────────────────────────────────
 with tab_tools:
-    tool_tab_names = ["🗄 Data", "🔭 Polygon", "🛡 Risk", "🗂 Registry", "📚 Guide"]
-    (tab_data, tab_polygon, tab_risk, tab_registry, tab_guide) = st.tabs(tool_tab_names)
+    tool_tab_names = ["🗄 Data", "🔭 Polygon", "🛡 Risk", "🗂 Registry", "📚 Guide", "🏦 Broker"]
+    (tab_data, tab_polygon, tab_risk, tab_registry, tab_guide, tab_broker) = st.tabs(tool_tab_names)
 
     with tab_data:
         from alan_trader.dashboard.tabs.data_manager import render as render_data
@@ -3174,3 +4278,14 @@ with tab_tools:
     with tab_guide:
         from alan_trader.dashboard.tabs.strategy_guide import render as render_guide
         render_guide()
+
+    with tab_broker:
+        st.subheader("🏦 Broker Integration Guide")
+        import pathlib as _pl_broker
+        _broker_guide = (
+            _pl_broker.Path(__file__).parent / "tabs" / "guide_articles" / "broker_integration.md"
+        )
+        if _broker_guide.exists():
+            st.markdown(_broker_guide.read_text(encoding="utf-8"))
+        else:
+            st.warning("Broker integration guide not found.")
