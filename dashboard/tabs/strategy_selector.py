@@ -12,15 +12,58 @@ from alan_trader.strategies.registry import STRATEGY_METADATA, registry_datafram
 
 
 def _status_badge(status: str) -> str:
-    colors = {"Active": "#26a69a", "Stub": "#78909c", "Disabled": "#ef5350"}
-    c = colors.get(status, "#78909c")
-    return f'<span style="background:{c};color:#fff;padding:2px 8px;border-radius:10px;font-size:11px">{status}</span>'
+    cfg = {
+        "Active":   ("#10b981", "rgba(16,185,129,0.15)"),
+        "Stub":     ("#6b7280", "rgba(107,114,128,0.15)"),
+        "Disabled": ("#ef4444", "rgba(239,68,68,0.15)"),
+    }
+    fg, bg = cfg.get(status, ("#6b7280", "rgba(107,114,128,0.15)"))
+    return (f'<span style="background:{bg};color:{fg};padding:2px 9px;border-radius:10px;'
+            f'font-size:11px;font-weight:600;font-family:Inter,sans-serif;border:1px solid {fg}40">'
+            f'{status}</span>')
 
 
 def _type_badge(t: str) -> str:
-    colors = {"AI": "#ab47bc", "RULE": "#5c6bc0", "HYBRID": "#ffa726"}
-    c = colors.get(t.upper(), "#78909c")
-    return f'<span style="background:{c};color:#fff;padding:2px 8px;border-radius:10px;font-size:11px">{t.upper()}</span>'
+    cfg = {
+        "AI":     ("#a78bfa", "rgba(167,139,250,0.15)"),
+        "RULE":   ("#6366f1", "rgba(99,102,241,0.15)"),
+        "HYBRID": ("#f59e0b", "rgba(245,158,11,0.15)"),
+    }
+    fg, bg = cfg.get(t.upper(), ("#6b7280", "rgba(107,114,128,0.15)"))
+    return (f'<span style="background:{bg};color:{fg};padding:2px 9px;border-radius:10px;'
+            f'font-size:11px;font-weight:600;font-family:Inter,sans-serif;border:1px solid {fg}40">'
+            f'{t.upper()}</span>')
+
+
+def _metric_card(label: str, value: str, delta: str = "", delta_positive: bool = True,
+                 accent: str = "#6366f1") -> str:
+    """Render a professional metric card as HTML."""
+    delta_color = "#10b981" if delta_positive else "#ef4444"
+    delta_html = ""
+    if delta:
+        delta_html = (
+            f'<div style="margin-top:6px;font-size:11px;font-weight:500;'
+            f'color:{delta_color};font-family:\'JetBrains Mono\',monospace;">'
+            f'{delta}</div>'
+        )
+    return (
+        f'<div style="'
+        f'background:#111827;'
+        f'border:1px solid #1f2937;'
+        f'border-top:2px solid {accent};'
+        f'border-radius:10px;'
+        f'padding:14px 18px;'
+        f'transition:border-color 0.2s,box-shadow 0.2s;'
+        f'">'
+        f'<div style="color:#6b7280;font-size:10px;font-weight:700;'
+        f'text-transform:uppercase;letter-spacing:0.09em;'
+        f'font-family:Inter,sans-serif;margin-bottom:6px">{label}</div>'
+        f'<div style="color:#f9fafb;font-size:1.5rem;font-weight:700;'
+        f'font-family:\'JetBrains Mono\',monospace;letter-spacing:-0.02em;line-height:1">'
+        f'{value}</div>'
+        f'{delta_html}'
+        f'</div>'
+    )
 
 
 def render(backtest_results: dict = None, selected_slugs: list = None):
@@ -28,7 +71,12 @@ def render(backtest_results: dict = None, selected_slugs: list = None):
     backtest_results: {slug: BacktestResult} for active strategies
     selected_slugs:   list of slugs currently selected by sidebar
     """
-    st.header("Strategy Registry")
+    st.markdown(
+        '<h2 style="color:#f9fafb;font-size:1.25rem;font-weight:700;'
+        'padding-left:12px;border-left:3px solid #6366f1;'
+        'margin-bottom:20px;font-family:Inter,sans-serif">Strategy Registry</h2>',
+        unsafe_allow_html=True,
+    )
 
     meta_df = registry_dataframe()
 
@@ -39,33 +87,50 @@ def render(backtest_results: dict = None, selected_slugs: list = None):
     ai       = sum(1 for m in STRATEGY_METADATA.values() if m["type"] == "ai")
     rule     = sum(1 for m in STRATEGY_METADATA.values() if m["type"] == "rule")
 
-    c1, c2, c3, c4, c5 = st.columns(5)
-    c1.metric("Total Strategies",    total)
-    c2.metric("Implemented",         active, delta=f"{active}/{total}")
-    c3.metric("Stubs (Roadmap)",     stub)
-    c4.metric("AI-Driven",           ai)
-    c5.metric("Rule-Based",          rule)
+    _cards = [
+        _metric_card("Total Strategies", str(total),  accent="#6366f1"),
+        _metric_card("Implemented",       str(active), delta=f"{active}/{total} · {active*100//total}%",
+                     delta_positive=True, accent="#10b981"),
+        _metric_card("Stubs (Roadmap)",  str(stub),   accent="#f59e0b"),
+        _metric_card("AI-Driven",         str(ai),     accent="#a78bfa"),
+        _metric_card("Rule-Based",        str(rule),   accent="#38bdf8"),
+    ]
+    st.markdown(
+        '<div style="display:grid;grid-template-columns:repeat(5,1fr);gap:12px;margin-bottom:24px">'
+        + "".join(_cards) + "</div>",
+        unsafe_allow_html=True,
+    )
 
     st.markdown("---")
 
     # ── strategy grid ──────────────────────────────────────────────────────
-    st.subheader("All 30 Strategies")
+    st.markdown(
+        '<h2 style="color:#f9fafb;font-size:1.05rem;font-weight:700;'
+        'padding-left:12px;border-left:3px solid #6366f1;'
+        'margin-bottom:16px;font-family:Inter,sans-serif">All 30 Strategies</h2>',
+        unsafe_allow_html=True,
+    )
 
     display_df = meta_df[["Name", "Type", "Status", "Asset Class",
                            "Typical Hold (days)", "Target Sharpe"]].copy()
 
     # Inject Sharpe from backtest results if available
     if backtest_results:
-        display_df["Live Sharpe"] = display_df.index.map(
-            lambda s: f"{backtest_results[s].metrics.get('sharpe', '—'):.2f}"
-                      if s in backtest_results and backtest_results[s].metrics else "—"
-        )
+        def _fmt_sharpe(s):
+            if s not in backtest_results or not backtest_results[s].metrics:
+                return "—"
+            v = backtest_results[s].metrics.get("sharpe")
+            try:
+                return f"{float(v):.2f}" if v is not None else "—"
+            except (TypeError, ValueError):
+                return "—"
+        display_df["Live Sharpe"] = display_df.index.map(_fmt_sharpe)
 
     # Style the dataframe
     def _row_style(row):
         if row["Status"] == "Active":
-            return ["background-color: #0d1f18"] * len(row)
-        return ["background-color: #0e1117"] * len(row)
+            return ["background-color: #0d1a14"] * len(row)
+        return ["background-color: #0a0e1a"] * len(row)
 
     st.dataframe(
         display_df.style.apply(_row_style, axis=1),
@@ -76,7 +141,12 @@ def render(backtest_results: dict = None, selected_slugs: list = None):
     st.markdown("---")
 
     # ── detail view for selected strategy ─────────────────────────────────
-    st.subheader("Strategy Detail")
+    st.markdown(
+        '<h2 style="color:#f9fafb;font-size:1.05rem;font-weight:700;'
+        'padding-left:12px;border-left:3px solid #6366f1;'
+        'margin-bottom:16px;font-family:Inter,sans-serif">Strategy Detail</h2>',
+        unsafe_allow_html=True,
+    )
     slug_options = list(STRATEGY_METADATA.keys())
     selected = st.selectbox(
         "Select a strategy to inspect",
@@ -90,17 +160,48 @@ def render(backtest_results: dict = None, selected_slugs: list = None):
 
     with d1:
         st.markdown(f"""
-        <div style="background:#161b27;padding:20px;border-radius:10px">
-          <h3 style="color:#e0e0e0;margin:0">{meta["display_name"]}</h3>
-          <div style="margin:8px 0">
-            {_type_badge(meta["type"])} &nbsp; {_status_badge(meta["status"].capitalize())}
+        <div style="
+            background:#111827;
+            border:1px solid #1f2937;
+            border-top:2px solid #6366f1;
+            border-radius:10px;
+            padding:20px 22px;
+        ">
+          <div style="
+              font-size:1.1rem;font-weight:700;
+              color:#f9fafb;margin-bottom:10px;
+              font-family:Inter,sans-serif;letter-spacing:-0.01em;
+          ">{meta["display_name"]}</div>
+          <div style="margin-bottom:12px;display:flex;gap:6px;flex-wrap:wrap">
+            {_type_badge(meta["type"])} {_status_badge(meta["status"].capitalize())}
           </div>
-          <p style="color:#b0b8c8;margin:12px 0 6px">{meta["description"]}</p>
-          <table style="width:100%;color:#b0b8c8;font-size:12px">
-            <tr><td><b>Asset Class</b></td><td>{meta.get("asset_class","")}</td></tr>
-            <tr><td><b>Typical Hold</b></td><td>{meta.get("typical_holding_days","")} days</td></tr>
-            <tr><td><b>Target Sharpe</b></td><td>{meta.get("target_sharpe","")}</td></tr>
-            <tr><td><b>Class path</b></td><td style="font-size:10px;font-family:monospace">{meta.get("class_path","(stub)")}</td></tr>
+          <p style="color:#9ca3af;margin:0 0 14px;font-size:13px;line-height:1.6;
+                     font-family:Inter,sans-serif">{meta["description"]}</p>
+          <table style="width:100%;border-collapse:collapse;">
+            <tr style="border-bottom:1px solid #1f2937">
+              <td style="color:#6b7280;font-size:11px;font-weight:600;text-transform:uppercase;
+                         letter-spacing:.07em;padding:7px 0;font-family:Inter,sans-serif">Asset Class</td>
+              <td style="color:#d1d5db;font-size:13px;font-weight:500;padding:7px 0 7px 16px;
+                         font-family:Inter,sans-serif">{meta.get("asset_class","—")}</td>
+            </tr>
+            <tr style="border-bottom:1px solid #1f2937">
+              <td style="color:#6b7280;font-size:11px;font-weight:600;text-transform:uppercase;
+                         letter-spacing:.07em;padding:7px 0;font-family:Inter,sans-serif">Typical Hold</td>
+              <td style="color:#d1d5db;font-size:13px;font-weight:500;padding:7px 0 7px 16px;
+                         font-family:'JetBrains Mono',monospace">{meta.get("typical_holding_days","—")} days</td>
+            </tr>
+            <tr style="border-bottom:1px solid #1f2937">
+              <td style="color:#6b7280;font-size:11px;font-weight:600;text-transform:uppercase;
+                         letter-spacing:.07em;padding:7px 0;font-family:Inter,sans-serif">Target Sharpe</td>
+              <td style="color:#10b981;font-size:13px;font-weight:700;padding:7px 0 7px 16px;
+                         font-family:'JetBrains Mono',monospace">{meta.get("target_sharpe","—")}</td>
+            </tr>
+            <tr>
+              <td style="color:#6b7280;font-size:11px;font-weight:600;text-transform:uppercase;
+                         letter-spacing:.07em;padding:7px 0;font-family:Inter,sans-serif;vertical-align:top">Class</td>
+              <td style="color:#6366f1;font-size:10px;padding:7px 0 7px 16px;
+                         font-family:'JetBrains Mono',monospace;word-break:break-all">{meta.get("class_path","(stub)")}</td>
+            </tr>
           </table>
         </div>
         """, unsafe_allow_html=True)
@@ -109,7 +210,27 @@ def render(backtest_results: dict = None, selected_slugs: list = None):
         if meta["status"] == "active" and backtest_results and selected in backtest_results:
             res = backtest_results[selected]
             m   = res.metrics
-            st.markdown("**Backtest Metrics**")
+            st.markdown(
+                '<div style="color:#6b7280;font-size:10px;font-weight:700;'
+                'text-transform:uppercase;letter-spacing:0.09em;'
+                'font-family:Inter,sans-serif;margin-bottom:12px">Backtest Metrics</div>',
+                unsafe_allow_html=True,
+            )
+
+            def _val_color(label, val_str):
+                """Return a color hint for certain metrics."""
+                try:
+                    num = float(val_str.replace("%", "").replace("$", "").replace(",", ""))
+                except ValueError:
+                    return "#f9fafb"
+                if "Return" in label or "Win Rate" in label or "Profit Factor" in label:
+                    return "#10b981" if num > 0 else "#ef4444"
+                if "Drawdown" in label or "VaR" in label:
+                    return "#f59e0b"
+                if "Sharpe" in label or "Sortino" in label or "Calmar" in label:
+                    return "#10b981" if num >= 1 else ("#f59e0b" if num >= 0 else "#ef4444")
+                return "#f9fafb"
+
             pairs = [
                 ("Total Return",  f"{m.get('total_return_pct', 0):.1f}%"),
                 ("Sharpe",        f"{m.get('sharpe', 0):.2f}"),
@@ -120,26 +241,46 @@ def render(backtest_results: dict = None, selected_slugs: list = None):
                 ("Profit Factor", f"{m.get('profit_factor', 0):.2f}"),
                 ("VaR 95%",       f"{m.get('var_95_pct', 0):.2f}%"),
             ]
-            for label, val in pairs:
-                st.markdown(
-                    f'<div style="display:flex;justify-content:space-between;'
-                    f'padding:4px 0;border-bottom:1px solid #1e2130">'
-                    f'<span style="color:#b0b8c8">{label}</span>'
-                    f'<span style="color:#e0e0e0;font-weight:600">{val}</span></div>',
-                    unsafe_allow_html=True,
+            rows_html = ""
+            for i, (label, val) in enumerate(pairs):
+                row_bg = "#111827" if i % 2 == 0 else "#0f1623"
+                vc = _val_color(label, val)
+                rows_html += (
+                    f'<div style="display:flex;justify-content:space-between;align-items:center;'
+                    f'padding:8px 12px;background:{row_bg};'
+                    f'border-bottom:1px solid #1f2937;">'
+                    f'<span style="color:#9ca3af;font-size:12px;font-family:Inter,sans-serif">{label}</span>'
+                    f'<span style="color:{vc};font-weight:700;font-size:13px;'
+                    f'font-family:\'JetBrains Mono\',monospace">{val}</span>'
+                    f'</div>'
                 )
+            st.markdown(
+                f'<div style="border:1px solid #1f2937;border-radius:10px;overflow:hidden">'
+                f'{rows_html}</div>',
+                unsafe_allow_html=True,
+            )
         elif meta["status"] == "active":
-            st.info("Run backtest to see live metrics.")
+            st.markdown(
+                '<div style="background:#111827;border:1px solid #1f2937;border-radius:10px;'
+                'padding:20px;text-align:center;">'
+                '<div style="font-size:1.5rem;margin-bottom:8px">⚡</div>'
+                '<div style="color:#9ca3af;font-size:13px;font-family:Inter,sans-serif">'
+                'Run a backtest to see live metrics</div>'
+                '</div>',
+                unsafe_allow_html=True,
+            )
         else:
-            st.markdown("""
-            <div style="background:#1e2130;padding:20px;border-radius:10px;text-align:center">
-              <div style="font-size:2rem">🚧</div>
-              <div style="color:#78909c;margin-top:8px">Not yet implemented</div>
-              <div style="color:#546e7a;font-size:12px;margin-top:6px">
-                This strategy is on the roadmap.
-              </div>
-            </div>
-            """, unsafe_allow_html=True)
+            st.markdown(
+                '<div style="background:#111827;border:1px solid #1f2937;border-radius:10px;'
+                'padding:24px;text-align:center;">'
+                '<div style="font-size:2rem;margin-bottom:10px">🚧</div>'
+                '<div style="color:#9ca3af;font-size:13px;font-weight:500;'
+                'font-family:Inter,sans-serif">Not yet implemented</div>'
+                '<div style="color:#6b7280;font-size:11px;margin-top:6px;font-family:Inter,sans-serif">'
+                'This strategy is on the roadmap.</div>'
+                '</div>',
+                unsafe_allow_html=True,
+            )
 
     # ── params table for active strategy ──────────────────────────────────
     if meta["status"] == "active":
@@ -352,17 +493,56 @@ def render(backtest_results: dict = None, selected_slugs: list = None):
 
     # ── roadmap / progress bar ─────────────────────────────────────────────
     st.markdown("---")
-    st.subheader("Implementation Roadmap")
+    st.markdown(
+        '<h2 style="color:#f9fafb;font-size:1.05rem;font-weight:700;'
+        'padding-left:12px;border-left:3px solid #6366f1;'
+        'margin-bottom:16px;font-family:Inter,sans-serif">Implementation Roadmap</h2>',
+        unsafe_allow_html=True,
+    )
     pct = active / total * 100
     st.markdown(f"""
-    <div style="background:#161b27;padding:16px;border-radius:10px">
-      <div style="display:flex;justify-content:space-between;margin-bottom:8px">
-        <span style="color:#e0e0e0">Implemented</span>
-        <span style="color:#26a69a;font-weight:700">{active} / {total} ({pct:.0f}%)</span>
+    <div style="
+        background:#111827;border:1px solid #1f2937;
+        border-radius:10px;padding:18px 20px;
+    ">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+        <span style="color:#9ca3af;font-size:13px;font-family:Inter,sans-serif">
+          Strategies implemented
+        </span>
+        <span style="
+            color:#10b981;font-weight:700;font-size:14px;
+            font-family:'JetBrains Mono',monospace;
+        ">{active} / {total}
+          <span style="color:#6b7280;font-size:12px;font-weight:500"> · {pct:.0f}%</span>
+        </span>
       </div>
-      <div style="background:#1e2130;border-radius:4px;height:10px">
-        <div style="background:linear-gradient(90deg,#26a69a,#5c6bc0);
-             width:{pct}%;height:10px;border-radius:4px"></div>
+      <div style="background:#1f2937;border-radius:6px;height:8px;overflow:hidden">
+        <div style="
+            background:linear-gradient(90deg,#6366f1,#10b981);
+            width:{pct}%;height:8px;border-radius:6px;
+            box-shadow:0 0 8px rgba(99,102,241,0.4);
+            transition:width 0.6s ease;
+        "></div>
+      </div>
+      <div style="
+          display:flex;gap:20px;margin-top:12px;flex-wrap:wrap;
+      ">
+        <span style="
+            color:#6b7280;font-size:11px;font-family:Inter,sans-serif;
+        ">
+          <span style="
+              display:inline-block;width:8px;height:8px;border-radius:50%;
+              background:#10b981;margin-right:5px;vertical-align:middle;
+          "></span>Active: {active}
+        </span>
+        <span style="
+            color:#6b7280;font-size:11px;font-family:Inter,sans-serif;
+        ">
+          <span style="
+              display:inline-block;width:8px;height:8px;border-radius:50%;
+              background:#f59e0b;margin-right:5px;vertical-align:middle;
+          "></span>Roadmap: {total - active}
+        </span>
       </div>
     </div>
     """, unsafe_allow_html=True)

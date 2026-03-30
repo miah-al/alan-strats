@@ -115,7 +115,7 @@ class SequenceDataset(Dataset):
         self.spread_prices = torch.tensor(sp, dtype=torch.float32)
 
     def __len__(self):
-        return len(self.features) - self.seq_len
+        return max(0, len(self.features) - self.seq_len)
 
     def __getitem__(self, idx):
         x  = self.features[idx: idx + self.seq_len]

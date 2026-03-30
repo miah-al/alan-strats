@@ -3,42 +3,48 @@ IV Skew Premium Capture — Defined-Risk Options Spread Strategy.
 
 THESIS
 ------
-In retail-heavy names (HOOD, COIN, GME), retail investors persistently buy
-puts for downside protection, inflating put IV above call IV at the same
-strike. This structural skew mispricing mean-reverts — the strategy harvests
-the overpriced put premium via a defined-risk spread structure.
+In retail-heavy names (high P/C OI ratio equities), retail investors
+persistently buy puts for downside protection, inflating put IV above call IV
+at the same strike. This structural skew mispricing mean-reverts — the
+strategy harvests the overpriced put premium via a defined-risk spread
+structure. The ticker is always a parameter; no specific symbol is hardcoded.
 
 PRIMARY TRADE: Bull Put Spread (skew strike)
-  - Sell put at K  (overpriced, high IV)
-  - Buy  put at K − put_spread_width  (protection, lower IV)
-  → Captures put skew premium; max loss is capped at spread width
+  - Sell put at K                     (overpriced — put IV >> call IV at same strike K)
+  - Buy  put at K − put_spread_width  (protection — cheaper, further OTM)
+  → Net CREDIT: sell the higher-dollar-premium put at K, buy cheaper put at K−width.
+    Positive theta — time decay works in your favour.
+    The IV arb is the same-strike comparison: put IV at K vs call IV at K.
 
 PRIMARY TRADE: Long Call at K
-  - Buy call at K  (cheap, low IV relative to put)
-  → Profits if stock rises AND/OR put IV mean-reverts
+  - Buy call at K  (cheap, low IV relative to put at same strike)
+  → Profits if stock rises AND/OR put IV mean-reverts toward call IV
 
 DELTA HEDGE: Bear Call Spread (ATM)
-  - Sell call at ATM  (neutralises net positive delta of the position)
-  - Buy  call at ATM + hedge_spread_width  (caps short call risk, RH-compliant)
+  - Sell call at ATM (~S)               (neutralises net positive delta)
+  - Buy  call at ATM + hedge_width      (caps short call risk, RH-compliant)
+  → Short call is at current stock price, NOT at K — placing it at K would cancel
+    the LongCallATK. ATM placement ensures genuine delta offset.
   → Isolates IV skew P&L from directional stock moves
 
 FULL STRUCTURE (5 legs, fully defined risk, Robinhood Level 3 compliant):
-  ① Short Put  (K)                   — main skew arb
-  ② Long Put   (K − put_spread_width) — bull put spread protection
-  ③ Long Call  (K)                   — main skew arb
-  ④ Short Call (ATM)                 — delta hedge
-  ⑤ Long Call  (ATM + hedge_width)   — bear call spread cap
+  ① Short Put  (K)                    — sell overpriced put (high IV vs call at K)
+  ② Long Put   (K − put_spread_width) — protection (further OTM, cheaper)
+  ③ Long Call  (K)                    — buy cheap call (low IV vs put at K)
+  ④ Short Call (ATM ~S)               — delta hedge (at spot, not at K)
+  ⑤ Long Call  (ATM + hedge_width)    — bear call spread cap
 
 PUT-CALL PARITY ARBS (secondary signals, when real bid/ask quotes available):
   CONVERSION  (calls overpriced): Buy stock + Buy put + Sell call
   REVERSAL    (puts overpriced):  Short stock + Sell put + Buy call
 
-HOOD-SPECIFIC INSIGHTS
-----------------------
-  - IV typically 60–100% → wide dollar spreads worth trading
+BEST CANDIDATES (examples — not hardcoded)
+------------------------------------------
+  - High-IV retail-heavy names (e.g. HOOD, COIN, GME, MSTR, MARA):
+      IV typically 60–100% → wide dollar spreads worth trading
   - Persistent put skew 8–20 vol pts → skew_arb fires frequently
   - P/C OI ratio 1.5–2.5 → retail put demand creates structural mispricing
-  - Hard-to-borrow → stock-based reversals avoided; spread hedge used instead
+  - Hard-to-borrow stocks → stock-based reversals avoided; spread hedge used
   - Best DTE: 7–45 days (liquid, enough time value, not too much gamma risk)
 
 PARAMETERS
@@ -57,11 +63,11 @@ EXAMPLE TRADE (HOOD, 2025-06-16 → 2025-06-18)
   Spot   : $76.75    DTE: 11    Contracts: 7
 
   Entry legs:
-    ① Short Put  K=$65   @ $0.30   (overpriced — put IV 57%)
-    ② Long Put   K=$63   @ $0.20   (protection  — bull put spread)
-    ③ Long Call  K=$65   @ $11.95  (cheap       — call IV 43%)
-    ④ Short Call K=$77   @ $3.10   (ATM hedge   — bear call spread)
-    ⑤ Long Call  K=$78   @ $3.50   (hedge cap   — RH-compliant)
+    ① Short Put  K=$65   @ $0.30   (overpriced  — put IV 57% vs call IV 43% at K=$65)
+    ② Long Put   K=$63   @ $0.20   (protection  — further OTM, cheaper)
+    ③ Long Call  K=$65   @ $11.95  (cheap IV arb — call IV 43% vs put IV 57%)
+    ④ Short Call K=$77   @ $3.10   (ATM hedge   — at spot $76.75, not at K=$65)
+    ⑤ Long Call  K=$78   @ $3.50   (hedge cap   — ATM + $1 width, RH-compliant)
 
   Exit (2 days later, stock rallied):
     ① Short Put  → $0.19   P&L  +$77
@@ -203,8 +209,8 @@ class VolArbitrageStrategy(BaseStrategy):
     strategy_type        = StrategyType.RULE_BASED
     status               = StrategyStatus.ACTIVE
     description          = (
-        "Harvests structural put IV overpricing in retail-heavy names (HOOD, COIN, GME) "
-        "via a fully defined-risk, RH-compliant spread structure. "
+        "Harvests structural put IV overpricing in retail-heavy names (high P/C OI) "
+        "via a fully defined-risk, RH-compliant spread structure. Ticker is a parameter. "
         "Core trade: bull put spread at the skew strike (sell overpriced put, buy protective put) "
         "+ long call (cheap relative to put IV). "
         "Delta hedged with a bear call spread at ATM. "
@@ -252,7 +258,8 @@ class VolArbitrageStrategy(BaseStrategy):
 
     def generate_signal(self, market_snapshot: dict) -> SignalResult:
         chain = market_snapshot.get("options_chain")
-        S     = market_snapshot.get("spy_price") or market_snapshot.get("price", 500.0)
+        # Accept 'price' (preferred), then legacy 'spy_price', then a fallback placeholder
+        S     = market_snapshot.get("price") or market_snapshot.get("spy_price") or 500.0
         r     = market_snapshot.get("rate_10y", 0.045)
         vix_hist = market_snapshot.get("vix_history", pd.Series(dtype=float))
         cur_iv   = market_snapshot.get("vix", 0.20)
@@ -355,7 +362,8 @@ class VolArbitrageStrategy(BaseStrategy):
         )
 
         # Build rolling ATM IV history from the chains themselves (more accurate than VIX
-        # for stock-specific options — HOOD IV 60-100% has nothing to do with VIX 12-25%)
+        # for stock-specific options — a high-IV retail name's 60-100% IV has nothing to
+        # do with VIX 12-25%; the strategy is generic so we always compute per-ticker IV)
         _chain_iv_by_date: dict = {}   # Timestamp → median ATM IV (decimal) for that day
 
         capital     = float(starting_capital)
@@ -411,9 +419,11 @@ class VolArbitrageStrategy(BaseStrategy):
                     self._tmp_skew_thr  = skew_thr
                     self._tmp_dte_min   = dte_lo
                     self._tmp_dte_max   = dte_hi
+                    self._tmp_hold_days = h_days
                     violations = self._scan_chain(chain, S, r)
                     del self._tmp_min_viol, self._tmp_skew_thr
                     del self._tmp_dte_min,  self._tmp_dte_max
+                    del self._tmp_hold_days
 
                     for v in violations[:1]:
                         tr = self._open_trade(v, S, capital, today_date, chain=chain)
@@ -440,6 +450,14 @@ class VolArbitrageStrategy(BaseStrategy):
             # Record final equity after all positions are closed
             equity_pts.append({"date": price_data.index[-1], "equity": capital})
 
+        # Clean up temporary instance attributes set at start of backtest
+        for _attr in ("_skip_parity_arb", "_use_delta_hedge",
+                      "_hedge_spread_width", "_put_spread_width"):
+            try:
+                delattr(self, _attr)
+            except AttributeError:
+                pass
+
         if not equity_pts:
             return self._empty_result(starting_capital)
 
@@ -450,13 +468,13 @@ class VolArbitrageStrategy(BaseStrategy):
             name="equity",
         )
         daily_ret = equity.pct_change().dropna()
-        spy_ret   = price_data["close"].pct_change().dropna()
-        spy_ret.index = pd.to_datetime(spy_ret.index)
+        bh_ret   = price_data["close"].pct_change().dropna()
+        bh_ret.index = pd.to_datetime(bh_ret.index)
 
         metrics = compute_all_metrics(
             equity_curve=equity,
             trades_df=trades_df if not trades_df.empty else None,
-            benchmark_returns=spy_ret.reindex(equity.index).dropna(),
+            benchmark_returns=bh_ret.reindex(equity.index).dropna(),
         )
 
         # Trade type breakdown for performance tab
@@ -479,7 +497,7 @@ class VolArbitrageStrategy(BaseStrategy):
             metrics=metrics,
             params=self.get_params(),
             extra={
-                "spy_returns":           spy_ret,
+                "benchmark_ret":         bh_ret,
                 "type_breakdown":        type_breakdown,
                 "vix_series":            vix_series,
                 "data_quality":          data_quality,
@@ -633,7 +651,7 @@ class VolArbitrageStrategy(BaseStrategy):
              "col": 0, "row": 0, "help": "Close position after this many days if not expired"},
             {"key": "min_violation_pct",  "label": "Min parity violation (fraction of S)",
              "type": "slider",  "min": 0.001, "max": 0.020, "default": 0.003, "step": 0.001,
-             "col": 1, "row": 0, "help": "Minimum violation as fraction of spot (0.003 = 0.3% for SPY, 0.005 for HOOD)"},
+             "col": 1, "row": 0, "help": "Minimum violation as fraction of spot (0.003 = 0.3% for large ETFs, 0.005 for high-IV names)"},
             {"key": "iv_skew_threshold",  "label": "IV skew threshold (fraction, e.g. 0.05 = 5pts)",
              "type": "slider",  "min": 0.02, "max": 0.20, "default": 0.05, "step": 0.01,
              "col": 2, "row": 0, "help": "Put minus call IV threshold to trigger skew arb (0.05 = 5 vol pts)"},
@@ -830,8 +848,14 @@ class VolArbitrageStrategy(BaseStrategy):
                 iv_p2 = p_iv_stored if p_iv_stored == p_iv_stored else None
                 if iv_c2 and iv_p2:
                     skew = iv_p2 - iv_c2
-                    if skew > skew_thr and viol_pct < min_viol:
-                        strength = min(1.0, (skew - skew_thr) / skew_thr)
+                    # DTE-adjusted threshold: require proportionally larger skew when
+                    # hold_days consumes a large fraction of remaining DTE.
+                    # A 5-day hold on a 10-DTE option eats 50% of time value — require more skew.
+                    _h_days = getattr(self, "_tmp_hold_days", self.hold_days)
+                    _dte_remaining_ratio = max(dte_val - _h_days, 1) / max(dte_val, 1)
+                    _adjusted_skew_thr = skew_thr / max(_dte_remaining_ratio, 0.30)
+                    if skew > _adjusted_skew_thr and viol_pct < min_viol:
+                        strength = min(1.0, (skew - _adjusted_skew_thr) / _adjusted_skew_thr)
                         violations.append(ParityViolation(
                             date=None, strike=K, expiry_days=int(dte_val),
                             call_price=c_mid, put_price=p_mid, spot=S,
@@ -850,9 +874,15 @@ class VolArbitrageStrategy(BaseStrategy):
 
     def _open_trade(self, v: ParityViolation, S: float,
                     capital: float, today, chain=None) -> Optional[dict]:
-        margin_per_contract = S * 100 * 0.20
-        budget              = capital * self.pos_size_pct
-        n_contracts         = max(1, int(budget / margin_per_contract))
+        # Max loss per contract = the wider of put spread width or hedge spread width × 100
+        # This is the actual defined-risk per contract set, not a 20% notional approximation
+        use_hedge = v.trade_type == "skew_arb" and self.delta_hedge
+        put_sw    = getattr(self, "_tmp_put_spread_width",  self.put_spread_width)
+        hedge_sw  = getattr(self, "_tmp_hedge_spread_width", self.hedge_spread_width)
+        max_loss_per_contract = max(put_sw, hedge_sw if use_hedge else put_sw) * 100
+
+        budget       = capital * self.pos_size_pct
+        n_contracts  = max(1, int(budget / max_loss_per_contract))
 
         # Bear call spread hedge params (skew_arb only) — compute before commission
         use_hedge  = getattr(self, "_use_delta_hedge", self.delta_hedge)
@@ -879,7 +909,9 @@ class VolArbitrageStrategy(BaseStrategy):
                 hedge_long_strike = float(_otm_row["strike"].iloc[0])
                 hedge_long_entry  = _cmid(_otm_row)
 
-        # Long put leg of bull put spread (skew_arb only)
+        # Bull put spread: short put at detection strike K (overpriced vs call at K),
+        # long put at K − put_sw (protection, further OTM, cheaper in dollar terms).
+        # Net CREDIT — positive theta.  IV edge = put IV at K vs call IV at K (same strike).
         _raw_put_sw = getattr(self, "_put_spread_width", None)
         if _raw_put_sw is None or float(_raw_put_sw) == 0.0:
             _raw_put_sw = getattr(self, "put_spread_width", 2.0)
@@ -896,7 +928,7 @@ class VolArbitrageStrategy(BaseStrategy):
                     b = float(row["bid"].iloc[0]) if "bid" in row.columns else float("nan")
                     a = float(row["ask"].iloc[0]) if "ask" in row.columns else float("nan")
                     return (b + a) / 2 if (b == b and a == a and b > 0 and a > 0) else None
-                _lp_target = v.strike - put_sw   # long put is BELOW the short put at K
+                _lp_target = v.strike - put_sw   # long put below the short put at K
                 _lp_row = _puts.iloc[(_puts["strike"] - _lp_target).abs().argsort().iloc[:1]]
                 long_put_strike = float(_lp_row["strike"].iloc[0])
                 long_put_entry  = _cmid_put(_lp_row)
@@ -907,16 +939,19 @@ class VolArbitrageStrategy(BaseStrategy):
         commission    = self.commission * n_contracts * (3 + hedge_legs)
 
         if v.trade_type == "skew_arb":
-            # Risk-reversal: sell put, buy call, bear call spread hedge
-            gross   = abs(v.iv_skew or 0) * S * 0.10 * n_contracts * 100
+            # Estimate net credit/debit from the spread structure using vega approximation
+            # skew × S × sqrt(T/252) ≈ fair value difference between put and call at same strike
+            T_approx = max(v.expiry_days, 1) / 252
+            gross    = abs(v.iv_skew or 0) * S * (T_approx ** 0.5) * n_contracts * 100
         else:
-            gross   = abs(v.violation) * n_contracts * 100
+            gross    = abs(v.violation) * n_contracts * 100
 
         net_profit = gross - slippage_cost - commission
         if net_profit <= 0:
             return None
 
-        cost = margin_per_contract * n_contracts
+        # Capital at risk = defined max loss (spread width × 100 × contracts)
+        cost = max_loss_per_contract * n_contracts
 
         iv_str = (f"Call IV={v.iv_call:.1%}  Put IV={v.iv_put:.1%}"
                   if v.iv_call and v.iv_put else "IV=N/A")
@@ -962,7 +997,9 @@ class VolArbitrageStrategy(BaseStrategy):
             comment = (
                 f"Put IV is {skew_pct:.1f} vol pts above call IV at K=${v.strike:.0f} "
                 f"({v.expiry_days}d to expiry). "
-                f"Selling the overpriced put and buying the cheap call."
+                f"Selling the overpriced put and buying the cheap call at the same strike. "
+                f"Bull put spread (short K=${v.strike:.0f}, long K≈${v.strike-put_sw:.0f}) "
+                f"generates net credit with positive theta."
                 f"{hedge_note} "
                 f"Win if put premium mean-reverts (skew compresses) before expiry. "
                 f"Lose if skew widens further."
@@ -1081,6 +1118,17 @@ class VolArbitrageStrategy(BaseStrategy):
         c_near = calls_c.iloc[(calls_c["strike"] - K).abs().argsort().iloc[:1]]
         p_near = puts_c.iloc[(puts_c["strike"] - K).abs().argsort().iloc[:1]]
 
+        # IV at exit
+        def _iv_val(row):
+            if "iv" in row.columns:
+                v = row["iv"].iloc[0]
+                if v == v and v is not None:
+                    return round(float(v) * 100, 1)
+            return None
+        _ivc_exit = _iv_val(c_near)
+        _ivp_exit = _iv_val(p_near)
+        _ivsk_exit = round(_ivp_exit - _ivc_exit, 1) if (_ivc_exit is not None and _ivp_exit is not None) else None
+
         # Exit mid prices
         def _mid(row):
             bid = row["bid"].iloc[0] if "bid" in row.columns else float("nan")
@@ -1150,13 +1198,17 @@ class VolArbitrageStrategy(BaseStrategy):
             skew_pnl = put_pnl + call_pnl - commission
             profit   = skew_pnl + hedge_pnl + long_put_pnl
             extra    = {
-                "put_pnl":          round(put_pnl,       2),
-                "call_pnl":         round(call_pnl,      2),
-                "hedge_pnl":        round(hedge_pnl,     2),
-                "long_put_pnl":     round(long_put_pnl,  2),
-                "commission":       round(commission,     2),
-                "call_price_exit":  round(c_mid_exit,    4),
-                "put_price_exit":   round(p_mid_exit,    4),
+                "spot_exit":        round(S_exit,         2),
+                "iv_call_exit":     _ivc_exit,
+                "iv_put_exit":      _ivp_exit,
+                "iv_skew_exit":     _ivsk_exit,
+                "put_pnl":          round(put_pnl,        2),
+                "call_pnl":         round(call_pnl,       2),
+                "hedge_pnl":        round(hedge_pnl,      2),
+                "long_put_pnl":     round(long_put_pnl,   2),
+                "commission":       round(commission,      2),
+                "call_price_exit":  round(c_mid_exit,     4),
+                "put_price_exit":   round(p_mid_exit,     4),
                 "hedge_short_exit": round(h_short_ex, 4) if h_short_ex == h_short_ex else None,
                 "hedge_long_exit":  round(h_long_ex,  4) if h_long_ex  == h_long_ex  else None,
                 "long_put_exit":    round(long_put_exit, 4) if (long_put_exit is not None and long_put_exit == long_put_exit) else None,
@@ -1171,11 +1223,15 @@ class VolArbitrageStrategy(BaseStrategy):
             call_pnl = (c_mid_exit - call_entry) * 100 * n
             profit   = put_pnl + call_pnl - commission
             extra    = {
-                "put_pnl":         round(put_pnl,    2),
-                "call_pnl":        round(call_pnl,   2),
-                "commission":      round(commission,  2),
-                "call_price_exit": round(c_mid_exit,  4),
-                "put_price_exit":  round(p_mid_exit,  4),
+                "spot_exit":       round(S_exit,       2),
+                "iv_call_exit":    _ivc_exit,
+                "iv_put_exit":     _ivp_exit,
+                "iv_skew_exit":    _ivsk_exit,
+                "put_pnl":         round(put_pnl,      2),
+                "call_pnl":        round(call_pnl,     2),
+                "commission":      round(commission,    2),
+                "call_price_exit": round(c_mid_exit,    4),
+                "put_price_exit":  round(p_mid_exit,    4),
             }
 
         else:   # reversal
@@ -1186,11 +1242,15 @@ class VolArbitrageStrategy(BaseStrategy):
             call_pnl = (call_entry - c_mid_exit) * 100 * n
             profit   = put_pnl + call_pnl - commission
             extra    = {
-                "put_pnl":         round(put_pnl,    2),
-                "call_pnl":        round(call_pnl,   2),
-                "commission":      round(commission,  2),
-                "call_price_exit": round(c_mid_exit,  4),
-                "put_price_exit":  round(p_mid_exit,  4),
+                "spot_exit":       round(S_exit,       2),
+                "iv_call_exit":    _ivc_exit,
+                "iv_put_exit":     _ivp_exit,
+                "iv_skew_exit":    _ivsk_exit,
+                "put_pnl":         round(put_pnl,      2),
+                "call_pnl":        round(call_pnl,     2),
+                "commission":      round(commission,    2),
+                "call_price_exit": round(c_mid_exit,    4),
+                "put_price_exit":  round(p_mid_exit,    4),
             }
 
         return round(tr["cost"] + profit, 2), extra

@@ -19,10 +19,13 @@ TRADING_DAYS = 252
 
 def sharpe_ratio(returns: pd.Series, risk_free_daily: float = 0.0) -> float:
     """Annualized Sharpe ratio."""
-    excess = returns - risk_free_daily
-    if excess.std() == 0:
+    if returns.empty:
         return 0.0
-    return float((excess.mean() / excess.std()) * np.sqrt(TRADING_DAYS))
+    excess = returns - risk_free_daily
+    std = excess.std()
+    if std < 1e-10:
+        return 0.0
+    return float((excess.mean() / std) * np.sqrt(TRADING_DAYS))
 
 
 def sortino_ratio(returns: pd.Series, risk_free_daily: float = 0.0) -> float:

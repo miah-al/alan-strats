@@ -762,6 +762,112 @@ def sync_earnings(
     return {"status": "ok", "rows": inserted}
 
 
+# ── EPS Estimates (Alpha Vantage free) ────────────────────────────────────────
+
+def sync_eps_estimates(
+    symbol: str,
+    av_api_key: str,
+    progress_cb: Callable[[str], None] = None,
+) -> dict:
+    """
+    Fetch consensus EPS estimates from Alpha Vantage EARNINGS endpoint and
+    write them into mkt.Earnings.EpsEstimate.
+
+    Alpha Vantage free tier: 25 requests/day, covers major tickers.
+    Endpoint: GET https://www.alphavantage.co/query?function=EARNINGS&symbol=X&apikey=Y
+    Returns quarterlyEarnings[] with estimatedEPS, reportedEPS, fiscalDateEnding.
+
+    The function matches rows by TickerId + PeriodOfReport (= fiscalDateEnding).
+    Rows that exist in Alpha Vantage but not yet in mkt.Earnings are inserted
+    with NULL for columns not available from this source.
+    """
+    import requests
+    from sqlalchemy import text as _t
+
+    engine = get_engine()
+
+    # Ensure EpsEstimate column exists (idempotent)
+    with engine.begin() as conn:
+        conn.execute(_t("""
+            IF NOT EXISTS (
+                SELECT 1 FROM INFORMATION_SCHEMA.COLUMNS
+                WHERE TABLE_SCHEMA = 'mkt' AND TABLE_NAME = 'Earnings'
+                  AND COLUMN_NAME = 'EpsEstimate'
+            )
+            ALTER TABLE mkt.Earnings ADD EpsEstimate FLOAT NULL
+        """))
+
+    if progress_cb:
+        progress_cb(f"Fetching {symbol} EPS estimates from Alpha Vantage…")
+
+    url = "https://www.alphavantage.co/query"
+    params = {"function": "EARNINGS", "symbol": symbol, "apikey": av_api_key}
+    try:
+        resp = requests.get(url, params=params, timeout=30)
+        resp.raise_for_status()
+        data = resp.json()
+    except Exception as e:
+        raise RuntimeError(f"Alpha Vantage request failed: {e}")
+
+    if "Information" in data:
+        raise RuntimeError(f"Alpha Vantage rate limit or plan restriction: {data['Information']}")
+    if "Error Message" in data:
+        raise RuntimeError(f"Alpha Vantage error: {data['Error Message']}")
+
+    quarterly = data.get("quarterlyEarnings", [])
+    if not quarterly:
+        return {"status": "no_data", "rows": 0,
+                "detail": "Alpha Vantage returned no quarterly earnings for this ticker."}
+
+    tid = ensure_ticker(engine, symbol)
+    updated = 0
+    inserted = 0
+
+    with engine.begin() as conn:
+        for row in quarterly:
+            period_str = row.get("fiscalDateEnding")
+            if not period_str:
+                continue
+            est_str = row.get("estimatedEPS")
+            act_str = row.get("reportedEPS")
+            if est_str in (None, "None", ""):
+                continue
+            try:
+                est = float(est_str)
+            except (TypeError, ValueError):
+                continue
+            try:
+                act = float(act_str) if act_str not in (None, "None", "") else None
+            except (TypeError, ValueError):
+                act = None
+
+            # Try UPDATE first — most periods already exist from Polygon sync
+            res = conn.execute(_t("""
+                UPDATE mkt.Earnings
+                SET EpsEstimate = :est
+                WHERE TickerId = :tid AND PeriodOfReport = :period
+            """), {"est": est, "tid": tid, "period": period_str})
+
+            if res.rowcount > 0:
+                updated += res.rowcount
+            else:
+                # Row not in DB yet — insert with minimal fields
+                filed_str = row.get("reportedDate")
+                conn.execute(_t("""
+                    INSERT INTO mkt.Earnings
+                        (TickerId, PeriodOfReport, EpsBasic, EpsEstimate, FiledDate)
+                    VALUES (:tid, :period, :eps, :est, :filed)
+                """), {"tid": tid, "period": period_str,
+                       "eps": act, "est": est,
+                       "filed": filed_str})
+                inserted += 1
+
+    total = updated + inserted
+    if progress_cb:
+        progress_cb(f"Done — {updated} rows updated, {inserted} new rows inserted.")
+    return {"status": "ok", "rows": total, "updated": updated, "inserted": inserted}
+
+
 # ── VIX Futures (CBOE free) ───────────────────────────────────────────────────
 
 def sync_vix_futures(

@@ -20,15 +20,20 @@ DEFAULT_LOOKBACK_DAYS = 730  # 2 years — matches Polygon Options Starter plan
 # ── Main loader ───────────────────────────────────────────────────────────────
 
 def load_training_data(
-    ticker: str = "HOOD",
+    ticker: str,
     from_date: Optional[date] = None,
     to_date: Optional[date] = None,
 ) -> dict:
     """
     Load all training data from SQL Server.
 
-    Returns dict with same keys as data.loader.load_real_data():
-      "spy"     — daily OHLCV for the ticker (indexed by date)
+    ``ticker`` is the PRIMARY TRADING INSTRUMENT — it must always be supplied
+    explicitly by the caller; there is no hardcoded default.
+
+    Returns a dict:
+      "spy"     — daily OHLCV for *ticker* (key named "spy" for legacy
+                  compatibility with the rest of the pipeline; it is NOT
+                  necessarily SPY — it is whatever ticker was requested)
       "vix"     — daily VIX OHLCV (indexed by date, 'close' column used)
       "rate2y"  — 2Y Treasury yield series (indexed by date, 'close' column)
       "rate10y" — 10Y Treasury yield series (indexed by date, 'close' column)
@@ -91,7 +96,7 @@ def _clean_price_bars(df: pd.DataFrame, ticker: str = "") -> pd.DataFrame:
 
 # ── Validation ────────────────────────────────────────────────────────────────
 
-def validate_training_data(ticker: str = "HOOD") -> dict:
+def validate_training_data(ticker: str) -> dict:
     """
     Check DB coverage for a ticker before training.
 

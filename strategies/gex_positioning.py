@@ -196,8 +196,8 @@ class GexPositioningStrategy(BaseStrategy):
         vix_df.index = pd.to_datetime(vix_df.index)
         vix = vix_df["close"].reindex(price_data.index).ffill().infer_objects(copy=False).fillna(20.0)
 
-        spy_close = price_data["close"]
-        spy_ret   = spy_close.pct_change()
+        close   = price_data["close"]
+        bh_ret  = close.pct_change()
 
         # ── Raw regime from VIX proxy ─────────────────────────────────────
         raw_regime = pd.Series(
@@ -235,7 +235,7 @@ class GexPositioningStrategy(BaseStrategy):
             spy_w   = _ALLOC[regime]
 
             if i > 0:
-                s_ret = float(spy_ret.iloc[i]) if not np.isnan(spy_ret.iloc[i]) else 0.0
+                s_ret = float(bh_ret.iloc[i]) if not np.isnan(bh_ret.iloc[i]) else 0.0
                 capital += capital * cur_spy_w * s_ret
                 days_since += 1
 
@@ -275,7 +275,7 @@ class GexPositioningStrategy(BaseStrategy):
 
         equity    = pd.Series(equity_list, index=price_data.index, dtype=float)
         daily_ret = equity.pct_change().dropna()
-        spy_bh    = spy_close.pct_change().reindex(equity.index).dropna()
+        bh_benchmark = close.pct_change().reindex(equity.index).dropna()
 
         trades_df = pd.DataFrame(trades_list) if trades_list else pd.DataFrame(
             columns=["entry_date", "exit_date", "spread_type",
@@ -285,7 +285,7 @@ class GexPositioningStrategy(BaseStrategy):
         metrics = compute_all_metrics(
             equity_curve=equity,
             trades_df=trades_df,
-            benchmark_returns=spy_bh,
+            benchmark_returns=bh_benchmark,
         )
 
         return BacktestResult(
@@ -299,7 +299,7 @@ class GexPositioningStrategy(BaseStrategy):
                 "regime_series": regime_series,
                 "spy_weights":   pd.Series(spy_weights_l, index=price_data.index),
                 "vix":           vix,
-                "spy_returns":   spy_ret,
+                "spy_returns":   bh_ret,
             },
         )
 

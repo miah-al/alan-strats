@@ -9,55 +9,102 @@ from alan_trader.strategies.base import BaseStrategy, StubStrategy, StrategyStat
 # ─────────────────────────────────────────────────────────────────────────────
 
 STRATEGY_METADATA: dict[str, dict] = {
-    # ── Fully implemented ──────────────────────────────────────────────────
-    "options_spread": {
-        "display_name": "Spread",
+    # ── Iron Condor strategies (quant-designed, replacing generic options_spread) ──
+    "iron_condor_ai": {
+        "display_name": "Iron Condor — AI",
         "type": "ai",
         "status": "active",
+        "icon": "🎯",
+        "description": (
+            "AI-powered Iron Condor. Gradient boosting model predicts range-bound conditions "
+            "using 18 features (IVR, term structure, momentum, VIX regime, macro). "
+            "Strike placement adapts to regime. Walk-forward: retrains every 30 bars."
+        ),
+        "asset_class": "equities_options",
+        "typical_holding_days": 24,
+        "target_sharpe": 1.8,
+        "class_path": "alan_trader.strategies.iron_condor_ai.IronCondorAIStrategy",
+        "requires_training": True,
+        "uses_ml": True,
+        "requires_ticker": True,
+        "required_data": ["price", "vix", "rates"],
+        "has_screener": True,
+    },
+    "iron_condor_rules": {
+        "display_name": "Iron Condor — Rules",
+        "type": "rule",
+        "status": "active",
+        "icon": "📐",
+        "description": (
+            "Rules-based Iron Condor. Enters when IVR ≥ 45%, VIX 16–35, ADX ≤ 22 (range-bound), "
+            "and ATR is calm. 50% profit target, 21 DTE time exit, 2× stop loss. "
+            "Transparent, auditable, battle-tested rules from 30 years of quant experience."
+        ),
+        "asset_class": "equities_options",
+        "typical_holding_days": 24,
+        "target_sharpe": 1.5,
+        "class_path": "alan_trader.strategies.iron_condor_rules.IronCondorRulesStrategy",
+        "requires_training": False,
+        "uses_ml": False,
+        "requires_ticker": True,
+        "required_data": ["price", "vix"],
+        "has_screener": True,
+    },
+    # ── Archived: replaced by iron_condor_ai / iron_condor_rules ──────────
+    "options_spread": {
+        "display_name": "Spread (archived)",
+        "type": "ai",
+        "status": "archived",
         "icon": "🤖",
-        "description": "LSTM attention model predicts 5-day price direction → enters bull call or bear put vertical spreads.",
+        "description": "Archived — replaced by Iron Condor AI and Iron Condor Rules strategies.",
         "asset_class": "equities_options",
         "typical_holding_days": 5,
         "target_sharpe": 1.2,
         "class_path": "alan_trader.strategies.options_spread.OptionsSpreadStrategy",
-        # ── capability flags ─────────────────────────────────────────────
-        "requires_training": True,   # has a meaningful fit() / train step
-        "uses_ml": True,             # uses a neural network (PyTorch)
-        "requires_ticker": True,     # needs equity price data
+        "requires_training": True,
+        "uses_ml": True,
+        "requires_ticker": True,
         "required_data": ["price", "vix", "rates", "news"],
     },
     "conversion_arb": {
         "display_name": "Conversion Arb (Div)",
         "type": "rule",
-        "status": "active",
+        "status": "inactive",
         "icon": "⚖️",
         "description": (
-            "True dividend arb via put-call parity. Enters conversion (long stock + long put + short call) "
-            "when implied dividend < actual dividend. Delta-neutral. Edge = actual div − implied div."
+            "⚠️ Requires combo orders (stock + options) not supported atomically on Robinhood. "
+            "Edge is sub-10bps and wiped by execution slippage at retail. Needs IBKR + real-time NBBO. "
+            "True dividend arb via put-call parity — theoretical edge is real but not retail-executable."
         ),
         "asset_class": "equities_options",
         "typical_holding_days": 5,
         "target_sharpe": 1.1,
-        "class_path": "alan_trader.strategies.conversion_arb.ConversionArbStrategy",
+        "class_path": None,
         "requires_training": False,
         "uses_ml": False,
         "requires_ticker": True,
         "required_data": ["price", "vix", "dividends"],
+        "has_screener": False,
     },
     "dividend_arb": {
         "display_name": "Dividend Arbitrage",
         "type": "rule",
-        "status": "active",
+        "status": "inactive",
         "icon": "💰",
-        "description": "Buy before ex-dividend date, capture dividend, hedge equity downside with short-dated put.",
+        "description": (
+            "⚠️ No durable edge: ATM put hedge cost ≈ dividend yield in efficient markets. "
+            "Tax treatment is punitive for short holds in taxable accounts. "
+            "Expected Sharpe 0.4–0.7 before tax drag. Dropped from active trading."
+        ),
         "asset_class": "equities_options",
         "typical_holding_days": 4,
         "target_sharpe": 0.9,
-        "class_path": "alan_trader.strategies.dividend_arbitrage.DividendArbitrageStrategy",
+        "class_path": None,
         "requires_training": False,
         "uses_ml": False,
         "requires_ticker": True,
         "required_data": ["price", "vix", "dividends"],
+        "has_screener": False,
     },
     "vol_arbitrage": {
         "display_name": "IV Skew Premium Capture",
@@ -102,13 +149,23 @@ STRATEGY_METADATA: dict[str, dict] = {
     },
     "vix_spike_fade": {
         "display_name": "VIX Spike Fade",
-        "type": "ai",
-        "status": "stub",
-        "description": "ML model detects capitulation VIX spikes (>30) and enters SPY bull call spreads.",
+        "type": "rule",
+        "status": "active",
+        "icon": "📉",
+        "description": (
+            "Buys bull call spreads on any broad-market ticker (e.g. SPY, QQQ, IWM) during "
+            "VIX panic spikes (VIX > 25 and 30%+ above 20-day avg). Captures mean-reversion of "
+            "fear-driven volatility within 5-15 days. Ticker is a parameter — no hardcoding."
+        ),
         "asset_class": "equities_options",
-        "typical_holding_days": 3,
-        "target_sharpe": 1.3,
-        "class_path": "",
+        "typical_holding_days": 10,
+        "target_sharpe": 1.8,
+        "class_path": "alan_trader.strategies.vix_spike_fade.VIXSpikeFadeStrategy",
+        "requires_training": False,
+        "uses_ml": False,
+        "requires_ticker": True,
+        "required_data": ["price", "vix"],
+        "has_screener": True,
     },
 
     # ── Pairs trading ──────────────────────────────────────────────────────
@@ -881,6 +938,43 @@ STRATEGY_METADATA: dict[str, dict] = {
         "uses_ml": False,
         "requires_ticker": False,
         "required_data": ["price", "rates", "tlt"],
+        "has_screener": True,
+    },
+    "vol_calendar_spread": {
+        "display_name": "Vol Regime Calendar Spread",
+        "type": "ai",
+        "status": "active",
+        "icon": "📅",
+        "description": (
+            "XGBoost 3-class classifier predicts IV compression / expansion for any optionable ticker. "
+            "COMPRESS → short calendar (credit). EXPAND → long calendar (debit). "
+            "16 features across IV term structure, VRP, market context, and news sentiment."
+        ),
+        "asset_class": "equities_options",
+        "typical_holding_days": 21,
+        "target_sharpe": 1.2,
+        "class_path": "alan_trader.strategies.vol_calendar_spread.VolCalendarSpreadStrategy",
+        "requires_training": True,
+        "uses_ml": True,
+        "requires_ticker": True,
+        "required_data": ["price", "options_chain", "vix", "news"],
+        "has_screener": True,
+    },
+    "ivr_credit_spread": {
+        "display_name": "IVR Credit Spread",
+        "type": "rule",
+        "status": "active",
+        "icon": "💹",
+        "description": "Sells defined-risk vertical spreads on any liquid optionable ticker when IV rank ≥ 50%. Bull put spread in uptrend, bear call spread in downtrend. Harvests the variance risk premium systematically. Ticker is a parameter.",
+        "asset_class": "equities_options",
+        "typical_holding_days": 21,
+        "target_sharpe": 1.2,
+        "class_path": "alan_trader.strategies.ivr_credit_spread.IVRCreditSpreadStrategy",
+        "requires_training": False,
+        "uses_ml": False,
+        "requires_ticker": True,
+        "required_data": ["price", "vix"],
+        "has_screener": True,
     },
     "credit_spread_signal": {
         "display_name": "Credit Spread Canary",
@@ -899,6 +993,154 @@ STRATEGY_METADATA: dict[str, dict] = {
         "requires_training": False,
         "uses_ml": False,
         "required_data": ["price", "credit_spreads"],
+    },
+
+    # ── Earnings strategies ───────────────────────────────────────────────────
+    "earnings_iv_crush": {
+        "display_name": "Earnings IV Crush",
+        "type": "rule",
+        "status": "active",
+        "icon": "🎯",
+        "description": (
+            "Sells defined-risk iron condors 1 day before earnings. Captures the systematic "
+            "overpricing of post-earnings uncertainty (implied move consistently exceeds actual "
+            "move by 20-40%). Closes at next-day open after IV collapse."
+        ),
+        "asset_class": "equities_options",
+        "typical_holding_days": 1,
+        "target_sharpe": 1.7,
+        "class_path": "alan_trader.strategies.earnings_iv_crush.EarningsIVCrushStrategy",
+        "requires_training": False,
+        "uses_ml": False,
+        "requires_ticker": True,
+        "required_data": ["price", "vix", "earnings"],
+        "has_screener": True,
+    },
+    "earnings_post_drift": {
+        "display_name": "Earnings Post-Drift",
+        "type": "rule",
+        "status": "active",
+        "icon": "🚀",
+        "description": (
+            "Buys bull call spreads the morning after large EPS beats (>10% surprise). "
+            "Captures the SUE effect — markets systematically underreact to earnings beats, "
+            "stocks drift 2-4% higher over 2-3 weeks post-announcement."
+        ),
+        "asset_class": "equities_options",
+        "typical_holding_days": 14,
+        "target_sharpe": 1.3,
+        "class_path": "alan_trader.strategies.earnings_post_drift.EarningsPostDriftStrategy",
+        "requires_training": False,
+        "uses_ml": False,
+        "requires_ticker": True,
+        "required_data": ["price", "vix", "earnings"],
+        "has_screener": True,
+    },
+    "vol_term_structure_regime": {
+        "display_name": "Vol Term Structure Regime",
+        "type": "ai",
+        "status": "active",
+        "icon": "📐",
+        "description": (
+            "LSTM classifies IV term structure regime (contango/backwardation) to time "
+            "premium selling vs buying. Trades bull put spreads in contango, long straddles "
+            "in backwardation."
+        ),
+        "asset_class": "equities_options",
+        "typical_holding_days": 14,
+        "target_sharpe": 1.3,
+        "class_path": "alan_trader.strategies.vol_term_structure_regime.VolTermStructureRegimeStrategy",
+        "requires_training": True,
+        "uses_ml": True,
+        "requires_ticker": True,
+        "has_screener": True,
+        "required_data": ["price", "options", "vix", "rates"],
+    },
+
+    # ── OI / flow-driven ML strategies ──────────────────────────────────────
+    "oi_imbalance_put_fade": {
+        "display_name": "OI Imbalance Put Fade",
+        "type": "ai",
+        "status": "active",
+        "icon": "📉",
+        "description": (
+            "Logistic regression detects retail put-buying extremes on high-IV stocks. "
+            "Sells a bull put spread (7–14 DTE) when put/call OI imbalance spikes and "
+            "ATM put IV is elevated beyond fair value. Exits at 50% profit, 2× loss, or 5 DTE."
+        ),
+        "asset_class": "equities_options",
+        "typical_holding_days": 10,
+        "target_sharpe": 1.3,
+        "class_path": "alan_trader.strategies.oi_imbalance_put_fade.OIImbalancePutFadeStrategy",
+        "requires_training": True,
+        "uses_ml": True,
+        "requires_ticker": True,
+        "has_screener": True,
+        "required_data": ["price", "options", "vix", "fomc"],
+    },
+    "short_squeeze_vol_expansion": {
+        "display_name": "Short Squeeze Vol Expansion",
+        "type": "ai",
+        "status": "active",
+        "icon": "🚀",
+        "description": (
+            "LightGBM classifier detects early short-squeeze setups via call OI surge + low IV. "
+            "When dealers go short gamma on call side, forced delta hedging creates momentum. "
+            "Trades a bull call spread (14–21 DTE) to capture the directional squeeze move. "
+            "Features: call OI concentration, vol/OI ratio, OTM call OI change, ATM IV, VIX context."
+        ),
+        "asset_class": "equities_options",
+        "typical_holding_days": 14,
+        "target_sharpe": 1.4,
+        "class_path": "alan_trader.strategies.short_squeeze_vol_expansion.ShortSqueezeVolExpansionStrategy",
+        "requires_training": True,
+        "uses_ml": True,
+        "requires_ticker": True,
+        "has_screener": True,
+        "required_data": ["price", "options", "vix", "fomc"],
+    },
+    "iv_skew_momentum": {
+        "display_name": "IV Skew Momentum",
+        "type": "ai",
+        "status": "active",
+        "icon": "📐",
+        "description": (
+            "LightGBM 3-class classifier trained on IV skew shape and momentum. "
+            "When put skew accelerates (put IV rising faster than call IV), the options market "
+            "is pricing in downside risk before price reacts. "
+            "Bullish signal → bull call spread; bearish signal → bear put spread. "
+            "11 features: skew level, skew z-score, skew 5d momentum, IVR, realized vol, VIX, market context."
+        ),
+        "asset_class": "equities_options",
+        "typical_holding_days": 21,
+        "target_sharpe": 1.3,
+        "class_path": "alan_trader.strategies.iv_skew_momentum.IVSkewMomentumStrategy",
+        "requires_training": True,
+        "uses_ml": True,
+        "requires_ticker": True,
+        "required_data": ["price", "options", "vix"],
+        "has_screener": True,
+    },
+    "gamma_flip_breakout": {
+        "display_name": "Gamma Flip Breakout",
+        "type": "ai",
+        "status": "active",
+        "icon": "⚡",
+        "description": (
+            "XGBoost binary classifier trained on dealer Gamma Exposure (GEX), distance to GEX flip level, "
+            "and momentum. Above the flip → dealers long gamma → dampen moves → iron condor. "
+            "Below the flip → dealers short gamma → amplify moves → strangle. "
+            "11 features: net GEX, GEX flow, dist-to-flip, GEX ratio, ATR, volume ratio, macro context."
+        ),
+        "asset_class": "equities_options",
+        "typical_holding_days": 14,
+        "target_sharpe": 1.4,
+        "class_path": "alan_trader.strategies.gamma_flip_breakout.GammaFlipBreakoutStrategy",
+        "requires_training": True,
+        "uses_ml": True,
+        "requires_ticker": True,
+        "required_data": ["price", "options", "vix"],
+        "has_screener": True,
     },
 }
 

@@ -16,8 +16,8 @@ def render(api_key: str = ""):
     # ── Top controls ───────────────────────────────────────────────────────────
     col1, col2, col3 = st.columns([2, 2, 1])
     ticker = col1.text_input(
-        "Ticker", value="SPY", key="dm_ticker",
-        placeholder="SPY, TLT, AAPL…",
+        "Ticker", value="", key="dm_ticker",
+        placeholder="SPY, TLT, AAPL, HOOD…",
     ).strip().upper()
     from_date = col2.date_input(
         "Backfill from", value=date.today() - timedelta(days=730), key="dm_from_date"
@@ -138,6 +138,41 @@ def render(api_key: str = ""):
     with col_free:
         st.markdown("**Free Sources** *(no API key needed)*")
 
+        # Alpha Vantage EPS Estimates
+        av_key = st.text_input(
+            "Alpha Vantage API key",
+            type="password",
+            key="dm_av_key",
+            placeholder="Get free key at alphavantage.co",
+            help="Free tier: 25 req/day. Provides consensus EPS estimates needed by Earnings Post-Drift strategy.",
+        )
+        if st.button(f"Sync EPS Estimates — {ticker or '…'} (Alpha Vantage)",
+                     key="dm_sync_eps_est",
+                     disabled=not av_key or not ticker,
+                     help="Fetches analyst consensus EPS estimates and writes them into mkt.Earnings.EpsEstimate"):
+            st.session_state["_dm_run"] = {"eps_estimates"}
+        eps_est_result = st.empty()
+        try:
+            _eng_eps = get_engine()
+            with _eng_eps.connect() as _c_eps:
+                from sqlalchemy import text as _t_eps
+                from alan_trader.db.client import get_ticker_id as _gtid_eps
+                _tid_eps = _gtid_eps(_eng_eps, ticker) if ticker else None
+                if _tid_eps:
+                    try:
+                        _r_eps = _c_eps.execute(_t_eps(
+                            "SELECT COUNT(*) FROM mkt.Earnings WHERE TickerId=:tid AND EpsEstimate IS NOT NULL"
+                        ), {"tid": _tid_eps}).fetchone()
+                        st.caption(f"DB: {int(_r_eps[0]):,} rows with EpsEstimate")
+                    except Exception:
+                        st.caption("DB: EpsEstimate column not yet created (run sync first)")
+                else:
+                    st.caption("DB: —")
+        except Exception:
+            st.caption("DB: —")
+
+        st.markdown("---")
+
         # Treasury
         if st.button("Sync Treasury Yields — FRED", key="dm_sync_treasury"):
             st.session_state["_dm_run"] = {"treasury"}
@@ -177,6 +212,7 @@ def render(api_key: str = ""):
             sync_price_bars, sync_news, sync_dividends, sync_earnings,
             sync_option_snapshots, sync_treasury_bars, sync_vix_bars,
             sync_macro_bars, sync_cpi, sync_fomc_calendar,
+            sync_eps_estimates,
         )
 
         def _exec(label, fn, result_el, *args, **kwargs):
@@ -279,6 +315,22 @@ def render(api_key: str = ""):
 
         if "fomc" in _run:
             _exec("FOMC Calendar", sync_fomc_calendar, fomc_result)
+
+        if "eps_estimates" in _run:
+            av_key_run = st.session_state.get("dm_av_key", "")
+            if av_key_run:
+                eps_est_result.info(f"Syncing EPS estimates for {ticker}…")
+                try:
+                    r = sync_eps_estimates(ticker, av_key_run,
+                                           progress_cb=lambda msg: eps_est_result.info(msg))
+                    eps_est_result.success(
+                        f"EPS Estimates — {r.get('updated', 0)} rows updated, "
+                        f"{r.get('inserted', 0)} new rows inserted"
+                    )
+                except Exception as e:
+                    eps_est_result.error(f"EPS Estimates failed: {e}")
+            else:
+                eps_est_result.error("Alpha Vantage API key required.")
 
         st.rerun()
 

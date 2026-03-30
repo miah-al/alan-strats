@@ -108,7 +108,8 @@ class ModelTrainer:
         weights = torch.tensor(w, dtype=torch.float32).to(self.device)
         criterion = nn.CrossEntropyLoss(weight=weights)
 
-        train_loader = DataLoader(train_ds, batch_size=self.batch_size, shuffle=True, drop_last=True)
+        _eff_bs = min(self.batch_size, len(train_ds))
+        train_loader = DataLoader(train_ds, batch_size=_eff_bs, shuffle=True, drop_last=False)
         val_loader = DataLoader(val_ds, batch_size=self.batch_size, shuffle=False)
 
         history = {"train_loss": [], "val_loss": [], "train_acc": [], "val_acc": []}
@@ -168,6 +169,11 @@ class ModelTrainer:
         scaled = self.scaler.transform(features)
         dummy_labels = np.zeros(len(scaled), dtype=int)
         dataset = SequenceDataset(scaled, dummy_labels, self.seq_len)
+        if len(dataset) == 0:
+            n_out = max(0, len(scaled) - self.seq_len)
+            empty = np.zeros((n_out, 3), dtype=np.float32)
+            empty[:] = [1/3, 1/3, 1/3]
+            return empty, None
         loader = DataLoader(dataset, batch_size=256, shuffle=False)
         self.model.eval()
         all_proba = []
@@ -250,6 +256,8 @@ class ModelTrainer:
         from torch.utils.data import DataLoader
         scaled = self.scaler.transform(features)
         ds     = SequenceDataset(scaled, labels, self.seq_len)
+        if len(ds) == 0:
+            return np.zeros((3, 3), dtype=float)
         loader = DataLoader(ds, batch_size=256, shuffle=False)
         self.model.eval()
         preds, trues = [], []
@@ -328,6 +336,8 @@ class ModelTrainer:
     # ------------------------------------------------------------------
 
     def _train_epoch(self, loader: DataLoader, criterion: nn.Module) -> tuple:
+        if len(loader) == 0:
+            return 0.0, 0.0
         self.model.train()
         total_loss = 0.0
         correct = 0

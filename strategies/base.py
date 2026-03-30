@@ -76,15 +76,16 @@ class BaseStrategy(ABC):
         """
         Called live. Must be fast — no training inside.
         market_snapshot keys (all optional, strategies extract what they need):
-          spy_price, vix, rate_10y, rate_2y, days_to_next_exdiv,
-          next_dividend_yield, features_df (last N rows of feature matrix)
+          price, vix, rate_10y, rate_2y, days_to_next_exdiv,
+          next_dividend_yield, features_df (last N rows of feature matrix),
+          benchmark_price (broad-market index price, e.g. SPY — for context only)
         """
         ...
 
     @abstractmethod
     def backtest(
         self,
-        price_data: pd.DataFrame,    # SPY OHLCV, date-indexed
+        price_data: pd.DataFrame,    # Primary ticker OHLCV, date-indexed
         auxiliary_data: dict,        # {"vix": df, "rate2y": df, "rate10y": df,
                                      #  "news": df, "dividends": df, ...}
         starting_capital: float = 100_000,
@@ -109,7 +110,7 @@ class BaseStrategy(ABC):
         """Return True if this strategy requires/supports ML training."""
         return False
 
-    def get_model_name(self, ticker: str = "SPY") -> str:
+    def get_model_name(self, ticker: str = "generic") -> str:
         """Return unique checkpoint name for this strategy + ticker combo."""
         return f"{self.name}_{ticker.lower()}"
 

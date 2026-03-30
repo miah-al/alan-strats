@@ -207,7 +207,7 @@ class OptionsSpreadStrategy(BaseStrategy):
     def is_trainable(self) -> bool:
         return True
 
-    def get_model_name(self, ticker: str = "SPY") -> str:
+    def get_model_name(self, ticker: str = "generic") -> str:
         return f"options_spread_{ticker.lower()}"
 
     def get_backtest_ui_params(self) -> list:

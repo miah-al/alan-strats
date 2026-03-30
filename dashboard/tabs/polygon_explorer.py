@@ -498,7 +498,71 @@ def render(api_key: str = ""):
                 except Exception as e:
                     st.error(f"Error: {e}")
 
-    # ── 8. Raw API Call ───────────────────────────────────────────────────────
+    # ── 8. EPS Financials (plan test) ─────────────────────────────────────────
+    with st.expander("💰 EPS Financials (plan test)", expanded=False):
+        st.caption(
+            "Fetches filed EPS actuals via `/vX/reference/financials`. "
+            "If your plan includes analyst **estimates**, they will appear under `eps_estimate` — "
+            "otherwise only `eps_actual` (filed) will be populated."
+        )
+        c1, c2 = st.columns(2)
+        fin_timeframe = c1.selectbox("Timeframe", ["quarterly", "annual"], key="px_fin_tf")
+        fin_limit     = c2.number_input("Periods", 1, 20, 8, key="px_fin_limit")
+
+        if st.button("Fetch Financials", key="px_fin_btn"):
+            c = _client(api_key)
+            if c:
+                try:
+                    with st.spinner("Fetching financials…"):
+                        raw = c._get("/vX/reference/financials", {
+                            "ticker":    ticker,
+                            "timeframe": fin_timeframe,
+                            "order":     "desc",
+                            "limit":     int(fin_limit),
+                        })
+                    results = raw.get("results", [])
+                    if not results:
+                        st.warning("No financials returned — ticker may not have data or plan may not include this endpoint.")
+                    else:
+                        rows = []
+                        for r in results:
+                            fi     = r.get("financials", {})
+                            inc    = fi.get("income_statement", {})
+                            eps_a  = inc.get("basic_earnings_per_share", {}).get("value")
+                            # Polygon does not expose consensus estimates in vX/reference/financials.
+                            # Check if any estimate field exists in the raw response.
+                            eps_e  = r.get("eps_estimate") or r.get("estimated_eps") or r.get("consensus_eps")
+                            rev    = inc.get("revenues", {}).get("value")
+                            net    = inc.get("net_income_loss", {}).get("value")
+                            rows.append({
+                                "Period":       r.get("fiscal_period"),
+                                "Fiscal Year":  r.get("fiscal_year"),
+                                "Filed Date":   r.get("filing_date"),
+                                "Period End":   r.get("end_date"),
+                                "EPS Actual":   round(eps_a, 4) if eps_a is not None else None,
+                                "EPS Estimate": round(eps_e, 4) if eps_e is not None else "— (not in plan)",
+                                "Revenue":      f"${rev/1e9:.2f}B" if rev else None,
+                                "Net Income":   f"${net/1e9:.2f}B" if net else None,
+                            })
+
+                        df_fin = pd.DataFrame(rows)
+                        has_estimates = any(r.get("eps_estimate") or r.get("estimated_eps") or r.get("consensus_eps")
+                                            for r in results)
+                        if has_estimates:
+                            st.success("✅ Your plan includes EPS estimates — earnings_post_drift can be wired up.")
+                        else:
+                            st.warning(
+                                "⚠️ No EPS estimates found in response. "
+                                "Polygon's standard financials endpoint only returns filed actuals. "
+                                "Consensus estimates require a higher-tier plan or separate data provider."
+                            )
+
+                        st.dataframe(df_fin, width="stretch")
+                        _raw(raw)
+                except Exception as e:
+                    st.error(f"Error: {e}")
+
+    # ── 9. Raw API Call ───────────────────────────────────────────────────────
     with st.expander("🛠 Raw API Call", expanded=False):
         st.caption("Call any Polygon endpoint directly. Params as JSON.")
         raw_path   = st.text_input("Endpoint path", value=f"/v2/snapshot/locale/us/markets/stocks/tickers/{ticker}",
