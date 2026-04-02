@@ -26,7 +26,9 @@
       "Bash(grep -n \"def render_\" /d/Work/ClaudeCodeTest/alan_trader/dashboard/tabs/*.py)",
       "Bash(grep -n \"^def render\" /d/Work/ClaudeCodeTest/alan_trader/dashboard/tabs/*.py)",
       "Bash(wc -l /d/Work/ClaudeCodeTest/alan_trader/dashboard/tabs/*.py)",
-      "Bash(grep -rn \"pass\\\\|NotImplemented\\\\|stub\\\\|placeholder\\\\|TODO\" /d/Work/ClaudeCodeTest/alan_trader/strategies/*.py)"
+      "Bash(grep -rn \"pass\\\\|NotImplemented\\\\|stub\\\\|placeholder\\\\|TODO\" /d/Work/ClaudeCodeTest/alan_trader/strategies/*.py)",
+      "Bash(python -c \"import sys; sys.path.insert\\(0, ''.''\\); from alan_trader.db.client import get_engine, get_ticker_id, get_dividends; from datetime import date; eng = get_engine\\(\\); tid = get_ticker_id\\(eng, ''F''\\); print\\(''TickerId for F:'', tid\\); divs = get_dividends\\(eng, ''F'', date\\(2022,1,1\\), date.today\\(\\)\\); print\\(''Dividends found:'', len\\(divs\\)\\); print\\(divs.to_string\\(\\) if not divs.empty else ''NO ROWS''\\)\")",
+      "Bash(python -c \"import sys; sys.path.insert\\(0, ''..''\\); from alan_trader.db.client import get_engine, get_ticker_id, get_dividends; from datetime import date; eng = get_engine\\(\\); tid = get_ticker_id\\(eng, ''F''\\); print\\(''TickerId for F:'', tid\\); divs = get_dividends\\(eng, ''F'', date\\(2022,1,1\\), date.today\\(\\)\\); print\\(''Dividends found:'', len\\(divs\\)\\); print\\(divs.to_string\\(\\) if not divs.empty else ''NO ROWS''\\)\")"
     ]
   }
 }

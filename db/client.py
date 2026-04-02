@@ -31,10 +31,24 @@ def _build_connection_string(server: str = _DEFAULT_SERVER,
     )
 
 
+# Module-level engine cache — one engine per (server, database) pair.
+# create_engine() is cheap but pyodbc connection pool setup is not.
+_ENGINE_CACHE: dict[tuple, Engine] = {}
+
+
 def get_engine(server: str = _DEFAULT_SERVER,
                database: str = _DEFAULT_DB) -> Engine:
-    conn_str = _build_connection_string(server, database)
-    return create_engine(conn_str, fast_executemany=True)
+    key = (server, database)
+    if key not in _ENGINE_CACHE:
+        conn_str = _build_connection_string(server, database)
+        _ENGINE_CACHE[key] = create_engine(
+            conn_str,
+            fast_executemany=True,
+            pool_size=5,
+            max_overflow=10,
+            pool_pre_ping=True,
+        )
+    return _ENGINE_CACHE[key]
 
 
 @contextmanager

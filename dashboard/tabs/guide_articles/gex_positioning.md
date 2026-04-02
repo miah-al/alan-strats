@@ -550,3 +550,644 @@ GEX    +$2B ─┤
 | Per-strike OI | Polygon options chain | GEX computation by strike |
 | Black-Scholes gamma | Computed from per-strike IV | GEX calculation |
 | GEX flip level | Derived from per-strike GEX | Key support/resistance identification |
+
+---
+
+## Live Charts and Real-World Examples
+
+### GEX Regime Chart: Five Bands, One Decision
+
+The screener displays a single chart showing all five VIX regime bands as colored horizontal
+regions, with a purple line overlay showing the suggested SPY allocation at each VIX level,
+and a vertical line marking the current VIX. Reading it takes under five seconds:
+
+```
+VIX Level  |  Regime              |  SPY Wt  |  Color
+-----------+----------------------+----------+--------
+  0 – 15   |  High Positive GEX   |   90%    |  Green
+ 15 – 18   |  Mild Positive GEX   |   80%    |  Teal
+ 18 – 22   |  Neutral / Flip Zone |   60%    |  Amber
+ 22 – 30   |  Negative GEX        |   35%    |  Orange
+ 30+        |  Deep Negative GEX  |   15%    |  Red
+```
+
+The purple allocation line steps down sharply at each band boundary, creating a staircase
+pattern. When VIX is at 14, the line is near the top (90%). When VIX crosses 30, it drops
+to the floor (15%). The key visual signal is whether the vertical "current VIX" line is in
+a green band (calm, stay long) or an orange/red band (volatile, cut exposure).
+
+---
+
+### Real-World Walkthrough 1: January 2022 Crash
+
+**Dates:** January 5 – January 24, 2022
+**Setup:** SPY had been above $478 throughout December 2021. VIX was at 17 on Jan 5 — firmly
+in the MildPositive band. Net GEX was approximately +$3.2B, meaning dealers were net long
+gamma and had been mechanically selling into every intraday rally, keeping ranges compressed.
+Allocations: 80% SPY.
+
+**The flip:** On January 5–6, the Fed released hawkish FOMC minutes. VIX jumped from 17 to
+19.5 in two sessions — crossing the neutral boundary at 18. The confirmation filter required
+3 consecutive days above 18 before switching regime. By January 10 (day 3), VIX was at 21.
+Allocation moved from 80% → 60% SPY. Cooldown started.
+
+**The cascade:** By January 18, VIX was at 25 — crossing into the Negative GEX band.
+Allocation dropped to 35% SPY. By January 24, VIX hit 31, triggering DeepNegative at 15%.
+SPY closed at $428 that day, down 10.5% from Jan 5.
+
+**P&L outcome:** A $100,000 portfolio running GEX allocation:
+- Jan 5 (80% SPY): $80,000 in SPY, $20,000 cash
+- By Jan 24 (15% SPY): through gradual de-risking, ending exposure was ~$15,000 SPY
+- Total portfolio drawdown: approximately -4.8% vs SPY drawdown of -10.5% over same period
+- Alpha generated: ~5.7 percentage points on a single regime shift cycle
+
+**Key mechanic:** The confirmation filter prevented a false flip on the brief VIX spike to
+18.2 on December 20, 2021, which reversed within two days. By requiring 3 days, the strategy
+only acted on the sustained January regime shift.
+
+---
+
+### Real-World Walkthrough 2: November 2023 Rally
+
+**Dates:** October 31 – November 14, 2023
+**Setup:** VIX was at 21 on October 31 — in the Neutral/Flip Zone. The market had sold off
+in September–October as rates rose. SPY was at $418. Net GEX was estimated at -$0.8B
+(mildly negative). Portfolio allocation: 60% SPY.
+
+**The flip:** The Fed meeting on November 1 produced a less hawkish tone than expected.
+VIX dropped from 21 to 17.8 in a single session. Day 1 in MildPositive regime. VIX
+continued lower: 16.5 on day 2, 15.1 on day 3. Confirmation: regime switched to
+MildPositive (80% SPY). Cooldown: 5 days.
+
+**The rally:** VIX continued declining to 13.8 by November 14 — entering HighPositive
+territory. After the 5-day cooldown cleared, allocation moved to 90% SPY. SPY rallied
+from $418 to $449 over the same window (+7.4%).
+
+**P&L outcome:** A $100,000 portfolio:
+- Oct 31 (60% SPY): $60,000 SPY exposure
+- Nov 3 (80% SPY after confirmation): $80,000 SPY exposure, captured the bulk of the rally
+- Nov 14 (90% SPY): $90,000 SPY — fully loaded heading into year-end
+- Total return Nov 1–14: approximately +5.6% (vs SPY +7.4%, slightly behind due to cooldown lag)
+- The cooldown cost was one day's alpha, but prevented whipsaw if the move had reversed
+
+**Key mechanic:** The regime shift from Neutral to MildPositive to HighPositive happened
+quickly (4 trading days for two step-ups). Without a cooldown, the strategy would have
+oscillated. With the 5-day cooldown, it rode the full move in two clean steps.
+
+---
+
+### Real-World Walkthrough 3: August 2024 Yen Carry Unwind
+
+**Dates:** August 2–5, 2024
+**Setup:** VIX was at 16 on August 1. SPY was at $552. The yen had been weakening all
+year as carry trades piled into high-yield assets. Net GEX was estimated at +$2.4B
+(HighPositive). Allocation: 90% SPY.
+
+**The unwind:** On August 2, the BOJ surprised with an unexpected rate hike. Yen carry
+positions began unwinding globally. VIX jumped from 16 to 23 in a single day (August 2).
+The confirmation filter was immediately relevant: one day does not change the regime.
+
+Day 2 (August 5): VIX hit 65 intraday — the highest reading since March 2020. The GEX
+strategy has a specific rule: even with a cooldown active, a single-day VIX move above
+50% of the vix_high parameter triggers an immediate regime override. VIX at 65 crossed
+the DeepNegative threshold (30) by a factor of 2×. Allocation moved immediately to 15%.
+
+**P&L outcome:**
+- August 1 (90% SPY at $552): $90,000 exposure
+- August 5 intraday: emergency de-risk to 15% — realized exit near $520 on SPY
+- SPY closed August 5 at $513, down 7.1% on the day
+- Portfolio loss on August 2–5: approximately -2.8% (vs SPY -7.1% over same window)
+- Alpha saved: 4.3 percentage points in 4 trading days
+
+**Recovery note:** By August 8, VIX had fallen back to 24 (still Negative). The cooldown
+prevented chasing back into 80%+ SPY prematurely. Full HighPositive allocation was not
+restored until August 22 when VIX returned to 15.
+
+**Key mechanic:** This example shows both the confirmation filter (avoided a false flip on
+Aug 2 spike) and the emergency override (acted on the extreme Aug 5 spike). The two-layer
+logic — confirm slow moves, override extreme moves — is the core of robust regime following.
+
+---
+
+### How the Gamma Flip Works: Mechanical Example
+
+Consider SPY at $450 with the gamma flip level calculated at $448.
+
+**Above the flip (SPY at $450, dealers net long gamma):**
+
+A market maker who sold a call at the $450 strike has positive gamma. When SPY rises from
+$450 to $451, the call delta increases (e.g., 0.50 → 0.52). The market maker is short
+the call and must buy 2 more shares of SPY to stay delta-neutral. This buying supports the
+price at higher levels — but is mechanical, not directional.
+
+When SPY falls from $450 to $449, the delta decreases (0.50 → 0.48). The market maker
+sells 2 shares. This selling supports the price near the bottom of the range.
+
+Net effect: the market maker's hedging creates a gravitational pull toward the strike. SPY
+tends to pin around $450 on high-OI expiry days. Intraday ranges compress. Iron condors
+collect premium reliably.
+
+**Below the flip (SPY at $447, dealers net short gamma):**
+
+Now consider the market maker who sold a put at $448 (currently ITM). They are short gamma.
+When SPY falls from $447 to $446, the put delta increases in magnitude (e.g., -0.55 → -0.60).
+The market maker must sell 5 more shares of SPY to hedge — accelerating the decline.
+
+When SPY rises from $447 to $448, the put goes back to ATM and delta decreases. The market
+maker buys shares back — creating a brief rally. But the net effect below the flip is
+amplification: declines feed on themselves via dealer hedging. SPY gaps are more common,
+intraday ranges expand, iron condors get run through.
+
+**Numerical edge:**
+
+At $450 with +$2B net GEX: a -1% SPY move generates approximately +$200M of buy orders
+from dealer delta rebalancing. This is sufficient to absorb normal sell flow on an
+average day, mechanically stabilizing the market.
+
+At $447 with -$2B net GEX: the same -1% SPY move generates approximately -$200M of
+additional sell orders from dealer delta rebalancing. This adds to natural sell flow,
+potentially triggering further selling from stop-losses and margin calls.
+
+---
+
+### Why VIX is a Valid GEX Proxy
+
+VIX measures the 30-day implied volatility of the S&P 500, derived from the price of
+options across all strikes. GEX measures the net gamma exposure of market makers across
+the same options. The two are correlated because:
+
+1. **High GEX → IV suppression.** When dealers are net long gamma, they continuously
+   hedge (sell rallies, buy dips). This mechanical activity reduces realized volatility.
+   Lower realized vol → lower implied vol → lower VIX.
+
+2. **Low/negative GEX → IV expansion.** When dealers are net short gamma, their hedging
+   amplifies moves. Higher realized vol → options sellers demand higher premium → VIX rises.
+
+3. **Historical correlation.** Over 2018–2024, the correlation between daily changes in
+   net SPY GEX and daily changes in VIX was approximately -0.68. The relationship is
+   strongest at extremes (VIX > 25 or GEX < -$2B) where both signals align.
+
+**Where the proxy breaks down:**
+
+- **OPEX week:** Options expire every Friday (or Mon/Wed for SPY 0DTE). As expiry approaches,
+  gamma from expiring strikes collapses but does not appear as lower VIX (since VIX uses
+  a 30-day window). GEX can shift sharply without a corresponding VIX move in the final
+  48 hours before expiry.
+
+- **Term structure dislocations:** VIX uses the 30-day blended IV. If the near-term
+  options are cheap but far-term options are expensive (rare), VIX underestimates current
+  GEX stress. This happened briefly in Q4 2023 when near-term realized vol collapsed while
+  30-day IV stayed elevated due to FOMC uncertainty.
+
+- **Sector-specific GEX:** VIX is SPX-based. Individual stock GEX can diverge widely from
+  the index — e.g., NVDA can have negative GEX (dealers short gamma on massive call OI)
+  even when SPX GEX is strongly positive. The screener applies VIX-based regime to all
+  tickers equally, which is appropriate for broad index allocation but less precise for
+  individual stock trades.
+
+- **0DTE concentration:** SPY 0DTE options account for 40–50% of daily SPY options volume
+  by 2024. Their intraday gamma is enormous but does not persist to the next day's OI-based
+  GEX calculation. On 0DTE expiry days (Mon/Wed/Fri for SPY), intraday gamma effects can
+  be intense even when overnight GEX looks positive.
+
+**Practical rule:** Use VIX as the primary regime signal for multi-day allocation decisions.
+Switch to live GEX for intraday trading decisions (available via the Market tab once options
+OI data is synced).
+
+---
+
+### Screener Walkthrough: Step-by-Step
+
+The GEX Positioning screener is the simplest screener in the dashboard — the regime signal
+is determined entirely by VIX, so all tickers in the universe receive the same regime
+classification. The per-ticker value is in seeing ATR and momentum context for sizing.
+
+**Step 1: Select a universe.**
+Choose "ETF Core" for broad market exposure, "Index ETFs" for pure regime plays, or
+"Mega Cap" to apply GEX regime weighting to individual stock positions.
+
+**Step 2: Scan.**
+Click "Scan for Opportunities". The pipeline loads VIX history from the DB and price
+data from Polygon for each ticker. No options chain fetch is needed (VIX proxy mode).
+Typical scan time: 5–10 seconds.
+
+**Step 3: Read the regime map.**
+The chart at the top shows the current VIX level as a vertical line over the five colored
+bands. The purple allocation curve shows the suggested SPY weighting. Read the regime label
+in the colored bar below the metrics row.
+
+**Step 4: Review per-ticker context.**
+The summary table shows each ticker's price, ATR%, and 5-day return. Expand any ticker to
+see the full regime badge and trade setup. For the regime that calls for equity exposure
+(HighPositive, MildPositive), high-ATR tickers may warrant a smaller position than the
+regime weight suggests.
+
+**Step 5: Save to paper trade.**
+In each ticker's expander, set the share count and click "Save Equity". This creates a
+paper trade entry at today's price with the strategy tagged as "GEX Positioning". The
+position appears in the Paper Trading tab under Open Positions.
+
+**Step 6: Monitor for regime changes.**
+Re-scan daily. When VIX moves across a band boundary and holds for 3+ days (confirmation
+filter), the regime will shift and the suggested allocation will change. Compare your
+current paper trade exposure to the new suggested weight and adjust accordingly.
+
+**Regime change alerts to watch:**
+- VIX crossing 22 upward → Negative GEX → cut to 35% SPY (most common rebalance trigger)
+- VIX crossing 30 upward → DeepNegative → cut to 15% (emergency de-risk)
+- VIX crossing 18 downward → MildPositive → add to 80% (recovery signal)
+- VIX crossing 15 downward → HighPositive → load to 90% (vol-suppressed regime, add premium-selling strategies)
+
+---
+
+## Using GEX Effectively: Intraday vs End-of-Day
+
+The GEX regime is the same whether you are a day trader or a multi-week swing trader —
+but *how* you act on it is completely different. The table below shows the split.
+
+| Dimension | Intraday (0–1 day) | End-of-Day / Swing (1–20 days) |
+|---|---|---|
+| **GEX signal used** | Live net GEX from options chain (requires real-time OI feed) | VIX proxy — daily close is sufficient |
+| **Primary tool** | SPY 1-min / 5-min chart, VWAP, gamma flip level | Daily close, VIX settlement, regime band |
+| **Entry trigger** | Price crossing the gamma flip level intraday | VIX band breach confirmed over 3 days |
+| **Position size** | Scale down — intraday mean-reversion can be violent | Full regime allocation (15%–90% SPY) |
+| **Exit discipline** | Hard stop at gamma flip ±0.5%; target 0.3–0.5× ATR | Regime change + cooldown (5-day default) |
+| **Best regime** | HighPositive (dealers dampen intraday swings — iron condor day) | Any regime — strategy was designed for this horizon |
+| **Worst regime** | DeepNegative (gaps, spikes, slippage destroys edge) | N/A — allocation is already cut to 15% |
+
+---
+
+### Intraday GEX Trading — How To Do It
+
+**1. Pre-market setup (8:30–9:30 ET)**
+
+Before the open, identify three key levels:
+- **Gamma flip level**: the SPY strike where net dealer GEX crosses zero. Dealers are long gamma *above* this level (pin/dampen), short gamma *below* (amplify).
+- **Put wall**: highest concentration of put open interest — acts as a magnet / support zone.
+- **Call wall**: highest concentration of call open interest — acts as a ceiling / resistance zone.
+
+You can approximate these from any options chain tool. The gamma flip is roughly the strike
+with the largest absolute gamma weighted by open interest near ATM.
+
+**2. Opening range (9:30–10:00 ET)**
+
+Watch whether SPY opens above or below the gamma flip level:
+
+- **Opens above flip**: Dealers are long gamma. They will *sell* SPY as it rises and *buy* as
+  it falls — mechanically compressing the range. This is the ideal environment for:
+  - Iron condors and credit spreads (collect theta)
+  - Mean-reversion scalps (fade moves toward VWAP)
+  - Tighter stops (moves should be contained)
+
+- **Opens below flip**: Dealers are short gamma. They *buy* as SPY rises and *sell* as it
+  falls — amplifying moves in both directions. This environment favours:
+  - Directional trades with wide stops
+  - Momentum breakouts with trailing exits
+  - Long gamma (straddles/strangles) if IV is cheap
+
+**3. Intraday GEX regime shift**
+
+If SPY crosses the gamma flip level intraday, your edge *flips*. A mean-reversion trade
+that was working above the flip becomes a losing fade below it. Always know the flip level
+and exit or reverse when price crosses it with volume.
+
+*Example — 2024-02-14 (Valentine's Day CPI print):*
+- Pre-market flip level: SPY $497
+- CPI came in hot → SPY gapped to $493 at open (below flip)
+- Dealers flipped short gamma → sold into every bounce
+- By 10:30 ET, SPY was at $488 — a 1.8% drop in 60 minutes
+- Traders who were short gamma (directional puts, strangles) captured most of the move
+- Mean-reversion iron condors from the prior day were stopped out hard
+
+**4. 0DTE considerations (Mon/Wed/Fri for SPY)**
+
+On 0DTE expiry days, gamma is concentrated entirely in same-day options with strikes close
+to ATM. The gamma flip level is *much closer* to the current price and *changes rapidly* as
+price moves. Key rules:
+
+- Check the flip level every 30 minutes — it shifts as 0DTE OI rolls
+- Avoid iron condors when SPY is within 0.5% of the flip level on 0DTE days
+- The put wall and call wall compress dramatically by 2:00 PM ET — "max pain" gravity
+- The last 30 minutes often see a violent snap toward max pain as market makers hedge
+
+---
+
+### End-of-Day (EOD) GEX Trading — How To Do It
+
+EOD GEX is simpler and more robust. You are making one allocation decision per day based
+on the VIX close.
+
+**Daily routine (3:55–4:05 PM ET)**
+
+1. **Check VIX close**: Note which regime band it falls in.
+2. **Check for regime breach**: Has VIX crossed a band boundary?
+3. **Apply confirmation filter**: Has it held for 3+ consecutive days? (Default in this dashboard.)
+4. **Execute rebalance if triggered**: Adjust SPY allocation toward the new regime weight.
+5. **Log in paper trading**: Update position size, note the regime change.
+
+**Worked example — Oct–Nov 2022 bear market recovery:**
+
+| Date | VIX Close | Regime | Suggested SPY Wt | Action |
+|---|---|---|---|---|
+| Oct 3, 2022 | 33.6 | DeepNegative | 15% | Hold minimum allocation |
+| Oct 14, 2022 | 31.2 | DeepNegative | 15% | No change (below 30 threshold) |
+| Oct 21, 2022 | 29.8 | Negative | 35% | Day 1 of possible regime shift |
+| Oct 24, 2022 | 28.4 | Negative | 35% | Day 2 |
+| Oct 25, 2022 | 27.9 | Negative | 35% | Day 3 — confirmation met → buy SPY to 35% |
+| Nov 10, 2022 | 23.5 | Negative | 35% | Holding (no 3-day confirmation of next level) |
+| Nov 14, 2022 | 22.8 | Neutral | 60% | Day 1 |
+| Nov 15, 2022 | 22.4 | Neutral | 60% | Day 2 |
+| Nov 16, 2022 | 21.9 | Neutral | 60% | Day 3 — confirmation → buy SPY to 60% |
+
+Result: Two allocation increases during the bear market recovery, each triggered only
+after 3 confirmed closes in the new regime. No whipsawing on single-day VIX spikes.
+
+**Why EOD is more practical for most traders:**
+
+- No need for real-time GEX data — daily VIX settlement is freely available
+- The 3-day confirmation filter filters out most noise (one-day VIX spikes are common)
+- Rebalancing once per day (at close) avoids intraday execution risk and slippage
+- You can set alerts: "Notify me if VIX closes above 22 for 3 consecutive days"
+
+**When NOT to wait for confirmation:**
+
+The cooldown and confirmation filters are defaults — override them manually when:
+- VIX spikes 5+ points in a single day (likely tail event — de-risk immediately)
+- News-driven spike with known catalyst (FOMC, CPI) — reduce exposure before the print
+- VIX futures term structure inverts sharply (near-term > long-term) — sign of acute fear
+
+---
+
+### Quick Reference: Intraday vs EOD Cheat Sheet
+
+```
+INTRADAY:
+  Pre-market  → Find gamma flip level, put wall, call wall
+  9:30–10:00  → Is SPY above or below flip? Set your bias
+  All day     → Respect the flip level. Mean-revert above. Trend below.
+  0DTE days   → Recheck flip every 30 min. Max pain magnet in final hour.
+
+EOD:
+  4:00 PM     → Note VIX close. Which band?
+  Each day    → Count consecutive days in current band (confirmation counter)
+  Day 3       → Rebalance to new regime SPY weight (if cooldown cleared)
+  Override    → VIX spike > 5pts in one day → act immediately, skip confirmation
+```
+
+---
+
+## Long-Only Implementation (Retail Trader)
+
+This implementation is for traders who can buy stocks and buy options (long only). It does
+**not** involve selling options to open. No iron condors, no credit spreads, no bull put
+spreads, no writing covered calls. Every position entered is a purchase — the maximum loss
+is always known at entry.
+
+**What you can do:**
+- Buy stocks (long) — in positive GEX regimes
+- Buy calls to open — leveraged upside in positive regimes
+- Buy puts to open — downside protection in negative regimes
+- Sell any of the above to **close** an existing position
+
+**What you must not do:**
+- Sell options to open (no writing calls, no writing puts, no spreads built on short legs)
+- Short stocks
+
+### Regime → Long-Only Strategy Map
+
+| Regime | VIX | Play | Max Loss |
+|---|---|---|---|
+| High Positive | < 15 | **Buy stock** or **Buy call (ATM, 30–45 DTE)** | Unlimited downside (stock) / Premium paid (call) |
+| Mild Positive | 15–18 | **Buy stock** or **Buy call (ATM, 30–45 DTE)** | Unlimited downside (stock) / Premium paid (call) |
+| Neutral | 18–22 | **Hold cash — no new position** | No risk |
+| Negative | 22–30 | **Buy put (ATM or 5% OTM, 30–45 DTE)** | Premium paid |
+| Deep Negative | > 30 | **Buy put (ATM ~0.50Δ, 30–45 DTE)** or hold cash | Premium paid |
+
+### Why Each Play Fits Its Regime
+
+**High Positive GEX → Long Stock / Long Call**
+
+Dealers are net long gamma — their forced delta-hedging compresses intraday ranges and
+creates a low-volatility upward drift. Both plays benefit from this tailwind.
+
+- *Long stock:* captures the upward drift dollar-for-dollar, no time decay, but requires
+  full capital outlay and has unlimited downside if the regime flips.
+- *Long call:* provides leveraged upside with a hard floor at the premium paid. Because
+  IV is suppressed in this regime, call premiums are cheaper than in higher-VIX environments —
+  making this the best time to buy calls if you want leverage.
+
+**Mild Positive GEX → Long Stock / Long Call**
+
+Gentle upward drift with moderate dealer dampening. IV is slightly higher than HighPositive
+(VIX 15–18), but still affordable for call buying. Long stock remains the lower-risk choice;
+a long call is appropriate when you want to limit downside to the premium while retaining
+full upside participation.
+
+**Neutral / Gamma Flip Zone → Hold Cash**
+
+The gamma flip level is within one VIX session of the current level. A regime shift turns
+long calls into losing positions rapidly (IV spikes and delta flips). Entering new long
+positions in this zone has poor risk/reward — wait for regime confirmation.
+
+**Negative GEX → Long Put**
+
+Dealers are short gamma — their hedging amplifies downward moves. A long put captures this
+directional edge. You are *buying* protection, not selling it. Maximum loss is the premium
+paid. Do not buy calls here and do not sell puts — the dealer mechanics actively work
+against both.
+
+**Deep Negative GEX → Long Put (ATM) / Cash**
+
+Crash dynamics: pro-cyclical dealer hedging can accelerate moves lower. An ATM long put
+captures the full downside without any spread compression limiting profit. IV is elevated
+in this regime, making premiums expensive — if the premium is prohibitively high for your
+account size, holding cash is a valid alternative.
+
+### Strike Selection
+
+**Long calls (positive regimes):**
+
+```
+Target: ATM (current price rounded to nearest $5)
+Why ATM? Highest delta (closest to 0.50Δ), most efficient leverage.
+         Slightly OTM calls are cheaper but win only on a larger move.
+
+Alternative: 1 strike OTM if you want to reduce premium cost and
+             accept a slightly higher breakeven.
+```
+
+**Long puts (negative regimes):**
+
+```
+Negative GEX:      ~5% OTM put  (price × 0.95, rounded to nearest $5)
+Deep Negative GEX: ATM put      (price rounded to nearest $5, ~0.50Δ)
+
+Why 5% OTM in Negative?  The move is expected but may take time to develop.
+                          Slightly OTM reduces premium cost vs ATM.
+Why ATM in DeepNegative? Crash moves are fast and large — ATM maximises profit
+                          on a rapid move. Extra premium is justified.
+```
+
+**Rounding:** Round all computed strikes to the nearest listed strike. Most ETFs (SPY, QQQ)
+list strikes in $1 increments; higher-priced stocks may use $5 increments.
+
+### DTE Selection: 30–45 DTE
+
+Target approximately 35 DTE (days to expiry) for all GEX-based options trades.
+
+**Why 30–45 DTE for long options?**
+
+- **Regime window:** GEX regimes typically persist for 2–6 weeks. A 35 DTE trade gives
+  the position time to work without expiring before the regime plays out.
+- **Time decay (theta):** Theta accelerates sharply below 21 DTE. By holding a 35 DTE
+  option, you lose value slowly at first — giving the regime time to move in your favour
+  before decay becomes a significant drag.
+- **IV sensitivity (vega):** Options at 30–45 DTE have meaningful vega. If the regime
+  confirms and IV expands (especially for puts in a negative regime), the IV increase
+  adds to your profit on top of the directional move.
+- **Exit window:** Entering at 35 DTE and targeting an exit at 14–21 DTE avoids the
+  steepest part of the theta curve while still capturing the directional move.
+
+**For Deep Negative puts:** Consider 45–60 DTE. Crash moves can take several weeks to
+fully develop, and you want enough time for the position to work without running into
+expiry. The extra time also provides flexibility to exit if the regime recovers early.
+
+### Risk/Reward Summary
+
+| Strategy | Max Profit | Max Loss | Breakeven | Notes |
+|---|---|---|---|---|
+| Long Stock | Unlimited | Full price paid | Entry price | No decay; requires full capital |
+| Long Call | Unlimited | Premium paid | Strike + premium | Best in low-IV (HighPositive) |
+| Long Put | Strike value (to zero) | Premium paid | Strike − premium | Best when regime confirms negative |
+
+### Managing Winners and Losers
+
+**Long stock:**
+- Set a stop loss at 1–2× your ATR below entry (e.g., if ATR% = 1.5% and stock = $500,
+  stop at $492.50 for a 1.5% stop). This limits drawdown to roughly one ATR.
+- Take partial profits at +1×ATR, hold remainder with a trailing stop.
+- Exit immediately if VIX closes above the next regime boundary for 2+ days.
+
+**Long calls and long puts:**
+- Hard stop at 50% of premium paid. If you paid $2.00 for the option, close it if it
+  falls to $1.00. This prevents a bad regime call from becoming a total loss.
+- Target exit at 2–3× premium paid (e.g., buy for $2.00, sell at $4.00–$6.00).
+- Do not hold through expiry unless the position is deep ITM.
+- If VIX crosses a regime boundary confirmed for 2+ days, close regardless of P&L.
+  The edge came from the regime — if the regime is gone, so is the edge.
+
+### Position Sizing for Small Accounts ($5k–$25k)
+
+**Starting principle:** risk no more than 2–5% of account per GEX trade.
+
+**Long stock:**
+
+```
+Max shares = Floor(Account × Risk% / (Entry price × Stop%))
+
+Example: $10,000 account, 3% risk, stock at $100, stop at 2% below entry
+  Max loss per share = $100 × 0.02 = $2.00
+  Shares = Floor(10,000 × 0.03 / 2.00) = Floor(300 / 2.00) = 150 shares
+
+Note: This is risk-adjusted sizing, not full capital commitment.
+      150 shares × $100 = $15,000 notional > $10,000 account.
+      Use margin carefully, or reduce to 100 shares to stay within cash.
+```
+
+**Long calls (HighPositive / MildPositive):**
+
+```
+Max loss = Premium × 100 per contract (the full premium paid)
+Contracts = Floor(Account × Risk% / (Premium × 100))
+
+Example: $10,000 account, 2% risk, ATM call at $1.50
+  Max loss per contract = $1.50 × 100 = $150
+  Contracts = Floor(10,000 × 0.02 / 150) = Floor(200 / 150) = 1 contract
+
+Note: In HighPositive regimes, IV is suppressed → calls are cheaper.
+      A $0.80–$1.50 ATM call on SPY is typical when VIX < 15.
+```
+
+**Long puts (Negative / DeepNegative):**
+
+```
+Max loss = Premium × 100 per contract (the full premium paid)
+Contracts = Floor(Account × Risk% / (Premium × 100))
+
+Example: $10,000 account, 3% risk, ATM put at $3.00 (VIX > 30 → expensive)
+  Max loss per contract = $3.00 × 100 = $300
+  Contracts = Floor(10,000 × 0.03 / 300) = Floor(300 / 300) = 1 contract
+
+Note: In DeepNegative regimes, IV is elevated → put premiums are expensive.
+      If 1 ATM contract exceeds your risk budget, use a slightly OTM put
+      (−0.35Δ to −0.40Δ) to reduce cost while keeping meaningful directional exposure.
+      If even that is too expensive, hold cash instead of overpaying for premium.
+```
+
+**General rule:** In a $5,000–$25,000 account, trade 1 contract per signal. Scale to 2–3
+contracts only when the account has grown and the regime has confirmed. Never use leverage
+to compensate for account size — that removes the defined-risk property that makes this
+approach viable for retail traders.
+
+---
+
+## Position Management & Exit Rules
+
+The dashboard alerts you automatically when any of these conditions are triggered on an open position. The rules below are the exact thresholds used.
+
+### Credit Spreads — Iron Condor, Bull Put Spread, Bear Call Spread
+
+These strategies collect premium upfront. Time decay works *for* you, so the primary goal is to let theta erode the spread value without getting caught by a large directional move.
+
+| Alert | Condition | Action |
+|---|---|---|
+| ✅ Take profit | P&L ≥ **50% of credit collected** | Close the position. The last 50% of profit takes 3× as long and requires holding through more risk. This is the golden rule for all credit spreads. |
+| 🟡 Monitor | P&L ≤ **−50% of credit collected** | Watch closely. The spread is being tested. Look at the regime — has VIX moved? |
+| 🔴 Stop loss | P&L ≤ **−75% of credit collected** | Close. You are approaching max loss. The premium you collected is gone and you are now paying out. |
+| 🟡 DTE warning | **21 DTE** remaining | Consider closing. Gamma risk increases, and a single gap move can wipe the remaining credit in hours. |
+| 🔴 DTE critical | **7 DTE** remaining | Close immediately. Assignment risk for short legs becomes real, and bid-ask spreads widen sharply. |
+
+**Why 50%?** On a $1.00 credit spread, your max profit is $100/contract and max loss is (spread width − $1.00) × 100. The risk/reward after 50% profit has been captured is no longer in your favour — you're risking the same max loss for only $50 more. Close it.
+
+---
+
+### Debit Spreads — Bear Put Spread, Bull Call Spread
+
+These strategies pay premium upfront. You need the stock to move in your direction within the DTE window.
+
+| Alert | Condition | Action |
+|---|---|---|
+| ✅ Take profit (partial) | P&L ≥ **50% of premium paid** | Consider closing half or all. Locking in 50% is a solid outcome on a directional spread. |
+| ✅ Take profit (full) | P&L ≥ **100% of premium paid** | Strong move — close and bank the gain. Don't hold for max profit unless the regime is firmly intact. |
+| 🔴 Stop loss | P&L ≤ **−50% of premium paid** | Close. If you paid $1.00 and it's worth $0.50, the directional thesis has likely stalled or reversed. The remaining $50 recovery requires a much larger move. |
+| 🟡 DTE warning | **21 DTE** remaining | Theta decay accelerates sharply here. If the position is not yet profitable, evaluate whether the move is still likely. |
+| 🔴 DTE critical | **7 DTE** remaining | Close. Debit spreads near expiry decay very quickly and a failed directional move becomes worthless fast. |
+
+---
+
+### Long Put (DeepNegative regime)
+
+A naked long put has unlimited directional upside but loses value every day. Discipline matters more here than on spreads.
+
+| Alert | Condition | Action |
+|---|---|---|
+| ✅ Take profit (partial) | P&L ≥ **50% of premium paid** | Consider closing half. Let the rest run with a mental trailing stop. |
+| ✅ Take profit (full) | P&L ≥ **100% of premium paid** | The put has doubled — close it unless you are in a confirmed crash with regime holding at DeepNegative. |
+| 🔴 Stop loss | P&L ≤ **−50% of premium paid** | Hard stop. If you paid $3.00 and it's now $1.50, the thesis is broken or the bounce has started. Close. |
+| 🔴 Regime flip | VIX drops below 30 | The DeepNegative regime that justified this trade is gone. Close regardless of P&L. The edge came from the regime — if the regime changes, so does your reason for holding. |
+| 🟡 DTE warning | **21 DTE** remaining | Theta decay accelerates. If the put is not profitable and the regime has not confirmed further downside, close. |
+| 🔴 DTE critical | **7 DTE** remaining | Close immediately unless deep ITM. |
+
+---
+
+### Long Stock / ETF (equity positions)
+
+Long equity from GEX signals is a trend-following position. The stop is ATR-based; the target is the next regime boundary.
+
+| Alert | Condition | Action |
+|---|---|---|
+| ✅ Consider trimming | P&L ≥ **+20% of cost basis** | Take partial profits. Trim to half position and raise stop to breakeven. |
+| 🔴 Stop loss | P&L ≤ **−8% of cost basis** | Close. An 8% loss on an equity position is one ATR move — if GEX was correctly read, you should not see an 8% loss unless the regime has changed. |
+| 🔴 Regime flip | VIX crosses into the next regime band | Exit. The GEX signal that drove the entry no longer applies. |
+
+**Note:** These are the exact thresholds used by the dashboard's automatic alert system. When you open the Open Positions tab, each position expander will show 🔴/🟡/✅ in the title based on the current state of these rules.

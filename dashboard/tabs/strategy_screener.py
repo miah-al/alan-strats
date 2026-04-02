@@ -961,6 +961,10 @@ def _save_options_paper_trade(
             f"Net {label}: ${abs(net):.0f}",
             icon="✅",
         )
+        # Invalidate paper trading price cache so new position symbols are fetched on next load
+        import streamlit as _st
+        _st.session_state.pop("pt_live_prices", None)
+        _st.session_state.pop("pt_live_option_prices", None)
 
     except Exception as e:
         st.error(f"Failed to save paper trade: {e}")
@@ -1533,6 +1537,1110 @@ def _render_vol_term_structure(results: list[dict]) -> None:
     )
 
 
+# ── GEX Positioning screener helpers ───────────────────────────────────────────
+
+# Regime thresholds (match gex_positioning.py defaults)
+_GEX_VIX_BANDS = [
+    # (regime_key, vix_lo, vix_hi, spy_weight, color)
+    ("HighPositive", 0.0,  15.0, 0.90, "#10b981"),
+    ("MildPositive", 15.0, 18.0, 0.80, "#34d399"),
+    ("Neutral",      18.0, 22.0, 0.60, "#f59e0b"),
+    ("Negative",     22.0, 30.0, 0.35, "#f97316"),
+    ("DeepNegative", 30.0, 999., 0.15, "#ef4444"),
+]
+
+_GEX_REGIME_LABELS = {
+    "HighPositive": "High Positive GEX — vol-suppressed",
+    "MildPositive": "Mild Positive GEX — calm",
+    "Neutral":      "Neutral / Gamma Flip Zone",
+    "Negative":     "Negative GEX — volatile",
+    "DeepNegative": "Deep Negative GEX — crash dynamics",
+}
+
+_GEX_REGIME_COLORS = {
+    "HighPositive": "#10b981",
+    "MildPositive": "#34d399",
+    "Neutral":      "#f59e0b",
+    "Negative":     "#f97316",
+    "DeepNegative": "#ef4444",
+}
+
+
+def _classify_vix_regime(vix_val: float) -> str:
+    for regime, lo, hi, _, _ in _GEX_VIX_BANDS:
+        if lo <= vix_val < hi:
+            return regime
+    return "DeepNegative"
+
+
+def _score_gex_positioning(
+    tickers: list[str],
+    api_key: str,
+    vix_series: pd.Series,
+    price_dfs: dict[str, pd.DataFrame],
+    params: dict,
+) -> list[dict]:
+    """
+    Score each ticker for GEX Positioning strategy.
+
+    NOTE: Live per-ticker GEX requires options OI data which is not universally
+    available.  This function uses VIX as a GEX proxy (clearly labelled).
+    VIX is shared across all tickers; individual ticker price data provides
+    ATR and momentum context.
+    """
+    current_vix = float(vix_series.iloc[-1]) if not vix_series.empty else 20.0
+    regime      = _classify_vix_regime(current_vix)
+    spy_weight  = dict(zip(
+        [b[0] for b in _GEX_VIX_BANDS],
+        [b[3] for b in _GEX_VIX_BANDS],
+    ))[regime]
+    signal = "BUY" if spy_weight >= 0.75 else ("SELL" if spy_weight <= 0.35 else "HOLD")
+
+    results = []
+    for ticker in tickers:
+        price_df = price_dfs.get(ticker)
+        if price_df is None or price_df.empty or len(price_df) < 10:
+            continue
+        try:
+            close        = price_df["close"].astype(float)
+            high         = price_df.get("high",  close).astype(float)
+            low          = price_df.get("low",   close).astype(float)
+            latest_price = float(close.iloc[-1])
+            latest_atr   = _atr(high, low, close)
+            atr_pct      = latest_atr / latest_price * 100 if latest_price > 0 else 0.0
+            ret_5d       = float(close.pct_change(5).iloc[-1]) if len(close) >= 6 else 0.0
+
+            results.append({
+                "Ticker":        ticker,
+                "Price":         latest_price,
+                "VIX":           current_vix,
+                "Regime":        regime,
+                "Regime Label":  _GEX_REGIME_LABELS[regime],
+                "SPY Weight":    spy_weight,
+                "Signal":        signal,
+                "ATR%":          atr_pct,
+                "5d Return":     ret_5d,
+                "GEX Source":    "VIX proxy (live GEX requires options OI)",
+            })
+        except Exception as e:
+            logger.warning(f"GEX score error for {ticker}: {e}")
+
+    return results
+
+
+def _gex_regime_band_chart(current_vix: float) -> "go.Figure":
+    """
+    Plotly chart showing VIX regime bands (colored background) with current VIX marked.
+    Five colored horizontal bands, one vertical line for current VIX.
+    """
+    band_data = [
+        ("HighPositive", 0,  15, "#10b981", "HighPositive GEX\n90% SPY"),
+        ("MildPositive", 15, 18, "#34d399", "MildPositive\n80% SPY"),
+        ("Neutral",      18, 22, "#f59e0b", "Neutral/Flip\n60% SPY"),
+        ("Negative",     22, 30, "#f97316", "Negative GEX\n35% SPY"),
+        ("DeepNegative", 30, 50, "#ef4444", "Deep Negative\n15% SPY"),
+    ]
+
+    # Build VIX history sparkline using a short range for display
+    vix_x = [b[1] for b in band_data] + [band_data[-1][2]]
+
+    fig = go.Figure()
+
+    for regime, lo, hi, color, label in band_data:
+        fig.add_shape(
+            type="rect",
+            x0=lo, x1=hi, y0=0, y1=1,
+            xref="x", yref="paper",
+            fillcolor=color,
+            opacity=0.18,
+            line_width=0,
+        )
+        mid = (lo + hi) / 2
+        fig.add_annotation(
+            x=mid, y=0.97,
+            xref="x", yref="paper",
+            text=label.replace("\n", "<br>"),
+            showarrow=False,
+            font=dict(color=color, size=10),
+            align="center",
+            valign="top",
+        )
+
+    # Current VIX vertical line
+    vix_color = _GEX_REGIME_COLORS[_classify_vix_regime(current_vix)]
+    fig.add_vline(
+        x=current_vix,
+        line=dict(color=vix_color, width=3, dash="solid"),
+        annotation_text=f"VIX = {current_vix:.1f}",
+        annotation_position="top",
+        annotation_font_color=vix_color,
+        annotation_font_size=13,
+    )
+
+    # Allocation curve
+    alloc_vix  = [0, 15, 15, 18, 18, 22, 22, 30, 30, 50]
+    alloc_wt   = [0.90, 0.90, 0.80, 0.80, 0.60, 0.60, 0.35, 0.35, 0.15, 0.15]
+    fig.add_trace(go.Scatter(
+        x=alloc_vix, y=alloc_wt,
+        mode="lines",
+        line=dict(color="#6366f1", width=2.5),
+        name="SPY weight",
+        hovertemplate="VIX %{x:.1f} → %{y:.0%} SPY<extra></extra>",
+        yaxis="y2",
+    ))
+
+    fig.update_layout(
+        title=dict(text="GEX Regime Bands — VIX Proxy | Current VIX highlighted", font=dict(size=13)),
+        xaxis=dict(
+            title="VIX Level",
+            range=[0, 50],
+            gridcolor="#1f2937",
+            tickformat=".0f",
+        ),
+        yaxis=dict(showticklabels=False, showgrid=False, range=[0, 1]),
+        yaxis2=dict(
+            title="SPY Allocation",
+            overlaying="y",
+            side="right",
+            tickformat=".0%",
+            range=[0, 1.05],
+            gridcolor="#1f2937",
+        ),
+        height=320,
+        margin=dict(l=0, r=60, t=50, b=40),
+        paper_bgcolor="#0a0e1a",
+        plot_bgcolor="#111827",
+        font=dict(color="#9ca3af", size=12),
+        showlegend=True,
+        legend=dict(bgcolor="rgba(0,0,0,0)", orientation="h", y=-0.20),
+    )
+    return fig
+
+
+# ── GEX regime → options strategy mapping ──────────────────────────────────────
+
+_GEX_OPTIONS_MAP: dict[str, dict] = {
+    "HighPositive": {
+        "strategy":   "Iron Condor",
+        "play":       "Sell OTM call spread + OTM put spread (vol suppressed, range-bound — collect premium on both sides)",
+        "rationale":  "Dealers are net long gamma — their forced delta-hedging compresses intraday ranges "
+                      "and pins price between the put wall and call wall. An iron condor collects credit "
+                      "on both sides of the range. All four legs are defined-risk; maximum loss is the "
+                      "width of one spread minus the total credit received.",
+        "risk_type":  "credit",
+        "legs_desc":  "SELL call (short strike +1×ATR), BUY call (+2×ATR) | SELL put (−1×ATR), BUY put (−2×ATR)",
+    },
+    "MildPositive": {
+        "strategy":   "Bull Put Spread",
+        "play":       "Sell OTM put, buy further OTM put (mild upward bias — collect credit with defined downside)",
+        "rationale":  "Mild positive GEX provides steady upward drift with moderate dealer dampening. "
+                      "A bull put spread collects credit when the stock stays above the short put strike. "
+                      "Both legs are defined-risk; maximum loss is the spread width minus the credit received.",
+        "risk_type":  "credit",
+        "legs_desc":  "SELL put (−1×ATR below spot), BUY put (−2×ATR below spot)",
+    },
+    "Neutral": {
+        "strategy":   "Hold Cash",
+        "play":       "No new position — wait for regime confirmation",
+        "rationale":  "VIX is near the gamma flip boundary. Dealer positioning is ambiguous "
+                      "and a single VIX session can tip the regime in either direction. "
+                      "The risk/reward does not justify entry until the regime confirms.",
+        "risk_type":  "none",
+        "legs_desc":  "",
+    },
+    "Negative": {
+        "strategy":   "Bear Put Spread",
+        "play":       "Buy near-ATM put, sell further OTM put (dealers amplify moves down — defined-risk downside)",
+        "rationale":  "Negative GEX means dealers are short gamma and their hedging amplifies downward moves. "
+                      "A bear put spread buys the directional edge at a reduced net debit vs a naked long put. "
+                      "Maximum loss is the net debit paid; maximum profit is the spread width minus the debit.",
+        "risk_type":  "debit",
+        "legs_desc":  "BUY put (−0.5×ATR below spot), SELL put (−2×ATR below spot)",
+    },
+    "DeepNegative": {
+        "strategy":   "Long Put",
+        "play":       "Buy ATM put outright (crash dynamics — maximum downside capture, no spread compression)",
+        "rationale":  "Crash dynamics — pro-cyclical dealer hedging accelerates moves lower. "
+                      "An ATM long put captures the full downside without a short leg compressing "
+                      "the profit. Maximum loss is the premium paid (defined risk).",
+        "risk_type":  "debit",
+        "legs_desc":  "BUY put (ATM ~0.50Δ, ~35 DTE)",
+    },
+}
+
+
+def _save_equity_paper_trade(
+    ticker: str, strategy_name: str, price: float, qty: int,
+    trade_group: str | None = None,
+) -> str | None:
+    """Save a simple equity long position to paper trades. Returns error string or None.
+    Pass trade_group to share a group ID across multiple legs (e.g. rotation SPY+TLT)."""
+    import uuid
+    from alan_trader.db.client import get_engine
+    from sqlalchemy import text
+
+    if trade_group is None:
+        trade_group = f"GEX-{ticker}-{str(uuid.uuid4())[:8].upper()}"
+    today = date.today()
+
+    try:
+        engine = get_engine()
+        with engine.begin() as conn:
+            sec_row = conn.execute(text(
+                "SELECT SecurityId FROM portfolio.Security WHERE Symbol=:s AND SecurityType='equity'"
+            ), {"s": ticker}).fetchone()
+
+            if sec_row is None:
+                sec_row = conn.execute(text(
+                    "INSERT INTO portfolio.Security (Symbol, SecurityType, Underlying, Multiplier) "
+                    "OUTPUT INSERTED.SecurityId VALUES (:s, 'equity', :ul, 1)"
+                ), {"s": ticker, "ul": ticker}).fetchone()
+
+            sec_id = sec_row[0]
+
+            conn.execute(text("""
+                INSERT INTO portfolio.[Transaction]
+                    (BusinessDate, AccountId, TradeGroupId, StrategyName,
+                     SecurityId, Direction, Quantity, TransactionPrice,
+                     Commission, LegType, Source, Notes)
+                VALUES
+                    (:bd, 1, :tg, :strat,
+                     :sid, 'BUY', :qty, :px,
+                     0.0, 'Equity', 'Screener', :notes)
+            """), {
+                "bd":    today,
+                "tg":    trade_group,
+                "strat": strategy_name,
+                "sid":   sec_id,
+                "qty":   qty,
+                "px":    price,
+                "notes": f"{ticker} equity — screener",
+            })
+        # Invalidate paper trading price cache so new position symbols are fetched on next load
+        import streamlit as _st
+        _st.session_state.pop("pt_live_prices", None)
+        _st.session_state.pop("pt_live_option_prices", None)
+        return None
+    except Exception as e:
+        return str(e)
+
+
+def _next_monthly_friday(days_out: int = 35) -> str:
+    """Return the nearest Friday on or after (today + days_out) as YYYY-MM-DD."""
+    import datetime as _dt
+    target = _dt.date.today() + _dt.timedelta(days=days_out)
+    # weekday(): Mon=0 … Fri=4 … Sun=6
+    days_to_friday = (4 - target.weekday()) % 7
+    return (target + _dt.timedelta(days=days_to_friday)).strftime("%Y-%m-%d")
+
+
+def _render_gex_trade_setup(ticker: str, row, api_key: str, params: dict, kp, slug: str) -> None:
+    """
+    Render GEX regime trade setup for a single ticker.
+      HighPositive  → Iron Condor (4-leg credit spread, defined risk)
+      MildPositive  → Bull Put Spread (credit spread, defined risk)
+      Neutral       → Hold cash warning, no trade button
+      Negative      → Bear Put Spread (debit spread, defined risk)
+      DeepNegative  → Long Put (long option, defined risk)
+    All positions are defined-risk. No naked options.
+    """
+    regime       = row.get("Regime", "Neutral")
+    regime_label = row.get("Regime Label", regime)
+    spy_weight   = row.get("SPY Weight", 0.60)
+    current_vix  = row.get("VIX", 20.0)
+    price        = row.get("Price", 0.0)
+    signal       = row.get("Signal", "HOLD")
+    ret_5d       = row.get("5d Return", 0.0)
+    atr_pct      = row.get("ATR%", 0.0)
+    regime_color = _GEX_REGIME_COLORS.get(regime, "#f59e0b")
+    opt_info     = _GEX_OPTIONS_MAP.get(regime, _GEX_OPTIONS_MAP["Neutral"])
+
+    # ATR in dollar terms
+    atr_dollar = price * (atr_pct / 100.0) if price > 0 else 0.0
+
+    # Default expiry: next Friday on or after today+35 days
+    default_exp = _next_monthly_friday(35)
+
+    # ── Regime badge ────────────────────────────────────────────────────────────
+    st.markdown(
+        f"""<div style="display:inline-block;padding:4px 12px;border-radius:6px;
+                background:{regime_color}22;border:1px solid {regime_color};
+                color:{regime_color};font-weight:700;font-size:13px">
+            {regime_label}
+        </div>""",
+        unsafe_allow_html=True,
+    )
+    st.markdown("")
+
+    c1, c2, c3, c4, c5 = st.columns(5)
+    c1.metric("VIX",        f"{current_vix:.1f}")
+    c2.metric("SPY Weight", f"{spy_weight:.0%}")
+    c3.metric("Signal",     signal)
+    c4.metric("ATR%",       f"{atr_pct:.2f}%")
+    c5.metric("5d Return",  f"{ret_5d*100:+.1f}%")
+
+    st.caption("GEX source: VIX proxy (labelled). Live GEX requires options open interest data.")
+
+    # ── Regime band chart ────────────────────────────────────────────────────────
+    fig = _gex_regime_band_chart(current_vix)
+    st.plotly_chart(fig, width="stretch", key=kp(f"gex_band_{ticker}"))
+    st.caption(
+        "Colored bands = VIX regime zones · Purple line = SPY allocation by regime · "
+        "Vertical line = current VIX level"
+    )
+
+    st.markdown("---")
+
+    # ── Strategy recommendation ──────────────────────────────────────────────────
+    strategy_name = opt_info["strategy"]
+    st.markdown(f"#### Recommended Play: **{strategy_name}**")
+    st.caption(opt_info["play"])
+
+    # ── Neutral: no trade ────────────────────────────────────────────────────────
+    if regime == "Neutral":
+        st.warning(
+            "**Near gamma flip — hold cash, no new position recommended.**  "
+            "Dealer positioning is ambiguous and a single VIX session can tip the regime. "
+            "Wait for 3+ consecutive closes confirming the next regime band before entering."
+        )
+        return
+
+    # ── Rationale ───────────────────────────────────────────────────────────────
+    st.info(f"**Why this play?** {opt_info['rationale']}")
+
+    st.markdown("---")
+
+    # ── Helper: fetch chain and return (exp, dte, chain_ok) ────────────────────
+    def _fetch_chain():
+        exp_chain, best_exp, dte_used, err = _get_options_chain(
+            ticker, api_key, price, dte_target=35, dte_lo=28, dte_hi=50
+        )
+        if err or exp_chain is None or exp_chain.empty:
+            return None, default_exp, 35, False
+        return exp_chain, best_exp, dte_used, True
+
+    def _safe_mid(val) -> float:
+        try:
+            v = float(val)
+            return v if v == v else 0.0
+        except Exception:
+            return 0.0
+
+    # ── HighPositive: Iron Condor ────────────────────────────────────────────────
+    if regime == "HighPositive":
+        short_call_k = round((price + atr_dollar) / 1) if price > 0 else price + atr_dollar
+        long_call_k  = round((price + 2 * atr_dollar) / 1) if price > 0 else price + 2 * atr_dollar
+        short_put_k  = round((price - atr_dollar) / 1) if price > 0 else price - atr_dollar
+        long_put_k   = round((price - 2 * atr_dollar) / 1) if price > 0 else price - 2 * atr_dollar
+        # Ensure sensible ordering
+        short_call_k = max(short_call_k, price + 0.50)
+        long_call_k  = max(long_call_k,  short_call_k + 0.50)
+        short_put_k  = min(short_put_k,  price - 0.50)
+        long_put_k   = min(long_put_k,   short_put_k - 0.50)
+
+        m1, m2, m3, m4 = st.columns(4)
+        m1.metric("Spot",            f"${price:.2f}")
+        m2.metric("Short Call / Put", f"±1×ATR  (${atr_dollar:.2f})")
+        m3.metric("Long Call / Put",  f"±2×ATR  (${2*atr_dollar:.2f})")
+        m4.metric("Expiry (target)",  f"~35 DTE  ({default_exp})")
+
+        st.caption(
+            f"Short strikes: call ${short_call_k:.2f} / put ${short_put_k:.2f}  ·  "
+            f"Long strikes: call ${long_call_k:.2f} / put ${long_put_k:.2f}  ·  "
+            "Max loss = spread width − net credit (defined risk on both sides)."
+        )
+
+        _ic_confirm_key = kp(f"gex_ic_confirm_{ticker}")
+        if not st.session_state.get(_ic_confirm_key):
+            with st.form(kp(f"gex_ic_form_{ticker}")):
+                _i1, _i2 = st.columns([2, 3])
+                qty = _i1.number_input(
+                    "Contracts", min_value=1, max_value=50, value=1, step=1,
+                )
+                _ic_submitted = _i2.form_submit_button(
+                    f"Save Iron Condor on {ticker}", type="primary"
+                )
+            if _ic_submitted:
+                st.session_state[_ic_confirm_key] = qty
+                st.rerun()
+        else:
+            qty = st.session_state[_ic_confirm_key]
+            with st.spinner(f"Fetching {ticker} options chain…"):
+                exp_chain, best_exp, dte_used, chain_ok = _fetch_chain()
+
+            # Resolve strikes from chain if available; else use ATR-based defaults
+            if chain_ok:
+                calls = exp_chain[exp_chain["type"].str.lower() == "call"].sort_values("strike")
+                puts  = exp_chain[exp_chain["type"].str.lower() == "put"].sort_values("strike", ascending=False)
+                sc_k, sc_mid = _find_strike(calls, "call", price, 0.30)
+                lc_k, lc_mid = _find_strike(calls, "call", price, 0.15)
+                sp_k, sp_mid = _find_strike(puts,  "put",  price, 0.30)
+                lp_k, lp_mid = _find_strike(puts,  "put",  price, 0.15)
+                sc_k  = sc_k  or short_call_k;  sc_mid  = _safe_mid(sc_mid)
+                lc_k  = lc_k  or long_call_k;   lc_mid  = _safe_mid(lc_mid)
+                sp_k  = sp_k  or short_put_k;   sp_mid  = _safe_mid(sp_mid)
+                lp_k  = lp_k  or long_put_k;    lp_mid  = _safe_mid(lp_mid)
+            else:
+                sc_k, sc_mid = short_call_k, 0.0
+                lc_k, lc_mid = long_call_k,  0.0
+                sp_k, sp_mid = short_put_k,  0.0
+                lp_k, lp_mid = long_put_k,   0.0
+
+            net_credit = (sc_mid + sp_mid) - (lc_mid + lp_mid)
+            not_ok_note = " (chain unavailable — mids set to $0.00, edit after save)" if not chain_ok else ""
+            st.warning(
+                f"Confirm: **{qty} × {ticker} Iron Condor** expiring {best_exp} ({dte_used} DTE)  \n"
+                f"SELL call ${sc_k:.2f} / BUY call ${lc_k:.2f}  |  "
+                f"SELL put ${sp_k:.2f} / BUY put ${lp_k:.2f}  \n"
+                f"Net credit ≈ ${net_credit:.2f}/shr (${net_credit*100:.0f}/contract){not_ok_note}"
+            )
+            legs = [
+                ("SELL", sc_k, "call", sc_mid, "ShortCall"),
+                ("BUY",  lc_k, "call", lc_mid, "LongCall"),
+                ("SELL", sp_k, "put",  sp_mid, "ShortPut"),
+                ("BUY",  lp_k, "put",  lp_mid, "LongPut"),
+            ]
+            _ok_col, _no_col = st.columns(2)
+            if _ok_col.button("Confirm Save", type="primary", key=kp(f"gex_ic_yes_{ticker}")):
+                _save_options_paper_trade(
+                    ticker, "GEX Positioning — Iron Condor", slug, best_exp, legs, qty
+                )
+                st.session_state.pop(_ic_confirm_key, None)
+                st.rerun()
+            if _no_col.button("Cancel", key=kp(f"gex_ic_no_{ticker}")):
+                st.session_state.pop(_ic_confirm_key, None)
+                st.rerun()
+
+    # ── MildPositive: Bull Put Spread OR Bull Call Spread ────────────────────────
+    elif regime == "MildPositive":
+        strat_choice = st.radio(
+            "Strategy type",
+            ["Bull Put Spread (credit — theta decay)", "Bull Call Spread (debit — directional)"],
+            key=kp(f"gex_mpos_strat_{ticker}"),
+            horizontal=True,
+        )
+        use_bull_call = "Bull Call Spread" in strat_choice
+
+        if use_bull_call:
+            # Bull Call Spread: buy near-ATM call, sell higher OTM call
+            buy_call_k  = round((price + 0.5 * atr_dollar) / 1) if price > 0 else price + 0.5 * atr_dollar
+            sell_call_k = round((price + 1.5 * atr_dollar) / 1) if price > 0 else price + 1.5 * atr_dollar
+            buy_call_k  = max(buy_call_k,  price + 0.50)
+            sell_call_k = max(sell_call_k, buy_call_k + 0.50)
+
+            m1, m2, m3, m4 = st.columns(4)
+            m1.metric("Spot",              f"${price:.2f}")
+            m2.metric("Long Call (buy)",   f"+0.5×ATR  (${buy_call_k:.2f})")
+            m3.metric("Short Call (sell)", f"+1.5×ATR  (${sell_call_k:.2f})")
+            m4.metric("Expiry (target)",   f"~35 DTE  ({default_exp})")
+
+            st.caption(
+                "Buy the lower call, sell the higher call. "
+                "Max profit = spread width − net debit. Max loss = net debit paid. Defined risk."
+            )
+
+            _bcs_confirm_key = kp(f"gex_bcs_confirm_{ticker}")
+            if not st.session_state.get(_bcs_confirm_key):
+                with st.form(kp(f"gex_bcs_form_{ticker}")):
+                    _b1, _b2 = st.columns([2, 3])
+                    qty = _b1.number_input(
+                        "Contracts", min_value=1, max_value=50, value=1, step=1,
+                    )
+                    _bcs_submitted = _b2.form_submit_button(
+                        f"Save Bull Call Spread on {ticker}", type="primary"
+                    )
+                if _bcs_submitted:
+                    st.session_state[_bcs_confirm_key] = qty
+                    st.rerun()
+            else:
+                qty = st.session_state[_bcs_confirm_key]
+                with st.spinner(f"Fetching {ticker} options chain…"):
+                    exp_chain, best_exp, dte_used, chain_ok = _fetch_chain()
+
+                if chain_ok:
+                    calls = exp_chain[exp_chain["type"].str.lower() == "call"].sort_values("strike")
+                    bc_k, bc_mid = _find_strike(calls, "call", price, 0.45)
+                    sc_k, sc_mid = _find_strike(calls, "call", price, 0.25)
+                    bc_k  = bc_k  or buy_call_k;   bc_mid  = _safe_mid(bc_mid)
+                    sc_k  = sc_k  or sell_call_k;  sc_mid  = _safe_mid(sc_mid)
+                else:
+                    bc_k, bc_mid = buy_call_k,  0.0
+                    sc_k, sc_mid = sell_call_k, 0.0
+
+                net_debit = bc_mid - sc_mid
+                not_ok_note = " (chain unavailable — mids set to $0.00, edit after save)" if not chain_ok else ""
+                st.warning(
+                    f"Confirm: **{qty} × {ticker} Bull Call Spread** expiring {best_exp} ({dte_used} DTE)  \n"
+                    f"BUY call ${bc_k:.2f} / SELL call ${sc_k:.2f}  \n"
+                    f"Net debit ≈ ${net_debit:.2f}/shr (${net_debit*100:.0f}/contract){not_ok_note}"
+                )
+                legs = [
+                    ("BUY",  bc_k, "call", bc_mid, "LongCall"),
+                    ("SELL", sc_k, "call", sc_mid, "ShortCall"),
+                ]
+                _ok_col, _no_col = st.columns(2)
+                if _ok_col.button("Confirm Save", type="primary", key=kp(f"gex_bcs_yes_{ticker}")):
+                    _save_options_paper_trade(
+                        ticker, "GEX Positioning — Bull Call Spread", slug, best_exp, legs, qty
+                    )
+                    st.session_state.pop(_bcs_confirm_key, None)
+                    st.rerun()
+                if _no_col.button("Cancel", key=kp(f"gex_bcs_no_{ticker}")):
+                    st.session_state.pop(_bcs_confirm_key, None)
+                    st.rerun()
+
+        else:  # Bull Put Spread (credit — default)
+            short_put_k = round((price - atr_dollar) / 1) if price > 0 else price - atr_dollar
+            long_put_k  = round((price - 2 * atr_dollar) / 1) if price > 0 else price - 2 * atr_dollar
+            short_put_k = min(short_put_k, price - 0.50)
+            long_put_k  = min(long_put_k,  short_put_k - 0.50)
+
+            m1, m2, m3, m4 = st.columns(4)
+            m1.metric("Spot",             f"${price:.2f}")
+            m2.metric("Short Put (sell)", f"−1×ATR  (${short_put_k:.2f})")
+            m3.metric("Long Put (buy)",   f"−2×ATR  (${long_put_k:.2f})")
+            m4.metric("Expiry (target)",  f"~35 DTE  ({default_exp})")
+
+            st.caption(
+                "Sell the higher put, buy the lower put. "
+                "Max profit = net credit collected. Max loss = spread width − credit. Defined risk."
+            )
+
+            _bps_confirm_key = kp(f"gex_bps_confirm_{ticker}")
+            if not st.session_state.get(_bps_confirm_key):
+                with st.form(kp(f"gex_bps_form_{ticker}")):
+                    _b1, _b2 = st.columns([2, 3])
+                    qty = _b1.number_input(
+                        "Contracts", min_value=1, max_value=50, value=1, step=1,
+                    )
+                    _bps_submitted = _b2.form_submit_button(
+                        f"Save Bull Put Spread on {ticker}", type="primary"
+                    )
+                if _bps_submitted:
+                    st.session_state[_bps_confirm_key] = qty
+                    st.rerun()
+            else:
+                qty = st.session_state[_bps_confirm_key]
+                with st.spinner(f"Fetching {ticker} options chain…"):
+                    exp_chain, best_exp, dte_used, chain_ok = _fetch_chain()
+
+                if chain_ok:
+                    puts = exp_chain[exp_chain["type"].str.lower() == "put"].sort_values("strike", ascending=False)
+                    sp_k, sp_mid = _find_strike(puts, "put", price, 0.30)
+                    lp_k, lp_mid = _find_strike(puts, "put", price, 0.15)
+                    sp_k  = sp_k  or short_put_k;  sp_mid  = _safe_mid(sp_mid)
+                    lp_k  = lp_k  or long_put_k;   lp_mid  = _safe_mid(lp_mid)
+                else:
+                    sp_k, sp_mid = short_put_k, 0.0
+                    lp_k, lp_mid = long_put_k,  0.0
+
+                net_credit = sp_mid - lp_mid
+                not_ok_note = " (chain unavailable — mids set to $0.00, edit after save)" if not chain_ok else ""
+                st.warning(
+                    f"Confirm: **{qty} × {ticker} Bull Put Spread** expiring {best_exp} ({dte_used} DTE)  \n"
+                    f"SELL put ${sp_k:.2f} / BUY put ${lp_k:.2f}  \n"
+                    f"Net credit ≈ ${net_credit:.2f}/shr (${net_credit*100:.0f}/contract){not_ok_note}"
+                )
+                legs = [
+                    ("SELL", sp_k, "put", sp_mid, "ShortPut"),
+                    ("BUY",  lp_k, "put", lp_mid, "LongPut"),
+                ]
+                _ok_col, _no_col = st.columns(2)
+                if _ok_col.button("Confirm Save", type="primary", key=kp(f"gex_bps_yes_{ticker}")):
+                    _save_options_paper_trade(
+                        ticker, "GEX Positioning — Bull Put Spread", slug, best_exp, legs, qty
+                    )
+                    st.session_state.pop(_bps_confirm_key, None)
+                    st.rerun()
+                if _no_col.button("Cancel", key=kp(f"gex_bps_no_{ticker}")):
+                    st.session_state.pop(_bps_confirm_key, None)
+                    st.rerun()
+
+    # ── Negative: Bear Put Spread OR Bear Call Spread ────────────────────────────
+    elif regime == "Negative":
+        strat_choice = st.radio(
+            "Strategy type",
+            ["Bear Put Spread (debit — directional)", "Bear Call Spread (credit — theta decay)"],
+            key=kp(f"gex_neg_strat_{ticker}"),
+            horizontal=True,
+        )
+        use_bear_call = "Bear Call Spread" in strat_choice
+
+        if use_bear_call:
+            # Bear Call Spread: sell OTM call, buy higher OTM call
+            sell_call_k = round((price + 0.5 * atr_dollar) / 1) if price > 0 else price + 0.5 * atr_dollar
+            buy_call_k  = round((price + 1.5 * atr_dollar) / 1) if price > 0 else price + 1.5 * atr_dollar
+            sell_call_k = max(sell_call_k, price + 0.50)
+            buy_call_k  = max(buy_call_k,  sell_call_k + 0.50)
+
+            m1, m2, m3, m4 = st.columns(4)
+            m1.metric("Spot",              f"${price:.2f}")
+            m2.metric("Short Call (sell)", f"+0.5×ATR  (${sell_call_k:.2f})")
+            m3.metric("Long Call (buy)",   f"+1.5×ATR  (${buy_call_k:.2f})")
+            m4.metric("Expiry (target)",   f"~35 DTE  ({default_exp})")
+
+            st.caption(
+                "Sell the lower call, buy the higher call. "
+                "Max profit = net credit collected. Max loss = spread width − credit. Defined risk. "
+                "Profits if stock falls or stays below short call strike."
+            )
+
+            _becs_confirm_key = kp(f"gex_becs_confirm_{ticker}")
+            if not st.session_state.get(_becs_confirm_key):
+                with st.form(kp(f"gex_becs_form_{ticker}")):
+                    _n1, _n2 = st.columns([2, 3])
+                    qty = _n1.number_input(
+                        "Contracts", min_value=1, max_value=50, value=1, step=1,
+                    )
+                    _becs_submitted = _n2.form_submit_button(
+                        f"Save Bear Call Spread on {ticker}", type="primary"
+                    )
+                if _becs_submitted:
+                    st.session_state[_becs_confirm_key] = qty
+                    st.rerun()
+            else:
+                qty = st.session_state[_becs_confirm_key]
+                with st.spinner(f"Fetching {ticker} options chain…"):
+                    exp_chain, best_exp, dte_used, chain_ok = _fetch_chain()
+
+                if chain_ok:
+                    calls = exp_chain[exp_chain["type"].str.lower() == "call"].sort_values("strike")
+                    sc_k, sc_mid = _find_strike(calls, "call", price, 0.35)
+                    lc_k, lc_mid = _find_strike(calls, "call", price, 0.15)
+                    sc_k  = sc_k  or sell_call_k;  sc_mid  = _safe_mid(sc_mid)
+                    lc_k  = lc_k  or buy_call_k;   lc_mid  = _safe_mid(lc_mid)
+                else:
+                    sc_k, sc_mid = sell_call_k, 0.0
+                    lc_k, lc_mid = buy_call_k,  0.0
+
+                net_credit = sc_mid - lc_mid
+                not_ok_note = " (chain unavailable — mids set to $0.00, edit after save)" if not chain_ok else ""
+                st.warning(
+                    f"Confirm: **{qty} × {ticker} Bear Call Spread** expiring {best_exp} ({dte_used} DTE)  \n"
+                    f"SELL call ${sc_k:.2f} / BUY call ${lc_k:.2f}  \n"
+                    f"Net credit ≈ ${net_credit:.2f}/shr (${net_credit*100:.0f}/contract){not_ok_note}"
+                )
+                legs = [
+                    ("SELL", sc_k, "call", sc_mid, "ShortCall"),
+                    ("BUY",  lc_k, "call", lc_mid, "LongCall"),
+                ]
+                _ok_col, _no_col = st.columns(2)
+                if _ok_col.button("Confirm Save", type="primary", key=kp(f"gex_becs_yes_{ticker}")):
+                    _save_options_paper_trade(
+                        ticker, "GEX Positioning — Bear Call Spread", slug, best_exp, legs, qty
+                    )
+                    st.session_state.pop(_becs_confirm_key, None)
+                    st.rerun()
+                if _no_col.button("Cancel", key=kp(f"gex_becs_no_{ticker}")):
+                    st.session_state.pop(_becs_confirm_key, None)
+                    st.rerun()
+
+        else:  # Bear Put Spread (debit — default)
+            buy_put_k  = round((price - 0.5 * atr_dollar) / 1) if price > 0 else price - 0.5 * atr_dollar
+            sell_put_k = round((price - 2.0 * atr_dollar) / 1) if price > 0 else price - 2.0 * atr_dollar
+            buy_put_k  = min(buy_put_k,  price - 0.50)
+            sell_put_k = min(sell_put_k, buy_put_k - 0.50)
+
+            m1, m2, m3, m4 = st.columns(4)
+            m1.metric("Spot",              f"${price:.2f}")
+            m2.metric("Long Put (buy)",    f"−0.5×ATR  (${buy_put_k:.2f})")
+            m3.metric("Short Put (sell)",  f"−2×ATR  (${sell_put_k:.2f})")
+            m4.metric("Expiry (target)",   f"~35 DTE  ({default_exp})")
+
+            st.caption(
+                "Buy the higher put, sell the lower put. "
+                "Max profit = spread width − net debit. Max loss = net debit paid. Defined risk."
+            )
+
+            _beps_confirm_key = kp(f"gex_beps_confirm_{ticker}")
+            if not st.session_state.get(_beps_confirm_key):
+                with st.form(kp(f"gex_beps_form_{ticker}")):
+                    _n1, _n2 = st.columns([2, 3])
+                    qty = _n1.number_input(
+                        "Contracts", min_value=1, max_value=50, value=1, step=1,
+                    )
+                    _beps_submitted = _n2.form_submit_button(
+                        f"Save Bear Put Spread on {ticker}", type="primary"
+                    )
+                if _beps_submitted:
+                    st.session_state[_beps_confirm_key] = qty
+                    st.rerun()
+            else:
+                qty = st.session_state[_beps_confirm_key]
+                with st.spinner(f"Fetching {ticker} options chain…"):
+                    exp_chain, best_exp, dte_used, chain_ok = _fetch_chain()
+
+                if chain_ok:
+                    puts = exp_chain[exp_chain["type"].str.lower() == "put"].sort_values("strike", ascending=False)
+                    bp_k, bp_mid = _find_strike(puts, "put", price, 0.45)
+                    sp_k, sp_mid = _find_strike(puts, "put", price, 0.20)
+                    bp_k  = bp_k  or buy_put_k;   bp_mid  = _safe_mid(bp_mid)
+                    sp_k  = sp_k  or sell_put_k;  sp_mid  = _safe_mid(sp_mid)
+                else:
+                    bp_k, bp_mid = buy_put_k,  0.0
+                    sp_k, sp_mid = sell_put_k, 0.0
+
+                net_debit = bp_mid - sp_mid
+                not_ok_note = " (chain unavailable — mids set to $0.00, edit after save)" if not chain_ok else ""
+                st.warning(
+                    f"Confirm: **{qty} × {ticker} Bear Put Spread** expiring {best_exp} ({dte_used} DTE)  \n"
+                    f"BUY put ${bp_k:.2f} / SELL put ${sp_k:.2f}  \n"
+                    f"Net debit ≈ ${net_debit:.2f}/shr (${net_debit*100:.0f}/contract){not_ok_note}"
+                )
+                legs = [
+                    ("BUY",  bp_k, "put", bp_mid, "LongPut"),
+                    ("SELL", sp_k, "put", sp_mid, "ShortPut"),
+                ]
+                _ok_col, _no_col = st.columns(2)
+                if _ok_col.button("Confirm Save", type="primary", key=kp(f"gex_beps_yes_{ticker}")):
+                    _save_options_paper_trade(
+                        ticker, "GEX Positioning — Bear Put Spread", slug, best_exp, legs, qty
+                    )
+                    st.session_state.pop(_beps_confirm_key, None)
+                    st.rerun()
+                if _no_col.button("Cancel", key=kp(f"gex_beps_no_{ticker}")):
+                    st.session_state.pop(_beps_confirm_key, None)
+                    st.rerun()
+
+    # ── DeepNegative: Long Put ───────────────────────────────────────────────────
+    else:  # DeepNegative
+        atm_put_k = round(price) if price > 0 else price
+
+        m1, m2, m3 = st.columns(3)
+        m1.metric("Spot",             f"${price:.2f}")
+        m2.metric("Put Strike (ATM)", f"${atm_put_k:.2f}")
+        m3.metric("Expiry (target)",  f"~35 DTE  ({default_exp})")
+
+        st.caption(
+            "Long ATM put: max downside capture in crash dynamics. "
+            "Max loss = premium paid (defined risk). No short leg — full profit potential preserved."
+        )
+
+        _lp_confirm_key = kp(f"gex_lp_confirm_{ticker}")
+        if not st.session_state.get(_lp_confirm_key):
+            with st.form(kp(f"gex_lp_form_{ticker}")):
+                _p1, _p2 = st.columns([2, 3])
+                qty = _p1.number_input(
+                    "Contracts", min_value=1, max_value=50, value=1, step=1,
+                )
+                _lp_submitted = _p2.form_submit_button(
+                    f"Save Long Put on {ticker}", type="primary"
+                )
+            if _lp_submitted:
+                st.session_state[_lp_confirm_key] = qty
+                st.rerun()
+        else:
+            qty = st.session_state[_lp_confirm_key]
+            with st.spinner(f"Fetching {ticker} options chain…"):
+                exp_chain, best_exp, dte_used, chain_ok = _fetch_chain()
+
+            if chain_ok:
+                puts    = exp_chain[exp_chain["type"].str.lower() == "put"].sort_values("strike", ascending=False)
+                put_k, put_mid = _find_strike(puts, "put", price, 0.50)
+                put_k   = put_k  or atm_put_k
+                put_mid = _safe_mid(put_mid)
+            else:
+                put_k, put_mid = atm_put_k, 0.0
+
+            cost_note   = f"~${put_mid:.2f}/shr (${put_mid*100:.0f}/contract)" if put_mid > 0 else "mid unavailable"
+            not_ok_note = " (chain unavailable — mid set to $0.00, edit after save)" if not chain_ok else ""
+            st.warning(
+                f"Confirm: **{qty} × {ticker} Long Put** strike ${put_k:.2f} "
+                f"expiring {best_exp} ({dte_used} DTE) · {cost_note}{not_ok_note}"
+            )
+            legs = [("BUY", put_k, "put", put_mid, "LongPut")]
+            _ok_col, _no_col = st.columns(2)
+            if _ok_col.button("Confirm Save", type="primary", key=kp(f"gex_lp_yes_{ticker}")):
+                _save_options_paper_trade(
+                    ticker, "GEX Positioning — Long Put", slug, best_exp, legs, qty
+                )
+                st.session_state.pop(_lp_confirm_key, None)
+                st.rerun()
+            if _no_col.button("Cancel", key=kp(f"gex_lp_no_{ticker}")):
+                st.session_state.pop(_lp_confirm_key, None)
+                st.rerun()
+
+
+# ── TLT/SPY Rotation screener ─────────────────────────────────────────────────
+
+_ROTATION_REGIMES = {
+    "Growth":     {"color": "#22c55e", "emoji": "📈", "spy": 0.80, "tlt": 0.10, "cash": 0.10,
+                   "label": "Growth — Rates Rising + Stocks Rising",
+                   "why": "Economy expanding, Fed hiking slowly. Overweight equities; underweight bonds (rising rates hurt TLT).",
+                   "play": "BUY SPY, minimal TLT, hold small cash buffer."},
+    "Inflation":  {"color": "#ef4444", "emoji": "🔥", "spy": 0.40, "tlt": 0.05, "cash": 0.55,
+                   "label": "Inflation — Rates Rising + Stocks Falling",
+                   "why": "Fed hiking aggressively. BOTH equities and bonds fall — 2022 scenario. Shift to cash/commodities.",
+                   "play": "Reduce SPY, exit TLT, move to cash (or XLE/TIP/GLD if available)."},
+    "Fear":       {"color": "#a855f7", "emoji": "😨", "spy": 0.20, "tlt": 0.70, "cash": 0.10,
+                   "label": "Fear — Rates Falling + Stocks Falling",
+                   "why": "Recession/panic. Flight to safety. TLT is the hedge — this is the only regime where bonds protect equities.",
+                   "play": "Maximum TLT; minimal SPY; hold GLD as secondary hedge."},
+    "Risk-On":    {"color": "#3b82f6", "emoji": "🚀", "spy": 0.70, "tlt": 0.20, "cash": 0.10,
+                   "label": "Risk-On — Rates Falling + Stocks Rising",
+                   "why": "Goldilocks: Fed cutting, earnings growing. Both SPY and TLT rise simultaneously.",
+                   "play": "Maximum SPY weight; also long TLT (both rise). Best regime for the strategy."},
+    "Transition": {"color": "#f59e0b", "emoji": "⏳", "spy": 0.60, "tlt": 0.30, "cash": 0.10,
+                   "label": "Transition — Ambiguous Signal",
+                   "why": "Rate and equity directions don't clearly align. Regime shift may be imminent.",
+                   "play": "Hold current allocation. Wait for 3+ consecutive days of the same regime before rebalancing."},
+}
+
+
+def _classify_rotation_regime(
+    spy_ret_20d: float,
+    tlt_ret_20d: float,
+    yield_threshold: float = 0.03,
+    return_threshold: float = 0.03,
+) -> str:
+    """
+    TLT 20-day return as a yield proxy:
+      TLT rising  → rates falling (bond prices up = yields down)
+      TLT falling → rates rising  (bond prices down = yields up)
+    """
+    rates_rising  = tlt_ret_20d < -yield_threshold   # TLT falling = rates rising
+    rates_falling = tlt_ret_20d >  yield_threshold   # TLT rising  = rates falling
+    stocks_up     = spy_ret_20d >  return_threshold
+    stocks_down   = spy_ret_20d < -return_threshold
+
+    if   rates_rising  and stocks_up:   return "Growth"
+    elif rates_rising  and stocks_down: return "Inflation"
+    elif rates_falling and stocks_down: return "Fear"
+    elif rates_falling and stocks_up:   return "Risk-On"
+    else:                               return "Transition"
+
+
+def _render_rotation_screener(api_key: str, kp) -> None:
+    """Full TLT/SPY Rotation screener — bypasses IV pipeline, only needs price data."""
+    TICKERS = ["SPY", "TLT"]
+    INFLATION_ALTS = ["XLE", "TIP", "GLD"]
+
+    # Thresholds
+    with st.expander("⚙️ Detection thresholds", expanded=False):
+        c1, c2 = st.columns(2)
+        yield_thresh  = c1.slider("TLT 20d threshold (yield proxy)",  0.01, 0.08, 0.03, 0.005, key=kp("rot_yt"), format="%.3f")
+        return_thresh = c2.slider("SPY 20d return threshold",          0.01, 0.06, 0.03, 0.005, key=kp("rot_rt"), format="%.3f")
+
+    # Cache key — include thresholds so changing them invalidates cache
+    _cache_key = kp(f"rot_cache_{yield_thresh:.3f}_{return_thresh:.3f}")
+
+    scan_clicked = st.button("🔍 Detect Current Regime", type="primary", key=kp("rot_scan"))
+    if _cache_key in st.session_state:
+        if st.button("🗑 Clear", key=kp("rot_clear")):
+            st.session_state.pop(_cache_key, None)
+            st.rerun()
+
+    if scan_clicked:
+        price_dfs: dict[str, pd.DataFrame] = {}
+        with st.spinner("Fetching SPY + TLT prices…"):
+            for t in TICKERS + INFLATION_ALTS:
+                df = _fetch_ohlcv(t, api_key, bars=60)
+                if not df.empty:
+                    price_dfs[t] = df
+        if "SPY" not in price_dfs or "TLT" not in price_dfs:
+            st.error("Could not fetch SPY or TLT prices. Check API key.")
+            return
+        st.session_state[_cache_key] = {"price_dfs": price_dfs}
+
+    if _cache_key not in st.session_state:
+        st.info("Click **Detect Current Regime** to classify the current macro regime.")
+        return
+
+    price_dfs = st.session_state[_cache_key]["price_dfs"]
+
+    spy_df = price_dfs["SPY"]
+    tlt_df = price_dfs["TLT"]
+
+    spy_close   = spy_df["close"].astype(float)
+    tlt_close   = tlt_df["close"].astype(float)
+    spy_now     = float(spy_close.iloc[-1])
+    tlt_now     = float(tlt_close.iloc[-1])
+    spy_ret_20d = float((spy_close.iloc[-1] / spy_close.iloc[-21]) - 1) if len(spy_close) >= 21 else 0.0
+    tlt_ret_20d = float((tlt_close.iloc[-1] / tlt_close.iloc[-21]) - 1) if len(tlt_close) >= 21 else 0.0
+    spy_ret_5d  = float((spy_close.iloc[-1] / spy_close.iloc[-6])  - 1) if len(spy_close) >= 6  else 0.0
+    tlt_ret_5d  = float((tlt_close.iloc[-1] / tlt_close.iloc[-6])  - 1) if len(tlt_close) >= 6  else 0.0
+
+    regime      = _classify_rotation_regime(spy_ret_20d, tlt_ret_20d, yield_thresh, return_thresh)
+    info        = _ROTATION_REGIMES[regime]
+    color       = info["color"]
+
+    # ── Regime badge ─────────────────────────────────────────────────────────────
+    st.markdown(
+        f"""<div style="padding:10px 18px;margin:8px 0;border-left:5px solid {color};
+                background:{color}18;border-radius:6px;color:{color};font-weight:700;font-size:15px">
+            {info['emoji']} {info['label']}
+        </div>""",
+        unsafe_allow_html=True,
+    )
+
+    # ── Signal metrics ────────────────────────────────────────────────────────────
+    k1, k2, k3, k4, k5, k6 = st.columns(6)
+    k1.metric("SPY",          f"${spy_now:.2f}")
+    k2.metric("SPY 20d Ret",  f"{spy_ret_20d*100:+.1f}%")
+    k3.metric("SPY 5d Ret",   f"{spy_ret_5d*100:+.1f}%")
+    k4.metric("TLT",          f"${tlt_now:.2f}")
+    k5.metric("TLT 20d Ret",  f"{tlt_ret_20d*100:+.1f}%")
+    k6.metric("TLT 5d Ret",   f"{tlt_ret_5d*100:+.1f}%")
+
+    st.info(f"**Why this regime?** {info['why']}")
+    st.caption(f"**Suggested play:** {info['play']}")
+
+    # ── Allocation table ──────────────────────────────────────────────────────────
+    st.markdown("#### Suggested Allocation")
+    alloc_rows = [
+        {"Asset": "SPY (equities)",   "Weight": f"{info['spy']:.0%}",  "Direction": "HOLD" if regime == "Transition" else ("BUY" if info["spy"] >= 0.60 else "REDUCE")},
+        {"Asset": "TLT (long bonds)", "Weight": f"{info['tlt']:.0%}",  "Direction": "HOLD" if regime == "Transition" else ("BUY" if info["tlt"] >= 0.30 else "REDUCE")},
+        {"Asset": "Cash",             "Weight": f"{info['cash']:.0%}", "Direction": "HOLD"},
+    ]
+    if regime == "Inflation":
+        alloc_rows += [
+            {"Asset": "XLE (energy)",      "Weight": "30%", "Direction": "BUY (inflation hedge)"},
+            {"Asset": "TIP (TIPS)",        "Weight": "15%", "Direction": "BUY (inflation protection)"},
+            {"Asset": "GLD (gold)",        "Weight": "10%", "Direction": "BUY (safe haven)"},
+        ]
+    st.dataframe(pd.DataFrame(alloc_rows), hide_index=True)
+
+    # ── Regime chart: 20-day scatter quadrant ────────────────────────────────────
+    st.markdown("#### Regime Quadrant")
+    fig = go.Figure()
+    # Quadrant shading
+    quad_map = [
+        (0, 0.10, 0, 0.10, "#22c55e", "Growth"),
+        (-0.10, 0, 0, 0.10, "#ef4444", "Inflation"),
+        (-0.10, 0, -0.10, 0, "#a855f7", "Fear"),
+        (0, 0.10, -0.10, 0, "#3b82f6", "Risk-On"),
+    ]
+    for x0, x1, y0, y1, col, lbl in quad_map:
+        fig.add_shape(type="rect", x0=x0, x1=x1, y0=y0, y1=y1,
+                      fillcolor=col, opacity=0.12, line_width=0)
+        fig.add_annotation(x=(x0+x1)/2, y=(y0+y1)/2, text=lbl,
+                           showarrow=False, font=dict(color=col, size=11))
+
+    # Current dot
+    fig.add_trace(go.Scatter(
+        x=[spy_ret_20d], y=[tlt_ret_20d],
+        mode="markers+text",
+        marker=dict(size=14, color=color, symbol="circle"),
+        text=["NOW"], textposition="top center",
+        name="Current",
+    ))
+    # Threshold lines
+    fig.add_hline(y=0,  line_dash="dash", line_color="gray", line_width=1)
+    fig.add_vline(x=0,  line_dash="dash", line_color="gray", line_width=1)
+    fig.add_hline(y=yield_thresh,   line_dash="dot", line_color="gray", line_width=1, opacity=0.5)
+    fig.add_hline(y=-yield_thresh,  line_dash="dot", line_color="gray", line_width=1, opacity=0.5)
+    fig.add_vline(x=return_thresh,  line_dash="dot", line_color="gray", line_width=1, opacity=0.5)
+    fig.add_vline(x=-return_thresh, line_dash="dot", line_color="gray", line_width=1, opacity=0.5)
+
+    fig.update_layout(
+        xaxis_title="SPY 20d Return (stocks)",
+        yaxis_title="TLT 20d Return (yield proxy: up=rates↓)",
+        height=320,
+        margin=dict(l=10, r=10, t=10, b=10),
+        showlegend=False,
+        paper_bgcolor="rgba(0,0,0,0)",
+        plot_bgcolor="rgba(0,0,0,0)",
+        xaxis=dict(range=[-0.12, 0.12], tickformat=".0%", gridcolor="#333"),
+        yaxis=dict(range=[-0.12, 0.12], tickformat=".0%", gridcolor="#333"),
+    )
+    st.plotly_chart(fig, width="stretch", key=kp("rot_quad_chart"))
+    st.caption(
+        "X-axis: SPY 20-day return (equities direction). "
+        "Y-axis: TLT 20-day return (yield proxy — TLT up = rates falling). "
+        "Dotted lines = detection thresholds."
+    )
+
+    if regime == "Transition":
+        st.warning(
+            "**Transition regime — no rebalance recommended.**  "
+            "Rate and equity signals are ambiguous. "
+            "Wait for 3+ consecutive days of the same non-Transition regime before acting."
+        )
+        return
+
+    # ── Save rotation trade ───────────────────────────────────────────────────────
+    st.markdown("---")
+    st.markdown("#### Save Rotation Trade")
+    st.caption("Records a new long position at current price. Only save assets you are actually buying.")
+
+    # Show post-save feedback
+    if st.session_state.get(kp("rot_saved")):
+        st.success(f"✅ {st.session_state.pop(kp('rot_saved'))} saved to paper trading.")
+    if st.session_state.get(kp("rot_err")):
+        for err in st.session_state.pop(kp("rot_err")):
+            st.error(err)
+
+    # Determine which assets to offer based on regime
+    # Inflation: primary buys are XLE/TIP/GLD, not SPY/TLT
+    if regime == "Inflation":
+        _save_assets = [
+            ("XLE", price_dfs.get("XLE")),
+            ("TIP", price_dfs.get("TIP")),
+            ("GLD", price_dfs.get("GLD")),
+        ]
+        st.info("Inflation regime: suggested buys are energy/TIPS/gold. Save positions for assets you are entering.")
+    else:
+        _spy_buy = info["spy"] >= 0.50
+        _tlt_buy = info["tlt"] >= 0.20
+        _save_assets = []
+        if _spy_buy:
+            _save_assets.append(("SPY", price_dfs.get("SPY")))
+        if _tlt_buy:
+            _save_assets.append(("TLT", price_dfs.get("TLT")))
+        if not _save_assets:
+            st.warning("No BUY assets for this regime. Reduce existing positions as needed — no new entries.")
+            return
+
+    _confirm_key = kp("rot_confirm")
+    if not st.session_state.get(_confirm_key):
+        with st.form(kp("rot_form")):
+            _cols = st.columns(len(_save_assets))
+            _qtys = {}
+            for i, (sym, _df) in enumerate(_save_assets):
+                _px  = float(_df["close"].iloc[-1]) if _df is not None and not _df.empty else 0.0
+                _lbl = f"{sym} shares  (${_px:.2f})" if _px > 0 else f"{sym} shares"
+                _qtys[sym] = _cols[i].number_input(_lbl, min_value=1, max_value=10000, value=10, step=1)
+            submitted = st.form_submit_button(f"Save {regime} Rotation Trade", type="primary")
+        if submitted:
+            st.session_state[_confirm_key] = {"qtys": _qtys}
+            st.rerun()
+    else:
+        saved = st.session_state[_confirm_key]
+        qtys  = saved["qtys"]
+        lines = []
+        for sym, _df in _save_assets:
+            _px  = float(_df["close"].iloc[-1]) if _df is not None and not _df.empty else 0.0
+            qty  = qtys.get(sym, 0)
+            lines.append(f"• BUY {qty} × {sym} · ${_px:.2f}")
+
+        st.warning(f"Confirm: **{regime} rotation**  \n" + "  \n".join(lines))
+        ok_col, no_col = st.columns(2)
+        if ok_col.button("Confirm Save", type="primary", key=kp("rot_yes")):
+            import uuid as _uuid
+            strat_name = f"TLT / SPY Rotation — {regime}"
+            shared_tg  = f"ROT-{regime[:3].upper()}-{str(_uuid.uuid4())[:8].upper()}"
+            errs = []
+            saved_syms = []
+            for sym, _df in _save_assets:
+                _px  = float(_df["close"].iloc[-1]) if _df is not None and not _df.empty else 0.0
+                qty  = qtys.get(sym, 0)
+                if qty > 0 and _px > 0:
+                    e = _save_equity_paper_trade(sym, strat_name, _px, qty, trade_group=shared_tg)
+                    if e:
+                        errs.append(f"{sym}: {e}")
+                    else:
+                        saved_syms.append(f"{qty}×{sym}")
+            st.session_state.pop(_confirm_key, None)
+            if errs:
+                st.session_state[kp("rot_err")] = errs
+            else:
+                st.session_state[kp("rot_saved")] = f"{regime} rotation ({', '.join(saved_syms)})"
+            st.rerun()
+        if no_col.button("Cancel", key=kp("rot_no")):
+            st.session_state.pop(_confirm_key, None)
+            st.rerun()
+
+
 # ── Phase 1-3: Data loading pipeline ───────────────────────────────────────────
 
 def _run_data_pipeline(tickers: list[str], api_key: str, fetch_ivr_history: bool):
@@ -1604,10 +2712,11 @@ def render(slug: str, api_key: str = "", key_prefix: str = "") -> None:
     _SUPPORTED = {
         "iron_condor_rules", "iron_condor_ai",
         "vix_spike_fade", "vol_arbitrage", "ivr_credit_spread",
-        "iv_skew_momentum", "gamma_flip_breakout",
+        "iv_skew_momentum", "gamma_flip_breakout", "gex_positioning",
         "earnings_iv_crush", "earnings_post_drift",
         "vol_calendar_spread", "short_squeeze_vol_expansion",
         "oi_imbalance_put_fade", "vol_term_structure_regime",
+        "rates_spy_rotation",
     }
     if slug not in _SUPPORTED:
         st.info(f"Screener not yet configured for strategy: **{display_name}** (`{slug}`)")
@@ -1619,6 +2728,11 @@ def render(slug: str, api_key: str = "", key_prefix: str = "") -> None:
 
     if not api_key:
         st.warning("Enter your **Polygon API key** in the sidebar to use the scanner.")
+        return
+
+    # ── TLT/SPY Rotation — early dispatch (no IV pipeline needed) ────────────
+    if slug == "rates_spy_rotation":
+        _render_rotation_screener(api_key, kp)
         return
 
     # ── Universe ──────────────────────────────────────────────────────────────
@@ -1936,6 +3050,85 @@ def render(slug: str, api_key: str = "", key_prefix: str = "") -> None:
                 for _, row in partial.iterrows():
                     with st.expander(f"📋 {row['Ticker']} — {row.get('Spread Type', 'Credit Spread')} setup (partial signal)", expanded=False):
                         _render_ivr_credit_spread_setup(row["Ticker"], row, api_key, kp, slug)
+
+    elif slug == "gex_positioning":
+        # GEX Positioning — VIX-proxy regime classification for all tickers
+        results = _score_gex_positioning(
+            tickers=list(price_dfs.keys()),
+            api_key=api_key,
+            vix_series=vix_series,
+            price_dfs=price_dfs,
+            params=params,
+        )
+
+        all_errors = (all_errors or []) + score_errors
+        if not results:
+            st.error("No results — check API key or universe.")
+            return
+
+        df_gex      = pd.DataFrame(results)
+        current_vix = float(vix_series.iloc[-1]) if not vix_series.empty else 20.0
+        regime      = _classify_vix_regime(current_vix)
+        spy_weight  = df_gex["SPY Weight"].iloc[0] if not df_gex.empty else 0.60
+        signal      = df_gex["Signal"].iloc[0] if not df_gex.empty else "HOLD"
+        regime_color = _GEX_REGIME_COLORS.get(regime, "#f59e0b")
+
+        # Summary metrics
+        k1, k2, k3, k4, k5 = st.columns(5)
+        k1.metric("Current VIX",       f"{current_vix:.1f}")
+        k2.metric("Regime",            regime)
+        k3.metric("Suggested SPY Wt",  f"{spy_weight:.0%}")
+        k4.metric("Signal",            signal)
+        k5.metric("Tickers scanned",   len(df_gex))
+
+        st.markdown(
+            f"""<div style="padding:8px 16px;margin:8px 0;border-left:4px solid {regime_color};
+                    background:{regime_color}11;border-radius:4px;color:{regime_color};font-weight:600">
+                {_GEX_REGIME_LABELS[regime]} — All tickers share the same VIX-based regime
+            </div>""",
+            unsafe_allow_html=True,
+        )
+
+        # Regime band chart at top level (shared across all tickers)
+        st.markdown("#### VIX Regime Map")
+        fig_top = _gex_regime_band_chart(current_vix)
+        st.plotly_chart(fig_top, width="stretch")
+        st.caption(
+            "Five GEX regime bands defined by VIX level. Current VIX marked with vertical line. "
+            "Purple line shows suggested SPY allocation by regime. Source: VIX proxy."
+        )
+
+        st.markdown("---")
+        st.markdown("#### Per-Ticker Trade Setup")
+
+        # Format summary table
+        def _fmt_gex(df: pd.DataFrame) -> pd.DataFrame:
+            rows = []
+            for _, r in df.iterrows():
+                rows.append({
+                    "Ticker":       r["Ticker"],
+                    "Price":        f"${r['Price']:.2f}",
+                    "VIX":          f"{r['VIX']:.1f}",
+                    "Regime":       r["Regime"],
+                    "SPY Weight":   f"{r['SPY Weight']:.0%}",
+                    "Signal":       r["Signal"],
+                    "ATR%":         f"{r['ATR%']:.2f}%",
+                    "5d Return":    f"{r['5d Return']*100:+.1f}%",
+                    "GEX Source":   r.get("GEX Source", "VIX proxy"),
+                })
+            return pd.DataFrame(rows)
+
+        st.dataframe(_fmt_gex(df_gex), hide_index=True, width="stretch")
+        st.caption("GEX regime is VIX-based and shared across all tickers in the universe.")
+
+        for _, row in df_gex.iterrows():
+            ticker = row["Ticker"]
+            _gex_expanded = bool(
+                st.session_state.get(kp(f"gex_confirm_{ticker}")) or
+                st.session_state.get(kp(f"gex_save_err_{ticker}"))
+            )
+            with st.expander(f"📋 {ticker} — GEX Trade Setup & Save", expanded=_gex_expanded):
+                _render_gex_trade_setup(ticker, row, api_key, params, kp, slug)
 
     else:
         # Generic strategies: collect metrics, show signal tables

@@ -293,6 +293,263 @@ def _fetch_option_prices(api_key: str, legs_df: pd.DataFrame) -> dict[str, dict]
     return result
 
 
+def _compute_position_alerts(
+    grp: pd.DataFrame,
+    strategy: str,
+    total_upnl: float | None,
+    net_entry: float,
+) -> list[dict]:
+    """
+    Returns list of {"level": "error"|"warning"|"success", "msg": str}.
+    Checks: DTE (all options), P&L vs strategy-specific thresholds.
+
+    Strategy types detected from strategy name:
+      credit  — Iron Condor, Bull Put Spread, Bear Call Spread
+      debit   — Bear Put Spread, Bull Call Spread, Long Put, Long Call
+      equity  — long stock / ETF
+    """
+    alerts: list[dict] = []
+    today  = datetime.date.today()
+    sl     = strategy.lower()
+
+    # ── DTE check (options only) ─────────────────────────────────────────────
+    min_dte: int | None = None
+    for _, r in grp.iterrows():
+        exp = r.get("Expiration")
+        if exp:
+            try:
+                exp_date = pd.to_datetime(exp).date()
+                dte = (exp_date - today).days
+                if min_dte is None or dte < min_dte:
+                    min_dte = dte
+            except Exception:
+                pass
+
+    if min_dte is not None:
+        if min_dte <= 0:
+            alerts.append({"level": "error",
+                           "msg": f"EXPIRED ({min_dte} DTE) — close immediately to avoid assignment."})
+        elif min_dte <= 7:
+            alerts.append({"level": "error",
+                           "msg": f"{min_dte} DTE — critical, close immediately (assignment risk)."})
+        elif min_dte <= 21:
+            alerts.append({"level": "warning",
+                           "msg": f"{min_dte} DTE — theta decay accelerating, consider closing."})
+
+    # ── P&L check ────────────────────────────────────────────────────────────
+    if total_upnl is not None and net_entry != 0:
+        # Detect from actual position data — works for any strategy name
+        has_options = any(
+            str(r.get("SecurityType", "")).lower() == "option"
+            for _, r in grp.iterrows()
+        )
+        if has_options:
+            is_credit = net_entry > 0   # collected premium
+            is_debit  = net_entry <= 0  # paid premium
+            is_equity = False
+        else:
+            is_credit   = False
+            is_debit    = False
+            is_rotation = any(x in sl for x in ("rotation", "tlt / spy", "spy rotation"))
+            is_equity   = not is_rotation
+
+        if is_credit:
+            # net_entry > 0 = premium collected
+            credit = abs(net_entry)
+            if total_upnl >= 0.50 * credit:
+                alerts.append({"level": "success",
+                               "msg": f"Take profit — P&L ${total_upnl:+.2f} ≥ 50% of credit (${credit:.2f}). Standard exit for credit spreads."})
+            elif total_upnl <= -0.75 * credit:
+                alerts.append({"level": "error",
+                               "msg": f"Stop loss — P&L ${total_upnl:+.2f}, 75%+ of credit lost. Consider closing."})
+            elif total_upnl <= -0.50 * credit:
+                alerts.append({"level": "warning",
+                               "msg": f"P&L ${total_upnl:+.2f} — 50% of credit lost. Monitor closely."})
+
+        elif is_debit:
+            # net_entry < 0 = premium paid
+            cost = abs(net_entry)
+            if total_upnl >= cost:
+                alerts.append({"level": "success",
+                               "msg": f"100%+ gain — P&L ${total_upnl:+.2f} vs ${cost:.2f} paid. Consider taking profits."})
+            elif total_upnl >= 0.50 * cost:
+                alerts.append({"level": "success",
+                               "msg": f"Take profit — P&L ${total_upnl:+.2f} ≥ 50% of premium (${cost:.2f})."})
+            elif total_upnl <= -0.50 * cost:
+                alerts.append({"level": "error",
+                               "msg": f"Stop loss — P&L ${total_upnl:+.2f}, 50% of premium lost (${cost:.2f}). Thesis may be broken."})
+
+        elif is_rotation:
+            # Regime-driven hold — wider thresholds, trend following
+            cost = abs(net_entry)
+            pct  = total_upnl / cost if cost > 0 else 0.0
+            if pct >= 0.30:
+                alerts.append({"level": "success",
+                               "msg": f"+{pct:.1%} — consider trimming (≥30% gain on rotation position)."})
+            elif pct <= -0.15:
+                alerts.append({"level": "error",
+                               "msg": f"{pct:.1%} — stop loss (≥15% loss). Regime signal may have reversed."})
+            elif pct <= -0.08:
+                alerts.append({"level": "warning",
+                               "msg": f"{pct:.1%} — drawdown building. Check if regime has changed."})
+
+        else:  # equity
+            cost = abs(net_entry)
+            pct  = total_upnl / cost if cost > 0 else 0.0
+            if pct >= 0.20:
+                alerts.append({"level": "success",
+                               "msg": f"+{pct:.1%} — consider taking partial profits (≥20% gain)."})
+            elif pct <= -0.08:
+                alerts.append({"level": "error",
+                               "msg": f"{pct:.1%} — stop loss territory (≥8% loss). Consider closing."})
+
+    return alerts
+
+
+def _alert_icon(alerts: list[dict]) -> str:
+    levels = {a["level"] for a in alerts}
+    if "error"   in levels: return "🔴 "
+    if "warning" in levels: return "🟡 "
+    if "success" in levels: return "✅ "
+    return ""
+
+
+def _render_equity_position(
+    grp: pd.DataFrame,
+    spot: float | None,
+    open_date,
+    net_entry: float,
+    underlying: str,
+    chart_key: str = "eq_pos_chart",
+    live_prices: dict | None = None,
+) -> None:
+    """
+    P&L chart for equity long positions.
+    Single ticker: linear P&L curve.
+    Multi-ticker (e.g. SPY+TLT rotation): per-leg P&L bar chart.
+    """
+    import datetime as _dt
+
+    buy_rows = grp[grp["Direction"].str.upper() == "BUY"] if "Direction" in grp.columns else grp
+    if buy_rows.empty:
+        return
+
+    # Days held
+    try:
+        days_held = (_dt.date.today() - pd.to_datetime(open_date).date()).days
+    except Exception:
+        days_held = None
+    days_str = f" · {days_held}d held" if days_held is not None else ""
+
+    unique_symbols = buy_rows["Symbol"].dropna().unique() if "Symbol" in buy_rows.columns else [underlying]
+
+    if len(unique_symbols) > 1:
+        # ── Multi-ticker: per-leg P&L bar chart ──────────────────────────────────
+        leg_data = []
+        for _, r in buy_rows.iterrows():
+            sym      = str(r.get("Symbol", underlying))
+            entry_px = float(r.get("TransactionPrice") or 0)
+            qty      = float(r.get("Quantity") or 1)
+            cur_px   = (live_prices or {}).get(sym)
+            pnl      = (cur_px - entry_px) * qty if cur_px else None
+            leg_data.append({"sym": sym, "entry": entry_px, "qty": qty, "cur": cur_px, "pnl": pnl})
+
+        # Metrics row
+        _mcols = st.columns(len(leg_data))
+        for i, ld in enumerate(leg_data):
+            _mcols[i].metric(
+                f"{ld['sym']}  ({ld['qty']:.0f} sh @ ${ld['entry']:.2f})",
+                f"${ld['cur']:.2f}" if ld["cur"] else "—",
+                delta=round(ld["pnl"], 2) if ld["pnl"] is not None else None,
+            )
+
+        # Bar chart — always show all legs, use 0 for missing prices
+        bar_data = [
+            {"sym": ld["sym"], "pnl": ld["pnl"] if ld["pnl"] is not None else 0.0,
+             "has_price": ld["pnl"] is not None}
+            for ld in leg_data
+        ]
+        fig = go.Figure(go.Bar(
+            x=[ld["sym"] for ld in bar_data],
+            y=[ld["pnl"] for ld in bar_data],
+            marker_color=["#26a69a" if ld["pnl"] >= 0 else "#ef5350" for ld in bar_data],
+            marker_opacity=[1.0 if ld["has_price"] else 0.3 for ld in bar_data],
+            text=[f"${ld['pnl']:+,.2f}" if ld["has_price"] else "no price" for ld in bar_data],
+            textposition="outside",
+            hovertemplate="%{x}<br>P&L: %{y:$,.2f}<extra></extra>",
+            width=0.4,
+        ))
+        fig.add_hline(y=0, line=dict(color="#374151", width=1))
+        fig.update_layout(
+            template="plotly_dark",
+            title=f"Position P&L per Leg{days_str}",
+            height=260,
+            margin=dict(t=40, b=20, l=0, r=0),
+            yaxis=dict(tickformat="$,.0f"),
+            xaxis=dict(type="category"),
+        )
+        st.plotly_chart(fig, width="stretch", key=chart_key)
+        return
+
+    # ── Single ticker: linear P&L curve ──────────────────────────────────────────
+    entry_px = float(buy_rows["TransactionPrice"].iloc[0] or 0)
+    qty      = float(buy_rows["Quantity"].iloc[0] or 1)
+
+    if entry_px <= 0:
+        return
+
+    ref    = spot if spot else entry_px
+    prices = np.linspace(ref * 0.80, ref * 1.20, 300)
+    pnl    = (prices - entry_px) * qty
+
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(
+        x=prices, y=pnl,
+        mode="lines",
+        line=dict(color="#5c6bc0", width=2),
+        name="Unrealized P&L",
+        fill="tozeroy",
+        fillcolor="rgba(92,107,192,0.08)",
+        hovertemplate="Price: $%{x:.2f}<br>P&L: $%{y:+,.2f}<extra></extra>",
+    ))
+    fig.add_hline(y=0, line=dict(color="#374151", width=1))
+    fig.add_vline(
+        x=entry_px,
+        line=dict(color="#f59e0b", width=1.5, dash="dash"),
+        annotation_text=f"Entry ${entry_px:.2f}",
+        annotation_position="top left",
+        annotation_font_color="#f59e0b",
+        annotation_font_size=11,
+    )
+    if spot:
+        cur_pnl = (spot - entry_px) * qty
+        fig.add_vline(
+            x=spot,
+            line=dict(color="#26a69a" if cur_pnl >= 0 else "#ef5350", width=2),
+            annotation_text=f"Now ${spot:.2f}  P&L ${cur_pnl:+,.2f}",
+            annotation_position="top right",
+            annotation_font_color="#26a69a" if cur_pnl >= 0 else "#ef5350",
+            annotation_font_size=11,
+        )
+    fig.update_layout(
+        template="plotly_dark",
+        title=f"{underlying} Equity P&L — {qty:.0f} share(s) @ ${entry_px:.2f}{days_str}",
+        height=300,
+        margin=dict(t=45, b=20, l=0, r=0),
+        xaxis_title="Stock Price ($)",
+        yaxis_title="Unrealized P&L ($)",
+        xaxis=dict(tickformat="$,.2f"),
+        yaxis=dict(tickformat="$,.0f"),
+        showlegend=False,
+    )
+    st.plotly_chart(fig, width="stretch", key=chart_key)
+    st.caption(
+        f"Breakeven: **${entry_px:.2f}** · "
+        f"+10% target: **${entry_px*1.10:.2f}** (+${entry_px*0.10*qty:,.0f}) · "
+        f"-10% stop: **${entry_px*0.90:.2f}** (-${entry_px*0.10*qty:,.0f})"
+    )
+
+
 def _render_screener_position(
     grp: pd.DataFrame,
     spot: float | None,
@@ -300,6 +557,7 @@ def _render_screener_position(
     net_entry: float,
     strategy: str,
     live_opt_prices: dict,
+    chart_key_prefix: str = "scr_pos",
 ) -> None:
     """
     Generic payoff chart + P&L metrics for screener-saved positions
@@ -312,7 +570,7 @@ def _render_screener_position(
     if opt.empty:
         payoff_fig = _plot_payoff(grp, spot)
         if payoff_fig is not None:
-            st.plotly_chart(payoff_fig, width="stretch")
+            st.plotly_chart(payoff_fig, width="stretch", key=f"{chart_key_prefix}_payoff_eq")
         return
 
     opt["Strike"]           = pd.to_numeric(opt["Strike"],           errors="coerce")
@@ -392,7 +650,7 @@ def _render_screener_position(
     # Payoff chart
     payoff_fig = _plot_payoff(grp, spot)
     if payoff_fig is not None:
-        st.plotly_chart(payoff_fig, width="stretch")
+        st.plotly_chart(payoff_fig, width="stretch", key=f"{chart_key_prefix}_payoff")
         st.caption(
             "Payoff at expiration · Coloured dotted lines = strike levels · "
             "White line = current spot · Green fill = profit zone · Red fill = loss zone"
@@ -419,7 +677,7 @@ def _render_ic_position(
     if opt.empty:
         payoff_fig = _plot_payoff(grp, spot)
         if payoff_fig is not None:
-            st.plotly_chart(payoff_fig, width="stretch")
+            st.plotly_chart(payoff_fig, width="stretch", key=f"ic_payoff_eq_{tgid}")
         return
     # spot may be None if live price not fetched — chart still works, BS today-line skipped
 
@@ -627,7 +885,7 @@ def _render_ic_position(
             yaxis=dict(gridcolor="#1f2937", tickformat="$,.0f", zeroline=False),
             legend=dict(bgcolor="rgba(0,0,0,0)", orientation="h", y=-0.15),
         )
-        st.plotly_chart(fig, width="stretch")
+        st.plotly_chart(fig, width="stretch", key=f"ic_pnl_{tgid}")
         st.caption(
             "Solid purple = P&L at expiry · Dotted green = P&L today (BS, uses cached ATM IV) · "
             "Green/red dashed = strategy exit rules · Yellow = spot · Grey = breakevens"
@@ -636,7 +894,7 @@ def _render_ic_position(
         # Fallback for non-IC structures
         payoff_fig = _plot_payoff(grp, spot)
         if payoff_fig is not None:
-            st.plotly_chart(payoff_fig, width="stretch")
+            st.plotly_chart(payoff_fig, width="stretch", key=f"ic_payoff_fallback_{tgid}")
 
 
 def _plot_payoff(legs_grp: pd.DataFrame, spot: float | None) -> "go.Figure | None":
@@ -734,13 +992,9 @@ def _plot_payoff(legs_grp: pd.DataFrame, spot: float | None) -> "go.Figure | Non
         k_f = float(k)
         lt  = str(r.get("LegType") or "")
         color = leg_colors.get(lt, "#888888")
-        label = f"{lt} ${k_f:.1f}" if k_f not in seen_strikes else ""
         seen_strikes.add(k_f)
         fig.add_vline(
             x=k_f, line_dash="dot", line_color=color, line_width=1,
-            annotation_text=label,
-            annotation_position="top left",
-            annotation_font=dict(size=9, color=color),
         )
 
     # Current spot
@@ -1083,7 +1337,7 @@ def render() -> None:
             _dir   = str(_r.get("Direction", "")).upper()
             _qty   = float(_r.get("Quantity") or 1)
             _mult  = float(_r.get("Multiplier") or 1)
-            _cur   = _live_px.get(_underlying) if _stype in ("equity", "etf") else (_live_opt.get(_sym) or {}).get("price")
+            _cur   = _live_px.get(str(_sym)) if _stype in ("equity", "etf") else (_live_opt.get(_sym) or {}).get("price")
             if _cur is not None and total_unrealized is not None:
                 _sign = 1.0 if _dir == "BUY" else -1.0
                 total_unrealized += _sign * (_cur - _ep) * _qty * _mult
@@ -1152,25 +1406,44 @@ def render() -> None:
             all_txns_for_options = txns_df.copy()
             for tgid, grp in open_groups.items():
                 if "Underlying" in grp.columns:
-                    u = grp["Underlying"].dropna().iloc[0] if not grp["Underlying"].dropna().empty else None
-                else:
-                    u = None
-                if u:
-                    underlyings.add(str(u))
+                    for u in grp["Underlying"].dropna().unique():
+                        underlyings.add(str(u))
+                # For multi-ticker equity groups (e.g. rotation), also add each equity symbol
+                if "Symbol" in grp.columns and "SecurityType" in grp.columns:
+                    eq = grp[grp["SecurityType"].str.lower().isin(["equity", "etf"])]
+                    for sym in eq["Symbol"].dropna().unique():
+                        underlyings.add(str(sym))
 
             # Fetch stock + option prices (cached in session state)
             if "pt_live_prices" not in st.session_state and api_key and underlyings:
                 with st.spinner("Fetching live prices..."):
                     st.session_state["pt_live_prices"] = _fetch_stock_prices_bulk(api_key, list(underlyings))
                     st.session_state["pt_live_option_prices"] = _fetch_option_prices(api_key, all_txns_for_options)
-            live_prices: dict[str, float | None] = st.session_state.get("pt_live_prices", {})
+            live_prices: dict[str, float | None] = dict(st.session_state.get("pt_live_prices", {}))
+            # Fetch any symbols missing from the cache (positions added after last full refresh)
+            if api_key:
+                missing = [u for u in underlyings if u not in live_prices]
+                if missing:
+                    for _sym in missing:
+                        live_prices[_sym] = _fetch_stock_price(api_key, _sym)
+                    st.session_state["pt_live_prices"] = live_prices
             live_opt_prices: dict[str, float | None] = st.session_state.get("pt_live_option_prices", {})
 
             today = datetime.date.today()
 
             for tgid, grp in open_groups.items():
-                # Resolve underlying
-                if "Underlying" in grp.columns and not grp["Underlying"].dropna().empty:
+                # Resolve underlying — combined label only for multi-ticker equity groups
+                _has_options = ("SecurityType" in grp.columns and
+                                grp["SecurityType"].str.lower().eq("option").any())
+                if not _has_options and "Symbol" in grp.columns:
+                    _eq_syms = sorted(grp["Symbol"].dropna().unique())
+                    if len(_eq_syms) > 1:
+                        underlying = "+".join(_eq_syms)
+                    elif _eq_syms:
+                        underlying = _eq_syms[0]
+                    else:
+                        underlying = "?"
+                elif "Underlying" in grp.columns and not grp["Underlying"].dropna().empty:
                     underlying = str(grp["Underlying"].dropna().iloc[0])
                 elif "Symbol" in grp.columns and not grp.empty:
                     underlying = str(grp["Symbol"].iloc[0])
@@ -1209,7 +1482,7 @@ def render() -> None:
                     dir_h   = str(r.get("Direction", "")).upper()
                     qty_h   = float(r.get("Quantity") or 1)
                     mult_h  = float(r.get("Multiplier") or 1)
-                    cur_h   = live_prices.get(underlying) if stype_h in ("equity", "etf") else (live_opt_prices.get(sym_h) or {}).get("price")
+                    cur_h   = live_prices.get(str(sym_h)) if stype_h in ("equity", "etf") else (live_opt_prices.get(sym_h) or {}).get("price")
                     if cur_h is not None and total_upnl is not None:
                         sign_h = 1.0 if dir_h == "BUY" else -1.0
                         total_upnl += sign_h * (cur_h - ep_h) * qty_h * mult_h
@@ -1217,14 +1490,38 @@ def render() -> None:
                         total_upnl = None
                         break
 
-                upnl_str = f"  |  P&L: ${total_upnl:+.2f}" if total_upnl is not None else ""
+                _ne_icon   = "🟢" if net_entry >= 0 else "🔴"
+                _ne_str    = f"Net Entry: {_ne_icon} ${abs(net_entry):,.2f}"
+                if total_upnl is not None:
+                    _pnl_icon  = "🟢" if total_upnl >= 0 else "🔴"
+                    upnl_str   = f" · P&L: {_pnl_icon} ${abs(total_upnl):,.2f}"
+                else:
+                    upnl_str   = ""
+                pos_alerts    = _compute_position_alerts(grp, strategy, total_upnl, net_entry)
+                alert_pfx     = _alert_icon(pos_alerts)
+                # Use · instead of | to avoid Streamlit markdown table interpretation
+                def _md_safe(s: str) -> str:
+                    """Strip markdown-special chars that corrupt expander label rendering."""
+                    for ch in ("_", "*", "`", "#", "~", "—", "|", "[", "]", "(", ")"):
+                        s = s.replace(ch, " ")
+                    return s.strip()
+
                 expander_label = (
-                    f"{underlying}  |  {strategy}  |  Signal: {signal_str}  |  "
-                    f"Opened: {open_date}  |  {n_legs} legs  |  "
-                    f"Net Entry: ${net_entry:+.2f}  |  Stock: {stock_delta_str}{upnl_str}"
+                    f"{alert_pfx}{underlying} · {_md_safe(strategy)} · "
+                    f"Opened: {open_date} · {n_legs} {'leg' if n_legs == 1 else 'legs'} · "
+                    f"{_ne_str} · Stock: {stock_delta_str}{upnl_str}"
                 )
 
                 with st.expander(expander_label, expanded=False):
+                    # Alerts
+                    for _alert in pos_alerts:
+                        if _alert["level"] == "error":
+                            st.error(_alert["msg"])
+                        elif _alert["level"] == "warning":
+                            st.warning(_alert["msg"])
+                        else:
+                            st.success(_alert["msg"])
+
                     # Legs table
                     leg_rows = []
                     for _, r in grp.iterrows():
@@ -1311,10 +1608,12 @@ def render() -> None:
                     # Strategy-specific position detail
                     _ic_strategies = ("Iron Condor — Rules", "Iron Condor — AI",
                                       "iron_condor_rules", "iron_condor_ai")
-                    _screener_strategies = (
-                        "VIX Spike Fade", "Vol Arbitrage",
-                        "IVR Credit Spread", "iv_skew_momentum",
+
+                    _has_options = any(
+                        str(r.get("SecurityType", "")).lower() == "option"
+                        for _, r in grp.iterrows()
                     )
+
                     if any(s in strategy for s in _ic_strategies):
                         try:
                             _render_ic_position(grp, stock_price, open_date, net_entry, api_key, tgid)
@@ -1322,15 +1621,16 @@ def render() -> None:
                             st.warning(f"Payoff chart error: {_e}")
                             payoff_fig = _plot_payoff(grp, stock_price)
                             if payoff_fig is not None:
-                                st.plotly_chart(payoff_fig, width="stretch")
-                    elif any(s in strategy for s in _screener_strategies):
-                        # Screener-saved multi-leg positions: generic payoff + P&L metrics
+                                st.plotly_chart(payoff_fig, width="stretch", key=f"payoff_fallback_{tgid}")
+                    elif _has_options:
+                        # Any options position (GEX, screener, spreads) → generic options renderer
                         _render_screener_position(grp, stock_price, open_date, net_entry,
-                                                  strategy, live_opt_prices)
+                                                  strategy, live_opt_prices,
+                                                  chart_key_prefix=f"scr_{tgid}")
                     else:
-                        payoff_fig = _plot_payoff(grp, stock_price)
-                        if payoff_fig is not None:
-                            st.plotly_chart(payoff_fig, width="stretch")
+                        # Pure equity / ETF position
+                        _render_equity_position(grp, stock_price, open_date, net_entry, underlying,
+                                                chart_key=f"eq_pos_{tgid}", live_prices=live_prices)
 
                     # Strategy-specific charts
                     if strategy == "IV Skew Premium Capture" and api_key:
@@ -1341,7 +1641,7 @@ def render() -> None:
                                 st.session_state[_skew_key] = _plot_iv_skew(api_key, underlying, grp)
                         _skew_fig = st.session_state.get(_skew_key)
                         if _skew_fig is not None:
-                            st.plotly_chart(_skew_fig, width="stretch")
+                            st.plotly_chart(_skew_fig, width="stretch", key=f"skew_{tgid}")
                             st.caption(
                                 "Dashed lines = position strikes.  "
                                 "🔴 Short  🟡 Long  🟢 ATK"
@@ -1456,6 +1756,34 @@ def render() -> None:
                                 "P&L":         cc.NumberColumn(format="$%.2f"),
                             },
                         )
+
+                        # P&L bar chart per leg
+                        _pnl_vals = [r["P&L"] for r in _leg_rows if r["P&L"] is not None]
+                        if _pnl_vals:
+                            _pnl_labels  = [
+                                f"{r['Leg'] or r['Symbol'][:12]}" for r in _leg_rows if r["P&L"] is not None
+                            ]
+                            _pnl_colors  = ["#26a69a" if v >= 0 else "#ef5350" for v in _pnl_vals]
+                            _total_pnl   = sum(_pnl_vals)
+
+                            fig_closed = go.Figure(go.Bar(
+                                x=_pnl_labels,
+                                y=_pnl_vals,
+                                marker_color=_pnl_colors,
+                                text=[f"${v:+,.2f}" for v in _pnl_vals],
+                                textposition="outside",
+                                hovertemplate="%{x}<br>P&L: %{y:$,.2f}<extra></extra>",
+                            ))
+                            fig_closed.add_hline(y=0, line=dict(color="#374151", width=1))
+                            fig_closed.update_layout(
+                                template="plotly_dark",
+                                title=f"P&L per Leg — Total: ${_total_pnl:+,.2f}",
+                                height=260,
+                                margin=dict(t=40, b=20, l=0, r=0),
+                                xaxis_title=None,
+                                yaxis=dict(tickformat="$,.0f"),
+                            )
+                            st.plotly_chart(fig_closed, width="stretch", key=f"closed_pnl_{_tgid}")
                     else:
                         st.caption("No legs found.")
 
@@ -1654,6 +1982,198 @@ def render() -> None:
     with tab_perf:
         st.subheader("Performance")
 
+        # ── Account Equity Curve ──────────────────────────────────────────────
+        if closed_rows or open_groups:
+            _today = datetime.date.today()
+
+            # Build daily realized P&L series from closed trades
+            _eq_dates:  list = []
+            _eq_values: list = []
+            _eq_daily:  list = []
+            _eq_cumreal: list = []
+            _eq_unreal: list = []
+
+            _cum_real  = 0.0
+            _cum_cash  = 0.0  # net deposits/withdrawals beyond initial cash
+
+            # Cash movements from transactions (deposits + / withdrawals -)
+            _cash_events: dict = {}  # date -> net cash flow
+            if not txns_df.empty and "SecurityType" in txns_df.columns:
+                _cash_txns = txns_df[txns_df["SecurityType"].str.lower() == "cash"].copy()
+                for _, _ct in _cash_txns.iterrows():
+                    _ct_date = pd.to_datetime(_ct.get("BusinessDate")).date()
+                    _ct_dir  = str(_ct.get("Direction", "")).lower()
+                    _ct_amt  = float(_ct.get("TransactionPrice") or 0)
+                    _ct_flow = _ct_amt if _ct_dir == "deposit" else -_ct_amt
+                    _cash_events[_ct_date] = _cash_events.get(_ct_date, 0.0) + _ct_flow
+
+            # Merge closed trade P&L + cash events by date
+            _all_dates: set = set()
+            _daily_real: dict = {}
+            if closed_rows:
+                _closed_eq = (
+                    pd.DataFrame(closed_rows)
+                    .dropna(subset=["Close Date"])
+                    .assign(**{"Close Date": lambda d: pd.to_datetime(d["Close Date"]).dt.date})
+                    .groupby("Close Date")["P&L $"]
+                    .sum()
+                )
+                for _d, _v in _closed_eq.items():
+                    _daily_real[_d] = float(_v)
+                    _all_dates.add(_d)
+            _all_dates.update(_cash_events.keys())
+
+            _sorted_dates = sorted(_all_dates)
+
+            # Anchor point: $100k on the day before the first event
+            if _sorted_dates:
+                import datetime as _dt_mod
+                _anchor_date = _sorted_dates[0] - _dt_mod.timedelta(days=1)
+                _eq_dates.append(_anchor_date)
+                _eq_daily.append(0.0)
+                _eq_cumreal.append(0.0)
+                _eq_values.append(_INITIAL_CASH)
+                _eq_unreal.append(None)
+
+            for _edate in _sorted_dates:
+                _day_pnl  = _daily_real.get(_edate, 0.0)
+                _day_cash = _cash_events.get(_edate, 0.0)
+                _cum_real += _day_pnl
+                _cum_cash += _day_cash
+                _eq_dates.append(_edate)
+                _eq_daily.append(_day_pnl)
+                _eq_cumreal.append(_cum_real)
+                _eq_values.append(_INITIAL_CASH + _cum_cash + _cum_real)
+                _eq_unreal.append(None)
+
+            # Add today's point with unrealized P&L
+            _total_unreal: float | None = None
+            if open_groups and _live_opt is not None:
+                _total_unreal = 0.0
+                for _, _og in open_groups.items():
+                    for _, _or in _og.iterrows():
+                        _stype_e = str(_or.get("SecurityType", "")).lower()
+                        _sym_e   = _or.get("Symbol", "")
+                        _ul_e    = str(_or.get("Underlying", ""))
+                        _ep_e    = float(_or.get("TransactionPrice") or 0)
+                        _dir_e   = str(_or.get("Direction", "")).upper()
+                        _qty_e   = float(_or.get("Quantity") or 1)
+                        _mult_e  = float(_or.get("Multiplier") or 1)
+                        _cur_e   = _live_px.get(_ul_e) if _stype_e in ("equity", "etf") else (_live_opt.get(_sym_e) or {}).get("price")
+                        if _cur_e is not None and _total_unreal is not None:
+                            _sign_e = 1.0 if _dir_e == "BUY" else -1.0
+                            _total_unreal += _sign_e * (_cur_e - _ep_e) * _qty_e * _mult_e
+                        else:
+                            _total_unreal = None
+                            break
+                    if _total_unreal is None:
+                        break
+
+            # Add today point (even if unrealized is None, show realized-only value)
+            _today_value = _INITIAL_CASH + _cum_real + (_total_unreal or 0.0)
+            if not _eq_dates or _eq_dates[-1] != _today:
+                _eq_dates.append(_today)
+                _eq_daily.append(0.0)
+                _eq_cumreal.append(_cum_real)
+                _eq_values.append(_today_value)
+                _eq_unreal.append(_total_unreal)
+            else:
+                # Update last point with unrealized
+                _eq_values[-1]  = _today_value
+                _eq_unreal[-1]  = _total_unreal
+
+            if len(_eq_dates) >= 1:
+                # Build hover text
+                def _clr(v: float) -> str:
+                    return "#26a69a" if v >= 0 else "#ef5350"
+
+                def _signed(v: float) -> str:
+                    return f"{'▲' if v >= 0 else '▼'} ${abs(v):,.2f}"
+
+                _hover = []
+                for i, d in enumerate(_eq_dates):
+                    _val  = _eq_values[i]
+                    _real = _eq_cumreal[i]
+                    _day  = _eq_daily[i]
+                    _unr  = _eq_unreal[i]
+                    _dc   = _cash_events.get(d, 0.0)
+                    _net_chg = _val - _INITIAL_CASH
+
+                    _unr_row  = (
+                        f"<br><span style='color:#a78bfa'>Unrealized: {_signed(_unr)}</span>"
+                        if _unr is not None else ""
+                    )
+                    _day_row  = (
+                        f"<br><span style='color:{_clr(_day)}'>Daily P&L: {_signed(_day)}</span>"
+                        if _day != 0 else ""
+                    )
+                    _cash_row = (
+                        f"<br><span style='color:#60a5fa'>{'Deposit' if _dc > 0 else 'Withdrawal'}: ${abs(_dc):,.2f}</span>"
+                        if _dc != 0 else ""
+                    )
+
+                    _hover.append(
+                        f"<b style='font-size:13px'>{d}</b><br>"
+                        f"<b style='color:#f5f5f5;font-size:15px'>${_val:,.2f}</b>"
+                        f"<br><span style='color:{_clr(_net_chg)}'>Total: {_signed(_net_chg)}</span>"
+                        f"<br><span style='color:{_clr(_real)}'>Realized: {_signed(_real)}</span>"
+                        f"{_day_row}{_cash_row}{_unr_row}"
+                        f"<extra></extra>"
+                    )
+
+                _line_color  = "#26a69a" if _eq_values[-1] >= _INITIAL_CASH else "#ef5350"
+                _fill_color  = "rgba(38,166,154,0.12)" if _eq_values[-1] >= _INITIAL_CASH else "rgba(239,83,80,0.10)"
+
+                fig_eq = go.Figure()
+                # Baseline at initial cash
+                fig_eq.add_hline(
+                    y=_INITIAL_CASH, line_dash="dot",
+                    line_color="rgba(255,255,255,0.25)", line_width=1,
+                    annotation_text=f"Starting ${_INITIAL_CASH:,.0f}",
+                    annotation_position="bottom right",
+                    annotation_font=dict(size=9, color="rgba(255,255,255,0.4)"),
+                )
+                fig_eq.add_trace(go.Scatter(
+                    x=_eq_dates,
+                    y=_eq_values,
+                    mode="lines+markers",
+                    line=dict(color=_line_color, width=2.5),
+                    marker=dict(size=6, color=_line_color),
+                    fill="tozeroy",
+                    fillcolor=_fill_color,
+                    hovertemplate=_hover,
+                    name="Account Value",
+                ))
+
+                _pnl_total = _eq_values[-1] - _INITIAL_CASH
+                _pnl_pct   = _pnl_total / _INITIAL_CASH * 100
+                fig_eq.update_layout(
+                    template="plotly_dark",
+                    title=dict(
+                        text=f"Account Equity  |  ${_eq_values[-1]:,.2f}  "
+                             f"({'▲' if _pnl_total >= 0 else '▼'} ${abs(_pnl_total):,.2f} / {_pnl_pct:+.2f}%)",
+                        font=dict(size=13),
+                    ),
+                    height=320,
+                    margin=dict(t=45, b=20, l=0, r=0),
+                    showlegend=False,
+                    xaxis=dict(title=None),
+                    yaxis=dict(title="Account Value ($)", tickformat="$,.0f",
+                               showgrid=True, gridcolor="rgba(255,255,255,0.07)"),
+                    paper_bgcolor="#0e1117",
+                    plot_bgcolor="#0e1117",
+                    hoverlabel=dict(
+                        bgcolor="#1e2130",
+                        bordercolor="#444",
+                        font=dict(size=12, color="#f5f5f5"),
+                    ),
+                    hovermode="x unified",
+                )
+                st.plotly_chart(fig_eq, width="stretch")
+                if _total_unreal is None:
+                    st.caption("Realized P&L only — refresh Live Prices in Open Positions to include unrealized.")
+            st.markdown("---")
+
         # ── Open Positions — Unrealized P&L snapshot ──────────────────────────
         if open_groups:
             open_pnl_rows = []
@@ -1678,7 +2198,7 @@ def render() -> None:
                     _dir   = str(_r.get("Direction", "")).upper()
                     _qty   = float(_r.get("Quantity") or 1)
                     _mult  = float(_r.get("Multiplier") or 1)
-                    _cur   = _live_px.get(_underlying) if _stype in ("equity", "etf") else (_live_opt.get(_sym) or {}).get("price")
+                    _cur   = _live_px.get(str(_sym)) if _stype in ("equity", "etf") else (_live_opt.get(_sym) or {}).get("price")
                     if _cur is not None and _upnl is not None:
                         _sign = 1.0 if _dir == "BUY" else -1.0
                         _upnl += _sign * (_cur - _ep) * _qty * _mult
@@ -1686,10 +2206,12 @@ def render() -> None:
                         _upnl = None
                         break
 
-                # Net entry credit/debit
+                # Net entry credit/debit (full dollar value: price × qty × multiplier)
                 _net_entry = sum(
                     (-1 if str(_r.get("Direction","")).upper()=="BUY" else 1)
                     * float(_r.get("TransactionPrice") or 0)
+                    * float(_r.get("Quantity") or 1)
+                    * float(_r.get("Multiplier") or 1)
                     for _, _r in _grp.iterrows()
                 )
 
@@ -1741,7 +2263,7 @@ def render() -> None:
                     "Ticker":    r["ticker"],
                     "Strategy":  r["strategy"],
                     "Opened":    r["open_date"],
-                    "DTE":       r["dte"] if r["dte"] is not None else "—",
+                    "DTE":       r["dte"],
                     "Net Entry": r["net_entry"],
                     "Unr. P&L":  r["upnl"],
                 } for r in open_pnl_rows])

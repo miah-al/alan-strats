@@ -354,16 +354,34 @@ st.markdown("""
       font-size: 12px !important;
       color: var(--text-secondary) !important;
   }
+
+  /* ── Expander header — force all text white always ──────────────────── */
+  details summary,
+  details summary p,
+  details summary span,
+  details summary *,
+  details summary:hover,
+  details summary:hover * {
+      color: var(--text-primary) !important;
+  }
+
 </style>
 """, unsafe_allow_html=True)
+
 
 
 # ══════════════════════════════════════════════════════════════════════════════
 # REGISTRY
 # ══════════════════════════════════════════════════════════════════════════════
-from alan_trader.strategies.registry import STRATEGY_METADATA, get_strategy
+from alan_trader.strategies.registry import STRATEGY_METADATA, get_strategy as _get_strategy_raw
 
 ACTIVE_SLUGS = [s for s, m in STRATEGY_METADATA.items() if m.get("status") == "active"]
+
+
+@st.cache_resource(show_spinner=False)
+def get_strategy(slug: str):
+    """Cached strategy loader — avoids re-importing heavy ML deps on every rerun."""
+    return _get_strategy_raw(slug)
 
 
 def _meta(slug):   return STRATEGY_METADATA[slug]
