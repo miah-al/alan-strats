@@ -1,0 +1,315 @@
+/* ── Global resets ───────────────────────────────────────────────────────── */
+body, html {
+    background-color: #0a0e1a !important;
+    color: #f9fafb !important;
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+}
+
+/* Bootstrap card reset */
+.card {
+    background-color: #111827 !important;
+    border-color: #1f2937 !important;
+    color: #f9fafb !important;
+}
+.card-body {
+    background-color: #111827 !important;
+}
+
+/* ── AG Grid alpine-dark overrides ───────────────────────────────────────── */
+.ag-theme-quartz-dark {
+    --ag-background-color:            #111827;
+    --ag-foreground-color:            #f9fafb;
+    --ag-border-color:                #1f2937;
+    --ag-secondary-border-color:      #1f2937;
+    --ag-header-background-color:     #0a0e1a;
+    --ag-header-foreground-color:     #9ca3af;
+    --ag-odd-row-background-color:    #161d2e;
+    --ag-row-hover-color:             #1a2235;
+    --ag-selected-row-background-color: rgba(99,102,241,0.18);
+    --ag-range-selection-border-color: #6366f1;
+    --ag-input-focus-border-color:    #6366f1;
+    --ag-chip-background-color:       #1f2937;
+    --ag-row-border-color:            #1f2937;
+    --ag-secondary-foreground-color:  #9ca3af;
+    --ag-disabled-foreground-color:   #4b5563;
+    --ag-font-size:                   13px;
+    --ag-font-family:                 'Inter', sans-serif;
+}
+
+/* Clickable rows — pointer cursor */
+.ag-theme-quartz-dark .ag-row {
+    cursor: pointer;
+}
+
+/* Filter/sort icon colour fix */
+.ag-theme-quartz-dark .ag-icon {
+    color: #6b7280;
+}
+.ag-theme-quartz-dark .ag-header-cell-text {
+    color: #9ca3af;
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+}
+
+/* ── dbc.NavLink active state ─────────────────────────────────────────────── */
+.nav-pills .nav-link.active {
+    background-color: rgba(99,102,241,0.18) !important;
+    color: #6366f1 !important;
+}
+.nav-pills .nav-link:hover:not(.active) {
+    background-color: #1a2235 !important;
+    color: #f9fafb !important;
+}
+
+/* ── AG Grid direct element overrides (theme-version-agnostic) ───────────── */
+.ag-root-wrapper,
+.ag-root,
+.ag-body-viewport,
+.ag-center-cols-viewport,
+.ag-floating-bottom,
+.ag-overlay {
+    background-color: #111827 !important;
+}
+.ag-row {
+    background-color: #111827 !important;
+    border-color: #1f2937 !important;
+    color: #f9fafb !important;
+}
+.ag-row-odd {
+    background-color: #161d2e !important;
+}
+.ag-row:hover, .ag-row-hover {
+    background-color: #1a2235 !important;
+}
+.ag-header {
+    background-color: #0a0e1a !important;
+    border-color: #1f2937 !important;
+}
+.ag-header-cell {
+    color: #9ca3af !important;
+}
+.ag-cell {
+    color: #f9fafb !important;
+    border-color: #1f2937 !important;
+}
+.ag-paging-panel {
+    background-color: #111827 !important;
+    color: #9ca3af !important;
+    border-color: #1f2937 !important;
+}
+
+/* ── Bootstrap Tabs — dark override ──────────────────────────────────────── */
+.nav-tabs {
+    border-bottom: 1px solid #1f2937 !important;
+    background-color: transparent !important;
+}
+.nav-tabs .nav-link {
+    background-color: transparent !important;
+    border-color: transparent !important;
+    color: #9ca3af !important;
+    font-size: 13px;
+    font-weight: 500;
+    padding: 8px 14px;
+}
+.nav-tabs .nav-link:hover {
+    background-color: #1a2235 !important;
+    border-color: transparent !important;
+    color: #f9fafb !important;
+}
+.nav-tabs .nav-link.active {
+    background-color: #0a0e1a !important;
+    border-color: #1f2937 #1f2937 #0a0e1a !important;
+    color: #6366f1 !important;
+    font-weight: 600;
+}
+/* Tab content area */
+.tab-content {
+    background-color: transparent !important;
+}
+.tab-pane {
+    background-color: transparent !important;
+}
+
+/* ── dcc.Dropdown dark (Dash 4.x + react-select) ─────────────────────────── */
+/* Dash 4 uses data attributes on the outer wrapper */
+[data-dash-is-loading] { color: inherit; }
+
+/* react-select v5 classes (Dash 4.x) */
+.dash-dropdown > div,
+.dash-dropdown > div > div {
+    background-color: #161d2e !important;
+    border-color: #1f2937 !important;
+    color: #f9fafb !important;
+}
+.dash-dropdown input { color: #f9fafb !important; }
+
+/* Menu portal renders at body level — target globally */
+[class*="-menu"] {
+    background-color: #161d2e !important;
+    border: 1px solid #1f2937 !important;
+    color: #f9fafb !important;
+    z-index: 9999 !important;
+}
+[class*="-option"] {
+    background-color: #161d2e !important;
+    color: #f9fafb !important;
+}
+[class*="-option"]:hover,
+[class*="-option"][class*="focused"] {
+    background-color: #1a2235 !important;
+    color: #f9fafb !important;
+}
+[class*="-option"][class*="selected"] {
+    background-color: rgba(99,102,241,0.25) !important;
+}
+[class*="-control"] {
+    background-color: #161d2e !important;
+    border-color: #1f2937 !important;
+    color: #f9fafb !important;
+}
+[class*="-singleValue"],
+[class*="-placeholder"],
+[class*="-multiValue"] {
+    color: #f9fafb !important;
+    background-color: #1f2937 !important;
+}
+[class*="-multiValueLabel"] { color: #f9fafb !important; }
+[class*="-indicatorSeparator"] { background-color: #374151 !important; }
+
+/* Dash 4.x react-select v5 classes */
+.Select-control {
+    background-color: #161d2e !important;
+    border-color: #1f2937 !important;
+    color: #f9fafb !important;
+}
+.Select-placeholder, .Select-value-label {
+    color: #f9fafb !important;
+}
+.Select-input > input {
+    color: #f9fafb !important;
+}
+.Select-menu-outer {
+    background-color: #161d2e !important;
+    border-color: #1f2937 !important;
+    color: #f9fafb !important;
+    z-index: 9999 !important;
+}
+.Select-menu {
+    background-color: #161d2e !important;
+}
+.Select-option {
+    background-color: #161d2e !important;
+    color: #f9fafb !important;
+}
+.Select-option.is-focused {
+    background-color: #1a2235 !important;
+    color: #f9fafb !important;
+}
+.Select-option.is-selected {
+    background-color: rgba(99,102,241,0.25) !important;
+    color: #f9fafb !important;
+}
+.Select-value {
+    background-color: #1f2937 !important;
+    border-color: #374151 !important;
+    color: #f9fafb !important;
+}
+.Select-value-icon {
+    border-right-color: #374151 !important;
+    color: #9ca3af !important;
+}
+.Select-value-icon:hover {
+    background-color: #374151 !important;
+    color: #f9fafb !important;
+}
+.Select-arrow {
+    border-top-color: #9ca3af !important;
+}
+.Select-clear {
+    color: #9ca3af !important;
+}
+.VirtualizedSelectOption {
+    background-color: #161d2e !important;
+    color: #f9fafb !important;
+}
+.VirtualizedSelectFocusedOption {
+    background-color: #1a2235 !important;
+    color: #f9fafb !important;
+}
+/* Checkbox multi-select items */
+.Select-option input[type="checkbox"] {
+    accent-color: #6366f1;
+}
+/* Search input inside dropdown */
+.Select-search-box input {
+    background-color: #161d2e !important;
+    color: #f9fafb !important;
+    border-color: #1f2937 !important;
+}
+
+/* ── dbc Modal dark ───────────────────────────────────────────────────────── */
+.modal-content {
+    background-color: #0a0e1a !important;
+    border: 1px solid #1f2937 !important;
+    color: #f9fafb !important;
+}
+.modal-header, .modal-footer {
+    background-color: #111827 !important;
+    border-color: #1f2937 !important;
+}
+.modal-body {
+    background-color: #0a0e1a !important;
+}
+
+/* ── Native select dark ───────────────────────────────────────────────────── */
+select option {
+    background-color: #161d2e;
+    color: #f9fafb;
+}
+
+/* ── Loading spinner ──────────────────────────────────────────────────────── */
+._dash-loading {
+    background-color: transparent !important;
+}
+
+/* ── Markdown: dark code blocks ──────────────────────────────────────────── */
+pre, pre code {
+    background-color: #161d2e !important;
+    color: #f9fafb !important;
+    border: 1px solid #1f2937 !important;
+    border-radius: 6px;
+    padding: 12px !important;
+    font-size: 12px;
+    line-height: 1.6;
+}
+code {
+    background-color: #1f2937 !important;
+    color: #f9fafb !important;
+    padding: 2px 5px;
+    border-radius: 4px;
+    font-size: 12px;
+}
+blockquote {
+    border-left: 3px solid #6366f1 !important;
+    margin-left: 0 !important;
+    padding-left: 12px !important;
+    color: #9ca3af !important;
+}
+
+/* ── IC screener: Chart button cell ──────────────────────────────────────── */
+.ag-theme-quartz-dark .ic-chart-btn .ag-cell-value {
+    display: inline-block;
+    padding: 3px 10px;
+    border-radius: 6px;
+    border: 1px solid #6366f1;
+    color: #6366f1 !important;
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+    white-space: nowrap;
+}
+.ag-theme-quartz-dark .ic-chart-btn:hover .ag-cell-value {
+    background-color: rgba(99,102,241,0.15);
+}
