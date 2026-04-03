@@ -375,10 +375,13 @@ def _screener_layout(slug: str) -> html.Div:
 def _guide_layout(slug: str) -> html.Div:
     content = _load_guide(slug)
     return html.Div([
-        dcc.Markdown(
-            content,
-            style={"color": T.TEXT_PRIMARY, "fontSize": "14px", "lineHeight": "1.7"},
-        ),
+        html.Div([
+            dcc.Markdown(
+                content,
+                dangerously_allow_html=False,
+                style={"color": T.TEXT_PRIMARY, "fontSize": "14px", "lineHeight": "1.7"},
+            ),
+        ], style={"maxHeight": "600px", "overflowY": "auto", "padding": "4px 0"}),
     ], style={
         "backgroundColor": T.BG_CARD,
         "border": f"1px solid {T.BORDER}",
@@ -548,6 +551,28 @@ def layout() -> html.Div:
 
             # ── Store: selected IC row for modal ─────────────────────────────
             dcc.Store(id="str-ic-row-store"),
+
+            # ── Signal detail modal (VSF / IVR / VA / GEX) ───────────────────
+            dbc.Modal([
+                dbc.ModalHeader(
+                    dbc.ModalTitle(id="str-sig-modal-title", children="Signal Detail"),
+                    style={"backgroundColor": T.BG_ELEVATED,
+                           "borderBottom": f"1px solid {T.BORDER}"},
+                    close_button=True,
+                ),
+                dbc.ModalBody(
+                    dcc.Loading(html.Div(id="str-sig-modal-body"),
+                                type="circle", color=T.ACCENT),
+                    style={"backgroundColor": T.BG_BASE, "padding": "20px"},
+                ),
+                dbc.ModalFooter(
+                    dbc.Button("Dismiss", id="str-sig-modal-dismiss",
+                               color="secondary", size="sm"),
+                    style={"backgroundColor": T.BG_ELEVATED,
+                           "borderTop": f"1px solid {T.BORDER}"},
+                ),
+            ], id="str-sig-modal", size="lg", is_open=False, scrollable=True),
+            dcc.Store(id="str-sig-row-store"),
 
             # ── Store + outer tabs container ──────────────────────────────────
             dcc.Store(id="str-strategy-tabs-store", data=["iron_condor_rules"]),
@@ -1245,3 +1270,174 @@ def _paper_trade_ic(n_clicks, row, contracts):
         return html.Span(f"Error: {e}", style={"color": T.DANGER})
 
 
+# ── Signal detail modal for VSF / IVR / VA / GEX ─────────────────────────────
+
+def _make_signal_callback(slug: str):
+    grid_id = f"str-{slug}-grid"
+
+    @callback(
+        Output("str-sig-modal",       "is_open",  allow_duplicate=True),
+        Output("str-sig-modal-title", "children", allow_duplicate=True),
+        Output("str-sig-row-store",   "data",     allow_duplicate=True),
+        Input(grid_id, "selectedRows"),
+        prevent_initial_call=True,
+    )
+    def _open_sig_modal(selected_rows):
+        if not selected_rows:
+            return no_update, no_update, no_update
+        row    = {**selected_rows[0], "_slug": slug}
+        ticker = row.get("Ticker", "")
+        label  = _SLUG_TO_LABEL.get(slug, slug)
+        score  = row.get("Score", "")
+        title  = f"{ticker}  ·  {label}  ·  Score {score}"
+        return True, title, row
+
+    _open_sig_modal.__name__ = f"_open_sig_modal_{slug}"
+    return _open_sig_modal
+
+
+@callback(
+    Output("str-sig-modal-body", "children"),
+    Input("str-sig-row-store",   "data"),
+    prevent_initial_call=True,
+)
+def _build_signal_body(row):
+    if not row:
+        return no_update
+
+    slug   = row.get("_slug", "")
+    ticker = row.get("Ticker", "")
+    status = row.get("Status", "—")
+
+    status_color = (T.SUCCESS if status == "Trade-Ready" else
+                    T.WARNING if status == "Partial" else T.DANGER)
+
+    def _mc(label, val, color=T.TEXT_PRIMARY):
+        return html.Div([
+            html.Div(label, style={"color": T.TEXT_MUTED, "fontSize": "10px",
+                                   "fontWeight": "600", "textTransform": "uppercase",
+                                   "marginBottom": "4px"}),
+            html.Div(val,   style={"color": color, "fontSize": "1.05rem",
+                                   "fontWeight": "700"}),
+        ], style={**T.STYLE_CARD, "flex": "1", "minWidth": "100px", "padding": "10px 12px"})
+
+    def _row(*cards):
+        return html.Div(list(cards),
+                        style={"display": "flex", "gap": "10px",
+                               "flexWrap": "wrap", "marginBottom": "14px"})
+
+    # ── Strategy-specific content ─────────────────────────────────────────────
+    if slug == "vix_spike_fade":
+        vix     = row.get("VIX", "—")
+        vix20   = row.get("VIX 20d avg", "—")
+        ratio   = row.get("VIX / 20d", "—")
+        atm_iv  = row.get("ATM IV", "—")
+        hv20    = row.get("HV20", "—")
+        ivr     = row.get("IVR", "—")
+        ma200   = row.get("MA200", "—")
+        signal  = ("Buy put spread — VIX elevated, fade the spike back toward mean"
+                   if float(str(ratio).rstrip("%") or 0) > 1.2
+                   else "Monitor — VIX spike not sufficient")
+        metrics = _row(
+            _mc("VIX",        str(vix),   T.DANGER if float(str(vix) or 0) > 25 else T.TEXT_PRIMARY),
+            _mc("VIX 20d Avg",str(vix20)),
+            _mc("VIX / 20d",  str(ratio)),
+            _mc("ATM IV",     str(atm_iv)),
+            _mc("HV20",       str(hv20)),
+            _mc("IVR",        str(ivr)),
+            _mc("MA200",      str(ma200)),
+            _mc("Status",     status, status_color),
+        )
+
+    elif slug == "ivr_credit_spread":
+        atm_iv   = row.get("ATM IV", "—")
+        ivr      = row.get("IVR", "—")
+        vrp      = row.get("VRP", "—")
+        hv20     = row.get("HV20", "—")
+        iv_hv    = row.get("IV/HV", "—")
+        trend    = row.get("Trend", "—")
+        sp_type  = row.get("Spread Type", "—")
+        signal   = f"{sp_type} — sell premium into elevated IV (IVR {ivr})"
+        metrics  = _row(
+            _mc("ATM IV",     str(atm_iv)),
+            _mc("IVR",        str(ivr),  T.SUCCESS if status == "Trade-Ready" else T.TEXT_PRIMARY),
+            _mc("VRP",        str(vrp)),
+            _mc("HV20",       str(hv20)),
+            _mc("IV/HV",      str(iv_hv)),
+            _mc("Trend",      str(trend)),
+            _mc("Spread Type",str(sp_type)),
+            _mc("Status",     status, status_color),
+        )
+
+    elif slug == "vol_arbitrage":
+        atm_iv = row.get("ATM IV", "—")
+        hv20   = row.get("HV20", "—")
+        iv_hv  = row.get("IV/HV", "—")
+        vrp    = row.get("VRP", "—")
+        ivr    = row.get("IVR", "—")
+        try:
+            ratio_f = float(str(iv_hv) or 0)
+        except Exception:
+            ratio_f = 0
+        signal = (f"Sell straddle/strangle — IV {ratio_f:.1f}× HV, collect the vol premium"
+                  if ratio_f >= 1.3 else "IV/HV spread insufficient for arb")
+        metrics = _row(
+            _mc("ATM IV", str(atm_iv)),
+            _mc("HV20",   str(hv20)),
+            _mc("IV/HV",  str(iv_hv),
+                T.SUCCESS if ratio_f >= 1.3 else T.TEXT_PRIMARY),
+            _mc("VRP",    str(vrp)),
+            _mc("IVR",    str(ivr)),
+            _mc("Status", status, status_color),
+        )
+
+    else:  # gex_positioning
+        regime  = row.get("Regime", "—")
+        sig     = row.get("Signal", "—")
+        weight  = row.get("SPY Weight", "—")
+        atr     = row.get("ATR%", "—")
+        ret5d   = row.get("5d Return", "—")
+        label_r = row.get("Regime Label", "—")
+        sig_color = (T.SUCCESS if str(sig).upper() == "LONG" else
+                     T.DANGER  if str(sig).upper() == "SHORT" else T.TEXT_MUTED)
+        signal  = str(label_r)
+        metrics = _row(
+            _mc("Signal",     str(sig), sig_color),
+            _mc("Regime",     str(regime)),
+            _mc("SPY Weight", str(weight)),
+            _mc("ATR%",       str(atr)),
+            _mc("5d Return",  str(ret5d)),
+        )
+
+    score_val = row.get("Score", 0)
+    score_color = (T.SUCCESS if float(str(score_val) or 0) >= 70 else
+                   T.WARNING if float(str(score_val) or 0) >= 40 else T.DANGER)
+
+    return html.Div([
+        metrics,
+        html.Div([
+            html.Div("Signal", style={"color": T.TEXT_MUTED, "fontSize": "10px",
+                                      "fontWeight": "600", "textTransform": "uppercase",
+                                      "marginBottom": "6px"}),
+            html.Div(signal, style={"color": T.TEXT_PRIMARY, "fontSize": "13px"}),
+        ], style={**T.STYLE_CARD, "marginBottom": "14px", "padding": "12px 16px"}),
+        html.Div([
+            html.Span("Score  ", style={"color": T.TEXT_MUTED, "fontSize": "12px"}),
+            html.Span(str(score_val), style={"color": score_color,
+                                              "fontSize": "1.4rem", "fontWeight": "700"}),
+            html.Span(" / 100", style={"color": T.TEXT_MUTED, "fontSize": "12px"}),
+        ]),
+    ])
+
+
+@callback(
+    Output("str-sig-modal", "is_open", allow_duplicate=True),
+    Input("str-sig-modal-dismiss", "n_clicks"),
+    prevent_initial_call=True,
+)
+def _dismiss_sig_modal(n):
+    return False
+
+
+for _slug in ("vix_spike_fade", "ivr_credit_spread", "vol_arbitrage", "gex_positioning"):
+    _make_signal_callback(_slug)

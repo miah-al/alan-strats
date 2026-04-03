@@ -1472,28 +1472,192 @@ def _build_perf_chart(closed_rows: list[dict]):
         [r for r in closed_rows if r.get("Close Date")],
         key=lambda r: str(r["Close Date"]),
     )
+
+    if len(rows) < 2:
+        return html.P(
+            "Not enough trade history — need at least 2 closed trades.",
+            style={"color": T.TEXT_MUTED, "padding": "20px"},
+        )
+
     dates   = [str(r["Close Date"])[:10] for r in rows]
-    pnls    = [r.get("P&L $", 0) or 0 for r in rows]
-    cum_pnl = []
+    pnls    = [float(r.get("P&L $", 0) or 0) for r in rows]
+
+    # ── Core metrics ─────────────────────────────────────────────────────────
+    cum_pnl: list[float] = []
     running = 0.0
     for p in pnls:
         running += p
         cum_pnl.append(running)
 
+    total    = cum_pnl[-1]
+    wins_v   = [p for p in pnls if p > 0]
+    losses_v = [p for p in pnls if p < 0]
+    wins     = len(wins_v)
+    losses   = len(losses_v)
+    win_rate = wins / len(pnls) * 100
+    avg_win  = sum(wins_v)  / wins   if wins   else 0.0
+    avg_loss = sum(losses_v) / losses if losses else 0.0
+
+    sum_wins   = sum(wins_v)
+    sum_losses = abs(sum(losses_v))
+    profit_factor = sum_wins / sum_losses if sum_losses > 0 else float("inf")
+
+    # Sharpe — treat each trade P&L as a "return" relative to $100k capital
+    cap = 100_000.0
+    returns = np.array([p / cap for p in pnls])
+    sharpe = float(np.mean(returns) / np.std(returns) * np.sqrt(252)) if np.std(returns) > 0 else 0.0
+
+    # Max drawdown from cumulative P&L series
+    cum_arr     = np.array(cum_pnl)
+    running_max = np.maximum.accumulate(cum_arr)
+    # avoid div-by-zero when running_max contains zeros (early trades all flat)
+    safe_max    = np.where(running_max == 0, 1.0, running_max)
+    dd_series   = (cum_arr - running_max) / np.abs(safe_max) * 100
+    max_dd      = float(np.min(dd_series))  # most-negative value
+
+    # ── Helper: metric card ──────────────────────────────────────────────────
+    _CARD_STYLE = {
+        "background": T.BG_CARD,
+        "border": f"1px solid {T.BORDER}",
+        "borderRadius": "8px",
+        "padding": "12px 16px",
+        "flex": "1 1 130px",
+        "minWidth": "120px",
+    }
+    _LABEL_STYLE = {"color": T.TEXT_MUTED, "fontSize": "11px",
+                    "textTransform": "uppercase", "letterSpacing": "0.06em",
+                    "marginBottom": "4px"}
+    _VAL_STYLE   = {"fontWeight": "700", "fontSize": "18px"}
+
+    def _card(label: str, value_str: str, color: str = T.TEXT_PRIMARY) -> html.Div:
+        return html.Div([
+            html.Div(label, style=_LABEL_STYLE),
+            html.Div(value_str, style={**_VAL_STYLE, "color": color}),
+        ], style=_CARD_STYLE)
+
+    pf_str  = f"{profit_factor:.2f}" if profit_factor != float("inf") else "∞"
+    dd_str  = f"{max_dd:.1f}%"
+    sr_color = T.SUCCESS if sharpe >= 1.0 else (T.WARNING if sharpe >= 0 else T.DANGER)
+    dd_color = T.DANGER if max_dd < -10 else (T.WARNING if max_dd < -5 else T.SUCCESS)
+
+    summary_row = html.Div([
+        _card("Total P&L",
+              f"{'+'if total>=0 else ''}${total:,.2f}",
+              T.SUCCESS if total >= 0 else T.DANGER),
+        _card("Win Rate",
+              f"{win_rate:.0f}%  ({wins}W/{losses}L)"),
+        _card("Avg Win",    f"+${avg_win:,.2f}",  T.SUCCESS),
+        _card("Avg Loss",   f"${avg_loss:,.2f}",  T.DANGER),
+        _card("Profit Factor", pf_str,
+              T.SUCCESS if profit_factor >= 1.5 else (T.WARNING if profit_factor >= 1.0 else T.DANGER)),
+        _card("Sharpe Ratio",  f"{sharpe:.2f}", sr_color),
+        _card("Max Drawdown",  dd_str,          dd_color),
+    ], style={
+        "display": "flex", "flexWrap": "wrap", "gap": "10px",
+        "marginBottom": "16px",
+    })
+
+    # ── Monthly returns heatmap ───────────────────────────────────────────────
+    df_trades = pd.DataFrame({"close_date": pd.to_datetime(dates), "pnl": pnls})
+    df_trades["year"]  = df_trades["close_date"].dt.year
+    df_trades["month"] = df_trades["close_date"].dt.month
+
+    monthly = df_trades.groupby(["year", "month"])["pnl"].sum().reset_index()
+    years   = sorted(monthly["year"].unique())
+    months  = list(range(1, 13))
+    month_labels = ["Jan","Feb","Mar","Apr","May","Jun",
+                    "Jul","Aug","Sep","Oct","Nov","Dec"]
+
+    # Build z matrix: rows = years (top→bottom), cols = months
+    z = []
+    for yr in years:
+        row_vals = []
+        for mo in months:
+            mask = (monthly["year"] == yr) & (monthly["month"] == mo)
+            val  = float(monthly.loc[mask, "pnl"].sum()) if mask.any() else None
+            row_vals.append(val)
+        z.append(row_vals)
+
+    # Build hover text matrix
+    hover_text = []
+    for yi, yr in enumerate(years):
+        row_txt = []
+        for mi, mo in enumerate(months):
+            v = z[yi][mi]
+            if v is None:
+                row_txt.append(f"{month_labels[mi]} {yr}<br>No trades")
+            else:
+                sign = "+" if v >= 0 else ""
+                row_txt.append(f"{month_labels[mi]} {yr}<br>{sign}${v:,.2f}")
+        hover_text.append(row_txt)
+
+    # Replace None with NaN for plotly
+    z_plot = [[v if v is not None else float("nan") for v in row] for row in z]
+
+    fig_hm = go.Figure(go.Heatmap(
+        z=z_plot,
+        x=month_labels,
+        y=[str(yr) for yr in years],
+        text=hover_text,
+        hovertemplate="%{text}<extra></extra>",
+        colorscale=[
+            [0.0,  "#ef4444"],   # deep red  (large loss)
+            [0.45, "#7f1d1d"],   # dark red
+            [0.5,  "#1f2937"],   # neutral (near-zero)
+            [0.55, "#064e3b"],   # dark green
+            [1.0,  "#10b981"],   # deep green (large gain)
+        ],
+        zmid=0,
+        showscale=True,
+        colorbar=dict(
+            thickness=10, len=0.8,
+            tickformat="$,.0f",
+            tickfont=dict(color=T.TEXT_SEC, size=10),
+            bgcolor=T.BG_CARD,
+            bordercolor=T.BORDER,
+        ),
+        xgap=3, ygap=3,
+    ))
+
+    # Annotate each cell with the P&L value
+    annotations = []
+    for yi, yr in enumerate(years):
+        for mi in range(12):
+            v = z[yi][mi]
+            if v is not None:
+                sign = "+" if v >= 0 else ""
+                annotations.append(dict(
+                    x=month_labels[mi], y=str(yr),
+                    text=f"{sign}${v:,.0f}",
+                    showarrow=False,
+                    font=dict(size=9, color=T.TEXT_PRIMARY),
+                    xref="x", yref="y",
+                ))
+
+    fig_hm.update_layout(
+        template="plotly_dark",
+        paper_bgcolor=T.BG_CARD,
+        plot_bgcolor=T.BG_CARD,
+        font=dict(color=T.TEXT_SEC, size=11),
+        title=dict(text="Monthly Returns ($)", font=dict(size=12, color=T.TEXT_SEC)),
+        height=max(120, 60 + len(years) * 52),
+        margin=dict(l=0, r=0, t=40, b=10),
+        xaxis=dict(side="top", gridcolor=T.BORDER),
+        yaxis=dict(gridcolor=T.BORDER, autorange="reversed"),
+        annotations=annotations,
+    )
+
+    # ── Per-trade P&L bar chart ───────────────────────────────────────────────
     colors = [T.SUCCESS if p >= 0 else T.DANGER for p in pnls]
 
-    fig = go.Figure()
-
-    # Per-trade bars
-    fig.add_trace(go.Bar(
+    fig_bar = go.Figure()
+    fig_bar.add_trace(go.Bar(
         x=dates, y=pnls,
         marker_color=colors,
         name="Trade P&L",
         hovertemplate="%{x}<br>P&L: $%{y:+,.2f}<extra></extra>",
     ))
-
-    # Cumulative line
-    fig.add_trace(go.Scatter(
+    fig_bar.add_trace(go.Scatter(
         x=dates, y=cum_pnl,
         mode="lines+markers",
         line=dict(color=T.ACCENT, width=2),
@@ -1502,17 +1666,16 @@ def _build_perf_chart(closed_rows: list[dict]):
         yaxis="y2",
         hovertemplate="%{x}<br>Cumulative: $%{y:+,.2f}<extra></extra>",
     ))
-
-    fig.add_hline(y=0, line=dict(color=T.BORDER_BRT, width=1))
-
-    fig.update_layout(
+    fig_bar.add_hline(y=0, line=dict(color=T.BORDER_BRT, width=1))
+    fig_bar.update_layout(
         template="plotly_dark",
         paper_bgcolor=T.BG_CARD,
         plot_bgcolor=T.BG_CARD,
         font=dict(color=T.TEXT_SEC, size=11),
-        height=340,
-        margin=dict(l=0, r=0, t=20, b=0),
-        legend=dict(orientation="h", y=-0.15, bgcolor="rgba(0,0,0,0)"),
+        title=dict(text="Per-Trade P&L", font=dict(size=12, color=T.TEXT_SEC)),
+        height=320,
+        margin=dict(l=0, r=0, t=40, b=0),
+        legend=dict(orientation="h", y=-0.18, bgcolor="rgba(0,0,0,0)"),
         yaxis=dict(title="Trade P&L ($)", tickformat="$,.0f",
                    gridcolor=T.BORDER, zeroline=False),
         yaxis2=dict(title="Cumulative ($)", tickformat="$,.0f",
@@ -1521,39 +1684,6 @@ def _build_perf_chart(closed_rows: list[dict]):
         xaxis=dict(gridcolor=T.BORDER),
         barmode="relative",
     )
-
-    total    = cum_pnl[-1] if cum_pnl else 0
-    wins     = sum(1 for p in pnls if p > 0)
-    losses   = len(pnls) - wins
-    win_rate = wins / len(pnls) * 100 if pnls else 0
-    avg_win  = (sum(p for p in pnls if p > 0) / wins)   if wins   else 0
-    avg_loss = (sum(p for p in pnls if p < 0) / losses) if losses else 0
-
-    stats = html.Div([
-        html.Div([
-            html.Span("Total P&L  ", style={"color": T.TEXT_MUTED, "fontSize": "12px"}),
-            html.Span(f"{'+'if total>=0 else ''}${total:,.2f}",
-                      style={"color": T.SUCCESS if total >= 0 else T.DANGER,
-                             "fontWeight": "700"}),
-        ], style={"marginRight": "24px"}),
-        html.Div([
-            html.Span("Win Rate  ", style={"color": T.TEXT_MUTED, "fontSize": "12px"}),
-            html.Span(f"{win_rate:.0f}%  ({wins}W / {losses}L)",
-                      style={"color": T.TEXT_PRIMARY, "fontWeight": "600"}),
-        ], style={"marginRight": "24px"}),
-        html.Div([
-            html.Span("Avg Win  ", style={"color": T.TEXT_MUTED, "fontSize": "12px"}),
-            html.Span(f"+${avg_win:,.2f}",
-                      style={"color": T.SUCCESS, "fontWeight": "600"}),
-        ], style={"marginRight": "24px"}),
-        html.Div([
-            html.Span("Avg Loss  ", style={"color": T.TEXT_MUTED, "fontSize": "12px"}),
-            html.Span(f"${avg_loss:,.2f}",
-                      style={"color": T.DANGER, "fontWeight": "600"}),
-        ]),
-    ], style={"display": "flex", "flexWrap": "wrap", "marginBottom": "12px",
-              "padding": "10px 14px", "background": T.BG_CARD,
-              "borderRadius": "8px", "border": f"1px solid {T.BORDER}"})
 
     # ── P&L by Strategy ──────────────────────────────────────────────────────
     from collections import defaultdict
@@ -1612,15 +1742,30 @@ def _build_perf_chart(closed_rows: list[dict]):
         style={"width": "100%"},
     )
 
+    _section_label = lambda txt: html.Div(txt, style={
+        "color": T.TEXT_SEC, "fontSize": "11px", "fontWeight": "600",
+        "textTransform": "uppercase", "letterSpacing": "0.07em", "marginBottom": "10px",
+    })
+
     return html.Div([
-        stats,
-        dcc.Graph(figure=fig, config={"displayModeBar": False}),
-        html.Div(style={"height": "20px"}),
+        # 1. Summary metrics cards
+        summary_row,
+
+        # 2. Monthly returns heatmap
         dbc.Card(dbc.CardBody([
-            html.Div("P&L by Strategy", style={
-                "color": T.TEXT_SEC, "fontSize": "11px", "fontWeight": "600",
-                "textTransform": "uppercase", "letterSpacing": "0.07em", "marginBottom": "10px",
-            }),
+            _section_label("Monthly Returns"),
+            dcc.Graph(figure=fig_hm, config={"displayModeBar": False}),
+        ]), style={**T.STYLE_CARD, "marginBottom": "12px"}),
+
+        # 3. Per-trade P&L bars + cumulative
+        dbc.Card(dbc.CardBody([
+            _section_label("Per-Trade P&L"),
+            dcc.Graph(figure=fig_bar, config={"displayModeBar": False}),
+        ]), style={**T.STYLE_CARD, "marginBottom": "12px"}),
+
+        # 4. P&L by strategy
+        dbc.Card(dbc.CardBody([
+            _section_label("P&L by Strategy"),
             dcc.Graph(figure=fig_s, config={"displayModeBar": False}),
             html.Div(style={"height": "12px"}),
             summary_grid,
