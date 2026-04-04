@@ -8,12 +8,14 @@ Phase 2 (Guide): Markdown articles from dashboard/tabs/guide_articles/{slug}.md.
 """
 from __future__ import annotations
 
+import importlib
 import logging
 import math
 from datetime import date, timedelta
 from pathlib import Path
 
 import numpy as np
+import pandas as _pd
 from scipy.stats import norm as _scipy_norm
 
 import dash_ag_grid as dag
@@ -29,14 +31,20 @@ logger = logging.getLogger(__name__)
 
 # ── Strategy registry ─────────────────────────────────────────────────────────
 
-_STRATEGIES = [
+_STRATEGIES_RULES = [
     {"label": "Iron Condor (Rules)", "value": "iron_condor_rules"},
-    {"label": "Iron Condor (AI)",    "value": "iron_condor_ai"},
     {"label": "VIX Spike Fade",      "value": "vix_spike_fade"},
     {"label": "IVR Credit Spread",   "value": "ivr_credit_spread"},
     {"label": "Vol Arbitrage",       "value": "vol_arbitrage"},
     {"label": "GEX Positioning",     "value": "gex_positioning"},
 ]
+
+_STRATEGIES_AI = [
+    {"label": "Iron Condor (AI)",    "value": "iron_condor_ai"},
+]
+
+# flat list kept for label lookup and scan-callback registration
+_STRATEGIES = _STRATEGIES_RULES + _STRATEGIES_AI
 
 _SLUG_TO_LABEL: dict[str, str] = {s["value"]: s["label"] for s in _STRATEGIES}
 
@@ -54,7 +62,7 @@ _UNIVERSE_OPTIONS = [{"label": k, "value": k} for k in _UNIVERSE_TICKERS] + [
 
 # ── Guide articles directory ──────────────────────────────────────────────────
 
-_GUIDE_DIR = Path(__file__).parent.parent.parent / "dashboard" / "tabs" / "guide_articles"
+_GUIDE_DIR = Path(__file__).parent.parent / "guide_articles"
 
 
 # ── AG Grid column definitions per strategy ───────────────────────────────────
@@ -390,14 +398,167 @@ def _guide_layout(slug: str) -> html.Div:
     })
 
 
-def _backtest_stub(slug: str) -> html.Div:
-    return dbc.Card(
-        dbc.CardBody(html.P(
-            "Backtest tab — coming in Phase 3.",
-            style={"color": T.TEXT_MUTED, "fontSize": "14px"},
-        )),
-        style=T.STYLE_CARD,
+def _backtest_tab(slug: str) -> html.Div:
+    """Full backtest UI — controls, dynamic parameter sliders, results area."""
+    # ── Load strategy's UI params (needs the class) ───────────────────────────
+    _STRATEGY_CLASSES = {
+        "iron_condor_rules": ("alan_trader.strategies.iron_condor_rules", "IronCondorRulesStrategy"),
+        "iron_condor_ai":    ("alan_trader.strategies.iron_condor_ai",    "IronCondorAIStrategy"),
+        "vix_spike_fade":    ("alan_trader.strategies.vix_spike_fade",    "VixSpikeFadeStrategy"),
+        "ivr_credit_spread": ("alan_trader.strategies.ivr_credit_spread", "IVRCreditSpreadStrategy"),
+        "vol_arbitrage":     ("alan_trader.strategies.vol_arbitrage",     "VolArbitrageStrategy"),
+        "gex_positioning":   ("alan_trader.strategies.gex_positioning",   "GEXPositioningStrategy"),
+    }
+
+    ui_params = []
+    if slug in _STRATEGY_CLASSES:
+        try:
+            mod_path, cls_name = _STRATEGY_CLASSES[slug]
+            mod = importlib.import_module(mod_path)
+            strategy_cls = getattr(mod, cls_name)
+            ui_params = strategy_cls().get_backtest_ui_params()
+        except Exception:
+            ui_params = []
+
+    today_str = date.today().isoformat()
+
+    # ── Controls row ──────────────────────────────────────────────────────────
+    controls = dbc.Card(dbc.CardBody([
+        dbc.Row([
+            dbc.Col([
+                html.Label("Ticker", style={"color": T.TEXT_MUTED, "fontSize": "11px",
+                                             "fontWeight": "600", "textTransform": "uppercase",
+                                             "marginBottom": "4px"}),
+                dbc.Input(
+                    id=f"str-{slug}-bt-ticker",
+                    value="SPY",
+                    placeholder="e.g. SPY",
+                    style={"backgroundColor": T.BG_ELEVATED, "border": f"1px solid {T.BORDER}",
+                           "color": T.TEXT_PRIMARY, "fontSize": "13px"},
+                ),
+            ], width=2),
+            dbc.Col([
+                html.Label("From", style={"color": T.TEXT_MUTED, "fontSize": "11px",
+                                           "fontWeight": "600", "textTransform": "uppercase",
+                                           "marginBottom": "4px"}),
+                dbc.Input(
+                    id=f"str-{slug}-bt-from",
+                    type="date",
+                    value="2022-01-01",
+                    style={"backgroundColor": T.BG_ELEVATED, "border": f"1px solid {T.BORDER}",
+                           "color": T.TEXT_PRIMARY, "fontSize": "13px"},
+                ),
+            ], width=2),
+            dbc.Col([
+                html.Label("To", style={"color": T.TEXT_MUTED, "fontSize": "11px",
+                                         "fontWeight": "600", "textTransform": "uppercase",
+                                         "marginBottom": "4px"}),
+                dbc.Input(
+                    id=f"str-{slug}-bt-to",
+                    type="date",
+                    value=today_str,
+                    style={"backgroundColor": T.BG_ELEVATED, "border": f"1px solid {T.BORDER}",
+                           "color": T.TEXT_PRIMARY, "fontSize": "13px"},
+                ),
+            ], width=2),
+            dbc.Col([
+                html.Label("Starting Capital ($)", style={"color": T.TEXT_MUTED, "fontSize": "11px",
+                                                           "fontWeight": "600",
+                                                           "textTransform": "uppercase",
+                                                           "marginBottom": "4px"}),
+                dbc.Input(
+                    id=f"str-{slug}-bt-capital",
+                    type="number",
+                    value=100000,
+                    min=1000,
+                    step=1000,
+                    style={"backgroundColor": T.BG_ELEVATED, "border": f"1px solid {T.BORDER}",
+                           "color": T.TEXT_PRIMARY, "fontSize": "13px"},
+                ),
+            ], width=3),
+            dbc.Col([
+                html.Label("\u00a0", style={"fontSize": "11px", "marginBottom": "4px",
+                                             "display": "block"}),
+                dbc.Button(
+                    "Run Backtest",
+                    id=f"str-{slug}-bt-run",
+                    color="primary",
+                    style={"fontWeight": "600", "fontSize": "13px", "width": "100%"},
+                ),
+            ], width=3, style={"display": "flex", "flexDirection": "column",
+                               "justifyContent": "flex-end"}),
+        ], className="g-2", align="end"),
+    ]), style={**T.STYLE_CARD, "marginBottom": "12px"})
+
+    # ── Parameter sliders (grouped by row field) ──────────────────────────────
+    param_rows_by_row: dict[int, list[dict]] = {}
+    for p in ui_params:
+        row_idx = p.get("row", 0)
+        param_rows_by_row.setdefault(row_idx, [])
+        param_rows_by_row[row_idx].append(p)
+
+    slider_cards = []
+    if ui_params:
+        slider_children = []
+        for row_idx in sorted(param_rows_by_row.keys()):
+            row_params = sorted(param_rows_by_row[row_idx], key=lambda p: p.get("col", 0))
+            cols = []
+            for p in row_params:
+                key   = p["key"]
+                label = p.get("label", key)
+                mn    = p.get("min", 0)
+                mx    = p.get("max", 1)
+                dflt  = p.get("default", mn)
+                step  = p.get("step", (mx - mn) / 10)
+                help_ = p.get("help", "")
+
+                # Build marks: just the endpoints + default
+                marks_vals = sorted({mn, mx, dflt})
+                marks = {v: {"label": str(round(v, 4)).rstrip("0").rstrip("."),
+                             "style": {"color": T.TEXT_MUTED, "fontSize": "10px"}}
+                         for v in marks_vals}
+
+                cols.append(dbc.Col([
+                    html.Div([
+                        html.Span(label, style={"color": T.TEXT_SEC, "fontSize": "12px",
+                                                "fontWeight": "600"}),
+                        html.Span(
+                            id=f"str-{slug}-bt-param-{key}-val",
+                            children=str(dflt),
+                            style={"color": T.ACCENT, "fontSize": "12px",
+                                   "fontWeight": "700", "marginLeft": "8px"},
+                        ),
+                    ], style={"marginBottom": "6px", "display": "flex",
+                              "alignItems": "center"}),
+                    dcc.Slider(
+                        id=f"str-{slug}-bt-param-{key}",
+                        min=mn, max=mx, value=dflt, step=step,
+                        marks=marks,
+                        tooltip={"placement": "bottom", "always_visible": False},
+                        className="bt-slider",
+                    ),
+                    html.Div(help_, style={"color": T.TEXT_MUTED, "fontSize": "11px",
+                                           "marginTop": "4px", "lineHeight": "1.4"}),
+                ], width=4, style={"padding": "0 12px"}))
+
+            slider_children.append(dbc.Row(cols, className="g-2 mb-2"))
+
+        slider_cards = [dbc.Card(dbc.CardBody([
+            html.Div("Strategy Parameters", style={
+                "color": T.ACCENT, "fontSize": "11px", "fontWeight": "700",
+                "textTransform": "uppercase", "letterSpacing": "0.08em", "marginBottom": "12px",
+            }),
+            html.Hr(style={"borderColor": T.BORDER, "margin": "0 0 14px"}),
+        ] + slider_children), style={**T.STYLE_CARD, "marginBottom": "12px"})]
+
+    # ── Results area ──────────────────────────────────────────────────────────
+    results_area = dcc.Loading(
+        html.Div(id=f"str-{slug}-bt-results"),
+        type="circle",
+        color=T.ACCENT,
     )
+
+    return html.Div([controls] + slider_cards + [results_area], style={"padding": "4px 0"})
 
 
 def _performance_stub(slug: str) -> html.Div:
@@ -420,44 +581,464 @@ def _simulator_stub(slug: str) -> html.Div:
     )
 
 
+# ── Model details tab (Iron Condor AI only) ───────────────────────────────────
+
+_IC_AI_FEATURES = [
+    ("ivr",               "Option Chain", "IV Rank (0–1). Fraction of time VIX was below current level over past year. Entry requires ≥ 0.35."),
+    ("iv_term_slope",     "Option Chain", "VIX 5-day diff / 5. Positive = vol rising (contango). Negative = backwardation (vol falling, sellers favored)."),
+    ("put_call_skew",     "Option Chain", "vol_1m / vol_3m ratio (0.5–2.0). >1.1 signals elevated put premium — structural edge for condor seller."),
+    ("atm_iv",            "Option Chain", "ATM implied vol as decimal (VIX/100). Proxy for option pricing richness."),
+    ("realized_vol_20d",  "Volatility",  "20-day annualized realized vol from daily returns. Compares to IV to compute VRP."),
+    ("vrp",               "Volatility",  "Vol Risk Premium = atm_iv − realized_vol_20d. Positive = implied > realized → structural edge to sell premium."),
+    ("atr_pct",           "Volatility",  "ATR(14) / close price. Daily range as % of spot — measures intraday momentum/choppiness."),
+    ("ret_5d",            "Momentum",    "5-day price return. High |ret_5d| → trending → bad condor environment."),
+    ("ret_20d",           "Momentum",    "20-day price return. Strong directional move → model should reduce P(range-bound)."),
+    ("dist_from_ma50",    "Momentum",    "(close − MA50) / MA50. Measures deviation from trend. Far from MA50 = extended, prone to mean-revert or continue."),
+    ("vix_level",         "VIX",         "Absolute VIX level. 16–28 = condor-friendly. >35 = too much gap risk, model should suppress signal."),
+    ("vix_5d_change",     "VIX",         "VIX 5-day % change. Spike (>+20%) → avoid entry. Fast collapse → vol likely cheap."),
+    ("vix_ma_ratio",      "VIX",         "VIX / 20-day VIX MA. >1.2 = elevated vs recent history. Backwardation signal."),
+    ("rate_10y",          "Macro",       "10-year Treasury yield (decimal). Higher rates → higher carry cost, slightly cheaper puts."),
+    ("yield_curve_2y10y", "Macro",       "10Y−2Y spread. Inversion (<0) historically precedes vol spikes + bear markets."),
+    ("days_to_month_end", "Calendar",    "Days remaining to month end. Options expiry clusters at month-end; liquidity peaks."),
+    ("oi_put_call_proxy", "Option Chain", "OI put/call proxy (reuses put_call_skew). Elevated = market skewed for downside protection."),
+]
+
+_SAVED_MODEL_PATH = Path(__file__).parent.parent.parent / "saved_models" / "iron_condor_ai.pkl"
+_SAMPLE_DATA_PATH = Path(__file__).parent.parent.parent / "data" / "sample_ic_training_data.csv"
+
+
+def _model_tab(slug: str) -> html.Div:
+    if slug != "iron_condor_ai":
+        return html.Div()
+
+    # ── Model status ──────────────────────────────────────────────────────────
+    model_trained = _SAVED_MODEL_PATH.exists()
+    status_color  = T.SUCCESS if model_trained else T.WARNING
+    status_text   = f"Trained model found: {_SAVED_MODEL_PATH.name}" if model_trained \
+                    else "No saved model — run a backtest to train the GBM classifier"
+
+    status_card = dbc.Card(dbc.CardBody([
+        dbc.Row([
+            dbc.Col(html.Div([
+                html.Span("●  ", style={"color": status_color, "fontSize": "16px"}),
+                html.Span("Model Status: ", style={"color": T.TEXT_MUTED, "fontSize": "12px",
+                                                    "fontWeight": "600", "textTransform": "uppercase",
+                                                    "letterSpacing": "0.06em"}),
+                html.Span(status_text, style={"color": T.TEXT_PRIMARY, "fontSize": "13px"}),
+            ]), width=True),
+            dbc.Col(html.Div([
+                html.Span("Algorithm: ", style={"color": T.TEXT_MUTED, "fontSize": "11px",
+                                                 "fontWeight": "600", "textTransform": "uppercase"}),
+                html.Span("Gradient Boosting Classifier (sklearn)",
+                          style={"color": T.ACCENT, "fontSize": "12px",
+                                 "fontFamily": "JetBrains Mono, monospace"}),
+            ]), width="auto"),
+        ], align="center"),
+    ]), style={**T.STYLE_CARD,
+               "borderLeft": f"3px solid {status_color}",
+               "marginBottom": "16px"})
+
+    # ── Feature importance chart (from model or placeholder) ──────────────────
+    feat_names = [f[0] for f in _IC_AI_FEATURES]
+
+    if model_trained:
+        try:
+            import pickle
+            with open(_SAVED_MODEL_PATH, "rb") as f:
+                saved = pickle.load(f)
+            # Support both raw model and dict wrapper
+            clf = saved.get("clf") if isinstance(saved, dict) else saved
+            importances = clf.feature_importances_.tolist() if hasattr(clf, "feature_importances_") else None
+        except Exception:
+            importances = None
+    else:
+        importances = None
+
+    # Placeholder importances based on domain knowledge if no model
+    if importances is None:
+        importances = [
+            0.18,  # ivr            ← most important
+            0.08,  # iv_term_slope
+            0.07,  # put_call_skew
+            0.07,  # atm_iv
+            0.09,  # realized_vol_20d
+            0.10,  # vrp            ← second most important
+            0.05,  # atr_pct
+            0.04,  # ret_5d
+            0.04,  # ret_20d
+            0.04,  # dist_from_ma50
+            0.06,  # vix_level
+            0.04,  # vix_5d_change
+            0.04,  # vix_ma_ratio
+            0.02,  # rate_10y
+            0.03,  # yield_curve_2y10y
+            0.02,  # days_to_month_end
+            0.03,  # oi_put_call_proxy
+        ]
+        importance_note = " (illustrative — run backtest to see trained importances)"
+    else:
+        importance_note = " (from trained model)"
+
+    # Sort by importance descending
+    paired = sorted(zip(feat_names, importances), key=lambda x: x[1], reverse=True)
+    sorted_names, sorted_imps = zip(*paired)
+    bar_colors = [T.ACCENT if v > 0.08 else (T.TEXT_SEC if v > 0.04 else T.BORDER_BRT)
+                  for v in sorted_imps]
+
+    fig_imp = go.Figure(go.Bar(
+        x=list(sorted_imps),
+        y=list(sorted_names),
+        orientation="h",
+        marker=dict(color=bar_colors),
+        text=[f"{v:.1%}" for v in sorted_imps],
+        textposition="outside",
+        textfont=dict(color=T.TEXT_SEC, size=11),
+    ))
+    fig_imp.update_layout(
+        paper_bgcolor=T.BG_BASE,
+        plot_bgcolor=T.BG_ELEVATED,
+        font=dict(color=T.TEXT_PRIMARY, family="Inter, sans-serif", size=12),
+        height=420,
+        margin=dict(l=160, r=60, t=30, b=30),
+        title=dict(text=f"Feature Importances{importance_note}",
+                   font=dict(size=12, color=T.TEXT_MUTED)),
+        xaxis=dict(gridcolor=T.BORDER, tickformat=".0%", showgrid=True),
+        yaxis=dict(gridcolor=T.BORDER, showgrid=False),
+        showlegend=False,
+    )
+
+    importance_card = dbc.Card(dbc.CardBody([
+        html.Div("Feature Importances", style={
+            "color": T.ACCENT, "fontSize": "11px", "fontWeight": "700",
+            "textTransform": "uppercase", "letterSpacing": "0.08em", "marginBottom": "8px",
+        }),
+        html.Hr(style={"borderColor": T.BORDER, "margin": "0 0 12px"}),
+        dcc.Graph(figure=fig_imp, config={"displayModeBar": False}),
+    ]), style={**T.STYLE_CARD, "marginBottom": "16px"})
+
+    # ── Hyperparameters table ─────────────────────────────────────────────────
+    hyperparam_rows = [
+        ("n_estimators",      "100",   "Number of boosting trees. More = slower but better calibration. Default 100 balances speed and accuracy."),
+        ("max_depth",         "3",     "Tree depth. Shallow (3) prevents overfitting — GBM with deep trees memorizes noise."),
+        ("learning_rate",     "0.05",  "Shrinkage factor per tree. Smaller = more regularization, needs more trees."),
+        ("signal_threshold",  "0.60",  "P(range-bound) must exceed this to trigger entry. Higher = fewer but higher-quality signals."),
+        ("ivr_min",           "0.35",  "Hard IVR floor — no entry below this regardless of model score. Ensures option premium is sufficient."),
+        ("vix_max",           "38.0",  "Hard VIX ceiling — suppress entries during volatility regime breaks (crash risk)."),
+        ("delta_short",       "0.16",  "Default short strike delta (≈ 1 std dev). Model adjusts asymmetrically in directional regimes."),
+        ("wing_width_pct",    "5%",    "Wing width as % of spot price. Defines max loss (wing − credit)."),
+        ("dte_target",        "45",    "Target days-to-expiry at entry. Theta decay accelerates after ~45 DTE."),
+        ("dte_exit",          "21",    "Force-close DTE. Avoids gamma risk in final weeks. Non-negotiable rule."),
+        ("profit_target_pct", "50%",   "Take profit at 50% of max credit. Statistically optimal for IC strategies."),
+        ("stop_loss_mult",    "2×",    "Stop loss at 2× credit received. Limits tail loss on gap moves."),
+        ("position_size_pct", "3%",    "Capital at risk per trade (max loss ÷ account = 3%). Kelly-conservative sizing."),
+        ("warmup_bars",       "180",   "Bars before first ML prediction. Ensures sufficient training data (~9 months)."),
+        ("retrain_every",     "30",    "Bars between model retrains (≈ monthly). Walk-forward prevents lookahead bias."),
+    ]
+
+    hyp_table = dbc.Table([
+        html.Thead(html.Tr([
+            html.Th(h, style={"color": T.TEXT_MUTED, "fontSize": "10px", "fontWeight": "700",
+                              "textTransform": "uppercase", "letterSpacing": "0.07em",
+                              "padding": "8px 12px"})
+            for h in ["Parameter", "Default", "Rationale"]
+        ])),
+        html.Tbody([
+            html.Tr([
+                html.Td(p, style={"color": T.ACCENT, "fontSize": "12px", "fontWeight": "600",
+                                   "fontFamily": "JetBrains Mono, monospace",
+                                   "padding": "7px 12px", "whiteSpace": "nowrap"}),
+                html.Td(v, style={"color": T.SUCCESS, "fontSize": "12px", "fontWeight": "700",
+                                   "fontFamily": "JetBrains Mono, monospace",
+                                   "padding": "7px 12px"}),
+                html.Td(r, style={"color": T.TEXT_SEC, "fontSize": "12px",
+                                   "padding": "7px 12px", "lineHeight": "1.5"}),
+            ]) for p, v, r in hyperparam_rows
+        ]),
+    ], bordered=False, hover=True, size="sm",
+        style={"borderColor": T.BORDER, "--bs-table-bg": T.BG_ELEVATED,
+               "--bs-table-color": T.TEXT_PRIMARY,
+               "--bs-table-hover-bg": "#1a2235",
+               "--bs-table-border-color": T.BORDER})
+
+    hyperparam_card = dbc.Card(dbc.CardBody([
+        html.Div("GBM Hyperparameters & Strategy Parameters", style={
+            "color": T.ACCENT, "fontSize": "11px", "fontWeight": "700",
+            "textTransform": "uppercase", "letterSpacing": "0.08em", "marginBottom": "8px",
+        }),
+        html.Hr(style={"borderColor": T.BORDER, "margin": "0 0 12px"}),
+        hyp_table,
+    ]), style={**T.STYLE_CARD, "marginBottom": "16px"})
+
+    # ── Feature descriptions table ────────────────────────────────────────────
+    feat_table = dbc.Table([
+        html.Thead(html.Tr([
+            html.Th(h, style={"color": T.TEXT_MUTED, "fontSize": "10px", "fontWeight": "700",
+                              "textTransform": "uppercase", "letterSpacing": "0.07em",
+                              "padding": "8px 12px"})
+            for h in ["Feature", "Category", "Description"]
+        ])),
+        html.Tbody([
+            html.Tr([
+                html.Td(name, style={"color": T.ACCENT, "fontSize": "11px", "fontWeight": "600",
+                                      "fontFamily": "JetBrains Mono, monospace",
+                                      "padding": "6px 12px", "whiteSpace": "nowrap"}),
+                html.Td(cat, style={"color": T.WARNING, "fontSize": "11px", "fontWeight": "500",
+                                     "padding": "6px 12px", "whiteSpace": "nowrap"}),
+                html.Td(desc, style={"color": T.TEXT_SEC, "fontSize": "12px",
+                                      "padding": "6px 12px", "lineHeight": "1.5"}),
+            ]) for name, cat, desc in _IC_AI_FEATURES
+        ]),
+    ], bordered=False, hover=True, size="sm",
+        style={"borderColor": T.BORDER, "--bs-table-bg": T.BG_ELEVATED,
+               "--bs-table-color": T.TEXT_PRIMARY,
+               "--bs-table-hover-bg": "#1a2235",
+               "--bs-table-border-color": T.BORDER})
+
+    feat_card = dbc.Card(dbc.CardBody([
+        html.Div("Feature Engineering — 17 Input Features", style={
+            "color": T.ACCENT, "fontSize": "11px", "fontWeight": "700",
+            "textTransform": "uppercase", "letterSpacing": "0.08em", "marginBottom": "8px",
+        }),
+        html.Hr(style={"borderColor": T.BORDER, "margin": "0 0 12px"}),
+        html.P([
+            "All 17 features are derived from ", html.Strong("price, VIX, and macro data"),
+            " — no options chain required. VIX serves as the IV proxy. "
+            "Features are constructed without lookahead: only data available at bar ", html.Em("t"),
+            " is used to generate predictions for bar ", html.Em("t+1"), ".",
+        ], style={"color": T.TEXT_SEC, "fontSize": "13px", "lineHeight": "1.6",
+                  "marginBottom": "14px"}),
+        feat_table,
+    ]), style={**T.STYLE_CARD, "marginBottom": "16px"})
+
+    # ── Label construction note ───────────────────────────────────────────────
+    label_card = dbc.Card(dbc.CardBody([
+        html.Div("Label Construction", style={
+            "color": T.ACCENT, "fontSize": "11px", "fontWeight": "700",
+            "textTransform": "uppercase", "letterSpacing": "0.08em", "marginBottom": "8px",
+        }),
+        html.Hr(style={"borderColor": T.BORDER, "margin": "0 0 12px"}),
+        dbc.Row([
+            dbc.Col([
+                html.P("Binary classification target:", style={"color": T.TEXT_MUTED,
+                       "fontSize": "11px", "fontWeight": "600", "textTransform": "uppercase",
+                       "letterSpacing": "0.06em", "marginBottom": "8px"}),
+                html.Div([
+                    html.Div([
+                        html.Span("1  ", style={"color": T.SUCCESS, "fontWeight": "700",
+                                                 "fontFamily": "JetBrains Mono, monospace",
+                                                 "fontSize": "14px"}),
+                        html.Span("Range-bound — IC profitable. Max excursion over next 45 days "
+                                  "≤ 1σ expected N-day move.",
+                                  style={"color": T.TEXT_PRIMARY, "fontSize": "13px"}),
+                    ], style={"marginBottom": "8px", "padding": "8px 12px",
+                              "background": f"{T.SUCCESS}11",
+                              "border": f"1px solid {T.SUCCESS}33",
+                              "borderRadius": "6px"}),
+                    html.Div([
+                        html.Span("0  ", style={"color": T.DANGER, "fontWeight": "700",
+                                                 "fontFamily": "JetBrains Mono, monospace",
+                                                 "fontSize": "14px"}),
+                        html.Span("Trending / gapping — IC loses. Stock breaks outside the "
+                                  "expected 1σ volatility band.",
+                                  style={"color": T.TEXT_PRIMARY, "fontSize": "13px"}),
+                    ], style={"padding": "8px 12px",
+                              "background": f"{T.DANGER}11",
+                              "border": f"1px solid {T.DANGER}33",
+                              "borderRadius": "6px"}),
+                ]),
+            ], width=7),
+            dbc.Col([
+                html.P("Expected positive rate:", style={"color": T.TEXT_MUTED,
+                       "fontSize": "11px", "fontWeight": "600", "textTransform": "uppercase",
+                       "letterSpacing": "0.06em", "marginBottom": "8px"}),
+                html.Div([
+                    html.Div("~48–55%", style={"color": T.SUCCESS, "fontSize": "2rem",
+                                                "fontWeight": "700",
+                                                "fontFamily": "JetBrains Mono, monospace"}),
+                    html.Div("of days are range-bound (45-day window on SPY/QQQ)",
+                             style={"color": T.TEXT_MUTED, "fontSize": "12px",
+                                    "lineHeight": "1.5", "marginTop": "4px"}),
+                    html.Div(["Formula: ", html.Code(
+                        "max_excursion ≤ σ × √(N/252)",
+                        style={"background": T.BG_ELEVATED, "color": T.TEXT_PRIMARY,
+                               "padding": "2px 6px", "borderRadius": "4px",
+                               "fontSize": "11px"})],
+                        style={"color": T.TEXT_MUTED, "fontSize": "12px", "marginTop": "10px"}),
+                ], style={"padding": "14px 16px", "background": T.BG_ELEVATED,
+                          "borderRadius": "8px", "border": f"1px solid {T.BORDER}"}),
+            ], width=5),
+        ]),
+    ]), style={**T.STYLE_CARD, "marginBottom": "16px"})
+
+    # ── Sample data section ───────────────────────────────────────────────────
+    sample_exists = _SAMPLE_DATA_PATH.exists()
+    sample_card = dbc.Card(dbc.CardBody([
+        html.Div("Sample Training Data", style={
+            "color": T.ACCENT, "fontSize": "11px", "fontWeight": "700",
+            "textTransform": "uppercase", "letterSpacing": "0.08em", "marginBottom": "8px",
+        }),
+        html.Hr(style={"borderColor": T.BORDER, "margin": "0 0 12px"}),
+        html.Div(id="str-ic-ai-sample-data-body"),
+        dcc.Store(id="str-ic-ai-sample-exists", data=sample_exists),
+    ]), style=T.STYLE_CARD)
+
+    return html.Div([
+        status_card,
+        dbc.Row([
+            dbc.Col(importance_card, width=12),
+        ]),
+        dbc.Row([
+            dbc.Col(hyperparam_card, width=6),
+            dbc.Col(label_card,      width=6),
+        ], className="g-3 mb-0"),
+        html.Div(style={"marginBottom": "16px"}),
+        feat_card,
+        sample_card,
+    ], style={"padding": "8px 0"})
+
+
+@callback(
+    Output("str-ic-ai-sample-data-body", "children"),
+    Input("str-ic-ai-sample-exists",     "data"),
+)
+def _render_sample_data_preview(exists: bool):
+    if not exists or not _SAMPLE_DATA_PATH.exists():
+        return dbc.Alert([
+            html.Strong("Sample data not yet generated. "),
+            "Run the generator script: ",
+            html.Code("python data/generate_sample_data.py",
+                      style={"background": "#1f2937", "padding": "2px 8px",
+                             "borderRadius": "4px", "fontSize": "12px"}),
+        ], color="warning", style={"fontSize": "13px"})
+
+    try:
+        import pandas as pd
+        df = pd.read_csv(_SAMPLE_DATA_PATH)
+        n_rows   = len(df)
+        n_cols   = len(df.columns)
+        pos_rate = f"{df['label'].mean():.1%}" if "label" in df.columns else "—"
+        date_rng = f"{df['date'].iloc[0]} → {df['date'].iloc[-1]}" if "date" in df.columns else "—"
+
+        stats_row = dbc.Row([
+            dbc.Col(dbc.Card(dbc.CardBody([
+                html.Div("Rows", style={"color": T.TEXT_MUTED, "fontSize": "10px",
+                                        "fontWeight": "700", "textTransform": "uppercase"}),
+                html.Div(f"{n_rows:,}", style={"color": T.TEXT_PRIMARY, "fontSize": "1.4rem",
+                                               "fontWeight": "700",
+                                               "fontFamily": "JetBrains Mono, monospace"}),
+            ], style={"padding": "10px 14px"}), style=T.STYLE_CARD), width="auto"),
+            dbc.Col(dbc.Card(dbc.CardBody([
+                html.Div("Features", style={"color": T.TEXT_MUTED, "fontSize": "10px",
+                                             "fontWeight": "700", "textTransform": "uppercase"}),
+                html.Div(f"{n_cols - 3}", style={"color": T.TEXT_PRIMARY, "fontSize": "1.4rem",
+                                                  "fontWeight": "700",
+                                                  "fontFamily": "JetBrains Mono, monospace"}),
+            ], style={"padding": "10px 14px"}), style=T.STYLE_CARD), width="auto"),
+            dbc.Col(dbc.Card(dbc.CardBody([
+                html.Div("Positive Rate", style={"color": T.TEXT_MUTED, "fontSize": "10px",
+                                                  "fontWeight": "700", "textTransform": "uppercase"}),
+                html.Div(pos_rate, style={"color": T.SUCCESS, "fontSize": "1.4rem",
+                                          "fontWeight": "700",
+                                          "fontFamily": "JetBrains Mono, monospace"}),
+            ], style={"padding": "10px 14px"}), style=T.STYLE_CARD), width="auto"),
+            dbc.Col(dbc.Card(dbc.CardBody([
+                html.Div("Date Range", style={"color": T.TEXT_MUTED, "fontSize": "10px",
+                                               "fontWeight": "700", "textTransform": "uppercase"}),
+                html.Div(date_rng, style={"color": T.TEXT_PRIMARY, "fontSize": "13px",
+                                           "fontWeight": "600",
+                                           "fontFamily": "JetBrains Mono, monospace"}),
+            ], style={"padding": "10px 14px"}), style=T.STYLE_CARD), width="auto"),
+        ], className="g-2 mb-3")
+
+        # Preview last 10 rows
+        preview = df.tail(10).round(4)
+        col_defs = [{"field": c, "width": 80 if c == "date" else 70,
+                     "minWidth": 60} for c in preview.columns]
+        col_defs[0]["width"] = 100  # date column wider
+
+        grid = dag.AgGrid(
+            rowData=preview.to_dict("records"),
+            columnDefs=col_defs,
+            defaultColDef={"resizable": True, "sortable": True},
+            dashGridOptions={"domLayout": "autoHeight",
+                             "suppressColumnVirtualisation": True},
+            className=T.AGGRID_THEME,
+            style={"width": "100%"},
+        )
+
+        return html.Div([
+            html.P([
+                html.Span(f"File: ", style={"color": T.TEXT_MUTED, "fontSize": "11px"}),
+                html.Code(str(_SAMPLE_DATA_PATH.name),
+                          style={"background": T.BG_ELEVATED, "color": T.ACCENT,
+                                 "padding": "2px 6px", "borderRadius": "4px",
+                                 "fontSize": "11px"}),
+                html.Span("  ·  Showing last 10 rows",
+                          style={"color": T.TEXT_MUTED, "fontSize": "11px"}),
+            ], style={"marginBottom": "10px"}),
+            stats_row,
+            grid,
+        ])
+    except Exception as e:
+        return dbc.Alert(f"Could not load sample data: {e}", color="danger")
+
+
 # ── Inner tabs per strategy ───────────────────────────────────────────────────
 
 def _inner_tabs(slug: str) -> dbc.Tabs:
-    tab_style = {"fontSize": "13px", "padding": "6px 14px"}
+    tab_style     = {"fontSize": "13px", "padding": "6px 14px"}
+    tab_act_style = {**tab_style, "borderTop": f"2px solid {T.ACCENT}"}
+    tabs = [
+        dbc.Tab(
+            _screener_layout(slug),
+            label="Screener",
+            tab_id=f"str-{slug}-inner-screener",
+            tab_style=tab_style,
+            active_tab_style=tab_act_style,
+        ),
+        dbc.Tab(
+            _backtest_tab(slug),
+            label="Backtest",
+            tab_id=f"str-{slug}-inner-backtest",
+            tab_style=tab_style,
+            active_tab_style=tab_act_style,
+        ),
+        dbc.Tab(
+            _performance_stub(slug),
+            label="Performance",
+            tab_id=f"str-{slug}-inner-performance",
+            tab_style=tab_style,
+            active_tab_style=tab_act_style,
+        ),
+        dbc.Tab(
+            _guide_layout(slug),
+            label="Guide",
+            tab_id=f"str-{slug}-inner-guide",
+            tab_style=tab_style,
+            active_tab_style=tab_act_style,
+        ),
+    ]
+
+    # Model tab — Iron Condor AI only
+    if slug == "iron_condor_ai":
+        tabs.append(dbc.Tab(
+            _model_tab(slug),
+            label="Model",
+            tab_id=f"str-{slug}-inner-model",
+            tab_style=tab_style,
+            active_tab_style={**tab_act_style, "borderTop": f"2px solid #a78bfa"},
+        ))
+
+    tabs.append(dbc.Tab(
+        _simulator_stub(slug),
+        label="Simulator",
+        tab_id=f"str-{slug}-inner-simulator",
+        tab_style=tab_style,
+        disabled=True,
+    ))
+
     return dbc.Tabs(
-        [
-            dbc.Tab(
-                _screener_layout(slug),
-                label="Screener",
-                tab_id=f"str-{slug}-inner-screener",
-                tab_style=tab_style,
-            ),
-            dbc.Tab(
-                _backtest_stub(slug),
-                label="Backtest",
-                tab_id=f"str-{slug}-inner-backtest",
-                tab_style=tab_style,
-            ),
-            dbc.Tab(
-                _performance_stub(slug),
-                label="Performance",
-                tab_id=f"str-{slug}-inner-performance",
-                tab_style=tab_style,
-            ),
-            dbc.Tab(
-                _guide_layout(slug),
-                label="Guide",
-                tab_id=f"str-{slug}-inner-guide",
-                tab_style=tab_style,
-            ),
-            dbc.Tab(
-                _simulator_stub(slug),
-                label="Simulator",
-                tab_id=f"str-{slug}-inner-simulator",
-                tab_style=tab_style,
-                disabled=True,
-            ),
-        ],
+        tabs,
         id=f"str-{slug}-inner-tabs",
         active_tab=f"str-{slug}-inner-screener",
         style={"marginBottom": "16px"},
@@ -478,24 +1059,65 @@ def layout() -> html.Div:
                 style={"color": T.TEXT_MUTED, "fontSize": "13px", "marginBottom": "16px"},
             ),
 
-            # ── Strategy selector ─────────────────────────────────────────────
+            # ── Strategy selector (AI vs Rules-Based) ────────────────────────
             dbc.Card(dbc.CardBody([
-                html.Label("Select Strategies", style={
-                    "color": T.TEXT_SEC, "fontSize": "12px",
-                    "fontWeight": "600", "marginBottom": "8px",
-                    "display": "block",
-                }),
-                dbc.Checklist(
-                    id="str-strategy-select",
-                    options=_STRATEGIES,
-                    value=["iron_condor_rules"],
-                    inline=True,
-                    inputStyle={"marginRight": "4px", "accentColor": T.ACCENT},
-                    labelStyle={
-                        "color": T.TEXT_PRIMARY, "fontSize": "13px",
-                        "marginRight": "20px", "cursor": "pointer",
-                    },
-                ),
+                # Row: two groups side by side
+                html.Div([
+
+                    # ── Rules-Based group ─────────────────────────────────────
+                    html.Div([
+                        html.Div([
+                            html.Span("⚙", style={"marginRight": "5px", "fontSize": "11px"}),
+                            html.Span("Rules-Based", style={"fontSize": "11px",
+                                "fontWeight": "700", "letterSpacing": "0.06em",
+                                "textTransform": "uppercase", "color": T.ACCENT}),
+                        ], style={"marginBottom": "8px"}),
+                        dbc.Checklist(
+                            id="str-strategy-select-rules",
+                            options=_STRATEGIES_RULES,
+                            value=["iron_condor_rules"],
+                            inline=True,
+                            inputStyle={"marginRight": "4px", "accentColor": T.ACCENT},
+                            labelStyle={
+                                "color": T.TEXT_PRIMARY, "fontSize": "13px",
+                                "marginRight": "18px", "cursor": "pointer",
+                            },
+                        ),
+                    ], style={"flex": "1", "minWidth": "0"}),
+
+                    # ── Divider ───────────────────────────────────────────────
+                    html.Div(style={
+                        "width": "1px", "backgroundColor": T.BORDER,
+                        "margin": "0 20px", "alignSelf": "stretch",
+                    }),
+
+                    # ── AI-Powered group ──────────────────────────────────────
+                    html.Div([
+                        html.Div([
+                            html.Span("🤖", style={"marginRight": "5px", "fontSize": "11px"}),
+                            html.Span("AI-Powered", style={"fontSize": "11px",
+                                "fontWeight": "700", "letterSpacing": "0.06em",
+                                "textTransform": "uppercase",
+                                "color": "#a78bfa"}),  # purple tint
+                        ], style={"marginBottom": "8px"}),
+                        dbc.Checklist(
+                            id="str-strategy-select-ai",
+                            options=_STRATEGIES_AI,
+                            value=[],
+                            inline=True,
+                            inputStyle={"marginRight": "4px", "accentColor": "#a78bfa"},
+                            labelStyle={
+                                "color": T.TEXT_PRIMARY, "fontSize": "13px",
+                                "marginRight": "18px", "cursor": "pointer",
+                            },
+                        ),
+                    ], style={"flex": "0 0 auto"}),
+
+                ], style={"display": "flex", "alignItems": "flex-start",
+                          "flexWrap": "wrap", "gap": "4px"}),
+
+                # Hidden combined store consumed by update_outer_tabs
+                dcc.Store(id="str-strategy-select"),
             ]), style={**T.STYLE_CARD, "marginBottom": "16px"}),
 
             # ── API key note ──────────────────────────────────────────────────
@@ -592,12 +1214,26 @@ def layout() -> html.Div:
     )
 
 
+# ── Callback: merge AI + rules selections into combined store ─────────────────
+
+@callback(
+    Output("str-strategy-select", "data"),
+    Input("str-strategy-select-rules", "value"),
+    Input("str-strategy-select-ai",    "value"),
+)
+def _combine_selections(rules, ai):
+    combined = list(rules or []) + list(ai or [])
+    # Preserve original _STRATEGIES order
+    order = [s["value"] for s in _STRATEGIES]
+    return [s for s in order if s in combined]
+
+
 # ── Callback: update outer tabs when strategy selection changes ───────────────
 
 @callback(
     Output("str-outer-tabs-container", "children"),
     Output("str-strategy-tabs-store",  "data"),
-    Input("str-strategy-select",       "value"),
+    Input("str-strategy-select",       "data"),
 )
 def update_outer_tabs(selected: list[str] | None):
     if not selected:
@@ -1086,6 +1722,379 @@ for _slug in [s["value"] for s in _STRATEGIES]:
     _make_scan_callback(_slug)
 
 
+# ── Backtest tab ──────────────────────────────────────────────────────────────
+
+_STRATEGY_CLASSES_BT = {
+    "iron_condor_rules": ("alan_trader.strategies.iron_condor_rules", "IronCondorRulesStrategy"),
+    "iron_condor_ai":    ("alan_trader.strategies.iron_condor_ai",    "IronCondorAIStrategy"),
+    "vix_spike_fade":    ("alan_trader.strategies.vix_spike_fade",    "VixSpikeFadeStrategy"),
+    "ivr_credit_spread": ("alan_trader.strategies.ivr_credit_spread", "IVRCreditSpreadStrategy"),
+    "vol_arbitrage":     ("alan_trader.strategies.vol_arbitrage",     "VolArbitrageStrategy"),
+    "gex_positioning":   ("alan_trader.strategies.gex_positioning",   "GEXPositioningStrategy"),
+}
+
+
+def _get_ui_params_for_slug(slug: str) -> list:
+    """Instantiate strategy and return its get_backtest_ui_params()."""
+    if slug not in _STRATEGY_CLASSES_BT:
+        return []
+    try:
+        mod_path, cls_name = _STRATEGY_CLASSES_BT[slug]
+        mod = importlib.import_module(mod_path)
+        return getattr(mod, cls_name)().get_backtest_ui_params()
+    except Exception:
+        return []
+
+
+def _render_backtest_results(result, slug: str) -> html.Div:
+    """Build the full results display: metric cards, equity curve, monthly heatmap, trades table."""
+    m = result.metrics
+
+    # ── 6 metric cards ────────────────────────────────────────────────────────
+    def _card(label: str, value: str, color: str = T.TEXT_PRIMARY) -> html.Div:
+        return html.Div([
+            html.Div(label, style={"color": T.TEXT_MUTED, "fontSize": "10px",
+                                   "fontWeight": "700", "textTransform": "uppercase",
+                                   "letterSpacing": "0.05em", "marginBottom": "4px"}),
+            html.Div(value, style={"color": color, "fontSize": "1.35rem",
+                                   "fontWeight": "700", "fontFamily": "JetBrains Mono, monospace"}),
+        ], style={**T.STYLE_CARD, "flex": "1", "minWidth": "130px", "padding": "12px 16px"})
+
+    total_ret  = m.get("total_return_pct", 0.0)
+    sharpe     = m.get("sharpe", 0.0)
+    max_dd     = m.get("max_drawdown_pct", 0.0)
+    win_rate   = m.get("win_rate_pct", 0.0)
+    pf         = m.get("profit_factor", 0.0)
+    n_trades   = m.get("num_trades", 0)
+
+    metric_row = html.Div([
+        _card("Total Return",  f"{total_ret:+.2f}%",
+              T.SUCCESS if total_ret >= 0 else T.DANGER),
+        _card("Sharpe Ratio",  f"{sharpe:.3f}",
+              T.SUCCESS if sharpe >= 1.0 else T.WARNING if sharpe >= 0 else T.DANGER),
+        _card("Max Drawdown",  f"{max_dd:.2f}%",
+              T.DANGER if max_dd < -15 else T.WARNING if max_dd < -5 else T.SUCCESS),
+        _card("Win Rate",      f"{win_rate:.1f}%",
+              T.SUCCESS if win_rate >= 55 else T.WARNING if win_rate >= 40 else T.DANGER),
+        _card("Profit Factor", f"{pf:.3f}" if pf != float("inf") else "∞",
+              T.SUCCESS if pf >= 1.5 else T.WARNING if pf >= 1.0 else T.DANGER),
+        _card("Total Trades",  str(n_trades)),
+    ], style={"display": "flex", "gap": "10px", "flexWrap": "wrap", "marginBottom": "16px"})
+
+    # ── Equity curve ──────────────────────────────────────────────────────────
+    eq = result.equity_curve
+    start_cap = float(eq.iloc[0]) if not eq.empty else 100_000
+
+    # Drawdown shading
+    roll_max = eq.cummax()
+
+    fig_eq = go.Figure()
+
+    # Shade drawdown regions (red fill between equity and its running max)
+    if not eq.empty:
+        fig_eq.add_trace(go.Scatter(
+            x=list(eq.index), y=list(roll_max),
+            line=dict(width=0), showlegend=False, hoverinfo="skip",
+            name="peak",
+        ))
+        fig_eq.add_trace(go.Scatter(
+            x=list(eq.index), y=list(eq),
+            fill="tonexty",
+            fillcolor="rgba(239,68,68,0.12)",
+            line=dict(width=0), showlegend=False, hoverinfo="skip",
+            name="drawdown_fill",
+        ))
+
+    # Equity line
+    fig_eq.add_trace(go.Scatter(
+        x=list(eq.index), y=list(eq),
+        line=dict(color=T.ACCENT, width=2),
+        name="Equity",
+        hovertemplate="%{x|%Y-%m-%d}  $%{y:,.0f}<extra>Equity</extra>",
+    ))
+
+    # Starting capital reference
+    fig_eq.add_hline(
+        y=start_cap,
+        line=dict(color=T.BORDER_BRT, width=1, dash="dot"),
+        annotation_text=f"Start ${start_cap:,.0f}",
+        annotation_position="bottom right",
+        annotation_font_color=T.TEXT_MUTED,
+        annotation_font_size=10,
+    )
+
+    fig_eq.update_layout(
+        paper_bgcolor=T.BG_CARD, plot_bgcolor=T.BG_CARD,
+        font=dict(color=T.TEXT_PRIMARY, family="Inter, sans-serif", size=12),
+        height=350, margin=dict(l=10, r=10, t=30, b=10),
+        title=dict(text="Equity Curve", font=dict(size=12, color=T.TEXT_MUTED)),
+        xaxis=dict(gridcolor=T.BORDER, showgrid=True),
+        yaxis=dict(gridcolor=T.BORDER, showgrid=True, tickformat="$,.0f"),
+        legend=dict(bgcolor="rgba(0,0,0,0)"),
+        showlegend=False,
+        template="plotly_dark",
+    )
+
+    equity_chart = dbc.Card(dbc.CardBody([
+        dcc.Graph(figure=fig_eq, config={"displayModeBar": False}),
+    ]), style={**T.STYLE_CARD, "marginBottom": "16px"})
+
+    # ── Monthly returns heatmap ───────────────────────────────────────────────
+    dr = result.daily_returns
+    heatmap_card = html.Div()
+    if not dr.empty:
+        try:
+            dr_idx = _pd.to_datetime(dr.index)
+            dr_df  = _pd.DataFrame({
+                "year":  dr_idx.year,
+                "month": dr_idx.month,
+                "ret":   dr.values,
+            })
+            # Aggregate to monthly
+            monthly = (dr_df.groupby(["year", "month"])["ret"]
+                       .apply(lambda x: (1 + x).prod() - 1)
+                       .reset_index())
+            pivot = monthly.pivot(index="year", columns="month", values="ret").fillna(0)
+            month_labels = ["Jan","Feb","Mar","Apr","May","Jun",
+                            "Jul","Aug","Sep","Oct","Nov","Dec"]
+            col_labels = [month_labels[c - 1] for c in pivot.columns]
+
+            fig_heat = go.Figure(go.Heatmap(
+                z=(pivot.values * 100).tolist(),
+                x=col_labels,
+                y=[str(y) for y in pivot.index],
+                colorscale="RdYlGn",
+                zmid=0,
+                hovertemplate="%{y} %{x}: %{z:.2f}%<extra></extra>",
+                colorbar=dict(
+                    tickformat=".1f",
+                    ticksuffix="%",
+                    thickness=12,
+                    len=0.8,
+                    title=dict(text="%", side="right"),
+                ),
+            ))
+            fig_heat.update_layout(
+                paper_bgcolor=T.BG_CARD, plot_bgcolor=T.BG_CARD,
+                font=dict(color=T.TEXT_PRIMARY, family="Inter, sans-serif", size=11),
+                height=max(180, 40 + 35 * len(pivot)),
+                margin=dict(l=10, r=60, t=30, b=10),
+                title=dict(text="Monthly Returns (%)", font=dict(size=12, color=T.TEXT_MUTED)),
+                xaxis=dict(side="top"),
+                template="plotly_dark",
+            )
+            heatmap_card = dbc.Card(dbc.CardBody([
+                dcc.Graph(figure=fig_heat, config={"displayModeBar": False}),
+            ]), style={**T.STYLE_CARD, "marginBottom": "16px"})
+        except Exception:
+            pass
+
+    # ── Trades table ──────────────────────────────────────────────────────────
+    trades_card = html.Div()
+    trades_df = result.trades
+    if trades_df is not None and not trades_df.empty:
+        # Select displayable key columns; keep only those that exist
+        preferred = ["entry_date", "exit_date", "ticker", "pnl", "pnl_pct",
+                     "hold_days", "dte_held", "exit_reason", "contracts",
+                     "credit", "status", "winner"]
+        display_cols = [c for c in preferred if c in trades_df.columns]
+        # Add remaining columns not in the preferred list
+        extra_cols = [c for c in trades_df.columns if c not in display_cols]
+        display_cols = display_cols + extra_cols
+
+        col_defs = []
+        for c in display_cols:
+            cd = {"field": c, "resizable": True, "sortable": True, "filter": True,
+                  "minWidth": 70}
+            if c == "pnl":
+                cd["cellStyle"] = {
+                    "function": "params.value >= 0 ? {'color': '#10b981', 'fontWeight': '600'} : {'color': '#ef4444', 'fontWeight': '600'}"
+                }
+                cd["width"] = 100
+            elif c in ("entry_date", "exit_date"):
+                cd["width"] = 105
+            elif c == "exit_reason":
+                cd["flex"] = 1
+                cd["minWidth"] = 120
+            elif c in ("pnl_pct",):
+                cd["cellStyle"] = {
+                    "function": "params.value >= 0 ? {'color': '#10b981'} : {'color': '#ef4444'}"
+                }
+                cd["width"] = 90
+            elif c == "winner":
+                cd["cellStyle"] = {
+                    "function": "params.value ? {'color': '#10b981'} : {'color': '#ef4444'}"
+                }
+                cd["width"] = 75
+            col_defs.append(cd)
+
+        tbl_height = min(400, 50 + len(trades_df) * 40)
+        trades_grid = dag.AgGrid(
+            rowData=trades_df[display_cols].astype(str).to_dict("records"),
+            columnDefs=col_defs,
+            defaultColDef={"resizable": True, "sortable": True,
+                           "cellStyle": {"fontSize": "12px"}},
+            dashGridOptions={"domLayout": "autoHeight" if tbl_height < 400 else "normal",
+                             "animateRows": True},
+            columnSize="sizeToFit",
+            className=T.AGGRID_THEME,
+            style={"width": "100%", "height": f"{tbl_height}px"},
+        )
+        trades_card = dbc.Card(dbc.CardBody([
+            html.Div("Trades", style={
+                "color": T.ACCENT, "fontSize": "11px", "fontWeight": "700",
+                "textTransform": "uppercase", "letterSpacing": "0.08em",
+                "marginBottom": "8px",
+            }),
+            html.Hr(style={"borderColor": T.BORDER, "margin": "0 0 10px"}),
+            trades_grid,
+        ]), style={**T.STYLE_CARD, "marginBottom": "16px"})
+
+    return html.Div([
+        metric_row,
+        equity_chart,
+        heatmap_card,
+        trades_card,
+    ])
+
+
+def _make_backtest_callback(slug: str):
+    """Register a backtest run callback for the given strategy slug."""
+    ui_params = _get_ui_params_for_slug(slug)
+    results_id = f"str-{slug}-bt-results"
+    run_id     = f"str-{slug}-bt-run"
+    ticker_id  = f"str-{slug}-bt-ticker"
+    from_id    = f"str-{slug}-bt-from"
+    to_id      = f"str-{slug}-bt-to"
+    capital_id = f"str-{slug}-bt-capital"
+    param_ids  = [f"str-{slug}-bt-param-{p['key']}" for p in ui_params]
+
+    # Build slider value display callbacks (one per param)
+    for p in ui_params:
+        key      = p["key"]
+        val_id   = f"str-{slug}-bt-param-{key}-val"
+        slider_id = f"str-{slug}-bt-param-{key}"
+
+        @callback(
+            Output(val_id, "children"),
+            Input(slider_id, "value"),
+        )
+        def _update_val(v):
+            if v is None:
+                return ""
+            # Format: trim trailing zeros for floats
+            if isinstance(v, float) and v == int(v):
+                return str(int(v))
+            return str(round(v, 6)).rstrip("0").rstrip(".")
+
+        _update_val.__name__ = f"_bt_val_{slug}_{key}"
+
+    @callback(
+        Output(results_id, "children"),
+        Input(run_id, "n_clicks"),
+        State(ticker_id, "value"),
+        State(from_id, "value"),
+        State(to_id, "value"),
+        State(capital_id, "value"),
+        *[State(pid, "value") for pid in param_ids],
+        prevent_initial_call=True,
+    )
+    def _run_backtest(n, ticker, from_date, to_date, capital, *param_values):
+        if not n:
+            return no_update
+
+        ticker     = (ticker or "SPY").upper().strip()
+        from_date  = from_date  or "2022-01-01"
+        to_date    = to_date    or date.today().isoformat()
+        capital    = float(capital or 100_000)
+
+        # ── Load price data ───────────────────────────────────────────────────
+        try:
+            from db.client import get_engine, get_vix_bars, get_macro_bars, get_price_bars
+            engine = get_engine()
+        except Exception as e:
+            return dbc.Alert(
+                f"Database not available — ensure DB connection is configured. ({e})",
+                color="warning",
+            )
+
+        try:
+            fd = date.fromisoformat(from_date)
+            td = date.fromisoformat(to_date)
+            price_data = get_price_bars(engine, ticker, fd, td)
+        except Exception as e:
+            return dbc.Alert(
+                f"Error loading price data for {ticker}: {e}",
+                color="danger",
+            )
+
+        if price_data is None or price_data.empty:
+            return dbc.Alert(
+                f"No price data found for {ticker} in {from_date} → {to_date}. "
+                "Sync data first via Tools → Data Manager.",
+                color="warning",
+            )
+
+        # Set date index
+        if "date" in price_data.columns:
+            price_data = price_data.set_index("date")
+        price_data.index = _pd.to_datetime(price_data.index)
+
+        # ── Load auxiliary data ───────────────────────────────────────────────
+        try:
+            vix_df  = get_vix_bars(engine, fd, td)
+            rate_df = get_macro_bars(engine, fd, td)
+        except Exception:
+            vix_df  = _pd.DataFrame()
+            rate_df = _pd.DataFrame()
+
+        if not vix_df.empty:
+            vix_df.index = _pd.to_datetime(vix_df.index)
+        if not rate_df.empty:
+            rate_df.index = _pd.to_datetime(rate_df.index)
+
+        auxiliary_data = {"vix": vix_df, "rate10y": rate_df}
+
+        # ── Instantiate strategy + run backtest ───────────────────────────────
+        try:
+            if slug not in _STRATEGY_CLASSES_BT:
+                return dbc.Alert(f"No backtest class registered for strategy '{slug}'.",
+                                 color="danger")
+            mod_path, cls_name = _STRATEGY_CLASSES_BT[slug]
+            mod      = importlib.import_module(mod_path)
+            strategy = getattr(mod, cls_name)()
+
+            params = dict(zip([p["key"] for p in ui_params], param_values))
+            result = strategy.backtest(
+                price_data, auxiliary_data,
+                starting_capital=capital,
+                **params,
+            )
+        except NotImplementedError:
+            return dbc.Alert(
+                f"Strategy '{slug}' backtest is not yet implemented.",
+                color="warning",
+            )
+        except Exception as e:
+            logger.exception(f"Backtest error for {slug}: {e}")
+            return dbc.Alert(f"Backtest error: {str(e)}", color="danger")
+
+        # ── Render results ────────────────────────────────────────────────────
+        try:
+            return _render_backtest_results(result, slug)
+        except Exception as e:
+            logger.exception(f"Result render error for {slug}: {e}")
+            return dbc.Alert(f"Error rendering results: {str(e)}", color="danger")
+
+    _run_backtest.__name__ = f"_run_backtest_{slug}"
+    return _run_backtest
+
+
+# Register backtest callbacks for all strategies
+for _slug in [s["value"] for s in _STRATEGIES]:
+    _make_backtest_callback(_slug)
+
+
 # ── IC chart modal: two-step (open instantly → populate via store) ────────────
 
 def _make_ic_chart_callback(slug: str):
@@ -1109,7 +2118,7 @@ def _make_ic_chart_callback(slug: str):
         ticker = row.get("Ticker", "")
         chain  = row.get("_chain")
         title  = (f"{ticker} Iron Condor  ·  {chain['best_exp']} ({chain['dte_used']} DTE)  ·  "
-                  f"~{chain['target_delta']:.0%}-delta  ·  Net credit ${chain['net_credit']:.2f}/shr"
+                  f"~{chain['target_delta']:.0%}-delta  ·  Net credit ${chain['net_credit']*100:.0f}/contract"
                   if chain else ticker)
         return True, title, row
 
@@ -1153,15 +2162,18 @@ def _build_modal_body(row):
                                    "fontWeight": "700"}),
         ], style={**T.STYLE_CARD, "minWidth": "110px", "flex": "1", "padding": "10px 12px"})
 
+    nc100 = net_credit * 100
+    ml100 = max_loss   * 100
+    pt100 = profit_target * 100
     metrics = html.Div([
-        _mc("Net Credit/shr", f"${net_credit:.2f}",
+        _mc("Net Credit",   f"${nc100:.0f}/contract",
             T.SUCCESS if net_credit > 0 else T.DANGER),
-        _mc("Max Loss/shr",   f"${max_loss:.2f}",  T.DANGER),
-        _mc("50% Target",     f"${profit_target:.2f}", T.SUCCESS),
-        _mc("Upper BE",       f"${be_upper:.2f}"),
-        _mc("Lower BE",       f"${be_lower:.2f}"),
-        _mc("Expiry",         f"{chain['best_exp']} ({chain['dte_used']} DTE)"),
-        _mc("Delta target",   f"~{chain['target_delta']:.0%}"),
+        _mc("Max Loss",     f"${ml100:.0f}/contract", T.DANGER),
+        _mc("50% Target",   f"${pt100:.0f}/contract", T.SUCCESS),
+        _mc("Upper BE",     f"${be_upper:.2f}"),
+        _mc("Lower BE",     f"${be_lower:.2f}"),
+        _mc("Expiry",       f"{chain['best_exp']} ({chain['dte_used']} DTE)"),
+        _mc("Delta target", f"~{chain['target_delta']:.0%}"),
     ], style={"display": "flex", "gap": "10px", "flexWrap": "wrap", "marginBottom": "16px"})
 
     def _cash(mid, action):

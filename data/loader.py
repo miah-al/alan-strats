@@ -393,7 +393,7 @@ def load_real_data(ticker: str = "SPY", n_days: int = 756,
     Returns dict with keys matching simulator output:
       spy, vix, rate2y, rate10y, news
     """
-    from alan_trader.data.polygon_client import PolygonClient
+    from data.polygon_client import PolygonClient
 
     client = PolygonClient(api_key=api_key)
 

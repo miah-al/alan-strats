@@ -500,26 +500,34 @@ def _build_legs_table(grp: pd.DataFrame) -> dag.AgGrid:
         stype = str(r.get("SecurityType", "")).lower()
         if stype == "cash":
             continue
-        px = r.get("TransactionPrice")
+        px   = r.get("TransactionPrice")
+        qty  = float(r.get("Quantity")   or 0)
+        mult = float(r.get("Multiplier") or 100)
+        dirn = str(r.get("Direction", "")).upper()
+        # Mkt value at entry: SELL = credit (positive), BUY = debit (negative)
+        sign = 1.0 if dirn == "SELL" else -1.0
+        mkt_val = sign * float(px) * abs(qty) * mult if px is not None else None
         legs.append({
             "Symbol":    str(r.get("Symbol", "")),
             "Type":      str(r.get("OptionType") or stype).upper(),
             "Strike":    str(r.get("Strike") or "—"),
             "Expiry":    str(r.get("Expiration") or "—")[:10],
-            "Dir":       str(r.get("Direction", "")),
-            "Qty":       float(r.get("Quantity") or 0),
-            "Price":     f"${float(px):,.2f}" if px is not None else "—",
+            "Dir":       dirn,
+            "Qty":       qty,
+            "Entry Px":  f"${float(px):,.2f}" if px is not None else "—",
+            "Mkt Value": f"${mkt_val:,.2f}" if mkt_val is not None else "—",
         })
 
     return dag.AgGrid(
         columnDefs=[
-            {"field": "Symbol",  "flex": 1},
-            {"field": "Type",    "width": 80},
-            {"field": "Strike",  "width": 90},
-            {"field": "Expiry",  "width": 110},
-            {"field": "Dir",     "width": 80},
-            {"field": "Qty",     "width": 70, "type": "numericColumn"},
-            {"field": "Price",   "width": 100},
+            {"field": "Symbol",    "flex": 1},
+            {"field": "Type",      "width": 80},
+            {"field": "Strike",    "width": 90},
+            {"field": "Expiry",    "width": 110},
+            {"field": "Dir",       "width": 70},
+            {"field": "Qty",       "width": 60, "type": "numericColumn"},
+            {"field": "Entry Px",  "width": 95},
+            {"field": "Mkt Value", "width": 105},
         ],
         rowData=legs,
         defaultColDef={"resizable": True},
@@ -567,6 +575,16 @@ def _build_ic_modal_body(
     be_upper      = (short_call_k + net_credit) if short_call_k else None
     be_lower      = (short_put_k  - net_credit) if short_put_k  else None
 
+    # Max loss = (wider spread width − net credit) × multiplier × contracts
+    call_width = (float(long_calls["Strike"].iloc[0]) - float(short_calls["Strike"].iloc[0])
+                  if not long_calls.empty and not short_calls.empty else 0.0)
+    put_width  = (float(short_puts["Strike"].iloc[0]) - float(long_puts["Strike"].iloc[0])
+                  if not long_puts.empty and not short_puts.empty else 0.0)
+    spread_width = max(call_width, put_width) if (call_width > 0 or put_width > 0) else 0.0
+    multiplier   = float(opt["Multiplier"].iloc[0]) if not opt.empty else 100.0
+    contracts    = abs(float(opt["Quantity"].iloc[0])) if not opt.empty else 1.0
+    max_loss     = -(spread_width - net_credit) * multiplier * contracts
+
     # DTE remaining
     exp_dates     = opt["Expiration"].dropna()
     dte_remaining = None
@@ -607,13 +625,18 @@ def _build_ic_modal_body(
         })
     # (50% target and 2× stop would need live P&L; shown only from alerts)
 
-    # 5-column metric row
+    # 5-column metric row — all dollar values use per-contract (×multiplier×contracts)
+    net_credit_dollar   = net_credit * multiplier * contracts
+    profit_target_dollar = net_credit_dollar * 0.50
+    stop_loss_dollar    = -net_credit_dollar * 2.0
     dte_str  = str(dte_remaining) if dte_remaining is not None else "—"
     days_str = str(days_held)     if days_held     is not None else "—"
+    max_loss_str = f"${max_loss:,.2f}" if spread_width > 0 else "—"
     metrics  = html.Div([
-        _metric_card("Net Credit",    f"${net_credit:.2f}",   T.SUCCESS if net_credit >= 0 else T.DANGER),
-        _metric_card("50% Target",    f"${profit_target:.2f}", T.SUCCESS),
-        _metric_card("2× Stop",       f"${stop_loss:.2f}",    T.DANGER),
+        _metric_card("Net Credit",    f"${net_credit_dollar:,.2f}",    T.SUCCESS if net_credit >= 0 else T.DANGER),
+        _metric_card("Max Loss",      max_loss_str,                    T.DANGER),
+        _metric_card("50% Target",    f"${profit_target_dollar:,.2f}", T.SUCCESS),
+        _metric_card("2× Stop",       f"${stop_loss_dollar:,.2f}",     T.DANGER),
         _metric_card("DTE Remaining", dte_str,
                      T.DANGER if (dte_remaining or 999) <= 7 else
                      (T.WARNING if (dte_remaining or 999) <= 21 else T.TEXT_PRIMARY)),
@@ -725,11 +748,15 @@ def _build_screener_modal_body(
     ne_full = _net_entry(grp)
     alerts  = compute_position_alerts(grp, strategy, None, ne_full)
 
+    multiplier_gen = float(opt["Multiplier"].iloc[0]) if not opt.empty else 100.0
+    contracts_gen  = abs(float(opt["Quantity"].iloc[0])) if not opt.empty else 1.0
+    net_credit_dollar_gen   = net_credit * multiplier_gen * contracts_gen
+    profit_target_dollar_gen = abs(net_credit_dollar_gen) * 0.50
     dte_str  = str(dte_remaining) if dte_remaining is not None else "—"
     days_str = str(days_held)     if days_held     is not None else "—"
     metrics  = html.Div([
-        _metric_card(label_type,      f"${net_credit:.2f}",   T.SUCCESS if is_credit else T.DANGER),
-        _metric_card("50% Target",    f"${profit_target:.2f}", T.SUCCESS),
+        _metric_card(label_type,      f"${net_credit_dollar_gen:,.2f}",    T.SUCCESS if is_credit else T.DANGER),
+        _metric_card("50% Target",    f"${profit_target_dollar_gen:,.2f}", T.SUCCESS),
         _metric_card("DTE Remaining", dte_str,
                      T.DANGER if (dte_remaining or 999) <= 7 else
                      (T.WARNING if (dte_remaining or 999) <= 21 else T.TEXT_PRIMARY)),
@@ -996,7 +1023,9 @@ def layout() -> html.Div:
                         html.Div("Delete by date", style={"color": T.TEXT_SEC, "fontSize": "11px",
                                                            "fontWeight": "600", "marginBottom": "8px"}),
                         dcc.Dropdown(id="pt-del-date-picker", placeholder="Select date…",
-                                     clearable=True, style={"fontSize": "12px", "marginBottom": "8px"}),
+                                     clearable=True, className="dash-dropdown",
+                                     style={"fontSize": "12px", "marginBottom": "8px",
+                                            "backgroundColor": T.BG_ELEVATED}),
                         dbc.Button("Delete this date", id="pt-del-date-btn", color="danger",
                                    size="sm", outline=True, style={"width": "100%", "fontSize": "12px"}),
                     ]), style={**T.STYLE_CARD, "padding": "12px"}), width=4),
@@ -1025,12 +1054,13 @@ def layout() -> html.Div:
                         "textTransform": "uppercase", "marginBottom": "10px",
                     }),
                     dbc.Row([
-                        dbc.Col(dcc.Dropdown(
+                        dbc.Col(dbc.Select(
                             id="pt-cash-dir",
                             options=[{"label": "Deposit", "value": "DEPOSIT"},
                                      {"label": "Withdrawal", "value": "WITHDRAWAL"}],
-                            value="DEPOSIT", clearable=False,
-                            style={"fontSize": "13px"},
+                            value="DEPOSIT",
+                            style={"fontSize": "13px", "backgroundColor": T.BG_ELEVATED,
+                                   "border": f"1px solid {T.BORDER}", "color": T.TEXT_PRIMARY},
                         ), width=3),
                         dbc.Col(dbc.Input(
                             id="pt-cash-amount", type="number", placeholder="Amount",
@@ -1062,15 +1092,18 @@ def layout() -> html.Div:
                         ), width=4),
                         dbc.Col(dcc.Dropdown(
                             id="pt-txn-filter-type", placeholder="Security Type",
-                            clearable=True, style={"fontSize": "13px"},
+                            clearable=True, className="dash-dropdown",
+                            style={"fontSize": "13px", "backgroundColor": T.BG_ELEVATED},
                         ), width=2),
                         dbc.Col(dcc.Dropdown(
                             id="pt-txn-filter-dir", placeholder="Direction",
-                            clearable=True, style={"fontSize": "13px"},
+                            clearable=True, className="dash-dropdown",
+                            style={"fontSize": "13px", "backgroundColor": T.BG_ELEVATED},
                         ), width=2),
                         dbc.Col(dcc.Dropdown(
                             id="pt-txn-filter-strat", placeholder="Strategy",
-                            clearable=True, style={"fontSize": "13px"},
+                            clearable=True, className="dash-dropdown",
+                            style={"fontSize": "13px", "backgroundColor": T.BG_ELEVATED},
                         ), width=4),
                     ], align="center"),
                 ]), style={**T.STYLE_CARD, "marginBottom": "8px", "padding": "8px"}),
@@ -1143,6 +1176,7 @@ def layout() -> html.Div:
         dcc.Store(id="pt-delete-status",    data=""),
 
         dcc.Interval(id="pt-refresh", interval=60_000, n_intervals=0),
+        dcc.Location(id="pt-url", refresh=False),
     ], style=T.STYLE_PAGE)
 
 
@@ -1381,9 +1415,20 @@ def refresh_all(_n, _btn):
     Output("pt-modal-title",   "children", allow_duplicate=True),
     Output("pt-selected-tgid", "data"),
     Input("pt-open-grid",      "selectedRows"),
+    Input("pt-url",            "search"),
     prevent_initial_call=True,
 )
-def open_position_modal(selected_rows):
+def open_position_modal(selected_rows, url_search):
+    from dash import ctx
+    # Deep-link from blotter: /paper-trading?tgid=xxx
+    if ctx.triggered_id == "pt-url" and url_search:
+        from urllib.parse import parse_qs, urlparse
+        qs = parse_qs(url_search.lstrip("?"))
+        tgid = (qs.get("tgid") or [""])[0].strip()
+        if tgid:
+            return True, "Position Detail", tgid
+        return no_update, no_update, no_update
+
     if not selected_rows:
         return no_update, no_update, no_update
 

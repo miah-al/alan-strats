@@ -24,7 +24,7 @@ WALK-FORWARD TRAINING
   - Retrain every 30 bars (monthly equivalent)
   - No future data ever used in feature construction or labels
 
-FEATURE SET (18 features)
+FEATURE SET (17 features)
 -------------------------
   Option chain:  ivr, iv_term_slope, put_call_skew, atm_iv, oi_put_call_ratio
   Momentum:      ret_5d, ret_20d, dist_from_ma50 (% distance)
@@ -37,7 +37,7 @@ LABEL CONSTRUCTION
 ------------------
   range_bound_N = 1 if max(|daily_return|) over next N days ≤ realized_vol_20d
   This is a binary label: will the stock stay within its own recent vol band?
-  Calibrated at N = dte_target (default 21 days for strike optimization)
+  Calibrated at N = dte_target (default 45 days)
 """
 
 from __future__ import annotations
@@ -239,7 +239,7 @@ class IronCondorAIStrategy(BaseStrategy):
     status               = StrategyStatus.ACTIVE
     description          = (
         "AI-powered Iron Condor. A gradient boosting model predicts range-bound "
-        "conditions using 18 features (IVR, term structure, momentum, VIX regime, macro). "
+        "conditions using 17 features (IVR, term structure, momentum, VIX regime, macro). "
         "Enters only when P(range-bound) ≥ threshold. Strike placement adapts to regime. "
         "Walk-forward: retrains every 30 bars. Ticker is a parameter."
     )
@@ -594,7 +594,7 @@ class IronCondorAIStrategy(BaseStrategy):
                 adaptive_delta = d_short
                 if prob >= 0.75:
                     adaptive_delta = min(d_short + 0.04, 0.22)  # slightly tighter
-                elif prob < thresh + 0.05:
+                elif prob < thresh:
                     adaptive_delta = max(d_short - 0.03, 0.10)  # slightly wider
 
                 call_short_K = _find_strike_for_delta(spot, T_entry, r, iv_val, adaptive_delta, "call")

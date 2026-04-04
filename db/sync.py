@@ -43,7 +43,8 @@ def sync_price_bars(
     from sqlalchemy import text as _t
     last = get_last_sync_date(engine, "PriceBar", symbol)
     if last:
-        from_date = last
+        # Use whichever is earlier — allows backfilling further back than last sync
+        from_date = min(from_date, last)
         from alan_trader.db.client import get_ticker_id
         _tid = get_ticker_id(engine, symbol)
         if _tid:
@@ -353,13 +354,47 @@ def sync_option_snapshots(
             """), {"d": snap_d}).fetchall()
         return {_TENOR_DTE[r[0]]: float(r[1]) / 100 for r in rows if r[1] is not None}
 
-    # Step 2: for each contract, fetch daily OHLC and build per-date chain rows
-    # Accumulate rows by snapshot date for batch upsert
+    # Pre-load already-synced dates so we can skip them on resume
+    from alan_trader.db.client import get_ticker_id as _get_tid
+    _tid = _get_tid(engine, symbol)
+    synced_dates: set[date] = set()
+    if _tid:
+        with engine.connect() as _conn:
+            from sqlalchemy import text as _t
+            _rows = _conn.execute(_t("""
+                SELECT DISTINCT SnapshotDate FROM mkt.OptionSnapshot
+                WHERE TickerId = :tid AND SnapshotDate BETWEEN :from_d AND :to_d
+            """), {"tid": _tid, "from_d": from_date, "to_d": to_date}).fetchall()
+            synced_dates = {r[0] if isinstance(r[0], date) else r[0].date() for r in _rows}
+
+    if synced_dates and progress_cb:
+        progress_cb(
+            f"Resuming — {len(synced_dates)} dates already synced, skipping those…",
+            0, len(all_contracts), 0,
+        )
+
+    # Step 2: for each contract, fetch daily OHLC and build per-date chain rows.
+    # Flush to DB every FLUSH_EVERY contracts so progress is saved incrementally.
+    FLUSH_EVERY  = 500
     rows_by_date: dict[date, list[dict]] = {}
     total_rows   = 0
     errors       = []
 
     from scipy.optimize import brentq as _brentq
+
+    def _flush_to_db():
+        """Write all accumulated rows to DB, update synced_dates."""
+        for snap_date, date_rows in sorted(rows_by_date.items()):
+            try:
+                n = upsert_option_snapshots(engine, symbol, snap_date, pd.DataFrame(date_rows))
+                total_rows_ref[0] += n
+                synced_dates.add(snap_date)
+            except Exception as e:
+                errors.append(f"{snap_date}: {e}")
+        rows_by_date.clear()
+
+    # Mutable container so _flush_to_db can update the outer total_rows
+    total_rows_ref = [0]
 
     for i, contract in enumerate(all_contracts):
         ticker     = contract["ticker"]
@@ -369,7 +404,17 @@ def sync_option_snapshots(
         exp_date   = date.fromisoformat(exp_str)
 
         if progress_cb:
-            progress_cb(f"[{i+1}/{len(all_contracts)}] {ticker}", i + 1, len(all_contracts), total_rows)
+            progress_cb(f"[{i+1}/{len(all_contracts)}] {ticker}", i + 1, len(all_contracts), total_rows_ref[0])
+
+        # Skip contract entirely if all its possible bar dates are already synced
+        contract_start = max(from_date, exp_date - timedelta(days=dte_max))
+        contract_end   = min(to_date,   exp_date - timedelta(days=dte_min))
+        if contract_start > contract_end:
+            continue
+        # Check if every trading date in this contract's window is already synced
+        relevant_spot_dates = [d for d in spot_dates if contract_start <= d <= contract_end]
+        if relevant_spot_dates and all(d in synced_dates for d in relevant_spot_dates):
+            continue  # all dates covered — skip Polygon API call
 
         try:
             bars = client.get_aggregates(ticker, str(from_date), str(to_date))
@@ -385,6 +430,8 @@ def sync_option_snapshots(
                 bar_date = bar_date.date()
             if bar_date < from_date or bar_date > to_date:
                 continue
+            if bar_date in synced_dates:
+                continue  # already committed to DB
 
             S = spot_series.get(bar_date)
             if not S:
@@ -439,14 +486,15 @@ def sync_option_snapshots(
                 "volume":        int(row.get("volume") or 0),
             })
 
-    # Step 3: upsert each date's rows into mkt.OptionSnapshot
-    for snap_date, date_rows in sorted(rows_by_date.items()):
-        try:
-            df = pd.DataFrame(date_rows)
-            n  = upsert_option_snapshots(engine, symbol, snap_date, df)
-            total_rows += n
-        except Exception as e:
-            errors.append(f"{snap_date}: {e}")
+        # Flush to DB every FLUSH_EVERY contracts
+        if (i + 1) % FLUSH_EVERY == 0 and rows_by_date:
+            _flush_to_db()
+
+    # Step 3: final flush for any remaining rows
+    if rows_by_date:
+        _flush_to_db()
+
+    total_rows = total_rows_ref[0]
 
     log_sync(engine, "OptionSnapshot", to_date, total_rows, symbol,
              error="; ".join(errors) if errors else None)
@@ -477,7 +525,7 @@ def sync_vix_bars(
     from sqlalchemy import text as _t
     last = get_last_sync_date(engine, "VixBar")
     if last:
-        from_date = last
+        from_date = min(from_date, last)
         with engine.begin() as _conn:
             _conn.execute(_t("DELETE FROM mkt.VixBar WHERE BarDate = :d"), {"d": last})
 
@@ -544,7 +592,7 @@ def sync_macro_bars(
         if count == 0:
             last = None  # Force full resync
         else:
-            from_date = last
+            from_date = min(from_date, last)
             with engine.begin() as _conn:
                 _conn.execute(_t("DELETE FROM mkt.MacroBar WHERE BarDate = :d"), {"d": last})
 
@@ -593,7 +641,7 @@ def sync_news(
     from sqlalchemy import text as _t
     last = get_last_sync_date(engine, "News", symbol)
     if last:
-        from_date = last
+        from_date = min(from_date, last)
         from alan_trader.db.client import get_ticker_id as _gtid
         _tid = _gtid(engine, symbol)
         if _tid:
@@ -645,7 +693,7 @@ def sync_dividends(
 
     last = get_last_sync_date(engine, "Dividend", symbol)
     if last:
-        from_date = last
+        from_date = min(from_date, last)
 
     if from_date > to_date:
         return {"status": "up_to_date", "rows": 0}
@@ -707,7 +755,7 @@ def sync_earnings(
 
     last = get_last_sync_date(engine, "Earnings", symbol)
     if last:
-        from_date = last
+        from_date = min(from_date, last)
 
     if progress_cb:
         progress_cb(f"Fetching {symbol} earnings from Polygon…")
@@ -887,7 +935,7 @@ def sync_vix_futures(
 
     last = get_last_sync_date(engine, "VixFuture")
     if last:
-        from_date = last
+        from_date = min(from_date, last)
 
     if progress_cb:
         progress_cb("Fetching VIX front-month futures (VX=F) via yfinance…")
@@ -1004,7 +1052,7 @@ def sync_treasury_bars(
 
     last = get_last_sync_date(engine, "TreasuryBar")
     if last:
-        from_date = last
+        from_date = min(from_date, last)
         with engine.begin() as conn:
             conn.execute(_t("DELETE FROM mkt.TreasuryBar WHERE BarDate = :d"), {"d": last})
 
@@ -1016,7 +1064,7 @@ def sync_treasury_bars(
         if progress_cb:
             progress_cb(f"Fetching {series_id} from FRED…")
         try:
-            url  = f"https://fred.stlouisfed.org/graph/fredgraph.csv?id={series_id}"
+            url  = f"https://fred.stlouisfed.org/graph/fredgraph.csv?id={series_id}&observation_start={from_date}"
             resp = requests.get(url, timeout=30)
             resp.raise_for_status()
             df = pd.read_csv(StringIO(resp.text))
@@ -1111,7 +1159,7 @@ def sync_cpi(
 
     last = get_last_sync_date(engine, "CpiBar")
     if last:
-        from_date = last
+        from_date = min(from_date, last)
         with engine.begin() as conn:
             conn.execute(_t("DELETE FROM mkt.CpiBar WHERE BarDate = :d"), {"d": last})
 

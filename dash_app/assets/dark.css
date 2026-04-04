@@ -136,7 +136,7 @@ body, html {
 /* Dash 4 uses data attributes on the outer wrapper */
 [data-dash-is-loading] { color: inherit; }
 
-/* react-select v5 classes (Dash 4.x) */
+/* react-select — covers both dash-prefix (-) and BEM (__) class naming */
 .dash-dropdown > div,
 .dash-dropdown > div > div {
     background-color: #161d2e !important;
@@ -145,38 +145,78 @@ body, html {
 }
 .dash-dropdown input { color: #f9fafb !important; }
 
-/* Menu portal renders at body level — target globally */
+/* Control: matches react-select__control (BEM __) and css-xxx-control (hash -) */
+[class*="__control"],
+[class*="-control"] {
+    background-color: #161d2e !important;
+    border-color: #1f2937 !important;
+    color: #f9fafb !important;
+    min-height: 36px !important;
+}
+[class*="__control"]:hover,
+[class*="-control"]:hover {
+    border-color: #374151 !important;
+}
+
+/* Menu portal renders at body level */
+[class*="__menu"],
 [class*="-menu"] {
     background-color: #161d2e !important;
     border: 1px solid #1f2937 !important;
     color: #f9fafb !important;
     z-index: 9999 !important;
 }
+[class*="__menu-list"],
+[class*="-menu-list"] {
+    background-color: #161d2e !important;
+}
+[class*="__option"],
 [class*="-option"] {
     background-color: #161d2e !important;
     color: #f9fafb !important;
 }
+[class*="__option"]:hover,
+[class*="__option--is-focused"],
 [class*="-option"]:hover,
 [class*="-option"][class*="focused"] {
     background-color: #1a2235 !important;
     color: #f9fafb !important;
 }
+[class*="__option--is-selected"],
 [class*="-option"][class*="selected"] {
     background-color: rgba(99,102,241,0.25) !important;
-}
-[class*="-control"] {
-    background-color: #161d2e !important;
-    border-color: #1f2937 !important;
     color: #f9fafb !important;
 }
+
+/* Value / placeholder */
+[class*="__single-value"],
+[class*="__placeholder"],
 [class*="-singleValue"],
-[class*="-placeholder"],
-[class*="-multiValue"] {
+[class*="-placeholder"] {
     color: #f9fafb !important;
-    background-color: #1f2937 !important;
 }
+[class*="__multi-value"],
+[class*="-multiValue"] {
+    background-color: #1f2937 !important;
+    color: #f9fafb !important;
+}
+[class*="__multi-value__label"],
 [class*="-multiValueLabel"] { color: #f9fafb !important; }
+[class*="__indicator-separator"],
 [class*="-indicatorSeparator"] { background-color: #374151 !important; }
+
+/* Input inside react-select — background AND text */
+[class*="__input"] input,
+[class*="-Input"] input,
+.dash-dropdown input {
+    background-color: transparent !important;
+    color: #f9fafb !important;
+}
+/* Container background */
+.dash-dropdown,
+.dash-dropdown > div {
+    background-color: #161d2e !important;
+}
 
 /* Dash 4.x react-select v5 classes */
 .Select-control {
@@ -249,6 +289,50 @@ body, html {
     border-color: #1f2937 !important;
 }
 
+/* ── Bootstrap Accordion dark ────────────────────────────────────────────── */
+.accordion {
+    --bs-accordion-bg: #111827 !important;
+    --bs-accordion-border-color: #1f2937 !important;
+    --bs-accordion-btn-bg: #111827 !important;
+    --bs-accordion-btn-color: #f9fafb !important;
+    --bs-accordion-btn-focus-border-color: #6366f1 !important;
+    --bs-accordion-active-bg: #161d2e !important;
+    --bs-accordion-active-color: #f9fafb !important;
+    --bs-accordion-body-bg: #111827 !important;
+    --bs-accordion-color: #f9fafb !important;
+}
+.accordion-item {
+    background-color: #111827 !important;
+    border-color: #1f2937 !important;
+    color: #f9fafb !important;
+}
+.accordion-button {
+    background-color: #111827 !important;
+    color: #f9fafb !important;
+    font-size: 13px;
+    font-weight: 500;
+}
+.accordion-button:not(.collapsed) {
+    background-color: #161d2e !important;
+    color: #6366f1 !important;
+    box-shadow: inset 0 -1px 0 #1f2937 !important;
+}
+.accordion-button::after {
+    filter: invert(1) brightness(0.7);
+}
+.accordion-button:focus {
+    box-shadow: 0 0 0 2px rgba(99,102,241,0.3) !important;
+    border-color: #6366f1 !important;
+}
+.accordion-body {
+    background-color: #111827 !important;
+    color: #f9fafb !important;
+    font-size: 13px;
+}
+.accordion-header {
+    background-color: #111827 !important;
+}
+
 /* ── dbc Modal dark ───────────────────────────────────────────────────────── */
 .modal-content {
     background-color: #0a0e1a !important;
@@ -261,6 +345,32 @@ body, html {
 }
 .modal-body {
     background-color: #0a0e1a !important;
+}
+
+/* ── Bootstrap Input dark ────────────────────────────────────────────────── */
+.form-control, .form-select {
+    background-color: #161d2e !important;
+    border-color: #1f2937 !important;
+    color: #f9fafb !important;
+}
+.form-control:focus, .form-select:focus {
+    background-color: #161d2e !important;
+    border-color: #6366f1 !important;
+    color: #f9fafb !important;
+    box-shadow: 0 0 0 2px rgba(99,102,241,0.25) !important;
+}
+.form-control::placeholder {
+    color: #6b7280 !important;
+}
+input[type="date"]::-webkit-calendar-picker-indicator {
+    filter: invert(0.7);
+}
+
+/* ── Bootstrap CardHeader dark ───────────────────────────────────────────── */
+.card-header {
+    background-color: #0a0e1a !important;
+    border-color: #1f2937 !important;
+    color: #9ca3af !important;
 }
 
 /* ── Native select dark ───────────────────────────────────────────────────── */
@@ -276,26 +386,47 @@ select option {
 
 /* ── Markdown: dark code blocks ──────────────────────────────────────────── */
 pre, pre code {
-    background-color: #161d2e !important;
-    color: #f9fafb !important;
-    border: 1px solid #1f2937 !important;
+    background-color: #0d1117 !important;
+    color: #e6edf3 !important;
+    border: 1px solid #30363d !important;
     border-radius: 6px;
     padding: 12px !important;
     font-size: 12px;
-    line-height: 1.6;
+    line-height: 1.7;
+    font-family: 'JetBrains Mono', 'Fira Code', 'Cascadia Code', monospace !important;
+}
+/* Kill any syntax-highlighter span colors inside pre blocks */
+pre span, pre code span {
+    color: #e6edf3 !important;
 }
 code {
     background-color: #1f2937 !important;
-    color: #f9fafb !important;
+    color: #e6edf3 !important;
     padding: 2px 5px;
     border-radius: 4px;
     font-size: 12px;
+    font-family: 'JetBrains Mono', monospace !important;
 }
 blockquote {
     border-left: 3px solid #6366f1 !important;
     margin-left: 0 !important;
     padding-left: 12px !important;
     color: #9ca3af !important;
+}
+
+/* ── dcc.Dropdown group headers (disabled options used as section labels) ─── */
+[class*="-option"][class*="disabled"],
+[class*="-option--is-disabled"] {
+    color: #6366f1 !important;
+    background-color: #0a0e1a !important;
+    font-size: 11px !important;
+    font-weight: 700 !important;
+    letter-spacing: 0.07em !important;
+    text-transform: uppercase !important;
+    padding: 8px 10px 4px !important;
+    pointer-events: none !important;
+    cursor: default !important;
+    border-top: 1px solid #1f2937 !important;
 }
 
 /* ── IC screener: Chart button cell ──────────────────────────────────────── */

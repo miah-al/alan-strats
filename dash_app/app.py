@@ -61,17 +61,22 @@ app.layout = html.Div(
 )
 
 # ── Pre-import all page modules so callbacks register at startup ──────────────
+import dash_app.pages.blotter
 import dash_app.pages.paper_trading
 import dash_app.pages.market
 import dash_app.pages.screener
 import dash_app.pages.strategies
+import dash_app.pages.backtest
 import dash_app.pages.tools
 
 # ── Routing ───────────────────────────────────────────────────────────────────
 @app.callback(Output("page-content", "children"), Input("url", "pathname"))
 def render_page(pathname: str):
     try:
-        if pathname in (None, "/", "/paper-trading"):
+        if pathname in (None, "/"):
+            from dash_app.pages.blotter import layout
+            return layout()
+        if pathname == "/paper-trading":
             from dash_app.pages.paper_trading import layout
             return layout()
         if pathname == "/market":
@@ -82,6 +87,9 @@ def render_page(pathname: str):
             return layout()
         if pathname == "/strategies":
             from dash_app.pages.strategies import layout
+            return layout()
+        if pathname == "/backtest":
+            from dash_app.pages.backtest import layout
             return layout()
         if pathname == "/tools":
             from dash_app.pages.tools import layout

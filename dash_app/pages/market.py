@@ -695,10 +695,11 @@ def render_vol_surface(ticker, api_key):
         from data.loader import fetch_live_vol_surface
         c     = _polygon_client(api_key)
         today = _dt.date.today()
-        agg   = c._get(f"/v2/aggs/ticker/{ticker}/range/1/day/{today}/{today}",
-                       {"adjusted": "true", "limit": 1})
+        agg   = c._get(f"/v2/aggs/ticker/{ticker}/prev", {"adjusted": "true"})
         res   = agg.get("results", [])
-        spot  = float(res[0]["c"]) if res else 500.0
+        if not res:
+            return html.P(f"Could not fetch spot price for {ticker}.", style={"color": T.WARNING})
+        spot  = float(res[0]["c"])
 
         surf_df = fetch_live_vol_surface(c, ticker, spot, min_dte=7, max_dte=180, step_pct=0.05)
         if surf_df is None or surf_df.empty:
@@ -726,7 +727,6 @@ def render_vol_surface(ticker, api_key):
         WIRE  = "#3a5a8a"
         ATM_C = "#69f0ae"
         z_pct = iv_z * 100
-        z_min, z_max = float(np.nanmin(z_pct)), float(np.nanmax(z_pct))
         atm_j = int(np.argmin(np.abs(strikes - spot))) if spot else None
 
         fig = go.Figure()
@@ -748,29 +748,15 @@ def render_vol_surface(ticker, api_key):
                 hovertemplate=(("⚡ ATM — " if is_atm else "") +
                                f"Strike ${strike:.0f} — DTE %{{y}}d — IV %{{z:.1f}}%<extra></extra>"),
             ))
-        # Vertex markers coloured by IV
-        xv, yv, zv, cv = [], [], [], []
-        axv, ayv, azv  = [], [], []
+        # ATM column markers only
+        axv, ayv, azv = [], [], []
         for i in range(len(dtes)):
-            for j in range(len(strikes)):
-                if atm_j is not None and j == atm_j:
-                    axv.append(float(strikes[j])); ayv.append(float(dtes[i])); azv.append(float(z_pct[i, j]))
-                else:
-                    xv.append(float(strikes[j])); yv.append(float(dtes[i]))
-                    zv.append(float(z_pct[i, j])); cv.append(float(z_pct[i, j]))
-        fig.add_trace(go.Scatter3d(
-            x=xv, y=yv, z=zv, mode="markers",
-            marker=dict(size=3, color=cv, colorscale="Blues", cmin=z_min, cmax=z_max,
-                        showscale=True,
-                        colorbar=dict(title=dict(text="IV %", font=dict(color="#e0e0e0", size=12)),
-                                      thickness=14, len=0.7, tickfont=dict(color="#e0e0e0", size=11))),
-            showlegend=False,
-            hovertemplate="Strike $%{x:.0f} — DTE %{y}d — IV %{z:.1f}%<extra></extra>",
-        ))
+            if atm_j is not None:
+                axv.append(float(strikes[atm_j])); ayv.append(float(dtes[i])); azv.append(float(z_pct[i, atm_j]))
         if axv:
             fig.add_trace(go.Scatter3d(
                 x=axv, y=ayv, z=azv, mode="markers",
-                marker=dict(size=7, color=ATM_C, symbol="circle"),
+                marker=dict(size=5, color=ATM_C, symbol="circle"),
                 showlegend=False,
                 hovertemplate="⚡ ATM $%{x:.0f} — DTE %{y}d — IV %{z:.1f}%<extra></extra>",
             ))

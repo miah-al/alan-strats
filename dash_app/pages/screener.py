@@ -50,23 +50,21 @@ def layout() -> html.Div:
                 dbc.Col([
                     html.Label("Strategy", style={"color": T.TEXT_SEC, "fontSize": "12px",
                                                    "fontWeight": "600", "marginBottom": "4px"}),
-                    dcc.Dropdown(
+                    dbc.Select(
                         id="scr-strategy",
                         options=_STRATEGIES,
                         value="iron_condor_rules",
-                        clearable=False,
-                        style={"fontSize": "13px"},
+                        style={**T.STYLE_DROPDOWN},
                     ),
                 ], width=4),
                 dbc.Col([
                     html.Label("Universe", style={"color": T.TEXT_SEC, "fontSize": "12px",
                                                    "fontWeight": "600", "marginBottom": "4px"}),
-                    dcc.Dropdown(
+                    dbc.Select(
                         id="scr-universe",
                         options=_UNIVERSE_OPTIONS,
                         value=list(UNIVERSES.keys())[0],
-                        clearable=False,
-                        style={"fontSize": "13px"},
+                        style={**T.STYLE_DROPDOWN},
                     ),
                 ], width=3),
                 dbc.Col([
