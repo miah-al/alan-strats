@@ -2412,15 +2412,15 @@ def _build_modal_body(row):
     ]
     leg_table = dag.AgGrid(
         columnDefs=[
-            {"field": "Leg",        "flex": 1, "minWidth": 160,
+            {"field": "Leg",        "width": 200,
              "cellStyle": {"function": "params.data.Leg === 'NET CREDIT' ? {'fontWeight':'700','borderTop':'1px solid #374151'} : {}"}},
-            {"field": "Strike",     "width": 85,
+            {"field": "Strike",     "width": 150,
              "cellStyle": {"function": "params.data.Leg === 'NET CREDIT' ? {'borderTop':'1px solid #374151'} : {}"}},
-            {"field": "Mid",        "width": 80,
+            {"field": "Mid",        "width": 150,
              "cellStyle": {"function": "params.data.Leg === 'NET CREDIT' ? {'borderTop':'1px solid #374151'} : {}"}},
-            {"field": "Action",     "width": 80,
+            {"field": "Action",     "width": 150,
              "cellStyle": {"function": "params.data.Leg === 'NET CREDIT' ? {'borderTop':'1px solid #374151'} : {}"}},
-            {"field": "$/Contract", "width": 120,
+            {"field": "$/Contract", "flex": 1, "minWidth": 150,
              "cellStyle": {"function": "params.data.Leg === 'NET CREDIT' ? {'fontWeight':'700','borderTop':'1px solid #374151','color': params.value.startsWith('+') ? '#10b981' : '#ef4444'} : params.value.startsWith('+') ? {'color':'#10b981','fontWeight':'600'} : {'color':'#ef4444','fontWeight':'600'}"}},
         ],
         rowData=leg_rows,
