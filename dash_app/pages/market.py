@@ -7,13 +7,20 @@ Mirrors dashboard/tabs/market_data.py feature set.
 from __future__ import annotations
 
 import math
+import datetime as _dt
+import logging
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from typing import Optional
 import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
-from dash import html, dcc, callback, Input, Output, State, no_update
+from dash import html, dcc, callback, Input, Output, State, no_update, ALL
 import dash_bootstrap_components as dbc
 
 from dash_app import theme as T, get_polygon_api_key
+from engine.screener import UNIVERSES
+
+logger = logging.getLogger(__name__)
 
 # ── FRED yield curve (free, no API key) ────────────────────────────────────────
 
@@ -140,6 +147,694 @@ _DARK = dict(template="plotly_dark", paper_bgcolor=T.BG_CARD, plot_bgcolor=T.BG_
              font=dict(color=T.TEXT_SEC, size=11))
 
 
+# ── Screener: universe + sector map ───────────────────────────────────────────
+
+_SCR_UNIVERSE_OPTIONS = [{"label": k, "value": k} for k in UNIVERSES]
+_SCR_DEFAULT_UNIVERSE = "ETF Core"  # default if key exists in UNIVERSES else first
+if _SCR_DEFAULT_UNIVERSE not in UNIVERSES:
+    _SCR_DEFAULT_UNIVERSE = list(UNIVERSES.keys())[0]
+
+_SECTOR = {
+    "SPY": "Broad Market", "QQQ": "Technology", "IWM": "Small Cap",
+    "GLD": "Commodities", "TLT": "Fixed Income", "EEM": "Emerging Markets",
+    "XLF": "Financials", "XLE": "Energy", "XLK": "Technology", "XLV": "Healthcare",
+    "DIA": "Broad Market", "MDY": "Mid Cap", "VTI": "Broad Market",
+    "VEA": "International Dev", "VWO": "Emerging Markets",
+    "AAPL": "Technology", "MSFT": "Technology", "NVDA": "Technology",
+    "AMZN": "Consumer Discretionary", "GOOGL": "Communication Services",
+    "META": "Communication Services", "TSLA": "Consumer Discretionary",
+    "AVGO": "Technology", "JPM": "Financials",
+    "MSTR": "Technology", "COIN": "Financials", "PLTR": "Technology",
+    "ARKK": "Innovation", "SOXL": "Semiconductors (3x)", "TQQQ": "Technology (3x)",
+}
+
+_SCR_PLOT_BG  = "#111827"
+_SCR_PAPER_BG = "#111827"
+_SCR_GRID     = "#1f2937"
+_SCR_FONT     = dict(family="Inter, sans-serif", color="#9ca3af", size=11)
+_SCR_CFG      = {"displayModeBar": False, "responsive": True}
+
+
+def _fmt_vol(n: float) -> str:
+    if n >= 1_000_000_000: return f"{n/1_000_000_000:.1f}B"
+    if n >= 1_000_000:     return f"{n/1_000_000:.1f}M"
+    if n >= 1_000:         return f"{n/1_000:.0f}K"
+    return str(int(n))
+
+
+def _scr_empty_fig(msg: str = "") -> dict:
+    fig = go.Figure()
+    if msg:
+        fig.add_annotation(text=msg, xref="paper", yref="paper",
+                           x=0.5, y=0.5, showarrow=False,
+                           font=dict(color="#6b7280", size=13))
+    fig.update_layout(paper_bgcolor=_SCR_PAPER_BG, plot_bgcolor=_SCR_PLOT_BG,
+                      font=_SCR_FONT, height=300, margin=dict(l=10, r=10, t=10, b=10),
+                      xaxis=dict(visible=False), yaxis=dict(visible=False))
+    return fig
+
+
+def _scr_batch_snapshot(tickers: list[str], client) -> dict[str, dict]:
+    joined = ",".join(tickers)
+    try:
+        data = client._get("/v2/snapshot/locale/us/markets/stocks/tickers", {"tickers": joined})
+    except Exception as e:
+        logger.warning("Batch snapshot failed: %s", e)
+        return {}
+    out: dict[str, dict] = {}
+    for item in data.get("tickers", []):
+        tkr  = item.get("ticker", "")
+        day  = item.get("day", {})
+        prev = item.get("prevDay", {})
+        close  = float(day.get("c") or 0) or float(prev.get("c") or 0)
+        volume = float(day.get("v") or 0) or float(prev.get("v") or 0)
+        chg    = float(item.get("todaysChangePerc") or 0)
+        if chg == 0:
+            prev_c = float(prev.get("c") or 0)
+            day_c  = float(day.get("c") or 0)
+            if prev_c > 0 and day_c > 0:
+                chg = round((day_c - prev_c) / prev_c * 100, 2)
+        out[tkr] = {
+            "close":  close,
+            "volume": volume,
+            "change_pct": chg,
+        }
+    return out
+
+
+def _scr_fetch_bars(ticker: str, client, days: int = 60) -> pd.DataFrame:
+    to_date  = _dt.date.today()
+    frm_date = to_date - _dt.timedelta(days=int(days * 1.6))
+    path = f"/v2/aggs/ticker/{ticker}/range/1/day/{frm_date}/{to_date}"
+    params = {"adjusted": "true", "sort": "asc", "limit": 200}
+    results, url = [], path
+    while url:
+        try:
+            data = client._get(url, params)
+        except Exception:
+            break
+        results.extend(data.get("results", []))
+        next_url = data.get("next_url", "")
+        from data.polygon_client import PolygonClient
+        url = next_url.replace(PolygonClient.BASE, "") if next_url else None
+        params = {}
+    if not results:
+        return pd.DataFrame()
+    df = pd.DataFrame(results).rename(columns={"o":"open","h":"high","l":"low","c":"close","v":"volume"})
+    df["date"] = pd.to_datetime(df["t"], unit="ms", utc=True).dt.date
+    return df[["date","open","high","low","close","volume"]].sort_values("date").reset_index(drop=True)
+
+
+def _scr_fetch_iv(ticker: str, client) -> Optional[float]:
+    try:
+        data = client._get(f"/v3/snapshot/options/{ticker}",
+                           {"limit": 250, "contract_type": "call"})
+        ivs = [float(s["implied_volatility"])
+               for s in data.get("results", [])
+               if s.get("implied_volatility") and float(s["implied_volatility"]) > 0]
+        return float(np.median(ivs[:20])) if ivs else None
+    except Exception:
+        return None
+
+
+def _scr_hv(closes: pd.Series, window: int) -> Optional[float]:
+    if len(closes) < window + 1:
+        return None
+    log_ret = np.log(closes / closes.shift(1)).dropna()
+    if len(log_ret) < window:
+        return None
+    return float(log_ret.iloc[-window:].std() * math.sqrt(252) * 100)
+
+
+def _scr_rsi(closes: pd.Series, period: int = 14) -> Optional[float]:
+    if len(closes) < period + 1:
+        return None
+    delta = closes.diff().dropna()
+    ag = delta.clip(lower=0).rolling(period, min_periods=period).mean()
+    al = (-delta).clip(lower=0).rolling(period, min_periods=period).mean()
+    if ag.empty or al.empty:
+        return None
+    a, b = float(ag.iloc[-1]), float(al.iloc[-1])
+    return 100.0 if b == 0 else float(100 - (100 / (1 + a / b)))
+
+
+# ── Screener chart builders ─────────────────────────────────────────────────────
+
+def _build_movers_fig(rows: list[dict]):
+    if not rows:
+        return _scr_empty_fig("No data")
+    tickers = [r["Ticker"] for r in rows]
+    changes = [r["Change%"] for r in rows]
+    colors  = [T.SUCCESS if c >= 0 else T.DANGER for c in changes]
+    fig = go.Figure(go.Bar(
+        x=changes, y=tickers, orientation="h",
+        marker_color=colors,
+        text=[f"{c:+.2f}%" for c in changes],
+        textposition="outside", textfont=dict(size=11, color="#f9fafb"),
+        hovertemplate="%{y}: %{x:+.2f}%<extra></extra>",
+    ))
+    fig.update_layout(
+        paper_bgcolor=_SCR_PAPER_BG, plot_bgcolor=_SCR_PLOT_BG, font=_SCR_FONT,
+        height=max(260, len(tickers) * 28),
+        margin=dict(l=10, r=60, t=10, b=10),
+        xaxis=dict(showgrid=True, gridcolor=_SCR_GRID, zeroline=True,
+                   zerolinecolor="#374151", ticksuffix="%", color="#9ca3af"),
+        yaxis=dict(showgrid=False, color="#f9fafb", autorange="reversed"),
+        bargap=0.3,
+    )
+    return fig
+
+
+def _build_momentum_fig(rows: list[dict]):
+    if not rows:
+        return _scr_empty_fig("No data")
+    top = sorted(
+        [r for r in rows if isinstance(r["20d%"], (int, float))],
+        key=lambda r: abs(r["20d%"]), reverse=True
+    )[:15] or rows[:15]
+    tickers = [r["Ticker"] for r in top]
+    r1  = [r["1d%"]  if isinstance(r["1d%"],  (int, float)) else 0 for r in top]
+    r5  = [r["5d%"]  if isinstance(r["5d%"],  (int, float)) else 0 for r in top]
+    r20 = [r["20d%"] if isinstance(r["20d%"], (int, float)) else 0 for r in top]
+    fig = go.Figure()
+    fig.add_trace(go.Bar(name="1d%",  x=tickers, y=r1,  marker_color="#6366f1",
+                         hovertemplate="%{x} 1d: %{y:+.1f}%<extra></extra>"))
+    fig.add_trace(go.Bar(name="5d%",  x=tickers, y=r5,  marker_color="#8b5cf6",
+                         hovertemplate="%{x} 5d: %{y:+.1f}%<extra></extra>"))
+    fig.add_trace(go.Bar(name="20d%", x=tickers, y=r20, marker_color="#a78bfa",
+                         hovertemplate="%{x} 20d: %{y:+.1f}%<extra></extra>"))
+    fig.update_layout(
+        paper_bgcolor=_SCR_PAPER_BG, plot_bgcolor=_SCR_PLOT_BG, font=_SCR_FONT,
+        height=420, barmode="group", bargap=0.2, bargroupgap=0.05,
+        margin=dict(l=10, r=10, t=10, b=60),
+        xaxis=dict(showgrid=False, color="#9ca3af", tickangle=-30),
+        yaxis=dict(showgrid=True, gridcolor=_SCR_GRID, zeroline=True,
+                   zerolinecolor="#374151", ticksuffix="%", color="#9ca3af"),
+        legend=dict(orientation="h", x=0, y=1.06, font=dict(size=11)),
+    )
+    return fig
+
+
+def _build_vol_fig(rows: list[dict]):
+    if not rows:
+        return _scr_empty_fig("No data")
+    def _num(v): return float(str(v).replace("%","")) if v != "—" else None
+    def _ratio(r):
+        ih = r.get("IV/HV")
+        return float(ih) if isinstance(ih, (int, float)) else 0.0
+    top = sorted(rows, key=_ratio, reverse=True)[:15]
+    tickers = [r["Ticker"] for r in top]
+    hv20 = [_num(r["HV20"]) for r in top]
+    iv   = [_num(r["IV"])   for r in top]
+    iv_colors = [T.WARNING if (h and i and i > 1.5 * h) else T.ACCENT
+                 for h, i in zip(hv20, iv)]
+    fig = go.Figure()
+    fig.add_trace(go.Bar(name="HV20", x=tickers, y=hv20, marker_color="#3b82f6",
+                         hovertemplate="%{x} HV20: %{y:.1f}%<extra></extra>"))
+    fig.add_trace(go.Bar(name="IV",   x=tickers, y=iv,   marker_color=iv_colors,
+                         hovertemplate="%{x} IV: %{y:.1f}%<extra></extra>"))
+    fig.update_layout(
+        paper_bgcolor=_SCR_PAPER_BG, plot_bgcolor=_SCR_PLOT_BG, font=_SCR_FONT,
+        height=420, barmode="group", bargap=0.2, bargroupgap=0.05,
+        margin=dict(l=10, r=10, t=10, b=60),
+        xaxis=dict(showgrid=False, color="#9ca3af", tickangle=-30),
+        yaxis=dict(showgrid=True, gridcolor=_SCR_GRID, ticksuffix="%", color="#9ca3af"),
+        legend=dict(orientation="h", x=0, y=1.06, font=dict(size=11)),
+    )
+    return fig
+
+
+def _build_volalert_fig(rows: list[dict]):
+    if not rows:
+        fig = go.Figure()
+        fig.add_annotation(text="No tickers with volume > 2× average",
+                           xref="paper", yref="paper", x=0.5, y=0.5,
+                           showarrow=False, font=dict(color="#6b7280", size=13))
+        fig.update_layout(paper_bgcolor=_SCR_PAPER_BG, plot_bgcolor=_SCR_PLOT_BG,
+                          font=_SCR_FONT, height=160, margin=dict(l=10,r=10,t=10,b=10),
+                          xaxis=dict(visible=False), yaxis=dict(visible=False))
+        return fig
+    tickers = [r["Ticker"] for r in rows]
+    ratios  = [r["Vol Ratio"] for r in rows]
+    fig = go.Figure(go.Bar(
+        x=tickers, y=ratios,
+        marker_color=[T.DANGER if r >= 3 else T.WARNING for r in ratios],
+        text=[f"{r:.1f}×" for r in ratios],
+        textposition="outside", textfont=dict(size=11, color="#f9fafb"),
+        hovertemplate="%{x}: %{y:.1f}× avg volume<extra></extra>",
+    ))
+    fig.add_hline(y=2, line_dash="dot", line_color="#374151",
+                  annotation_text="2× threshold", annotation_font_size=10)
+    fig.update_layout(
+        paper_bgcolor=_SCR_PAPER_BG, plot_bgcolor=_SCR_PLOT_BG, font=_SCR_FONT,
+        height=220, margin=dict(l=10, r=10, t=10, b=30),
+        xaxis=dict(showgrid=False, color="#9ca3af"),
+        yaxis=dict(showgrid=True, gridcolor=_SCR_GRID, ticksuffix="×", color="#9ca3af"),
+    )
+    return fig
+
+
+# ── GEX guide: illustrative static charts ─────────────────────────────────────
+
+def _gex_guide() -> html.Div:
+    """Static illustrative section — no API calls, pure synthetic examples."""
+
+    _bg  = "#111827"
+    _grd = "#1f2937"
+    _fnt = dict(family="Inter, sans-serif", color="#9ca3af", size=10)
+    _cfg = {"displayModeBar": False, "responsive": True}
+
+    def _base_layout(title, height=300):
+        return dict(
+            paper_bgcolor=_bg, plot_bgcolor=_bg, font=_fnt,
+            height=height, barmode="overlay",
+            title=dict(text=title, font=dict(size=12, color="#d1d5db"), x=0),
+            xaxis=dict(tickprefix="$", gridcolor=_grd, color="#9ca3af"),
+            yaxis=dict(title="GEX ($B)", gridcolor=_grd, zeroline=False, color="#9ca3af"),
+            legend=dict(orientation="h", x=0, y=1.12, font=dict(size=10),
+                        bgcolor="rgba(0,0,0,0)"),
+            margin=dict(l=50, r=20, t=55, b=30),
+        )
+
+    def _bars_and_levels(strikes, calls, puts, spot, zero_g, g1, g2,
+                         sig_hi=None, sig_lo=None):
+        nets = [c + p for c, p in zip(calls, puts)]
+        y_rng = max(max(calls), abs(min(puts))) * 1.4
+        fig = go.Figure()
+        # dealer cluster shading
+        if g1 is not None and sig_hi is not None:
+            fig.add_hrect(y0=-y_rng, y1=y_rng,
+                          x0=min(g1, sig_hi), x1=max(g1, sig_hi),
+                          fillcolor="rgba(239,68,68,0.08)", line_width=0)
+        if g2 is not None and sig_lo is not None:
+            fig.add_hrect(y0=-y_rng, y1=y_rng,
+                          x0=min(g2, sig_lo), x1=max(g2, sig_lo),
+                          fillcolor="rgba(16,185,129,0.08)", line_width=0)
+        fig.add_trace(go.Bar(x=strikes, y=calls, name="Call GEX",
+                             marker_color=T.SUCCESS, opacity=0.8,
+                             hovertemplate="$%{x}  Call: %{y:.1f}B<extra></extra>"))
+        fig.add_trace(go.Bar(x=strikes, y=puts, name="Put GEX",
+                             marker_color=T.DANGER, opacity=0.8,
+                             hovertemplate="$%{x}  Put: %{y:.1f}B<extra></extra>"))
+        fig.add_trace(go.Bar(x=strikes, y=nets, name="Net GEX",
+                             marker_color=[T.ACCENT if v >= 0 else "#7c3aed" for v in nets],
+                             opacity=0.5,
+                             hovertemplate="$%{x}  Net: %{y:.1f}B<extra></extra>"))
+        fig.add_vline(x=spot,   line=dict(color="#fbbf24", width=1.5, dash="dash"),
+                      annotation_text=f"Spot ${spot}", annotation_font_color="#fbbf24",
+                      annotation_font_size=10, annotation_position="top right")
+        if zero_g:
+            fig.add_vline(x=zero_g, line=dict(color="#fb923c", width=1.2, dash="dot"),
+                          annotation_text=f"ZERO G ${zero_g}",
+                          annotation_font_color="#fb923c", annotation_font_size=10,
+                          annotation_position="bottom left")
+        if g1:
+            fig.add_vline(x=g1, line=dict(color="#ef4444", width=1.2, dash="dot"),
+                          annotation_text=f"G1 ${g1}",
+                          annotation_font_color="#ef4444", annotation_font_size=10,
+                          annotation_position="top left")
+        if g2:
+            fig.add_vline(x=g2, line=dict(color="#10b981", width=1.2, dash="dot"),
+                          annotation_text=f"G2 ${g2}",
+                          annotation_font_color="#10b981", annotation_font_size=10,
+                          annotation_position="bottom left")
+        if sig_hi:
+            fig.add_vline(x=sig_hi, line=dict(color="#8b5cf6", width=1, dash="dot"),
+                          annotation_text=f"σ ${sig_hi}",
+                          annotation_font_color="#8b5cf6", annotation_font_size=10,
+                          annotation_position="top right")
+        if sig_lo:
+            fig.add_vline(x=sig_lo, line=dict(color="#8b5cf6", width=1, dash="dot"),
+                          annotation_text=f"σ ${sig_lo}",
+                          annotation_font_color="#8b5cf6", annotation_font_size=10,
+                          annotation_position="bottom right")
+        fig.add_hline(y=0, line=dict(color="#374151", width=1))
+        return fig
+
+    # ── Scenario 1: Positive GEX, spot between G2 and G1 — pinning ────────────
+    st1 = list(range(520, 591, 5))
+    c1  = [max(0, 40 * np.exp(-((s - 565)**2) / 180)) for s in st1]
+    p1  = [-max(0, 12 * np.exp(-((s - 535)**2) / 250)) for s in st1]
+    fig1 = _bars_and_levels(st1, c1, p1, spot=554, zero_g=540, g1=565, g2=535,
+                             sig_hi=578, sig_lo=522)
+    fig1.update_layout(**_base_layout(
+        "① Positive GEX — Spot between G2 ($535) and G1 ($565)  ·  ZERO G at $540"))
+
+    # ── Scenario 2: Negative GEX, spot below ZERO G — amplification ────────────
+    st2 = list(range(520, 591, 5))
+    c2  = [max(0, 6  * np.exp(-((s - 575)**2) / 400)) for s in st2]
+    p2  = [-max(0, 20 * np.exp(-((s - 548)**2) / 150)) for s in st2]
+    fig2 = _bars_and_levels(st2, c2, p2, spot=552, zero_g=568, g1=575, g2=548,
+                             sig_hi=585, sig_lo=530)
+    fig2.update_layout(**_base_layout(
+        "② Negative GEX — Spot BELOW ZERO G ($568)  ·  Amplification regime"))
+
+    # ── Scenario 3: Spot just crossed ZERO G from below — regime flip ──────────
+    st3 = list(range(520, 591, 5))
+    c3  = [max(0, 15 * np.exp(-((s - 568)**2) / 280)) for s in st3]
+    p3  = [-max(0, 10 * np.exp(-((s - 553)**2) / 280)) for s in st3]
+    fig3 = _bars_and_levels(st3, c3, p3, spot=563, zero_g=560, g1=568, g2=553,
+                             sig_hi=580, sig_lo=538)
+    fig3.update_layout(**_base_layout(
+        "③ Regime Flip — Spot ($563) just crossed above ZERO G ($560)  ·  Entry window"))
+
+    def _rule(title, body, color=T.ACCENT):
+        return html.Div([
+            html.Span(title, style={"color": color, "fontWeight": "700",
+                                    "fontSize": "12px"}),
+            html.Span(f"  {body}", style={"color": "#9ca3af", "fontSize": "12px"}),
+        ], style={"marginBottom": "6px"})
+
+    pill_style = lambda c: {
+        "display": "inline-block", "padding": "2px 10px", "borderRadius": "12px",
+        "backgroundColor": c, "color": "#fff", "fontSize": "11px",
+        "fontWeight": "600", "marginRight": "6px", "marginBottom": "4px",
+    }
+
+    return html.Div([
+        # ── Level reference ───────────────────────────────────────────────────
+        html.Div([
+            html.Div("Key Levels", style={"color": T.TEXT_SEC, "fontSize": "11px",
+                                          "fontWeight": "700", "textTransform": "uppercase",
+                                          "marginBottom": "10px"}),
+            html.Div([
+                html.Span("Spot",   style=pill_style("#fbbf24")),
+                html.Span("G1 — upper gamma wall", style=pill_style("#ef4444")),
+                html.Span("ZERO G — flip point",   style=pill_style("#fb923c")),
+                html.Span("G2 — lower gamma wall", style=pill_style("#10b981")),
+                html.Span("σ — 1 std dev implied move", style=pill_style("#8b5cf6")),
+            ], style={"marginBottom": "10px"}),
+            html.Div([
+                _rule("G1 (red):", "Strike above spot with highest absolute Net GEX. Mechanical ceiling — dealers sell every rally into it. Use for short call strikes."),
+                _rule("ZERO G (orange):", "Where cumulative GEX crosses zero. Above = dampening (sell premium). Below = amplifying (protect positions). The single most important level.", "#fb923c"),
+                _rule("G2 (green):", "Strike below spot with highest absolute Net GEX. Mechanical floor — dealers buy every dip into it. Use for short put strikes.", "#10b981"),
+                _rule("σ (purple):", "One standard deviation implied move from nearest ATM IV. Beyond σ = dealer positioning thins out, moves can extend freely.", "#8b5cf6"),
+                _rule("Dealer Clusters (shaded):", "Red band (G1→σ upper) and green band (G2→σ lower). Dense dealer positioning inside these zones — price moves slowly, tends to revert."),
+            ]),
+        ], style={**T.STYLE_CARD, "marginBottom": "12px", "padding": "12px 16px"}),
+
+        # ── OI panel note ─────────────────────────────────────────────────────
+        html.Div([
+            html.Div("Open Interest Panel (right chart)", style={
+                "color": T.TEXT_SEC, "fontSize": "11px", "fontWeight": "700",
+                "textTransform": "uppercase", "marginBottom": "8px"}),
+            _rule("Green bars (right):", "Call OI per strike. Large call OI wall above spot reinforces G1 as resistance."),
+            _rule("Red bars (left):", "Put OI per strike, mirrored. Large put OI near G2 reinforces it as support.", T.DANGER),
+            _rule("OI + GEX agreement:", "When G1 aligns with the tallest call OI bar, that level is double-confirmed — highest conviction for short call placement.", T.SUCCESS),
+            _rule("Put OI >> Call OI:", "Indicates negative GEX regime. Dealers are short the overall book — amplification risk is elevated.", T.WARNING),
+        ], style={**T.STYLE_CARD, "marginBottom": "12px", "padding": "12px 16px"}),
+
+        # ── Example charts ────────────────────────────────────────────────────
+        html.Div("Example Scenarios", style={
+            "color": T.TEXT_SEC, "fontSize": "11px", "fontWeight": "700",
+            "textTransform": "uppercase", "marginBottom": "10px",
+        }),
+
+        html.Div([
+            dcc.Graph(figure=fig1, config=_cfg),
+            html.Div([
+                _rule("Regime:", "Dampening. Spot is above ZERO G, trapped between G2 ($535) and G1 ($565). Dealer clusters visible on both sides.", T.SUCCESS),
+                _rule("Trade:", "Iron condor: short put at G2 ($535), short call at G1 ($565). Both short legs sit at mechanical walls with dealer backing.", T.SUCCESS),
+                _rule("Caution:", "If spot breaks below ZERO G ($540), close the short put side immediately — regime will flip to amplifying.", T.WARNING),
+            ], style={"padding": "8px 4px"}),
+        ], style={**T.STYLE_CARD, "marginBottom": "12px", "padding": "14px"}),
+
+        html.Div([
+            dcc.Graph(figure=fig2, config=_cfg),
+            html.Div([
+                _rule("Regime:", "Amplifying. Spot ($552) is below ZERO G ($568). Put GEX dominates. Dealers must sell into any decline.", T.DANGER),
+                _rule("Trade:", "Exit all premium-selling positions. Buy long puts or VIX calls. Size all trades at 50% of normal. Tighten stops to 1–1.5× ATR.", T.DANGER),
+                _rule("Watch for:", "Net GEX transitioning from −$2B toward zero over 3–5 days. That transition + a spot close above ZERO G = the entry window.", "#fb923c"),
+            ], style={"padding": "8px 4px"}),
+        ], style={**T.STYLE_CARD, "marginBottom": "12px", "padding": "14px"}),
+
+        html.Div([
+            dcc.Graph(figure=fig3, config=_cfg),
+            html.Div([
+                _rule("Regime:", "Transitioning. Spot ($563) just crossed above ZERO G ($560). Call and put GEX now roughly balanced. Net GEX turning positive.", "#fb923c"),
+                _rule("Trade:", "Wait one full daily close above ZERO G for confirmation. Then enter condors with short call at G1 ($568) and short put at G2 ($553).", T.SUCCESS),
+                _rule("Don't jump early:", "An intraday touch above ZERO G without a close is not confirmation. The regime can flip back below on the same session.", T.WARNING),
+            ], style={"padding": "8px 4px"}),
+        ], style={**T.STYLE_CARD, "marginBottom": "0", "padding": "14px"}),
+    ], style={"marginTop": "16px"})
+
+
+# ── Vol Surface guide ─────────────────────────────────────────────────────────
+
+def _vol_surface_guide() -> html.Div:
+    """Static illustrative guide for the IV volatility surface."""
+    _bg  = "#111827"
+    _grd = "#1f2937"
+    _fnt = dict(family="Inter, sans-serif", color="#9ca3af", size=10)
+    _cfg = {"displayModeBar": False, "responsive": True}
+
+    # IV smile: moneyness 0.80–1.20, three DTE slices
+    mon = np.linspace(0.80, 1.20, 31)
+    lbl = [f"{int(m*100)}%" for m in mon]
+    def _smile(base, skew, wing):
+        return [(base + (-skew*(m-1.0)) + wing*(m-1.0)**2*15) * 100 for m in mon]
+    iv7d  = _smile(0.35, 0.10, 0.12)
+    iv30d = _smile(0.28, 0.07, 0.10)
+    iv90d = _smile(0.22, 0.04, 0.08)
+
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(x=lbl, y=iv7d,  mode="lines", name="7 DTE",
+                             line=dict(color="#ef4444", width=2)))
+    fig.add_trace(go.Scatter(x=lbl, y=iv30d, mode="lines", name="30 DTE",
+                             line=dict(color="#fbbf24", width=2)))
+    fig.add_trace(go.Scatter(x=lbl, y=iv90d, mode="lines", name="90 DTE",
+                             line=dict(color="#3b82f6", width=2)))
+    fig.add_shape(type="line", xref="x", yref="paper",
+                  x0="100%", x1="100%", y0=0, y1=1,
+                  line=dict(color="#69f0ae", width=1.5, dash="dot"))
+    fig.add_annotation(x="100%", y=1, xref="x", yref="paper",
+                       text="ATM (green in 3D)", showarrow=False,
+                       font=dict(color="#69f0ae", size=10),
+                       xanchor="left", yanchor="bottom")
+    fig.update_layout(
+        paper_bgcolor=_bg, plot_bgcolor=_bg, font=_fnt, height=280,
+        title=dict(text="IV Smile — put skew + term structure (synthetic)",
+                   font=dict(size=12, color="#d1d5db"), x=0),
+        xaxis=dict(title="Strike (% of spot)", gridcolor=_grd, color="#9ca3af"),
+        yaxis=dict(title="IV (%)", gridcolor=_grd, color="#9ca3af"),
+        legend=dict(orientation="h", x=0, y=1.12, font=dict(size=10), bgcolor="rgba(0,0,0,0)"),
+        margin=dict(l=50, r=20, t=55, b=40),
+    )
+
+    def _rule(title, body, color=T.ACCENT):
+        return html.Div([
+            html.Span(title, style={"color": color, "fontWeight": "700", "fontSize": "12px"}),
+            html.Span(f"  {body}", style={"color": "#9ca3af", "fontSize": "12px"}),
+        ], style={"marginBottom": "6px"})
+
+    return html.Div([
+        html.Div([
+            html.Div("Reading the Axes", style={
+                "color": T.TEXT_SEC, "fontSize": "11px", "fontWeight": "700",
+                "textTransform": "uppercase", "marginBottom": "10px"}),
+            _rule("X (Strike $):", "Left = OTM puts (below spot). Right = OTM calls (above spot). Center = ATM."),
+            _rule("Y (DTE):", "Days to expiration. Front = near-term. Back = longer-dated.", "#fbbf24"),
+            _rule("Z (IV %):", "Implied volatility. Higher = options market pricing larger expected moves.", "#8b5cf6"),
+            _rule("Green ATM column:", "The at-the-money strike. Skew and term structure are measured relative to ATM IV.", "#69f0ae"),
+        ], style={**T.STYLE_CARD, "marginBottom": "12px", "padding": "12px 16px"}),
+
+        html.Div([
+            dcc.Graph(figure=fig, config=_cfg),
+            html.Div([
+                _rule("IV Smile:", "IV rises at both wings vs ATM — OTM options price tail risk. Universal pattern."),
+                _rule("Put Skew (left wing higher):", "OTM puts more expensive than OTM calls — typical in equities. Reflects demand for downside hedges.", T.DANGER),
+                _rule("Inverted term structure (near > far):", "Short-dated IV above long-dated IV. Common near earnings, macro events, or in elevated-vol regimes.", "#ef4444"),
+                _rule("Normal term structure (far > near):", "Long-dated IV above short-dated IV. Default state in calm markets — time uncertainty priced at a premium.", "#3b82f6"),
+            ], style={"padding": "8px 4px"}),
+        ], style={**T.STYLE_CARD, "marginBottom": "12px", "padding": "14px"}),
+
+        html.Div([
+            html.Div("Trade Applications", style={
+                "color": T.TEXT_SEC, "fontSize": "11px", "fontWeight": "700",
+                "textTransform": "uppercase", "marginBottom": "8px"}),
+            _rule("ATM IV = expected move:", "ATM IV × √(DTE/365) × Spot ≈ 1σ implied move. Read the green column.", "#69f0ae"),
+            _rule("Elevated skew → put spreads:", "When OTM put IV is abnormally high vs HV, credit put spreads sell the expensive side. The skew shows you which side is overpriced.", T.SUCCESS),
+            _rule("Steep term structure → calendars:", "Buy front-month/sell back-month (debit) when near-term IV is depressed. Reverse when inverted (near > far). Surface makes this visible at a glance.", "#fbbf24"),
+            _rule("IV trough near ATM → butterflies:", "ATM IV cheapest relative to wings. Long butterfly buys wings, sells ATM — profits if surface flattens or price pins near current level.", T.ACCENT),
+        ], style={**T.STYLE_CARD, "padding": "12px 16px"}),
+    ], style={"marginTop": "16px"})
+
+
+# ── Momentum guide ─────────────────────────────────────────────────────────────
+
+def _momentum_guide() -> html.Div:
+    """Static illustrative guide for RSI and MACD."""
+    _bg  = "#111827"
+    _grd = "#1f2937"
+    _fnt = dict(family="Inter, sans-serif", color="#9ca3af", size=10)
+    _cfg = {"displayModeBar": False, "responsive": True}
+
+    # Synthetic price: uptrend → overbought → pullback → oversold → recovery
+    np.random.seed(7)
+    n = 90
+    segs = np.concatenate([
+        np.linspace(100, 128, 35),  # uptrend
+        np.linspace(128, 108, 25),  # pullback
+        np.linspace(108, 122, 30),  # recovery
+    ])
+    price = pd.Series(segs + np.random.randn(n) * 1.2)
+
+    delta  = price.diff()
+    gain   = delta.clip(lower=0).rolling(14).mean()
+    loss   = (-delta.clip(upper=0)).rolling(14).mean()
+    rsi    = 100 - 100 / (1 + gain / loss.replace(0, np.nan))
+    ema12  = price.ewm(span=12).mean()
+    ema26  = price.ewm(span=26).mean()
+    macd   = ema12 - ema26
+    sig    = macd.ewm(span=9).mean()
+    hist   = macd - sig
+
+    from plotly.subplots import make_subplots
+    fig = make_subplots(rows=3, cols=1, shared_xaxes=True,
+                        row_heights=[0.45, 0.28, 0.27], vertical_spacing=0.04,
+                        subplot_titles=["Price", "RSI (14)", "MACD"])
+    t = list(range(n))
+    fig.add_trace(go.Scatter(x=t, y=price, mode="lines",
+                             line=dict(color="#6366f1", width=2), showlegend=False), row=1, col=1)
+    fig.add_trace(go.Scatter(x=t, y=rsi, mode="lines",
+                             line=dict(color="#fbbf24", width=1.5), showlegend=False), row=2, col=1)
+    fig.add_hrect(y0=70, y1=100, row=2, col=1, fillcolor="rgba(239,68,68,0.12)", line_width=0)
+    fig.add_hrect(y0=0,  y1=30,  row=2, col=1, fillcolor="rgba(16,185,129,0.12)", line_width=0)
+    fig.add_hline(y=70, row=2, col=1, line=dict(color="#ef4444", width=1, dash="dot"))
+    fig.add_hline(y=30, row=2, col=1, line=dict(color="#10b981", width=1, dash="dot"))
+    fig.add_hline(y=50, row=2, col=1, line=dict(color="#374151", width=0.8, dash="dot"))
+    fig.add_trace(go.Scatter(x=t, y=macd, mode="lines",
+                             line=dict(color="#6366f1", width=1.5), showlegend=False), row=3, col=1)
+    fig.add_trace(go.Scatter(x=t, y=sig, mode="lines",
+                             line=dict(color="#fbbf24", width=1.5), showlegend=False), row=3, col=1)
+    hist_colors = ["#10b981" if (v is not None and not np.isnan(v) and v >= 0) else "#ef4444"
+                   for v in hist.fillna(0)]
+    fig.add_trace(go.Bar(x=t, y=hist.fillna(0),
+                         marker_color=hist_colors, opacity=0.6, showlegend=False), row=3, col=1)
+
+    # Annotate first bullish MACD cross
+    for i in range(1, len(t)):
+        if (not pd.isna(macd.iloc[i-1]) and not pd.isna(sig.iloc[i-1])
+                and macd.iloc[i-1] < sig.iloc[i-1] and macd.iloc[i] >= sig.iloc[i]):
+            fig.add_annotation(x=i, y=float(macd.iloc[i]), xref="x3", yref="y3",
+                               text="Bullish↑", showarrow=True, arrowhead=2,
+                               arrowcolor="#10b981", font=dict(color="#10b981", size=9),
+                               ax=0, ay=-28)
+            break
+    # Annotate first bearish MACD cross
+    for i in range(1, len(t)):
+        if (not pd.isna(macd.iloc[i-1]) and not pd.isna(sig.iloc[i-1])
+                and macd.iloc[i-1] > sig.iloc[i-1] and macd.iloc[i] <= sig.iloc[i]):
+            fig.add_annotation(x=i, y=float(macd.iloc[i]), xref="x3", yref="y3",
+                               text="Bearish↓", showarrow=True, arrowhead=2,
+                               arrowcolor="#ef4444", font=dict(color="#ef4444", size=9),
+                               ax=0, ay=28)
+            break
+
+    for i in range(1, 4):
+        fig.update_xaxes(gridcolor=_grd, showticklabels=(i == 3), row=i, col=1)
+        fig.update_yaxes(gridcolor=_grd, row=i, col=1)
+    fig.update_layout(paper_bgcolor=_bg, plot_bgcolor=_bg, font=_fnt,
+                      height=400, margin=dict(l=50, r=20, t=35, b=20), showlegend=False)
+    for ann in fig.layout.annotations:
+        if ann.text in ("Price", "RSI (14)", "MACD"):
+            ann.font = dict(size=11, color="#9ca3af")
+
+    def _rule(title, body, color=T.ACCENT):
+        return html.Div([
+            html.Span(title, style={"color": color, "fontWeight": "700", "fontSize": "12px"}),
+            html.Span(f"  {body}", style={"color": "#9ca3af", "fontSize": "12px"}),
+        ], style={"marginBottom": "6px"})
+
+    return html.Div([
+        html.Div([dcc.Graph(figure=fig, config=_cfg)],
+                 style={**T.STYLE_CARD, "marginBottom": "12px", "padding": "14px"}),
+        html.Div([
+            html.Div("RSI — Relative Strength Index", style={
+                "color": T.TEXT_SEC, "fontSize": "11px", "fontWeight": "700",
+                "textTransform": "uppercase", "marginBottom": "8px"}),
+            _rule("RSI > 70 (red zone):", "Overbought. Momentum stretched upward — watch for RSI turning down as a warning, not an outright sell trigger.", T.DANGER),
+            _rule("RSI < 30 (green zone):", "Oversold. Good time to tighten stops on shorts, watch for bounce setups. Not a standalone buy signal.", T.SUCCESS),
+            _rule("RSI 50 centerline:", "Crossing 50 from below = bullish momentum shift. Below 50 = bearish regime. More reliable than overbought/oversold alone."),
+            _rule("Divergence:", "Price new high + RSI lower high = bearish divergence (momentum fading). Price new low + RSI higher low = bullish divergence. Precedes reversals.", T.WARNING),
+        ], style={**T.STYLE_CARD, "marginBottom": "12px", "padding": "12px 16px"}),
+        html.Div([
+            html.Div("MACD — Moving Average Convergence / Divergence", style={
+                "color": T.TEXT_SEC, "fontSize": "11px", "fontWeight": "700",
+                "textTransform": "uppercase", "marginBottom": "8px"}),
+            _rule("MACD line (blue):", "EMA(12) − EMA(26). Captures short-term vs intermediate momentum."),
+            _rule("Signal line (yellow):", "EMA(9) of MACD. Cross above = bullish. Cross below = bearish. Confirmed by histogram direction.", "#fbbf24"),
+            _rule("Histogram (green/red):", "MACD − Signal. Expanding = momentum building. Shrinking = momentum fading. Watch for bar shrinkage before price turns.", T.SUCCESS),
+            _rule("Zero line cross:", "MACD crossing above zero = uptrend confirmed. Below zero = downtrend confirmed. Slower but more reliable than signal-line crosses."),
+            _rule("Caveat:", "MACD generates many false signals in choppy, range-bound markets. Combine with RSI and price structure for confirmation.", T.WARNING),
+        ], style={**T.STYLE_CARD, "padding": "12px 16px"}),
+    ], style={"marginTop": "16px"})
+
+
+# ── Yield curve guide ──────────────────────────────────────────────────────────
+
+def _yield_guide() -> html.Div:
+    """Static illustrative guide for the Treasury yield curve."""
+    _bg  = "#111827"
+    _grd = "#1f2937"
+    _fnt = dict(family="Inter, sans-serif", color="#9ca3af", size=10)
+    _cfg = {"displayModeBar": False, "responsive": True}
+
+    mat = ["3M", "6M", "1Y", "2Y", "5Y", "10Y", "30Y"]
+    normal   = [4.8, 4.7, 4.5, 4.3, 4.2, 4.4, 4.6]
+    inverted = [5.3, 5.4, 5.2, 5.0, 4.4, 4.1, 4.3]
+    flat_h   = [4.9, 4.9, 4.8, 4.7, 4.6, 4.6, 4.7]
+
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(x=mat, y=normal, mode="lines+markers",
+                             name="Normal (healthy)", line=dict(color="#10b981", width=2),
+                             marker=dict(size=7)))
+    fig.add_trace(go.Scatter(x=mat, y=inverted, mode="lines+markers",
+                             name="Inverted (recession signal)", line=dict(color="#ef4444", width=2),
+                             marker=dict(size=7)))
+    fig.add_trace(go.Scatter(x=mat, y=flat_h, mode="lines+markers",
+                             name="Flat/Humped (transition)", line=dict(color="#fbbf24", width=2),
+                             marker=dict(size=7)))
+    fig.update_layout(
+        paper_bgcolor=_bg, plot_bgcolor=_bg, font=_fnt, height=240,
+        title=dict(text="Yield Curve Shapes (synthetic example)",
+                   font=dict(size=12, color="#d1d5db"), x=0),
+        xaxis=dict(title="Maturity", gridcolor=_grd, color="#9ca3af"),
+        yaxis=dict(title="Yield (%)", gridcolor=_grd, color="#9ca3af", tickformat=".1f"),
+        legend=dict(orientation="h", x=0, y=1.15, font=dict(size=10), bgcolor="rgba(0,0,0,0)"),
+        margin=dict(l=50, r=20, t=55, b=40),
+    )
+
+    def _rule(title, body, color=T.ACCENT):
+        return html.Div([
+            html.Span(title, style={"color": color, "fontWeight": "700", "fontSize": "12px"}),
+            html.Span(f"  {body}", style={"color": "#9ca3af", "fontSize": "12px"}),
+        ], style={"marginBottom": "6px"})
+
+    return html.Div([
+        html.Div([dcc.Graph(figure=fig, config=_cfg)],
+                 style={**T.STYLE_CARD, "marginBottom": "12px", "padding": "14px"}),
+        html.Div([
+            html.Div("Curve Shapes", style={
+                "color": T.TEXT_SEC, "fontSize": "11px", "fontWeight": "700",
+                "textTransform": "uppercase", "marginBottom": "8px"}),
+            _rule("Normal (green, upward):", "Long rates higher than short rates. Economy healthy, investors demand yield premium for time risk. Default state.", T.SUCCESS),
+            _rule("Inverted (red):", "Short rates above long rates. Most reliable historical recession predictor. 2s10s negative = watch for credit stress 12–18 months out.", T.DANGER),
+            _rule("Flat / Humped (yellow):", "Short and long rates converging. Transition state — watch the 2s10s trend to see which way it resolves.", "#fbbf24"),
+        ], style={**T.STYLE_CARD, "marginBottom": "12px", "padding": "12px 16px"}),
+        html.Div([
+            html.Div("The Key Spreads", style={
+                "color": T.TEXT_SEC, "fontSize": "11px", "fontWeight": "700",
+                "textTransform": "uppercase", "marginBottom": "8px"}),
+            _rule("2s10s (shown in pills):", "10Y minus 2Y. Positive = normal. Goes negative months before recessions. Inversions can last 1–2 years before economic impact."),
+            _rule("3m10y:", "Fed's preferred recession indicator. More sensitive to policy rate. First to invert, often first to re-steepen.", "#fbbf24"),
+            _rule("Re-steepening from inversion:", "When 2s10s climbs rapidly from deeply negative, it often signals recession is starting — not ending. Counter-intuitive but historically consistent.", T.DANGER),
+            _rule("3D Surface:", "Shows how the full curve evolved over 2 years. A 'front-end rise' = Fed tightening. A 'bull steepener' (long end dropping) = market pricing future cuts.", "#3b82f6"),
+            _rule("For options traders:", "Steep inverted curve → recession risk elevated → reduce short vol, widen spread widths, avoid iron condors on cyclical sectors.", T.WARNING),
+        ], style={**T.STYLE_CARD, "padding": "12px 16px"}),
+    ], style={"marginTop": "16px"})
+
+
 # ── Layout ─────────────────────────────────────────────────────────────────────
 
 def layout() -> html.Div:
@@ -159,7 +854,7 @@ def layout() -> html.Div:
                            "border": f"1px solid {'#10b981' if key_loaded else T.BORDER}",
                            "color": T.TEXT_PRIMARY},
                 ),
-                dbc.Input(id="mkt-ticker", type="text", value="SPY",
+                dbc.Input(id="mkt-ticker", type="text", value="F",
                           style={"fontSize": "12px", "width": "80px",
                                  "backgroundColor": T.BG_ELEVATED,
                                  "border": f"1px solid {T.BORDER}", "color": T.TEXT_PRIMARY}),
@@ -190,25 +885,65 @@ def layout() -> html.Div:
                       "alignItems": "center", "borderBottom": f"1px solid {T.BORDER}",
                       "paddingBottom": "8px", "marginBottom": "12px"}),
             dcc.Loading(html.Div(id="mkt-candle-content",
-                                 children=_hint("Click Load to render")),
+                                 children=_hint("Loading…")),
                         type="circle", color=T.ACCENT),
         ], style={**T.STYLE_CARD, "marginBottom": "16px"}),
-        _section("Treasury Term Structure — Yield Curve & 3D Surface (FRED, free)",
-                 dcc.Loading(html.Div(id="mkt-yield-content",
-                                      children=_hint("Click Load to fetch from FRED")),
-                             type="circle", color=T.ACCENT)),
-        _section("Volatility Surface 3D",
-                 dcc.Loading(html.Div(id="mkt-vol-content",
-                                      children=_hint("Click Load to render")),
-                             type="circle", color=T.ACCENT)),
+        html.Div([
+            html.Div([
+                html.Div("Dealer GEX — Gamma Exposure by Strike", style={
+                    "color": T.TEXT_SEC, "fontSize": "11px", "fontWeight": "600",
+                    "textTransform": "uppercase", "letterSpacing": "0.07em",
+                }),
+                dbc.Button("How to read this chart",
+                           id="mkt-gex-guide-toggle",
+                           size="sm", color="link",
+                           style={"color": T.ACCENT, "fontSize": "11px",
+                                  "padding": "0", "fontWeight": "500"}),
+            ], style={"display": "flex", "justifyContent": "space-between",
+                      "alignItems": "center", "borderBottom": f"1px solid {T.BORDER}",
+                      "paddingBottom": "8px", "marginBottom": "12px"}),
+            dcc.Loading(html.Div(id="mkt-gex-content", children=_hint("Loading…")),
+                        type="circle", color=T.ACCENT),
+            dbc.Collapse(_gex_guide(), id="mkt-gex-guide-collapse", is_open=False),
+        ], style={**T.STYLE_CARD, "marginBottom": "16px"}),
+        html.Div([
+            html.Div([
+                html.Div("Volatility Surface 3D", style={
+                    "color": T.TEXT_SEC, "fontSize": "11px", "fontWeight": "600",
+                    "textTransform": "uppercase", "letterSpacing": "0.07em",
+                }),
+                dbc.Button("How to read this chart", id="mkt-vol-guide-toggle",
+                           size="sm", color="link",
+                           style={"color": T.ACCENT, "fontSize": "11px",
+                                  "padding": "0", "fontWeight": "500"}),
+            ], style={"display": "flex", "justifyContent": "space-between",
+                      "alignItems": "center", "borderBottom": f"1px solid {T.BORDER}",
+                      "paddingBottom": "8px", "marginBottom": "12px"}),
+            dcc.Loading(html.Div(id="mkt-vol-content", children=_hint("Loading…")),
+                        type="circle", color=T.ACCENT),
+            dbc.Collapse(_vol_surface_guide(), id="mkt-vol-guide-collapse", is_open=False),
+        ], style={**T.STYLE_CARD, "marginBottom": "16px"}),
         _section("Market Activity — Top Movers & Dealer GEX",
                  dcc.Loading(html.Div(id="mkt-activity-content",
-                                      children=_hint("Click Load to render")),
+                                      children=_hint("Loading…")),
                              type="circle", color=T.ACCENT)),
-        _section("Momentum Indicators — RSI & MACD",
-                 dcc.Loading(html.Div(id="mkt-momentum-content",
-                                      children=_hint("Click Load to render")),
-                             type="circle", color=T.ACCENT)),
+        html.Div([
+            html.Div([
+                html.Div("Momentum Indicators — RSI & MACD", style={
+                    "color": T.TEXT_SEC, "fontSize": "11px", "fontWeight": "600",
+                    "textTransform": "uppercase", "letterSpacing": "0.07em",
+                }),
+                dbc.Button("How to read this chart", id="mkt-momentum-guide-toggle",
+                           size="sm", color="link",
+                           style={"color": T.ACCENT, "fontSize": "11px",
+                                  "padding": "0", "fontWeight": "500"}),
+            ], style={"display": "flex", "justifyContent": "space-between",
+                      "alignItems": "center", "borderBottom": f"1px solid {T.BORDER}",
+                      "paddingBottom": "8px", "marginBottom": "12px"}),
+            dcc.Loading(html.Div(id="mkt-momentum-content", children=_hint("Loading…")),
+                        type="circle", color=T.ACCENT),
+            dbc.Collapse(_momentum_guide(), id="mkt-momentum-guide-collapse", is_open=False),
+        ], style={**T.STYLE_CARD, "marginBottom": "16px"}),
         _section("Correlation Analysis", html.Div([
             html.Div([
                 html.Label("Compare with:", style={"color": T.TEXT_SEC, "fontSize": "12px",
@@ -224,7 +959,101 @@ def layout() -> html.Div:
             dcc.Loading(html.Div(id="mkt-corr-content"), type="circle", color=T.ACCENT),
         ])),
 
-        dcc.Store(id="mkt-ticker-store", data=None),
+        html.Div([
+            html.Div([
+                html.Div("Treasury Term Structure — Yield Curve & 3D Surface (FRED, free)", style={
+                    "color": T.TEXT_SEC, "fontSize": "11px", "fontWeight": "600",
+                    "textTransform": "uppercase", "letterSpacing": "0.07em",
+                }),
+                dbc.Button("How to read this chart", id="mkt-yield-guide-toggle",
+                           size="sm", color="link",
+                           style={"color": T.ACCENT, "fontSize": "11px",
+                                  "padding": "0", "fontWeight": "500"}),
+            ], style={"display": "flex", "justifyContent": "space-between",
+                      "alignItems": "center", "borderBottom": f"1px solid {T.BORDER}",
+                      "paddingBottom": "8px", "marginBottom": "12px"}),
+            dcc.Loading(html.Div(id="mkt-yield-content", children=_hint("Loading…")),
+                        type="circle", color=T.ACCENT),
+            dbc.Collapse(_yield_guide(), id="mkt-yield-guide-collapse", is_open=False),
+        ], style={**T.STYLE_CARD, "marginBottom": "16px"}),
+
+        # ── Market Screener ──────────────────────────────────────────────────────
+        html.Div([
+            html.Div([
+                html.Div("Market Screener", style={
+                    "color": T.TEXT_SEC, "fontSize": "11px", "fontWeight": "600",
+                    "textTransform": "uppercase", "letterSpacing": "0.07em",
+                }),
+                html.Div(
+                    [dbc.Button(
+                        opt["label"],
+                        id={"type": "scr-univ-btn", "index": opt["value"]},
+                        size="sm",
+                        style={
+                            "fontSize": "12px", "fontWeight": "500",
+                            "padding": "4px 12px",
+                            "backgroundColor": T.ACCENT if opt["value"] == _SCR_DEFAULT_UNIVERSE else T.BG_ELEVATED,
+                            "border": f"1px solid {T.ACCENT if opt['value'] == _SCR_DEFAULT_UNIVERSE else T.BORDER}",
+                            "color": T.TEXT_PRIMARY,
+                            "borderRadius": "6px",
+                        },
+                    ) for opt in _SCR_UNIVERSE_OPTIONS],
+                    style={"display": "flex", "gap": "6px"},
+                ),
+                dcc.Store(id="mkt-scr-universe", data=_SCR_DEFAULT_UNIVERSE),
+            ], style={
+                "display": "flex", "justifyContent": "space-between",
+                "alignItems": "center",
+                "borderBottom": f"1px solid {T.BORDER}",
+                "paddingBottom": "8px", "marginBottom": "16px",
+            }),
+
+            dcc.Loading(type="circle", color=T.ACCENT, children=html.Div([
+                # Row 1: Movers full width
+                html.Div([
+                    html.Div("Movers", style={"color": T.TEXT_MUTED, "fontSize": "11px",
+                                              "fontWeight": "600", "marginBottom": "6px",
+                                              "borderLeft": f"3px solid {T.ACCENT}",
+                                              "paddingLeft": "8px"}),
+                    dcc.Graph(id="mkt-scr-movers-fig", figure=_scr_empty_fig(),
+                              config=_SCR_CFG),
+                ], style={"marginBottom": "16px"}),
+                # Row 2: Momentum | Volatility
+                html.Div([
+                    html.Div([
+                        html.Div("Momentum — top 15 by absolute 20d return",
+                                 style={"color": T.TEXT_MUTED, "fontSize": "11px",
+                                        "fontWeight": "600", "marginBottom": "6px",
+                                        "borderLeft": f"3px solid {T.ACCENT}",
+                                        "paddingLeft": "8px"}),
+                        dcc.Graph(id="mkt-scr-mom-fig", figure=_scr_empty_fig(),
+                                  config=_SCR_CFG, style={"height": "420px"}),
+                    ]),
+                    html.Div([
+                        html.Div("Volatility — HV20 vs IV (amber = IV > 1.5× HV)",
+                                 style={"color": T.TEXT_MUTED, "fontSize": "11px",
+                                        "fontWeight": "600", "marginBottom": "6px",
+                                        "borderLeft": f"3px solid {T.ACCENT}",
+                                        "paddingLeft": "8px"}),
+                        dcc.Graph(id="mkt-scr-vol-fig", figure=_scr_empty_fig(),
+                                  config=_SCR_CFG, style={"height": "420px"}),
+                    ]),
+                ], style={"display": "grid", "gridTemplateColumns": "1fr 1fr",
+                          "gap": "16px", "marginBottom": "16px"}),
+                # Row 3: Volume Alerts
+                html.Div([
+                    html.Div("Volume Alerts — today vs 20-day average",
+                             style={"color": T.TEXT_MUTED, "fontSize": "11px",
+                                    "fontWeight": "600", "marginBottom": "6px",
+                                    "borderLeft": f"3px solid {T.ACCENT}",
+                                    "paddingLeft": "8px"}),
+                    dcc.Graph(id="mkt-scr-volalert-fig", figure=_scr_empty_fig(),
+                              config=_SCR_CFG),
+                ]),
+            ])),
+        ], style={**T.STYLE_CARD, "marginBottom": "16px"}),
+
+        dcc.Store(id="mkt-ticker-store", data="F"),
         dcc.Store(id="mkt-apikey-store", data=get_polygon_api_key()),
     ], style=T.STYLE_PAGE)
 
@@ -380,11 +1209,10 @@ def _render_intraday(ticker: str, api_key: str):
     Input("mkt-ticker-store",    "data"),
     Input("mkt-eod-toggle",      "value"),
     State("mkt-apikey-store",    "data"),
-    prevent_initial_call=True,
 )
 def render_candle(ticker, eod_mode, api_key):
     if not ticker:
-        return _hint("Click Load to render")
+        return _hint("Loading…")
     if not api_key:
         return _hint("No API key — enter above and click Load")
 
@@ -515,7 +1343,6 @@ def render_candle(ticker, eod_mode, api_key):
 @callback(
     Output("mkt-yield-content", "children"),
     Input("mkt-ticker-store",   "data"),
-    prevent_initial_call=True,
 )
 def render_yield(_ticker):
     if _ticker is None:
@@ -683,11 +1510,10 @@ def _render_yield_inner():
     Output("mkt-vol-content",  "children"),
     Input("mkt-ticker-store",  "data"),
     State("mkt-apikey-store",  "data"),
-    prevent_initial_call=True,
 )
 def render_vol_surface(ticker, api_key):
     if not ticker:
-        return _hint("Click Load to render")
+        return _hint("Loading…")
     if not api_key:
         return _hint("No API key — enter above and click Load")
     try:
@@ -791,11 +1617,10 @@ def render_vol_surface(ticker, api_key):
     Output("mkt-activity-content", "children"),
     Input("mkt-ticker-store",      "data"),
     State("mkt-apikey-store",      "data"),
-    prevent_initial_call=True,
 )
 def render_activity(ticker, api_key):
     if not ticker:
-        return _hint("Click Load to render")
+        return _hint("Loading…")
     if not api_key:
         return _hint("No API key — enter above and click Load")
     try:
@@ -912,17 +1737,249 @@ def render_activity(ticker, api_key):
     return html.Div(children)
 
 
+# ── Dealer GEX ────────────────────────────────────────────────────────────────
+
+@callback(
+    Output("mkt-gex-content",   "children"),
+    Input("mkt-ticker-store",   "data"),
+    State("mkt-apikey-store",   "data"),
+)
+def render_gex(ticker, api_key):
+    if not ticker:
+        return _hint("Loading…")
+    if not api_key:
+        return _hint("No API key — enter above and click Load")
+    try:
+        import datetime as _dt
+        from collections import defaultdict
+        c    = _polygon_client(api_key)
+        agg  = c._get(f"/v2/aggs/ticker/{ticker}/prev", {"adjusted": "true"})
+        res  = agg.get("results", [])
+        if not res:
+            return html.P(f"Could not fetch spot price for {ticker}.", style={"color": T.WARNING})
+        spot = float(res[0]["c"])
+
+        exp_to = (_dt.date.today() + _dt.timedelta(days=60)).strftime("%Y-%m-%d")
+        results, url = [], f"/v3/snapshot/options/{ticker}"
+        params = {
+            "expiration_date.gte": str(_dt.date.today()),
+            "expiration_date.lte": exp_to,
+            "strike_price.gte":    round(spot * 0.85, 0),
+            "strike_price.lte":    round(spot * 1.15, 0),
+            "limit": 250,
+        }
+        while url:
+            data   = c._get(url, params)
+            results.extend(data.get("results", []))
+            nxt    = (data.get("next_url") or "").replace(c.BASE, "")
+            url, params = (nxt or None), {}
+
+        if not results:
+            return html.P("No options data for GEX calculation.", style={"color": T.WARNING})
+
+        # ── Aggregate GEX and OI per strike ───────────────────────────────────
+        gex: dict = defaultdict(lambda: {"call_gex": 0.0, "put_gex": 0.0,
+                                          "call_oi": 0,   "put_oi": 0})
+        atm_opts = []   # (iv, dte) for σ computation
+        for r in results:
+            details = r.get("details") or {}
+            strike  = details.get("strike_price")
+            ctype   = details.get("contract_type", "").lower()
+            exp     = details.get("expiration_date", "")
+            if not strike:
+                continue
+            gamma = (r.get("greeks") or {}).get("gamma")
+            oi    = r.get("open_interest") or 0
+            iv    = r.get("implied_volatility")
+            if gamma and oi:
+                val = float(gamma) * float(oi) * 100 * (spot ** 2) / 1e9
+                if ctype == "call":
+                    gex[strike]["call_gex"] += val
+                elif ctype == "put":
+                    gex[strike]["put_gex"]  -= val
+            if ctype == "call":
+                gex[strike]["call_oi"] += int(oi)
+            elif ctype == "put":
+                gex[strike]["put_oi"]  += int(oi)
+            # collect near-ATM options for σ
+            if iv and abs(float(strike) - spot) / spot < 0.03 and exp:
+                try:
+                    dte_r = (_dt.date.fromisoformat(exp) - _dt.date.today()).days
+                    if dte_r > 0:
+                        atm_opts.append((float(iv), dte_r))
+                except Exception:
+                    pass
+
+        if not gex:
+            return html.P("Options data present but no gamma/OI available.",
+                          style={"color": T.WARNING})
+
+        gex_df = pd.DataFrame([
+            {"strike": k, "call_gex": v["call_gex"], "put_gex": v["put_gex"],
+             "net_gex": v["call_gex"] + v["put_gex"],
+             "call_oi": v["call_oi"],  "put_oi": v["put_oi"]}
+            for k, v in sorted(gex.items())
+        ])
+        net_total  = float(gex_df["net_gex"].sum())
+        call_total = float(gex_df["call_gex"].sum())
+        put_total  = float(gex_df["put_gex"].sum())
+
+        # ── Key levels ────────────────────────────────────────────────────────
+        # ZERO G — flip where cumulative GEX crosses zero
+        gex_s    = gex_df.sort_values("strike")
+        cum_gex  = gex_s["net_gex"].cumsum()
+        flip_mask = (cum_gex.shift(1, fill_value=cum_gex.iloc[0]) * cum_gex) < 0
+        zero_g   = float(gex_s.loc[flip_mask, "strike"].iloc[0]) if flip_mask.any() else None
+
+        # G1 — highest absolute net GEX above spot
+        above = gex_df[gex_df["strike"] > spot]
+        g1 = float(above.loc[above["net_gex"].abs().idxmax(), "strike"]) if not above.empty else None
+        g1_val = float(above.loc[above["net_gex"].abs().idxmax(), "net_gex"]) if not above.empty else None
+
+        # G2 — highest absolute net GEX below spot
+        below = gex_df[gex_df["strike"] < spot]
+        g2 = float(below.loc[below["net_gex"].abs().idxmax(), "strike"]) if not below.empty else None
+        g2_val = float(below.loc[below["net_gex"].abs().idxmax(), "net_gex"]) if not below.empty else None
+
+        # σ — 1 std dev implied move from nearest-expiry ATM IV
+        sigma = None
+        if atm_opts:
+            nearest_dte = min(d for _, d in atm_opts)
+            near_ivs = [iv for iv, d in atm_opts if d == nearest_dte]
+            if near_ivs:
+                atm_iv = float(np.median(near_ivs))
+                sigma  = spot * atm_iv * math.sqrt(nearest_dte / 365)
+
+        sig_hi = spot + sigma if sigma else None
+        sig_lo = spot - sigma if sigma else None
+
+        # ── GEX by strike chart ───────────────────────────────────────────────
+        fig = go.Figure()
+
+        # Dealer cluster zones (shaded bands)
+        y_rng = max(gex_df[["call_gex","put_gex","net_gex"]].abs().max()) * 1.3
+        if g1 is not None and sig_hi is not None:
+            fig.add_hrect(y0=-y_rng, y1=y_rng,
+                          x0=min(g1, sig_hi), x1=max(g1, sig_hi),
+                          fillcolor="rgba(239,68,68,0.07)", line_width=0,
+                          annotation_text="DEALER CLUSTER",
+                          annotation_font_color="rgba(239,68,68,0.5)",
+                          annotation_font_size=9)
+        if g2 is not None and sig_lo is not None:
+            fig.add_hrect(y0=-y_rng, y1=y_rng,
+                          x0=min(g2, sig_lo), x1=max(g2, sig_lo),
+                          fillcolor="rgba(16,185,129,0.07)", line_width=0,
+                          annotation_text="DEALER CLUSTER",
+                          annotation_font_color="rgba(16,185,129,0.5)",
+                          annotation_font_size=9,
+                          annotation_position="bottom right")
+
+        fig.add_trace(go.Bar(x=gex_df["strike"], y=gex_df["call_gex"],
+                             name="Call GEX", marker_color=T.SUCCESS, opacity=0.8,
+                             hovertemplate="$%{x:.0f}  Call: %{y:+.4f}B<extra></extra>"))
+        fig.add_trace(go.Bar(x=gex_df["strike"], y=gex_df["put_gex"],
+                             name="Put GEX", marker_color=T.DANGER, opacity=0.8,
+                             hovertemplate="$%{x:.0f}  Put: %{y:+.4f}B<extra></extra>"))
+        fig.add_trace(go.Bar(x=gex_df["strike"], y=gex_df["net_gex"],
+                             name="Net GEX",
+                             marker_color=[T.ACCENT if v >= 0 else "#7c3aed"
+                                           for v in gex_df["net_gex"]],
+                             opacity=0.55,
+                             hovertemplate="$%{x:.0f}  Net: %{y:+.4f}B<extra></extra>"))
+
+        # Vertical reference lines
+        def _vl(x, color, text, pos="top left", width=1.5, dash="dot"):
+            fig.add_vline(x=x, line=dict(color=color, width=width, dash=dash),
+                          annotation_text=text, annotation_font_color=color,
+                          annotation_font_size=10, annotation_position=pos)
+
+        _vl(spot,  T.WARNING,  f"Spot ${spot:.0f}", "top right", dash="dash")
+        if zero_g: _vl(zero_g, "#fb923c", f"ZERO G  ${zero_g:.0f}", "bottom left")
+        if g1:     _vl(g1,     "#ef4444", f"G1  ${g1:.0f}", "top left")
+        if g2:     _vl(g2,     "#10b981", f"G2  ${g2:.0f}", "bottom left")
+        if sig_hi: _vl(sig_hi, "#8b5cf6", f"σ  ${sig_hi:.0f}", "top right")
+        if sig_lo: _vl(sig_lo, "#8b5cf6", f"σ  ${sig_lo:.0f}", "bottom right")
+
+        fig.add_hline(y=0, line=dict(color=T.BORDER_BRT, width=1))
+        fig.update_layout(
+            **_DARK, height=400, barmode="overlay",
+            title=dict(text=f"{ticker} — GEX by Strike  ·  ±15% spot  ·  next 60 DTE",
+                       font=dict(size=13, color=T.TEXT_SEC)),
+            xaxis=dict(tickprefix="$", gridcolor=T.BORDER),
+            yaxis=dict(title="GEX ($B)", gridcolor=T.BORDER, zeroline=False),
+            legend=dict(orientation="h", x=0, y=1.08, bgcolor="rgba(0,0,0,0)"),
+            margin=dict(l=0, r=0, t=50, b=0),
+        )
+
+        # ── Open Interest by Strike chart ─────────────────────────────────────
+        oi_df = gex_df.sort_values("strike")
+        fig_oi = go.Figure()
+        fig_oi.add_trace(go.Bar(
+            y=oi_df["strike"], x=oi_df["call_oi"], orientation="h",
+            name="Call OI", marker_color=T.SUCCESS, opacity=0.8,
+            hovertemplate="$%{y:.0f}  Call OI: %{x:,.0f}<extra></extra>",
+        ))
+        fig_oi.add_trace(go.Bar(
+            y=oi_df["strike"], x=[-v for v in oi_df["put_oi"]], orientation="h",
+            name="Put OI", marker_color=T.DANGER, opacity=0.8,
+            hovertemplate="$%{y:.0f}  Put OI: %{customdata:,.0f}<extra></extra>",
+            customdata=oi_df["put_oi"],
+        ))
+        fig_oi.add_hline(y=spot, line=dict(color=T.WARNING, width=1.5, dash="dash"),
+                         annotation_text=f"${spot:.0f}",
+                         annotation_font_color=T.WARNING, annotation_font_size=10)
+        if zero_g:
+            fig_oi.add_hline(y=zero_g, line=dict(color="#fb923c", width=1, dash="dot"),
+                             annotation_text="ZERO G",
+                             annotation_font_color="#fb923c", annotation_font_size=9)
+        fig_oi.update_layout(
+            **_DARK, height=400, barmode="overlay",
+            title=dict(text="Open Interest by Strike",
+                       font=dict(size=13, color=T.TEXT_SEC)),
+            xaxis=dict(title="OI (contracts)", gridcolor=T.BORDER,
+                       tickformat=",", color="#9ca3af"),
+            yaxis=dict(tickprefix="$", gridcolor=T.BORDER, color="#9ca3af"),
+            legend=dict(orientation="h", x=0, y=1.08, bgcolor="rgba(0,0,0,0)"),
+            margin=dict(l=0, r=0, t=50, b=0),
+        )
+
+        # ── Pills ─────────────────────────────────────────────────────────────
+        pills = [
+            _pill("Net GEX", f"{net_total:+.3f}B",
+                  T.SUCCESS if net_total >= 0 else T.DANGER),
+            _pill("Dealers", "Long Gamma" if net_total >= 0 else "Short Gamma",
+                  T.SUCCESS if net_total >= 0 else T.DANGER),
+            _pill("Call GEX", f"{call_total:+.3f}B", T.SUCCESS),
+            _pill("Put GEX",  f"{put_total:+.3f}B",  T.DANGER),
+        ]
+        if g1:     pills.append(_pill("G1",     f"${g1:.0f}", "#ef4444"))
+        if zero_g: pills.append(_pill("ZERO G", f"${zero_g:.0f}", "#fb923c"))
+        if g2:     pills.append(_pill("G2",     f"${g2:.0f}", "#10b981"))
+        if sig_hi: pills.append(_pill("σ range", f"${sig_lo:.0f} – ${sig_hi:.0f}", "#8b5cf6"))
+        pills.append(_pill("Spot", f"${spot:,.2f}"))
+
+        return html.Div([
+            html.Div(pills, style={"display": "flex", "gap": "8px",
+                                   "flexWrap": "wrap", "marginBottom": "12px"}),
+            dbc.Row([
+                dbc.Col(dcc.Graph(figure=fig,    config={"displayModeBar": False}), width=8),
+                dbc.Col(dcc.Graph(figure=fig_oi, config={"displayModeBar": False}), width=4),
+            ], className="g-2"),
+        ])
+    except Exception as e:
+        return html.P(f"GEX error: {e}", style={"color": T.DANGER, "fontSize": "12px"})
+
+
 # ── Momentum (RSI + MACD) ─────────────────────────────────────────────────────
 
 @callback(
     Output("mkt-momentum-content", "children"),
     Input("mkt-ticker-store",      "data"),
     State("mkt-apikey-store",      "data"),
-    prevent_initial_call=True,
 )
 def render_momentum(ticker, api_key):
     if not ticker:
-        return _hint("Click Load to render")
+        return _hint("Loading…")
     if not api_key:
         return _hint("No API key — enter above and click Load")
     try:
@@ -1061,3 +2118,202 @@ def render_corr(n_clicks, ticker_a, ticker_b, api_key):
             dbc.Col(dcc.Graph(figure=fig_s, config={"displayModeBar": False}), width=6),
         ], className="g-3"),
     ])
+
+
+# ── Guide toggles ─────────────────────────────────────────────────────────────
+
+@callback(Output("mkt-gex-guide-collapse",      "is_open"),
+          Input("mkt-gex-guide-toggle",          "n_clicks"),
+          State("mkt-gex-guide-collapse",        "is_open"),
+          prevent_initial_call=True)
+def _toggle_gex_guide(n, is_open): return not is_open
+
+
+@callback(Output("mkt-vol-guide-collapse",      "is_open"),
+          Input("mkt-vol-guide-toggle",          "n_clicks"),
+          State("mkt-vol-guide-collapse",        "is_open"),
+          prevent_initial_call=True)
+def _toggle_vol_guide(n, is_open): return not is_open
+
+
+@callback(Output("mkt-momentum-guide-collapse", "is_open"),
+          Input("mkt-momentum-guide-toggle",     "n_clicks"),
+          State("mkt-momentum-guide-collapse",   "is_open"),
+          prevent_initial_call=True)
+def _toggle_momentum_guide(n, is_open): return not is_open
+
+
+@callback(Output("mkt-yield-guide-collapse",    "is_open"),
+          Input("mkt-yield-guide-toggle",        "n_clicks"),
+          State("mkt-yield-guide-collapse",      "is_open"),
+          prevent_initial_call=True)
+def _toggle_yield_guide(n, is_open): return not is_open
+
+
+# ── Universe pill buttons → store + active highlight ──────────────────────────
+
+@callback(
+    Output("mkt-scr-universe", "data"),
+    Output({"type": "scr-univ-btn", "index": ALL}, "style"),
+    Input({"type": "scr-univ-btn", "index": ALL}, "n_clicks"),
+    State({"type": "scr-univ-btn", "index": ALL}, "id"),
+    prevent_initial_call=True,
+)
+def _select_universe(n_clicks_list, ids):
+    from dash import ctx
+    triggered = ctx.triggered_id
+    if not triggered:
+        return no_update, [no_update] * len(ids)
+    selected = triggered["index"]
+    styles = []
+    for btn_id in ids:
+        active = btn_id["index"] == selected
+        styles.append({
+            "fontSize": "12px", "fontWeight": "500",
+            "padding": "4px 12px",
+            "backgroundColor": T.ACCENT if active else T.BG_ELEVATED,
+            "border": f"1px solid {T.ACCENT if active else T.BORDER}",
+            "color": T.TEXT_PRIMARY,
+            "borderRadius": "6px",
+        })
+    return selected, styles
+
+
+# ── Market Screener callback ───────────────────────────────────────────────────
+
+@callback(
+    Output("mkt-scr-movers-fig",   "figure"),
+    Output("mkt-scr-mom-fig",      "figure"),
+    Output("mkt-scr-vol-fig",      "figure"),
+    Output("mkt-scr-volalert-fig", "figure"),
+    Input("mkt-scr-universe",      "data"),
+    State("mkt-apikey-store",      "data"),
+)
+def run_screener(universe, api_key):
+    _ef = _scr_empty_fig()
+    api_key = api_key or get_polygon_api_key()
+    if not api_key:
+        msg_fig = _scr_empty_fig("No Polygon API key — enter key above and click Load")
+        return msg_fig, msg_fig, msg_fig, msg_fig
+
+    tickers = UNIVERSES.get(universe or _SCR_DEFAULT_UNIVERSE, [])
+    if not tickers:
+        return _ef, _ef, _ef, _ef
+
+    try:
+        from data.polygon_client import PolygonClient
+        client = PolygonClient(api_key=api_key)
+    except Exception:
+        return _ef, _ef, _ef, _ef
+
+    # Batch snapshot
+    snap = _scr_batch_snapshot(tickers, client)
+
+    # Daily bars in parallel
+    bars: dict[str, pd.DataFrame] = {}
+    with ThreadPoolExecutor(max_workers=8) as ex:
+        fut_map = {ex.submit(_scr_fetch_bars, t, client, 60): t for t in tickers}
+        for fut in as_completed(fut_map):
+            t = fut_map[fut]
+            try:
+                df = fut.result()
+                if not df.empty:
+                    bars[t] = df
+            except Exception:
+                pass
+
+    # ── Movers ────────────────────────────────────────────────────────────────
+    mover_rows = []
+    for t in tickers:
+        df = bars.get(t)
+        if df is None or df.empty:
+            continue
+        s     = snap.get(t, {})
+        price = float(df["close"].iloc[-1])
+        vol   = int(s.get("volume", 0))
+        if len(df) >= 2:
+            prev_c = float(df["close"].iloc[-2])
+            chg = round((price - prev_c) / prev_c * 100, 2) if prev_c > 0 else 0.0
+        else:
+            chg = round(s.get("change_pct", 0), 2)
+        mover_rows.append({
+            "Ticker": t, "Price": round(price, 2),
+            "Change%": chg, "Volume": _fmt_vol(vol),
+            "Dollar Vol": _fmt_vol(price * vol),
+        })
+    mover_sorted = sorted(mover_rows, key=lambda r: r["Change%"], reverse=True)
+
+    # ── Momentum ──────────────────────────────────────────────────────────────
+    mom_rows = []
+    for t in tickers:
+        s  = snap.get(t, {})
+        df = bars.get(t)
+        if df is None or df.empty:
+            continue
+        closes = df["close"]
+        price  = s.get("close") or float(closes.iloc[-1])
+        def _ret(n):
+            if len(closes) < n + 1: return None
+            return round((float(closes.iloc[-1]) / float(closes.iloc[-(n+1)]) - 1) * 100, 2)
+        rsi  = _scr_rsi(closes)
+        ma20 = float(closes.iloc[-20:].mean()) if len(closes) >= 20 else None
+        ma50 = float(closes.iloc[-50:].mean()) if len(closes) >= 50 else None
+        mom_rows.append({
+            "Ticker": t, "Price": round(price, 2),
+            "1d%":   _ret(1)  if _ret(1)  is not None else "—",
+            "5d%":   _ret(5)  if _ret(5)  is not None else "—",
+            "20d%":  _ret(20) if _ret(20) is not None else "—",
+            "RSI14": round(rsi, 1) if rsi is not None else "—",
+            ">20MA": "Yes" if (ma20 and price > ma20) else "No",
+            ">50MA": "Yes" if (ma50 and price > ma50) else "No",
+        })
+
+    # ── Volatility (IV in parallel) ───────────────────────────────────────────
+    with ThreadPoolExecutor(max_workers=8) as ex:
+        iv_futs = {ex.submit(_scr_fetch_iv, t, client): t for t in tickers}
+        iv_map  = {iv_futs[f]: f.result() for f in iv_futs}
+
+    vol_rows = []
+    for t in tickers:
+        s  = snap.get(t, {})
+        df = bars.get(t)
+        if df is None or df.empty:
+            continue
+        closes = df["close"]
+        price  = s.get("close") or float(closes.iloc[-1])
+        hv20   = _scr_hv(closes, 20)
+        iv_raw = iv_map.get(t)
+        iv_val = iv_raw * 100 if iv_raw is not None else None
+        iv_hv  = round(iv_val / hv20, 2) if (iv_val and hv20 and hv20 > 0) else None
+        vol_rows.append({
+            "Ticker": t, "Price": round(price, 2),
+            "HV20":   f"{hv20:.1f}%" if hv20 is not None else "—",
+            "IV":     f"{iv_val:.1f}%" if iv_val is not None else "—",
+            "IV/HV":  iv_hv if iv_hv is not None else "—",
+        })
+
+    # ── Volume Alerts ─────────────────────────────────────────────────────────
+    volalert_rows = []
+    for t in tickers:
+        s  = snap.get(t, {})
+        df = bars.get(t)
+        if df is None or df.empty or s.get("volume", 0) == 0:
+            continue
+        avg_vol = float(df["volume"].iloc[-20:].mean()) if len(df) >= 20 else None
+        if not avg_vol:
+            continue
+        ratio = s["volume"] / avg_vol
+        if ratio >= 2.0:
+            price = s.get("close") or float(df["close"].iloc[-1])
+            volalert_rows.append({
+                "Ticker": t, "Vol Ratio": round(ratio, 2),
+                "Price": round(price, 2), "Change%": round(s.get("change_pct", 0), 2),
+            })
+    volalert_rows.sort(key=lambda r: r["Vol Ratio"], reverse=True)
+
+    return (
+        _build_movers_fig(mover_sorted),
+        _build_momentum_fig(mom_rows),
+        _build_vol_fig(vol_rows),
+        _build_volalert_fig(volalert_rows),
+    )

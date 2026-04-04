@@ -64,7 +64,6 @@ app.layout = html.Div(
 import dash_app.pages.blotter
 import dash_app.pages.paper_trading
 import dash_app.pages.market
-import dash_app.pages.screener
 import dash_app.pages.strategies
 import dash_app.pages.backtest
 import dash_app.pages.tools
@@ -81,9 +80,6 @@ def render_page(pathname: str):
             return layout()
         if pathname == "/market":
             from dash_app.pages.market import layout
-            return layout()
-        if pathname == "/screener":
-            from dash_app.pages.screener import layout
             return layout()
         if pathname == "/strategies":
             from dash_app.pages.strategies import layout
