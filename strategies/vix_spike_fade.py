@@ -155,14 +155,27 @@ class VIXSpikeFadeStrategy(BaseStrategy):
             or market_snapshot.get("spy_price")
             or 0.0
         )
-        vix_20d_avg = float(market_snapshot.get("vix_20d_avg", vix))
-        ma_200d     = float(market_snapshot.get("ma_200d")
-                            or market_snapshot.get("spy_200d_ma")
-                            or spot)
+        _vix_20d_raw = market_snapshot.get("vix_20d_avg")
+        # If vix_20d_avg is absent, defaulting to current vix makes vix > vix*1.3
+        # always False (silent failure). Use None and relax to threshold-only check.
+        vix_20d_avg = float(_vix_20d_raw) if _vix_20d_raw is not None else None
+        # Explicit key-presence check: 0.0 is a valid sentinel for "not enough history"
+        # Cannot use `or` here because 0.0 is falsy and would be skipped.
+        if "ma_200d" in market_snapshot and market_snapshot["ma_200d"] is not None:
+            ma_200d = float(market_snapshot["ma_200d"])
+        elif "spy_200d_ma" in market_snapshot and market_snapshot["spy_200d_ma"] is not None:
+            ma_200d = float(market_snapshot["spy_200d_ma"])
+        else:
+            ma_200d = float(spot)
 
-        spike_cond  = (vix > self.spike_threshold and
-                       vix > vix_20d_avg * self.spike_ratio)
-        regime_ok   = (ma_200d == 0.0 or spot >= ma_200d * 0.95)
+        if vix_20d_avg is not None:
+            spike_cond = (vix > self.spike_threshold and
+                          vix > vix_20d_avg * self.spike_ratio)
+        else:
+            # No 20d avg — only require absolute VIX threshold
+            spike_cond = vix > self.spike_threshold
+        # ma_200d == 0.0 means not enough data — skip the check (don't auto-pass)
+        regime_ok   = (ma_200d > 0.0 and spot >= ma_200d * 0.95)
 
         if spike_cond and regime_ok and spot > 0:
             # Quick debit estimate for confidence / sizing
@@ -179,7 +192,9 @@ class VIXSpikeFadeStrategy(BaseStrategy):
                 "k_long": k_long,
                 "k_short": k_short,
                 "estimated_debit": round(debit, 4),
-                "reason": "VIX spike detected — not a regime break",
+                "reason": "VIX spike detected — not a regime break" + (
+                    "" if vix_20d_avg is not None else " (no 20d avg in snapshot, ratio check skipped)"
+                ),
             }
         else:
             signal  = "HOLD"

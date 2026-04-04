@@ -835,6 +835,237 @@ def _yield_guide() -> html.Div:
     ], style={"marginTop": "16px"})
 
 
+# ── Futures performance table ──────────────────────────────────────────────────
+
+_FUTURES_CATEGORIES: list[dict] = [
+    {
+        "label": "Energy",
+        "color": "#f97316",
+        "tickers": [
+            ("CL=F",  "WTI Crude Oil"),
+            ("BZ=F",  "Brent Crude"),
+            ("NG=F",  "Natural Gas"),
+            ("HO=F",  "Heating Oil"),
+            ("RB=F",  "RBOB Gasoline"),
+        ],
+    },
+    {
+        "label": "Metals",
+        "color": "#a78bfa",
+        "tickers": [
+            ("GC=F",  "Gold"),
+            ("SI=F",  "Silver"),
+            ("HG=F",  "Copper"),
+            ("PL=F",  "Platinum"),
+            ("PA=F",  "Palladium"),
+        ],
+    },
+    {
+        "label": "Agriculture",
+        "color": "#4ade80",
+        "tickers": [
+            ("ZW=F",  "Wheat"),
+            ("ZC=F",  "Corn"),
+            ("ZS=F",  "Soybeans"),
+            ("KC=F",  "Coffee"),
+            ("CC=F",  "Cocoa"),
+            ("SB=F",  "Sugar #11"),
+            ("CT=F",  "Cotton"),
+        ],
+    },
+    {
+        "label": "Rates",
+        "color": "#fbbf24",
+        "tickers": [
+            ("ZB=F",   "30Y T-Bond"),
+            ("ZN=F",   "10Y T-Note"),
+            ("ZF=F",   "5Y T-Note"),
+            ("ZT=F",   "2Y T-Note"),
+            ("SR3=F",  "SOFR 3M"),
+        ],
+    },
+    {
+        "label": "Crypto",
+        "color": "#38bdf8",
+        "tickers": [
+            ("BTC=F",  "Bitcoin Futures"),
+            ("ETH=F",  "Ethereum Futures"),
+            ("MBT=F",  "Micro BTC Futures"),
+        ],
+    },
+]
+
+# caps used to normalize cell color intensity (per column)
+_FUT_CAPS = {"1D": 3.0, "5D": 7.0, "1M": 15.0, "YTD": 30.0}
+
+
+def _fetch_futures_data() -> dict[str, dict]:
+    """
+    Fetch 1D/5D/1M/YTD moves for all futures tickers using yfinance.
+    Returns {ticker: {last, 1D, 5D, 1M, YTD}} — pct values as floats (e.g. -1.23).
+    Missing values are None.
+    """
+    import yfinance as yf
+    import datetime as _dt
+
+    all_tickers = [t for cat in _FUTURES_CATEGORIES for t, _ in cat["tickers"]]
+    today = _dt.date.today()
+    start = (today - _dt.timedelta(days=400)).strftime("%Y-%m-%d")
+
+    result: dict[str, dict] = {}
+    try:
+        raw = yf.download(
+            all_tickers,
+            start=start,
+            end=today.strftime("%Y-%m-%d"),
+            auto_adjust=True,
+            progress=False,
+        )
+    except Exception as exc:
+        logger.warning(f"yfinance futures download failed: {exc}")
+        return result
+
+    def _get_close(ticker: str) -> pd.Series | None:
+        try:
+            if isinstance(raw.columns, pd.MultiIndex):
+                closes = raw["Close"][ticker].dropna()
+            else:
+                # single-ticker download — columns are flat ("Close", "Open", ...)
+                closes = raw["Close"].dropna()
+            return closes if not closes.empty else None
+        except Exception:
+            return None
+
+    ytd_start = _dt.date(today.year, 1, 1)
+
+    for ticker in all_tickers:
+        closes = _get_close(ticker)
+        if closes is None or len(closes) < 2:
+            result[ticker] = {"last": None, "1D": None, "5D": None, "1M": None, "YTD": None}
+            continue
+
+        last = float(closes.iloc[-1])
+
+        def _pct(n_days: int | None = None, from_date: _dt.date | None = None) -> float | None:
+            try:
+                if from_date is not None:
+                    idx = closes.index.searchsorted(pd.Timestamp(from_date))
+                    if idx >= len(closes):
+                        return None
+                    ref = float(closes.iloc[idx])
+                else:
+                    if len(closes) < (n_days + 1):
+                        return None
+                    ref = float(closes.iloc[-(n_days + 1)])
+                return (last / ref - 1) * 100 if ref else None
+            except Exception:
+                return None
+
+        result[ticker] = {
+            "last": last,
+            "1D":   _pct(1),
+            "5D":   _pct(5),
+            "1M":   _pct(21),
+            "YTD":  _pct(from_date=ytd_start),
+        }
+
+    return result
+
+
+def _fut_cell_style(value: float | None, col: str) -> dict:
+    """Background color for a pct move cell. Intensity scales with magnitude."""
+    if value is None:
+        return {}
+    cap = _FUT_CAPS.get(col, 10.0)
+    alpha = min(abs(value) / cap, 1.0) * 0.45
+    if value >= 0:
+        return {"backgroundColor": f"rgba(16,185,129,{alpha:.2f})", "color": "#d1fae5" if alpha > 0.25 else T.TEXT_PRIMARY}
+    else:
+        return {"backgroundColor": f"rgba(239,68,68,{alpha:.2f})", "color": "#fee2e2" if alpha > 0.25 else T.TEXT_PRIMARY}
+
+
+def _fmt_pct(v: float | None) -> str:
+    if v is None:
+        return "—"
+    sign = "+" if v >= 0 else ""
+    return f"{sign}{v:.2f}%"
+
+
+def _build_futures_table(data: dict[str, dict]) -> html.Div:
+    """Render the 4-category futures performance table."""
+    _col_w = {"name": "180px", "last": "90px", "pct": "80px"}
+    _hdr_style = {
+        "color": T.TEXT_MUTED, "fontSize": "11px", "fontWeight": "700",
+        "padding": "4px 10px", "textAlign": "right",
+        "borderBottom": f"1px solid {T.BORDER}",
+    }
+    _cell_base = {"fontSize": "12px", "padding": "4px 10px", "whiteSpace": "nowrap"}
+
+    def header_row() -> html.Tr:
+        return html.Tr([
+            html.Th("", style={**_hdr_style, "width": "90px", "textAlign": "left"}),
+            html.Th("Contract",  style={**_hdr_style, "width": _col_w["name"], "textAlign": "left"}),
+            html.Th("Last",  style={**_hdr_style, "width": _col_w["last"]}),
+            html.Th("1D",    style={**_hdr_style, "width": _col_w["pct"]}),
+            html.Th("5D",    style={**_hdr_style, "width": _col_w["pct"]}),
+            html.Th("1M",    style={**_hdr_style, "width": _col_w["pct"]}),
+            html.Th("YTD",   style={**_hdr_style, "width": _col_w["pct"]}),
+        ])
+
+    rows: list[html.Tr] = [header_row()]
+
+    for cat in _FUTURES_CATEGORIES:
+        cat_color = cat["color"]
+        for i, (ticker, name) in enumerate(cat["tickers"]):
+            d = data.get(ticker, {})
+            last_v = d.get("last")
+            last_s = f"${last_v:,.2f}" if last_v is not None else "—"
+
+            cat_cell = html.Td(
+                cat["label"] if i == 0 else "",
+                style={
+                    **_cell_base,
+                    "color": cat_color, "fontWeight": "700", "fontSize": "11px",
+                    "borderLeft": f"3px solid {cat_color}",
+                    "verticalAlign": "middle", "textAlign": "left",
+                },
+            )
+            name_cell = html.Td(
+                name,
+                style={**_cell_base, "color": T.TEXT_PRIMARY, "textAlign": "left"},
+            )
+            last_cell = html.Td(
+                last_s,
+                style={**_cell_base, "color": T.TEXT_PRIMARY, "textAlign": "right",
+                       "fontWeight": "600"},
+            )
+            pct_cells = [
+                html.Td(
+                    _fmt_pct(d.get(col)),
+                    style={**_cell_base, "textAlign": "right",
+                           **_fut_cell_style(d.get(col), col)},
+                )
+                for col in ("1D", "5D", "1M", "YTD")
+            ]
+
+            row_style: dict = {}
+            if i == 0 and rows:
+                row_style["borderTop"] = f"1px solid {T.BORDER}"
+
+            rows.append(html.Tr(
+                [cat_cell, name_cell, last_cell] + pct_cells,
+                style=row_style,
+            ))
+
+    return html.Div(
+        html.Table(
+            rows,
+            style={"width": "100%", "borderCollapse": "collapse"},
+        ),
+        style={"overflowX": "auto"},
+    )
+
+
 # ── Layout ─────────────────────────────────────────────────────────────────────
 
 def layout() -> html.Div:
@@ -977,7 +1208,34 @@ def layout() -> html.Div:
             dbc.Collapse(_yield_guide(), id="mkt-yield-guide-collapse", is_open=False),
         ], style={**T.STYLE_CARD, "marginBottom": "16px"}),
 
-        # ── Market Screener ──────────────────────────────────────────────────────
+        # ── Global Futures ───────────────────────────────────────────────────────
+        html.Div([
+            html.Div([
+                html.Div("Global Futures — Performance Overview", style={
+                    "color": T.TEXT_SEC, "fontSize": "11px", "fontWeight": "600",
+                    "textTransform": "uppercase", "letterSpacing": "0.07em",
+                }),
+                html.Div(
+                    html.Small("via Yahoo Finance · delayed", style={
+                        "color": T.TEXT_MUTED, "fontSize": "10px",
+                    }),
+                    style={"display": "flex", "alignItems": "center", "gap": "10px"},
+                ),
+                dbc.Button("↻ Refresh", id="mkt-futures-refresh-btn", size="sm",
+                           color="secondary",
+                           style={"fontSize": "11px", "padding": "2px 10px",
+                                  "border": f"1px solid {T.BORDER}",
+                                  "backgroundColor": T.BG_ELEVATED}),
+            ], style={"display": "flex", "justifyContent": "space-between",
+                      "alignItems": "center", "borderBottom": f"1px solid {T.BORDER}",
+                      "paddingBottom": "8px", "marginBottom": "12px"}),
+            dcc.Loading(
+                html.Div(id="mkt-futures-content", children=_hint("Click ↻ Refresh to load futures data.")),
+                type="circle", color=T.ACCENT,
+            ),
+        ], style={**T.STYLE_CARD, "marginBottom": "16px"}),
+
+        # ── Market Screener ───────────────────────────────────────────────────────
         html.Div([
             html.Div([
                 html.Div("Market Screener", style={
@@ -2317,3 +2575,23 @@ def run_screener(universe, api_key):
         _build_vol_fig(vol_rows),
         _build_volalert_fig(volalert_rows),
     )
+
+
+# ── Futures callback ───────────────────────────────────────────────────────────
+
+@callback(
+    Output("mkt-futures-content", "children"),
+    Input("mkt-futures-refresh-btn", "n_clicks"),
+    prevent_initial_call=True,
+)
+def refresh_futures(n_clicks):
+    try:
+        data = _fetch_futures_data()
+        if not data:
+            return html.P("No data returned from Yahoo Finance. Try again.",
+                          style={"color": T.WARNING, "fontSize": "12px"})
+        return _build_futures_table(data)
+    except Exception as exc:
+        logger.exception(f"Futures refresh error: {exc}")
+        return html.P(f"Error loading futures: {exc}",
+                      style={"color": T.DANGER, "fontSize": "12px"})

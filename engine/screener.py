@@ -122,7 +122,7 @@ def _score_ic_rules(
         latest_vix   = float(vix_series.iloc[-1]) if not vix_series.empty else 0.0
         latest_adx   = _adx(high, low, close)
         latest_atr   = _atr(high, low, close)
-        atr_pct      = latest_atr / latest_price * 100 if latest_price > 0 else 0.0
+        atr_pct      = latest_atr / latest_price if latest_price > 0 else 0.0  # decimal (0.0176 = 1.76%)
 
         atm_iv         = iv_metrics.get("atm_iv")
         ivr            = iv_metrics.get("ivr")
@@ -141,14 +141,14 @@ def _score_ic_rules(
         ivr_ok = ivr  >= params["ivr_min"]
         vix_ok = params["vix_min"] <= latest_vix <= params["vix_max"]
         adx_ok = latest_adx <= params["adx_max"]
-        atr_ok = atr_pct    <= params["atr_pct_max"] * 100
+        atr_ok = atr_pct    <= params["atr_pct_max"]
 
         n_pass = sum([ivr_ok, vix_ok, adx_ok, atr_ok])
 
         score = (
             ivr * 40
-            + max(0, 1 - latest_adx / 50) * 30
-            + max(0, 1 - atr_pct / 3)     * 20
+            + max(0, 1 - latest_adx / 50)          * 30
+            + max(0, 1 - atr_pct / 0.03)            * 20
             + (10 if vix_ok else 0)
         )
 
@@ -269,7 +269,7 @@ def _score_vix_spike_fade(
         vix_20d_avg  = _vix_20d_avg(vix_series)
         ma200_val    = _ma200(close)
         latest_atr   = _atr(high, low, close)
-        atr_pct      = latest_atr / latest_price * 100 if latest_price > 0 else 0.0
+        atr_pct      = latest_atr / latest_price if latest_price > 0 else 0.0  # decimal (0.0176 = 1.76%)
 
         atm_iv    = iv_metrics.get("atm_iv")
         hv20      = iv_metrics.get("hv20")
@@ -328,7 +328,7 @@ def _score_ivr_credit_spread(
         latest_vix   = float(vix_series.iloc[-1]) if not vix_series.empty else 0.0
         latest_adx   = _adx(high, low, close)
         latest_atr   = _atr(high, low, close)
-        atr_pct      = latest_atr / latest_price * 100 if latest_price > 0 else 0.0
+        atr_pct      = latest_atr / latest_price if latest_price > 0 else 0.0  # decimal (0.0176 = 1.76%)
 
         atm_iv         = iv_metrics.get("atm_iv")
         ivr            = iv_metrics.get("ivr")
@@ -401,7 +401,7 @@ def _score_vol_arbitrage(
         latest_price = float(close.iloc[-1])
         latest_vix   = float(vix_series.iloc[-1]) if not vix_series.empty else 0.0
         latest_atr   = _atr(high, low, close)
-        atr_pct      = latest_atr / latest_price * 100 if latest_price > 0 else 0.0
+        atr_pct      = latest_atr / latest_price if latest_price > 0 else 0.0  # decimal (0.0176 = 1.76%)
 
         atm_iv    = iv_metrics.get("atm_iv")
         ivr       = iv_metrics.get("ivr")
@@ -417,10 +417,13 @@ def _score_vol_arbitrage(
         iv_hv_ok   = iv_over_hv is not None and iv_over_hv > 1.1
         n_pass     = sum([vrp_ok, iv_hv_ok])
 
-        score = (
-            max(0, vrp or 0) * 100
-            + (min(iv_over_hv or 1.0, 2.0) - 1.0) * 50
-        )
+        # VRP term: only positive VRP scores; cap at 0.50 (50 vol pts) → max 50 pts
+        # IV/HV term: only when IV > HV (ratio > 1); cap at 2× → max 50 pts
+        # Total range: 0–100
+        score = min(100, max(0, (
+            min(max(0, vrp or 0), 0.50) * 100
+            + max(0, min(iv_over_hv or 1.0, 2.0) - 1.0) * 50
+        )))
 
         return {
             "Ticker":    ticker,
@@ -462,7 +465,7 @@ def _score_generic(
         latest_vix   = float(vix_series.iloc[-1]) if not vix_series.empty else 0.0
         latest_adx   = _adx(high, low, close)
         latest_atr   = _atr(high, low, close)
-        atr_pct      = latest_atr / latest_price * 100 if latest_price > 0 else 0.0
+        atr_pct      = latest_atr / latest_price if latest_price > 0 else 0.0  # decimal (0.0176 = 1.76%)
 
         return {
             "Ticker":  ticker,
@@ -558,15 +561,23 @@ def _find_strike(df: pd.DataFrame, opt_type: str, spot: float, target_delta: flo
     return float(best["strike"]), mid
 
 
-def _get_chain_mid(df: pd.DataFrame, strike: float):
-    """Look up mid price for a specific strike, or nearest."""
+def _get_chain_mid(df: pd.DataFrame, strike: float, exclude_strike: float | None = None):
+    """Look up mid price for a specific strike, or nearest.
+    exclude_strike: if set, skip any row whose strike equals this value (prevents
+    wing collapsing onto the short strike when no further OTM strike exists).
+    """
     if df.empty:
         return None, strike
-    row = df[df["strike"] == strike]
+    candidates = df[df["strike"] != exclude_strike] if exclude_strike is not None else df
+    if candidates.empty:
+        return None, strike
+    row = candidates[candidates["strike"] == strike]
     if row.empty:
-        row = df.iloc[(df["strike"] - strike).abs().argsort()[:1]]
-    m   = float(row["mid"].iloc[0]) if not row.empty and not pd.isna(row["mid"].iloc[0]) else None
-    k   = float(row["strike"].iloc[0]) if not row.empty else strike
+        row = candidates.iloc[(candidates["strike"] - strike).abs().argsort()[:1]]
+    if row.empty:
+        return None, strike
+    m = float(row["mid"].iloc[0]) if not pd.isna(row["mid"].iloc[0]) else None
+    k = float(row["strike"].iloc[0])
     return m, k
 
 
@@ -653,7 +664,7 @@ def _score_gex_positioning(
             low          = price_df.get("low",   close).astype(float)
             latest_price = float(close.iloc[-1])
             latest_atr   = _atr(high, low, close)
-            atr_pct      = latest_atr / latest_price * 100 if latest_price > 0 else 0.0
+            atr_pct      = latest_atr / latest_price if latest_price > 0 else 0.0  # decimal (0.0176 = 1.76%)
             ret_5d       = float(close.pct_change(5).iloc[-1]) if len(close) >= 6 else 0.0
 
             results.append({

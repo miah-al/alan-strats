@@ -86,19 +86,19 @@ def _col(field: str, width: int | None = None, flex: int | None = None,
 
 
 _IC_COLS = [
-    _col("Ticker",  width=110, pinned="left"),
-    _col("Price",   flex=1, min_width=75,  numeric=True),
-    _col("ATM IV",  flex=1, min_width=75,  numeric=True),
-    _col("IVR",     flex=1, min_width=65,  numeric=True),
-    _col("HV20",    flex=1, min_width=70,  numeric=True),
-    _col("VRP",     flex=1, min_width=65,  numeric=True),
-    _col("IV/HV",   flex=1, min_width=70,  numeric=True),
-    _col("VIX",     flex=1, min_width=60,  numeric=True),
-    _col("ADX",     flex=1, min_width=60,  numeric=True),
-    _col("ATR%",    flex=1, min_width=65,  numeric=True),
-    _col("Score",   flex=1, min_width=65,  numeric=True, sort="desc"),
-    _col("Status",  width=130),
-    {"field": "Chart", "flex": 1, "minWidth": 90, "sortable": False, "filter": False,
+    _col("Ticker",  width=150, pinned="left"),
+    _col("Price",   width=150, numeric=True),
+    _col("ATM IV",  width=150, numeric=True),
+    _col("IVR",     width=150, numeric=True),
+    _col("HV20",    width=150, numeric=True),
+    _col("VRP",     width=150, numeric=True),
+    _col("IV/HV",   width=150, numeric=True),
+    _col("VIX",     width=150, numeric=True),
+    _col("ADX",     width=150, numeric=True),
+    _col("ATR%",    width=150, numeric=True),
+    _col("Score",   width=150, numeric=True, sort="desc"),
+    _col("Status",  width=150),
+    {"field": "Chart", "flex": 1, "minWidth": 150, "sortable": False, "filter": False,
      "cellStyle": {"textAlign": "center", "cursor": "pointer"},
      "valueGetter": {"function": "'📊 View'"},
      "cellClass": "ic-chart-btn"},
@@ -107,61 +107,61 @@ _IC_COLS = [
 ]
 
 _VSF_COLS = [
-    _col("Ticker",      width=90,  pinned="left"),
-    _col("Price",       width=90,  numeric=True),
-    _col("VIX",         width=70,  numeric=True),
-    _col("VIX 20d avg", width=100, numeric=True),
-    _col("VIX / 20d",   width=90,  numeric=True),
-    _col("ATM IV",      width=85,  numeric=True),
-    _col("HV20",        width=80,  numeric=True),
-    _col("IVR",         width=75,  numeric=True),
-    _col("ATR%",        width=75,  numeric=True),
-    _col("MA200",       width=80,  numeric=True),
-    _col("Score",       width=75,  numeric=True, sort="desc"),
-    _col("Status",      flex=1,    min_width=100),
+    _col("Ticker",      width=150, pinned="left"),
+    _col("Price",       width=150, numeric=True),
+    _col("VIX",         width=150, numeric=True),
+    _col("VIX 20d avg", width=150, numeric=True),
+    _col("VIX / 20d",   width=150, numeric=True),
+    _col("ATM IV",      width=150, numeric=True),
+    _col("HV20",        width=150, numeric=True),
+    _col("IVR",         width=150, numeric=True),
+    _col("ATR%",        width=150, numeric=True),
+    _col("MA200",       width=150, numeric=True),
+    _col("Score",       width=150, numeric=True, sort="desc"),
+    _col("Status",      width=150),
 ]
 
 _IVR_COLS = [
-    _col("Ticker",      width=90,  pinned="left"),
-    _col("Price",       width=90,  numeric=True),
-    _col("ATM IV",      width=85,  numeric=True),
-    _col("IVR",         width=75,  numeric=True),
-    _col("VRP",         width=75,  numeric=True),
-    _col("HV20",        width=80,  numeric=True),
-    _col("IV/HV",       width=75,  numeric=True),
-    _col("VIX",         width=70,  numeric=True),
-    _col("ADX",         width=70,  numeric=True),
-    _col("ATR%",        width=75,  numeric=True),
-    _col("Trend",       width=85),
-    _col("Spread Type", flex=1,    min_width=120),
-    _col("Score",       width=75,  numeric=True, sort="desc"),
-    _col("Status",      width=80),
+    _col("Ticker",      width=150, pinned="left"),
+    _col("Price",       width=150, numeric=True),
+    _col("ATM IV",      width=150, numeric=True),
+    _col("IVR",         width=150, numeric=True),
+    _col("VRP",         width=150, numeric=True),
+    _col("HV20",        width=150, numeric=True),
+    _col("IV/HV",       width=150, numeric=True),
+    _col("VIX",         width=150, numeric=True),
+    _col("ADX",         width=150, numeric=True),
+    _col("ATR%",        width=150, numeric=True),
+    _col("Trend",       width=150),
+    _col("Spread Type", width=150),
+    _col("Score",       width=150, numeric=True, sort="desc"),
+    _col("Status",      width=150),
 ]
 
 _VA_COLS = [
-    _col("Ticker",  width=90,  pinned="left"),
-    _col("Price",   width=90,  numeric=True),
-    _col("ATM IV",  width=85,  numeric=True),
-    _col("HV20",    width=80,  numeric=True),
-    _col("IV/HV",   width=80,  numeric=True),
-    _col("VRP",     width=75,  numeric=True),
-    _col("IVR",     width=75,  numeric=True),
-    _col("VIX",     width=70,  numeric=True),
-    _col("ATR%",    width=75,  numeric=True),
-    _col("Score",   width=75,  numeric=True, sort="desc"),
-    _col("Status",  flex=1,    min_width=100),
+    _col("Ticker",  width=150, pinned="left"),
+    _col("Price",   width=150, numeric=True),
+    _col("ATM IV",  width=150, numeric=True),
+    _col("HV20",    width=150, numeric=True),
+    _col("IV/HV",   width=150, numeric=True),
+    _col("VRP",     width=150, numeric=True),
+    _col("IVR",     width=150, numeric=True),
+    _col("VIX",     width=150, numeric=True),
+    _col("ATR%",    width=150, numeric=True),
+    _col("Score",   width=150, numeric=True, sort="desc"),
+    _col("Status",  width=150),
 ]
 
 _GEX_COLS = [
-    _col("Ticker",       width=90,  pinned="left"),
-    _col("Price",        width=90,  numeric=True),
-    _col("VIX",          width=70,  numeric=True),
-    _col("Regime",       width=110),
-    _col("SPY Weight",   width=100, numeric=True),
-    _col("Signal",       width=75),
-    _col("ATR%",         width=75,  numeric=True),
-    _col("5d Return",    width=90,  numeric=True),
-    _col("Regime Label", flex=1,    min_width=200),
+    _col("Ticker",       width=150, pinned="left"),
+    _col("Price",        width=150, numeric=True),
+    _col("VIX",          width=150, numeric=True),
+    _col("Regime",       width=150),
+    _col("SPY Weight",   width=150, numeric=True),
+    _col("Signal",       width=150),
+    _col("ATR%",         width=150, numeric=True),
+    _col("5d Return",    width=150, numeric=True),
+    _col("Regime Label", width=200),
 ]
 
 _COLS_BY_SLUG: dict[str, list[dict]] = {
@@ -369,7 +369,6 @@ def _screener_layout(slug: str) -> html.Div:
                         "rowSelection": {"mode": "singleRow", "checkboxes": False,
                                         "enableClickSelection": True},
                     },
-                    columnSize="sizeToFit",
                     className=T.AGGRID_THEME,
                     style={"width": "100%"},
                 ),
@@ -387,14 +386,15 @@ def _guide_layout(slug: str) -> html.Div:
             dcc.Markdown(
                 content,
                 dangerously_allow_html=False,
-                style={"color": T.TEXT_PRIMARY, "fontSize": "14px", "lineHeight": "1.7"},
+                style={"color": T.TEXT_PRIMARY, "fontSize": "14px", "lineHeight": "1.7",
+                       "maxWidth": "860px"},
             ),
-        ], style={"maxHeight": "600px", "overflowY": "auto", "padding": "4px 0"}),
+        ], style={"padding": "4px 0"}),
     ], style={
         "backgroundColor": T.BG_CARD,
         "border": f"1px solid {T.BORDER}",
         "borderRadius": "10px",
-        "padding": "24px",
+        "padding": "24px 32px",
     })
 
 
@@ -983,6 +983,173 @@ def _render_sample_data_preview(exists: bool):
         return dbc.Alert(f"Could not load sample data: {e}", color="danger")
 
 
+# ── Test tab ─────────────────────────────────────────────────────────────────
+
+_TEST_SUITES = {
+    "iron_condor_rules": [
+        {"id": "phase4",        "label": "Phase 4 Bug Fixes",       "module": "test_phase4_fixes"},
+        {"id": "ic_integration","label": "IC Integration (DB + Polygon)", "module": "test_ic_rules_integration"},
+    ],
+    "vix_spike_fade":    [{"id": "phase4", "label": "Phase 4 Bug Fixes", "module": "test_phase4_fixes"}],
+    "vol_arbitrage":     [{"id": "phase4", "label": "Phase 4 Bug Fixes", "module": "test_phase4_fixes"}],
+    "iron_condor_ai":    [{"id": "phase4", "label": "Phase 4 Bug Fixes", "module": "test_phase4_fixes"}],
+    "ivr_credit_spread": [{"id": "phase4", "label": "Phase 4 Bug Fixes", "module": "test_phase4_fixes"}],
+    "gex_positioning":   [],
+}
+
+_TEST_MARK_OPTIONS = [
+    {"label": "All tests",    "value": "all"},
+    {"label": "Unit only",    "value": "not db and not polygon"},
+    {"label": "DB tests",     "value": "db"},
+    {"label": "Polygon live", "value": "polygon"},
+]
+
+
+def _test_tab(slug: str) -> html.Div:
+    suites = _TEST_SUITES.get(slug, [])
+    suite_options = [{"label": s["label"], "value": s["id"]} for s in suites]
+    default_suite = suites[0]["id"] if suites else None
+
+    return html.Div([
+        html.Div([
+            html.Div("Unit & Integration Tests", style={
+                "color": T.TEXT_SEC, "fontSize": "11px", "fontWeight": "600",
+                "textTransform": "uppercase", "letterSpacing": "0.07em",
+            }),
+            html.Div([
+                dcc.Dropdown(
+                    id=f"str-{slug}-test-suite",
+                    options=suite_options,
+                    value=default_suite,
+                    clearable=False,
+                    style={"width": "260px", "fontSize": "12px",
+                           "backgroundColor": T.BG_ELEVATED, "color": T.TEXT_PRIMARY},
+                ),
+                dcc.Dropdown(
+                    id=f"str-{slug}-test-marks",
+                    options=_TEST_MARK_OPTIONS,
+                    value="all",
+                    clearable=False,
+                    style={"width": "160px", "fontSize": "12px",
+                           "backgroundColor": T.BG_ELEVATED, "color": T.TEXT_PRIMARY},
+                ),
+                dbc.Button("▶ Run Tests", id=f"str-{slug}-test-run-btn",
+                           color="primary", size="sm",
+                           style={"fontSize": "12px",
+                                  "backgroundColor": T.ACCENT, "border": "none"}),
+            ], style={"display": "flex", "gap": "8px", "alignItems": "center"}),
+        ], style={"display": "flex", "justifyContent": "space-between",
+                  "alignItems": "center", "borderBottom": f"1px solid {T.BORDER}",
+                  "paddingBottom": "8px", "marginBottom": "16px"}),
+
+        html.Div(
+            html.P("Select a test suite and click ▶ Run Tests.",
+                   style={"color": T.TEXT_MUTED, "fontSize": "12px",
+                          "fontStyle": "italic", "margin": "4px 0"}),
+            id=f"str-{slug}-test-summary",
+            style={"marginBottom": "10px"},
+        ),
+
+        dcc.Loading(
+            html.Div(id=f"str-{slug}-test-output",
+                     style={"fontFamily": "JetBrains Mono, monospace",
+                            "fontSize": "11px", "whiteSpace": "pre-wrap",
+                            "backgroundColor": T.BG_ELEVATED,
+                            "border": f"1px solid {T.BORDER}",
+                            "borderRadius": "6px", "padding": "12px",
+                            "color": T.TEXT_PRIMARY,
+                            "maxHeight": "600px", "overflowY": "auto",
+                            "display": "none"}),
+            type="circle", color=T.ACCENT,
+        ),
+    ], style={"padding": "16px 0"})
+
+
+def _make_test_callback(slug: str):
+    @callback(
+        Output(f"str-{slug}-test-output",  "children"),
+        Output(f"str-{slug}-test-output",  "style"),
+        Output(f"str-{slug}-test-summary", "children"),
+        Input(f"str-{slug}-test-run-btn", "n_clicks"),
+        State(f"str-{slug}-test-suite",   "value"),
+        State(f"str-{slug}-test-marks",   "value"),
+        prevent_initial_call=True,
+    )
+    def _run_tests(n_clicks, suite_id, marks):
+        import subprocess, sys, os, time
+        suites = _TEST_SUITES.get(slug, [])
+        suite  = next((s for s in suites if s["id"] == suite_id), None)
+        if not suite:
+            return "No test suite selected.", {"display": "block"}, html.P("No suite.")
+
+        test_file = os.path.join(
+            os.path.dirname(os.path.dirname(os.path.dirname(__file__))),
+            "tests",
+            f"{suite['module']}.py",
+        )
+        if not os.path.exists(test_file):
+            return f"Test file not found: {test_file}", {"display": "block"}, html.P("File missing.")
+
+        cmd = [sys.executable, "-m", "pytest", test_file, "-v", "--tb=short", "--no-header"]
+        if marks and marks != "all":
+            cmd += ["-m", marks]
+
+        _output_style = {
+            "fontFamily": "JetBrains Mono, monospace",
+            "fontSize": "11px", "whiteSpace": "pre-wrap",
+            "backgroundColor": T.BG_ELEVATED,
+            "border": f"1px solid {T.BORDER}",
+            "borderRadius": "6px", "padding": "12px",
+            "color": T.TEXT_PRIMARY,
+            "maxHeight": "600px", "overflowY": "auto",
+            "display": "block",
+        }
+
+        t0 = time.time()
+        try:
+            result = subprocess.run(
+                cmd,
+                capture_output=True, text=True,
+                timeout=120,
+                cwd=os.path.dirname(os.path.dirname(os.path.dirname(__file__))),
+            )
+            output  = result.stdout + result.stderr
+            elapsed = time.time() - t0
+            passed  = output.count(" PASSED")
+            failed  = output.count(" FAILED")
+            errored = output.count(" ERROR")
+            skipped = output.count(" SKIPPED")
+            total   = passed + failed + errored
+
+            summary_color = T.SUCCESS if failed == 0 and errored == 0 else T.DANGER
+            summary = html.Div([
+                html.Span(f"✅ {passed} passed", style={"color": T.SUCCESS, "fontWeight": "700",
+                                                         "marginRight": "12px", "fontSize": "13px"}),
+                html.Span(f"❌ {failed} failed", style={"color": T.DANGER if failed else T.TEXT_MUTED,
+                                                         "fontWeight": "700", "marginRight": "12px",
+                                                         "fontSize": "13px"}),
+                html.Span(f"⏭ {skipped} skipped", style={"color": T.TEXT_MUTED,
+                                                           "marginRight": "12px", "fontSize": "12px"}),
+                html.Span(f"({elapsed:.1f}s)", style={"color": T.TEXT_MUTED, "fontSize": "11px"}),
+            ])
+        except subprocess.TimeoutExpired:
+            output  = "Test run timed out after 120 seconds."
+            summary = html.P(output, style={"color": T.DANGER, "fontSize": "13px"})
+        except Exception as exc:
+            output  = f"Error running tests: {exc}"
+            summary = html.P(output, style={"color": T.DANGER, "fontSize": "13px"})
+
+        return output, _output_style, summary
+
+    _run_tests.__name__ = f"_run_tests_{slug}"
+    return _run_tests
+
+
+# Register test callbacks for all strategies
+for _slug in [s["value"] for s in _STRATEGIES]:
+    _make_test_callback(_slug)
+
+
 # ── Inner tabs per strategy ───────────────────────────────────────────────────
 
 def _inner_tabs(slug: str) -> dbc.Tabs:
@@ -1028,6 +1195,14 @@ def _inner_tabs(slug: str) -> dbc.Tabs:
             tab_style=tab_style,
             active_tab_style={**tab_act_style, "borderTop": f"2px solid #a78bfa"},
         ))
+
+    tabs.append(dbc.Tab(
+        _test_tab(slug),
+        label="Test",
+        tab_id=f"str-{slug}-inner-test",
+        tab_style=tab_style,
+        active_tab_style={**tab_act_style, "borderTop": f"2px solid #34d399"},
+    ))
 
     tabs.append(dbc.Tab(
         _simulator_stub(slug),
@@ -1314,9 +1489,21 @@ def _fetch_ic_strikes(ticker: str, api_key: str, spot: float, adx_ok: bool) -> d
     if short_call_k is None or short_put_k is None:
         return None
 
-    wing_w             = round(spot * wing_pct, 0)
-    long_call_mid, long_call_k = _get_chain_mid(calls, short_call_k + wing_w)
-    long_put_mid,  long_put_k  = _get_chain_mid(puts,  short_put_k  - wing_w)
+    wing_w = round(spot * wing_pct, 0)
+
+    # Long call wing must be ABOVE short call (further OTM). Filter to calls > short_call_k.
+    calls_above = calls[calls["strike"] > short_call_k]
+    if calls_above.empty:
+        return None
+    long_call_mid, long_call_k = _get_chain_mid(calls_above, short_call_k + wing_w,
+                                                 exclude_strike=short_call_k)
+
+    # Long put wing must be BELOW short put (further OTM). Filter to puts < short_put_k.
+    puts_below = puts[puts["strike"] < short_put_k]
+    if puts_below.empty:
+        return None
+    long_put_mid, long_put_k = _get_chain_mid(puts_below, short_put_k - wing_w,
+                                               exclude_strike=short_put_k)
 
     def _m(v): return v if v is not None else 0.0
 
@@ -1469,7 +1656,7 @@ def _display_row_ic(r: dict) -> dict:
         "IV/HV":       _fmt2(r.get("IV/HV")),
         "VIX":         round(r.get("VIX", 0), 2),
         "ADX":         round(r.get("ADX", 0), 1),
-        "ATR%":        f"{r.get('ATR%', 0):.2f}%",
+        "ATR%":        f"{r.get('ATR%', 0):.2%}",
         "Score":       round(r.get("score", 0), 1),
         "Status":      status,
         "all_pass":    r.get("all_pass", False),
@@ -1492,7 +1679,7 @@ def _display_row_vsf(r: dict) -> dict:
         "ATM IV":      _fmt_pct(r.get("ATM IV")),
         "HV20":        _fmt_pct(r.get("HV20")),
         "IVR":         _fmt_pct(r.get("IVR")),
-        "ATR%":        f"{r.get('ATR%', 0):.2f}%",
+        "ATR%":        f"{r.get('ATR%', 0):.2%}",
         "MA200":       _fmt2(r.get("MA200")),
         "Score":       round(r.get("score", 0), 1),
         "Status":      status,
@@ -1515,7 +1702,7 @@ def _display_row_ivr(r: dict) -> dict:
         "IV/HV":       _fmt2(r.get("IV/HV")),
         "VIX":         round(r.get("VIX", 0), 2),
         "ADX":         round(r.get("ADX", 0), 1),
-        "ATR%":        f"{r.get('ATR%', 0):.2f}%",
+        "ATR%":        f"{r.get('ATR%', 0):.2%}",
         "Trend":       r.get("Trend", "—"),
         "Spread Type": r.get("Spread Type", "—"),
         "Score":       round(r.get("score", 0), 1),
@@ -1538,7 +1725,7 @@ def _display_row_va(r: dict) -> dict:
         "VRP":      _fmt_pct(r.get("VRP")),
         "IVR":      _fmt_pct(r.get("IVR")),
         "VIX":      round(r.get("VIX", 0), 2),
-        "ATR%":     f"{r.get('ATR%', 0):.2f}%",
+        "ATR%":     f"{r.get('ATR%', 0):.2%}",
         "Score":    round(r.get("score", 0), 1),
         "Status":   status,
         "all_pass": r.get("all_pass", False),
@@ -1671,6 +1858,23 @@ def _run_scan(slug: str, universe: str, custom: str | None, api_key: str):
 
     status_div   = _status_pill_row(display_rows)
     vix_banner   = _vix_banner(vix_series, slug)
+
+    # IVR fallback warning: if any ticker used VIX proxy instead of real options IVR
+    ivr_fallback_count = sum(
+        1 for r in raw_rows
+        if str(r.get("ivr_confidence", "")).startswith("low")
+    )
+    if ivr_fallback_count > 0:
+        ivr_warn = dbc.Alert(
+            [
+                html.Strong("IVR data quality warning: "),
+                f"{ivr_fallback_count}/{len(raw_rows)} ticker(s) are using VIX proxy IVR — "
+                "real options bid/ask unavailable. Rescan on a market day for accurate IVR values.",
+            ],
+            color="warning",
+            style={"fontSize": "12px", "padding": "8px 12px", "marginBottom": "8px"},
+        )
+        vix_banner = html.Div([ivr_warn, vix_banner])
 
     return display_rows, status_div, vix_banner
 
@@ -2165,37 +2369,46 @@ def _build_modal_body(row):
     nc100 = net_credit * 100
     ml100 = max_loss   * 100
     pt100 = profit_target * 100
+    _has_prices = any(chain.get(k, 0) > 0
+                      for k in ["short_call_mid", "short_put_mid",
+                                "long_call_mid",  "long_put_mid"])
     metrics = html.Div([
-        _mc("Net Credit",   f"${nc100:.0f}/contract",
-            T.SUCCESS if net_credit > 0 else T.DANGER),
-        _mc("Max Loss",     f"${ml100:.0f}/contract", T.DANGER),
-        _mc("50% Target",   f"${pt100:.0f}/contract", T.SUCCESS),
+        _mc("Net Credit",   f"${nc100:.0f}/contract" if _has_prices else "— (no quotes)",
+            T.SUCCESS if net_credit > 0 else (T.WARNING if not _has_prices else T.DANGER)),
+        _mc("Max Loss",     f"${ml100:.0f}/contract" if _has_prices else "—", T.DANGER),
+        _mc("50% Target",   f"${pt100:.0f}/contract" if _has_prices else "—", T.SUCCESS),
         _mc("Upper BE",     f"${be_upper:.2f}"),
         _mc("Lower BE",     f"${be_lower:.2f}"),
         _mc("Expiry",       f"{chain['best_exp']} ({chain['dte_used']} DTE)"),
         _mc("Delta target", f"~{chain['target_delta']:.0%}"),
     ], style={"display": "flex", "gap": "10px", "flexWrap": "wrap", "marginBottom": "16px"})
 
+    def _fmt_mid(v):
+        return f"${v:.2f}" if v and v > 0 else "—"
+
     def _cash(mid, action):
+        if not mid or mid == 0:
+            return "—"
         val = mid * 100 * (1 if action == "SELL" else -1)
         return f"+${val:.0f}" if val >= 0 else f"-${abs(val):.0f}"
 
     net_cash = net_credit * 100
     leg_rows = [
         {"Leg": "Long call (wing)", "Strike": f"${chain['long_call_k']:.0f}",
-         "Mid": f"${chain['long_call_mid']:.2f}", "Action": "BUY",
+         "Mid": _fmt_mid(chain['long_call_mid']), "Action": "BUY",
          "$/Contract": _cash(chain['long_call_mid'], "BUY")},
         {"Leg": "Short call",       "Strike": f"${chain['short_call_k']:.0f}",
-         "Mid": f"${chain['short_call_mid']:.2f}", "Action": "SELL",
+         "Mid": _fmt_mid(chain['short_call_mid']), "Action": "SELL",
          "$/Contract": _cash(chain['short_call_mid'], "SELL")},
         {"Leg": "Short put",        "Strike": f"${chain['short_put_k']:.0f}",
-         "Mid": f"${chain['short_put_mid']:.2f}", "Action": "SELL",
+         "Mid": _fmt_mid(chain['short_put_mid']), "Action": "SELL",
          "$/Contract": _cash(chain['short_put_mid'], "SELL")},
         {"Leg": "Long put (wing)",  "Strike": f"${chain['long_put_k']:.0f}",
-         "Mid": f"${chain['long_put_mid']:.2f}", "Action": "BUY",
+         "Mid": _fmt_mid(chain['long_put_mid']), "Action": "BUY",
          "$/Contract": _cash(chain['long_put_mid'], "BUY")},
         {"Leg": "NET CREDIT", "Strike": "", "Mid": "", "Action": "",
-         "$/Contract": f"+${net_cash:.0f}" if net_cash >= 0 else f"-${abs(net_cash):.0f}"},
+         "$/Contract": (f"+${net_cash:.0f}" if net_cash >= 0 else f"-${abs(net_cash):.0f}")
+                       if _has_prices else "—"},
     ]
     leg_table = dag.AgGrid(
         columnDefs=[
@@ -2207,7 +2420,7 @@ def _build_modal_body(row):
              "cellStyle": {"function": "params.data.Leg === 'NET CREDIT' ? {'borderTop':'1px solid #374151'} : {}"}},
             {"field": "Action",     "width": 80,
              "cellStyle": {"function": "params.data.Leg === 'NET CREDIT' ? {'borderTop':'1px solid #374151'} : {}"}},
-            {"field": "$/Contract", "width": 110,
+            {"field": "$/Contract", "width": 120,
              "cellStyle": {"function": "params.data.Leg === 'NET CREDIT' ? {'fontWeight':'700','borderTop':'1px solid #374151','color': params.value.startsWith('+') ? '#10b981' : '#ef4444'} : params.value.startsWith('+') ? {'color':'#10b981','fontWeight':'600'} : {'color':'#ef4444','fontWeight':'600'}"}},
         ],
         rowData=leg_rows,

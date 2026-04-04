@@ -86,13 +86,18 @@ def _find_strike_for_delta(S: float, T: float, r: float, sigma: float,
     return float(K)
 
 
+_MIN_VALID_IVR_BARS = 126  # 6 months — below this the range is too narrow to rank reliably
+
+
 def _compute_ivr(vix: pd.Series, window: int = 252) -> pd.Series:
     """
     Rolling IV Rank: (current − 52w_low) / (52w_high − 52w_low).
-    Returns NaN when the window is not yet full.
+    Returns NaN until _MIN_VALID_IVR_BARS of history exist (cold-start protection).
+    Using min_periods=30 would inflate IVR early because the 30-day range is much
+    narrower than the true 52-week range, making every bar look relatively elevated.
     """
-    roll_low  = vix.rolling(window, min_periods=_MIN_IVR_WINDOW).min()
-    roll_high = vix.rolling(window, min_periods=_MIN_IVR_WINDOW).max()
+    roll_low  = vix.rolling(window, min_periods=_MIN_VALID_IVR_BARS).min()
+    roll_high = vix.rolling(window, min_periods=_MIN_VALID_IVR_BARS).max()
     rng = roll_high - roll_low
     ivr = (vix - roll_low) / rng.replace(0, np.nan)
     return ivr.clip(0.0, 1.0)
@@ -208,32 +213,52 @@ class IVRCreditSpreadStrategy(BaseStrategy):
         ivr: float  = 0.0
         ma50: float | None = None
 
+        ivr_confidence = "high"
         if features_df is not None and not features_df.empty and "vix" in features_df.columns:
             vix_series = features_df["vix"].dropna()
-            if len(vix_series) >= _MIN_IVR_WINDOW:
-                vix_low  = vix_series.rolling(252, min_periods=_MIN_IVR_WINDOW).min().iloc[-1]
-                vix_high = vix_series.rolling(252, min_periods=_MIN_IVR_WINDOW).max().iloc[-1]
+            if len(vix_series) >= _MIN_VALID_IVR_BARS:
+                vix_low  = vix_series.rolling(252, min_periods=_MIN_VALID_IVR_BARS).min().iloc[-1]
+                vix_high = vix_series.rolling(252, min_periods=_MIN_VALID_IVR_BARS).max().iloc[-1]
                 rng = vix_high - vix_low
                 ivr = float((vix - vix_low) / rng) if rng > 0 else 0.0
                 ivr = float(np.clip(ivr, 0.0, 1.0))
+            else:
+                # Not enough history for a reliable 52-week range
+                ivr = float(np.clip((vix - 12.0) / (40.0 - 12.0), 0.0, 1.0))
+                ivr_confidence = "low (VIX fallback)"
 
             if "close" in features_df.columns and len(features_df) >= 50:
                 ma50 = float(features_df["close"].iloc[-50:].mean())
         else:
-            # Rough heuristic: VIX > 20 → IVR ≈ 0.5
+            # No features_df — rough heuristic only
             ivr = float(np.clip((vix - 12.0) / (40.0 - 12.0), 0.0, 1.0))
+            ivr_confidence = "low (VIX fallback)"
 
-        if ivr < self.ivr_min:
+        # Use a stricter threshold when IVR is estimated, not options-derived
+        _ivr_min_eff = self.ivr_min if ivr_confidence == "high" else min(self.ivr_min + 0.10, 0.65)
+
+        if ivr < _ivr_min_eff:
             return SignalResult(
                 strategy_name=self.name,
                 signal="HOLD",
                 confidence=round(ivr, 3),
                 position_size_pct=0.0,
-                metadata={"ivr": round(ivr, 3), "reason": "IVR below threshold"},
+                metadata={"ivr": round(ivr, 3), "ivr_confidence": ivr_confidence,
+                          "reason": "IVR below threshold"},
             )
 
-        # Direction from trend
-        above_ma    = (spot is not None and ma50 is not None and spot > ma50)
+        # Direction from trend — only use MA50 if we have enough history; otherwise HOLD
+        if ma50 is None:
+            return SignalResult(
+                strategy_name=self.name,
+                signal="HOLD",
+                confidence=round(ivr, 3),
+                position_size_pct=0.0,
+                metadata={"ivr": round(ivr, 3), "ivr_confidence": ivr_confidence,
+                          "reason": "Insufficient price history for MA50 — cannot determine direction"},
+            )
+
+        above_ma    = spot is not None and spot > ma50
         spread_type = "bull_put" if above_ma else "bear_call"
         signal      = "BUY" if above_ma else "SELL"
 
@@ -243,10 +268,11 @@ class IVRCreditSpreadStrategy(BaseStrategy):
             confidence=round(ivr, 3),
             position_size_pct=self.position_size_pct,
             metadata={
-                "ivr":         round(ivr, 3),
-                "vix":         vix,
-                "spread_type": spread_type,
-                "above_50ma":  above_ma,
+                "ivr":            round(ivr, 3),
+                "ivr_confidence": ivr_confidence,
+                "vix":            vix,
+                "spread_type":    spread_type,
+                "above_50ma":     above_ma,
             },
         )
 

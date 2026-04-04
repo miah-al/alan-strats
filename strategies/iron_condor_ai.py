@@ -254,6 +254,41 @@ class IronCondorAIStrategy(BaseStrategy):
         "yield_curve_2y10y", "days_to_month_end", "oi_put_call_proxy",
     ]  # 17 features (close_price excluded from ML input)
 
+    # Sensible neutral defaults when forward-fill still leaves NaN.
+    # Values chosen so they represent "no signal / normal regime" rather than zero.
+    _FEATURE_DEFAULTS = {
+        "ivr":              0.50,   # neutral IV rank
+        "iv_term_slope":    0.00,
+        "put_call_skew":    0.00,
+        "atm_iv":           0.20,   # typical equity IV
+        "realized_vol_20d": 0.15,   # typical HV
+        "vrp":              0.00,
+        "atr_pct":          0.015,
+        "ret_5d":           0.00,
+        "ret_20d":          0.00,
+        "dist_from_ma50":   0.00,
+        "vix_level":        20.0,   # long-run VIX mean
+        "vix_5d_change":    0.00,
+        "vix_ma_ratio":     1.00,   # no spike
+        "rate_10y":         0.04,
+        "yield_curve_2y10y":0.00,
+        "days_to_month_end":10,
+        "oi_put_call_proxy":1.00,
+    }
+
+    # Features that are critical — if still NaN after defaults, HOLD rather than predict
+    _CRITICAL_FEATURES = {"vix_level", "realized_vol_20d", "atm_iv"}
+
+    @classmethod
+    def _prepare_feat_row(cls, df_slice: "pd.DataFrame") -> "pd.DataFrame":
+        """Forward-fill, apply per-feature defaults, detect critical NaN."""
+        row = df_slice[cls.FEATURE_COLS].copy()
+        row = row.ffill()
+        for col, default in cls._FEATURE_DEFAULTS.items():
+            if col in row.columns:
+                row[col] = row[col].fillna(default)
+        return row
+
     def __init__(
         self,
         signal_threshold:   float = 0.60,  # P(range-bound) must exceed this
@@ -370,8 +405,14 @@ class IronCondorAIStrategy(BaseStrategy):
                                 metadata={"mode": "heuristic", "ivr": round(ivr_approx, 3)})
 
         try:
-            feat_row = features_df[self.FEATURE_COLS].iloc[-1:].fillna(0)
-            prob = float(self._model.predict_proba(feat_row)[0][1])
+            feat_row = self._prepare_feat_row(features_df.iloc[-1:])
+            # If any critical feature is still NaN, HOLD rather than predict on garbage
+            critical_nan = feat_row[list(self._CRITICAL_FEATURES)].isna().any(axis=1).iloc[0]
+            if critical_nan:
+                logger.warning("iron_condor_ai: critical features NaN at inference — HOLD")
+                prob = 0.0
+            else:
+                prob = float(self._model.predict_proba(feat_row)[0][1])
         except Exception as e:
             logger.warning(f"iron_condor_ai live signal failed: {e}")
             prob = 0.0
@@ -560,7 +601,7 @@ class IronCondorAIStrategy(BaseStrategy):
             prob = 0.0
             if model_ready and enough_history:
                 try:
-                    feat_row = feat_df[self.FEATURE_COLS].iloc[i:i+1].fillna(0).values
+                    feat_row = self._prepare_feat_row(feat_df.iloc[i:i+1])
                     prob = float(model_pipeline.predict_proba(feat_row)[0][1])
                 except Exception:
                     prob = 0.0
@@ -593,9 +634,9 @@ class IronCondorAIStrategy(BaseStrategy):
                 # In marginal signals, use wider strikes (lower delta)
                 adaptive_delta = d_short
                 if prob >= 0.75:
-                    adaptive_delta = min(d_short + 0.04, 0.22)  # slightly tighter
-                elif prob < thresh:
-                    adaptive_delta = max(d_short - 0.03, 0.10)  # slightly wider
+                    adaptive_delta = min(d_short + 0.04, 0.22)   # high conviction → tighter strikes
+                elif prob < thresh + 0.10:
+                    adaptive_delta = max(d_short - 0.03, 0.10)   # marginal signal → wider strikes
 
                 call_short_K = _find_strike_for_delta(spot, T_entry, r, iv_val, adaptive_delta, "call")
                 put_short_K  = _find_strike_for_delta(spot, T_entry, r, iv_val, adaptive_delta, "put")

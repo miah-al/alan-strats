@@ -273,6 +273,13 @@ def get_option_snapshots(engine: Engine, symbol: str,
         df = pd.DataFrame(result.fetchall(), columns=result.keys())
     if not df.empty:
         df.columns = [c.lower() for c in df.columns]
+        # SQL Server returns NUMERIC/DECIMAL columns as decimal.Decimal objects.
+        # Cast all numeric-like columns to float so arithmetic works in pandas.
+        _numeric_cols = ["strike", "bid", "ask", "mid", "last", "iv",
+                         "delta", "gamma", "theta", "vega"]
+        for col in _numeric_cols:
+            if col in df.columns:
+                df[col] = pd.to_numeric(df[col], errors="coerce")
     return df
 
 

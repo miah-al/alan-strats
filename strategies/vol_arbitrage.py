@@ -804,8 +804,11 @@ class VolArbitrageStrategy(BaseStrategy):
                 # violation is circular: violation = BS(put_iv) - BS(call_iv) - parity,
                 # which is just the IV skew in dollar form — not a real market arb.
                 # Only trade parity violations when we have real bid/ask market quotes.
+                # Parity arb requires BOTH sides to have real market quotes.
+                # If either side is reconstructed from IV, the violation is circular.
                 _force_skip_parity = getattr(self, "_skip_parity_arb", False)
-                if not both_reconstructed and not _force_skip_parity:
+                neither_reconstructed = not c_reconstructed and not p_reconstructed
+                if neither_reconstructed and not _force_skip_parity:
                     observed    = c_mid - p_mid
                     theoretical = _parity_theoretical(S, K, T, r, self.div_yield)
                     violation   = observed - theoretical

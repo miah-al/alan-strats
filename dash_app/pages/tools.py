@@ -608,6 +608,61 @@ def _polygon_explorer_tab() -> html.Div:
                 dcc.Loading(html.Div(id="tools-px-fin-content"), type="dot", color=T.ACCENT),
             ], title="EPS Financials"),
 
+            # 10. Price Check — Polygon vs Robinhood
+            dbc.AccordionItem([
+                dbc.Alert(
+                    [
+                        html.Strong("Robinhood API not configured. "),
+                        "To enable live price comparison, set ",
+                        html.Code("ROBINHOOD_USERNAME"),
+                        ", ",
+                        html.Code("ROBINHOOD_PASSWORD"),
+                        " (and optionally ",
+                        html.Code("ROBINHOOD_MFA_CODE"),
+                        ") as environment variables, then install ",
+                        html.Code("robin_stocks"),
+                        ".",
+                    ],
+                    id="tools-pc-rh-warning",
+                    color="warning",
+                    style={"fontSize": "12px", "padding": "8px 12px", "marginBottom": "12px"},
+                    dismissable=False,
+                    is_open=True,
+                ),
+                html.Div([
+                    html.Div([
+                        _px_label("Ticker"),
+                        _px_input("tools-pc-ticker", placeholder="SPY", width="90px"),
+                    ]),
+                    html.Div([
+                        _px_label("Option expiry (YYYY-MM-DD, optional)"),
+                        _px_input("tools-pc-expiry", placeholder="2025-04-17", width="160px"),
+                    ]),
+                    html.Div([
+                        _px_label("Strike (optional)"),
+                        _px_input("tools-pc-strike", placeholder="500", width="90px"),
+                    ]),
+                    html.Div([
+                        _px_label("Type"),
+                        dcc.Dropdown(
+                            id="tools-pc-opt-type",
+                            options=[{"label": "Call", "value": "call"},
+                                     {"label": "Put",  "value": "put"}],
+                            value="call",
+                            clearable=False,
+                            style={"width": "100px", "fontSize": "12px",
+                                   "backgroundColor": T.BG_ELEVATED, "color": T.TEXT_PRIMARY},
+                        ),
+                    ]),
+                    html.Div(
+                        _px_fetch_btn("tools-pc-run-btn", "Check Prices"),
+                        style={"alignSelf": "flex-end"},
+                    ),
+                ], style={"display": "flex", "gap": "12px", "flexWrap": "wrap",
+                          "alignItems": "flex-start", "marginBottom": "10px"}),
+                dcc.Loading(html.Div(id="tools-pc-content"), type="dot", color=T.ACCENT),
+            ], title="Price Check — Polygon vs Robinhood"),
+
             # 9. Raw API Call
             dbc.AccordionItem([
                 html.Div([
@@ -2354,6 +2409,177 @@ def _render_strategy_detail(slug: str):
                             "lineHeight": "1.6", "textAlign": "center", "padding": "20px 0"}),
         ]), style=T.STYLE_CARD), width=4),
     ])
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Callbacks — Price Check (Polygon vs Robinhood)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def _rh_available() -> bool:
+    """Return True if robin_stocks is installed and RH credentials are configured."""
+    try:
+        import robin_stocks  # noqa: F401
+        import os
+        return bool(os.environ.get("ROBINHOOD_USERNAME") and os.environ.get("ROBINHOOD_PASSWORD"))
+    except ImportError:
+        return False
+
+
+def _rh_get_stock_price(ticker: str) -> float | None:
+    """Fetch Robinhood last trade price for a stock."""
+    try:
+        import robin_stocks.robinhood as rh
+        import os
+        rh.login(
+            os.environ["ROBINHOOD_USERNAME"],
+            os.environ["ROBINHOOD_PASSWORD"],
+            mfa_code=os.environ.get("ROBINHOOD_MFA_CODE"),
+            store_session=False,
+        )
+        quote = rh.stocks.get_latest_price(ticker)
+        rh.authentication.logout()
+        return float(quote[0]) if quote else None
+    except Exception:
+        return None
+
+
+def _rh_get_option_ask(ticker: str, expiry: str, strike: str, opt_type: str) -> float | None:
+    """Fetch Robinhood ask price for a specific option contract."""
+    try:
+        import robin_stocks.robinhood as rh
+        import os
+        rh.login(
+            os.environ["ROBINHOOD_USERNAME"],
+            os.environ["ROBINHOOD_PASSWORD"],
+            mfa_code=os.environ.get("ROBINHOOD_MFA_CODE"),
+            store_session=False,
+        )
+        data = rh.options.find_options_by_expiration_and_strike(
+            ticker, expiry, strike, opt_type
+        )
+        rh.authentication.logout()
+        if data and len(data) > 0:
+            ask = data[0].get("ask_price")
+            return float(ask) if ask else None
+        return None
+    except Exception:
+        return None
+
+
+@callback(
+    Output("tools-pc-rh-warning", "is_open"),
+    Output("tools-pc-content", "children"),
+    Input("tools-pc-run-btn", "n_clicks"),
+    State("tools-pc-ticker",   "value"),
+    State("tools-pc-expiry",   "value"),
+    State("tools-pc-strike",   "value"),
+    State("tools-pc-opt-type", "value"),
+    prevent_initial_call=True,
+)
+def _run_price_check(n_clicks, ticker, expiry, strike, opt_type):
+    from dash_app import get_polygon_api_key
+    ticker = (ticker or "SPY").upper().strip()
+    api_key = get_polygon_api_key()
+
+    rh_ok = _rh_available()
+    show_warning = not rh_ok
+
+    rows: list[html.Tr] = []
+
+    def _flag(poly_val, rh_val, threshold: float) -> str:
+        if poly_val is None or rh_val is None:
+            return "—"
+        diff = abs(poly_val - rh_val)
+        return "✅" if diff <= threshold else f"⚠️ diff ${diff:.2f}"
+
+    def _cell(txt, color=None, bold=False):
+        s = {"fontSize": "13px", "padding": "6px 12px", "whiteSpace": "nowrap"}
+        if color:
+            s["color"] = color
+        if bold:
+            s["fontWeight"] = "700"
+        return html.Td(txt, style=s)
+
+    # ── Stock price row ────────────────────────────────────────────────────────
+    poly_stock: float | None = None
+    try:
+        if api_key:
+            from data.polygon_client import PolygonClient
+            c = PolygonClient(api_key=api_key)
+            snap = c._get(f"/v2/snapshot/locale/us/markets/stocks/tickers/{ticker}", {})
+            day = snap.get("ticker", {}).get("day") or {}
+            poly_stock = day.get("c") or None
+    except Exception:
+        pass
+
+    rh_stock: float | None = _rh_get_stock_price(ticker) if rh_ok else None
+
+    flag_s = _flag(poly_stock, rh_stock, 0.10)
+    flag_color = T.SUCCESS if flag_s == "✅" else (T.WARNING if flag_s.startswith("⚠️") else T.TEXT_MUTED)
+    rows.append(html.Tr([
+        _cell("Stock last", bold=True),
+        _cell(f"${poly_stock:.2f}" if poly_stock else "—"),
+        _cell(f"${rh_stock:.2f}" if rh_stock else "—"),
+        _cell(flag_s, color=flag_color),
+        _cell("flag if diff > $0.10", color=T.TEXT_MUTED),
+    ]))
+
+    # ── Option mid / ask row ───────────────────────────────────────────────────
+    if expiry and strike:
+        poly_mid: float | None = None
+        try:
+            if api_key:
+                from data.polygon_client import PolygonClient
+                c = PolygonClient(api_key=api_key)
+                sym_suffix = f"{expiry.replace('-', '')}{opt_type[0].upper()}{int(float(strike) * 1000):08d}"
+                opt_sym = f"O:{ticker}{sym_suffix}"
+                snap = c._get(f"/v3/snapshot/options/{ticker}/{opt_sym}", {})
+                details = snap.get("results", {}) or {}
+                day = details.get("day") or {}
+                bid = day.get("bid") or 0
+                ask = day.get("ask") or 0
+                if bid and ask:
+                    poly_mid = (bid + ask) / 2
+        except Exception:
+            pass
+
+        rh_ask: float | None = _rh_get_option_ask(ticker, expiry, strike, opt_type) if rh_ok else None
+
+        flag_o = _flag(poly_mid, rh_ask, 0.20)
+        flag_o_color = T.SUCCESS if flag_o == "✅" else (T.WARNING if flag_o.startswith("⚠️") else T.TEXT_MUTED)
+        rows.append(html.Tr([
+            _cell(f"{opt_type.upper()} {strike} {expiry} mid/ask", bold=True),
+            _cell(f"${poly_mid:.2f}" if poly_mid else "—"),
+            _cell(f"${rh_ask:.2f}" if rh_ask else "—"),
+            _cell(flag_o, color=flag_o_color),
+            _cell("flag if diff > $0.20", color=T.TEXT_MUTED),
+        ]))
+
+    if not rh_ok:
+        note = dbc.Alert(
+            "Robinhood prices unavailable — showing Polygon only. Configure RH credentials to enable comparison.",
+            color="secondary",
+            style={"fontSize": "12px", "padding": "6px 12px", "marginBottom": "10px"},
+        )
+    else:
+        note = html.Div()
+
+    hdr_style = {"fontSize": "11px", "fontWeight": "700", "color": T.TEXT_MUTED,
+                 "padding": "4px 12px", "borderBottom": f"1px solid {T.BORDER}",
+                 "textTransform": "uppercase", "letterSpacing": "0.05em"}
+    table = html.Table([
+        html.Thead(html.Tr([
+            html.Th("Instrument", style=hdr_style),
+            html.Th("Polygon", style=hdr_style),
+            html.Th("Robinhood", style=hdr_style),
+            html.Th("Status", style=hdr_style),
+            html.Th("Threshold", style=hdr_style),
+        ])),
+        html.Tbody(rows, style={"backgroundColor": T.BG_CARD}),
+    ], style={"width": "100%", "borderCollapse": "collapse",
+              "border": f"1px solid {T.BORDER}", "borderRadius": "6px"})
+
+    return show_warning, html.Div([note, table])
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
