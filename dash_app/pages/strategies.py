@@ -158,22 +158,25 @@ _VA_COLS = [
     _col("Status",  width=150),
 ]
 
-_GEX_COLS = [
-    _col("Ticker",       width=150, pinned="left"),
-    _col("Price",        width=150, numeric=True),
-    _col("VIX",          width=150, numeric=True),
-    _col("Regime",       width=150),
-    _col("SPY Weight",   width=150, numeric=True),
-    _col("Signal",       width=150),
-    _col("ATR%",         width=150, numeric=True),
-    _col("5d Return",    width=150, numeric=True),
-    _col("Regime Label", width=200),
-]
-
 _VIEW_BTN = {"field": "Details", "width": 110, "sortable": False, "filter": False,
              "cellStyle": {"textAlign": "center", "cursor": "pointer"},
              "valueGetter": {"function": "'📊 View'"},
              "cellClass": "ic-chart-btn"}
+
+_GEX_COLS = [
+    _col("Ticker",       width=120, pinned="left"),
+    _col("Price",        width=110, numeric=True),
+    _col("VIX",          width=100, numeric=True),
+    _col("Regime",       width=130),
+    _col("SPY Weight",   width=110, numeric=True),
+    _col("Signal",       width=100),
+    _col("ATR%",         width=100, numeric=True),
+    _col("5d Return",    width=110, numeric=True),
+    _col("Regime Label", width=220),
+    _col("Score",        width=100, numeric=True, sort="desc"),
+    _col("Status",       width=120),
+    _VIEW_BTN,
+]
 
 _BWB_COLS = [
     _col("Ticker",      width=150, pinned="left"),
@@ -586,17 +589,17 @@ def _backtest_tab(slug: str) -> html.Div:
     """Full backtest UI — controls, dynamic parameter sliders, results area."""
     # ── Load strategy's UI params (needs the class) ───────────────────────────
     _STRATEGY_CLASSES = {
-        "iron_condor_rules":    ("alan_trader.strategies.iron_condor_rules",    "IronCondorRulesStrategy"),
-        "iron_condor_ai":       ("alan_trader.strategies.iron_condor_ai",       "IronCondorAIStrategy"),
-        "vix_spike_fade":       ("alan_trader.strategies.vix_spike_fade",       "VixSpikeFadeStrategy"),
-        "ivr_credit_spread":    ("alan_trader.strategies.ivr_credit_spread",    "IVRCreditSpreadStrategy"),
-        "vol_arbitrage":        ("alan_trader.strategies.vol_arbitrage",        "VolArbitrageStrategy"),
-        "gex_positioning":      ("alan_trader.strategies.gex_positioning",      "GEXPositioningStrategy"),
-        "broken_wing_butterfly": ("alan_trader.strategies.broken_wing_butterfly", "BrokenWingButterflyStrategy"),
-        "calendar_spread":      ("alan_trader.strategies.calendar_spread",      "CalendarSpreadStrategy"),
-        "earnings_straddle":    ("alan_trader.strategies.earnings_straddle",    "EarningsStraddleStrategy"),
-        "wheel_strategy":       ("alan_trader.strategies.wheel_strategy",       "WheelStrategy"),
-        "bull_put_spread":      ("alan_trader.strategies.bull_put_spread",      "BullPutSpreadStrategy"),
+        "iron_condor_rules":     ("strategies.iron_condor_rules",     "IronCondorRulesStrategy"),
+        "iron_condor_ai":        ("strategies.iron_condor_ai",        "IronCondorAIStrategy"),
+        "vix_spike_fade":        ("strategies.vix_spike_fade",        "VixSpikeFadeStrategy"),
+        "ivr_credit_spread":     ("strategies.ivr_credit_spread",     "IVRCreditSpreadStrategy"),
+        "vol_arbitrage":         ("strategies.vol_arbitrage",         "VolArbitrageStrategy"),
+        "gex_positioning":       ("strategies.gex_positioning",       "GEXPositioningStrategy"),
+        "broken_wing_butterfly": ("strategies.broken_wing_butterfly", "BrokenWingButterflyStrategy"),
+        "calendar_spread":       ("strategies.calendar_spread",       "CalendarSpreadStrategy"),
+        "earnings_straddle":     ("strategies.earnings_straddle",     "EarningsStraddleStrategy"),
+        "wheel_strategy":        ("strategies.wheel_strategy",        "WheelStrategy"),
+        "bull_put_spread":       ("strategies.bull_put_spread",       "BullPutSpreadStrategy"),
     }
 
     ui_params = []
@@ -753,7 +756,7 @@ def _backtest_tab(slug: str) -> html.Div:
 def _performance_stub(slug: str) -> html.Div:
     return dbc.Card(
         dbc.CardBody(html.P(
-            "Performance tab — coming in Phase 4.",
+            "Performance analytics coming soon.",
             style={"color": T.TEXT_MUTED, "fontSize": "14px"},
         )),
         style=T.STYLE_CARD,
@@ -1176,14 +1179,19 @@ def _render_sample_data_preview(exists: bool):
 
 _TEST_SUITES = {
     "iron_condor_rules": [
-        {"id": "phase4",        "label": "Phase 4 Bug Fixes",       "module": "test_phase4_fixes"},
+        {"id": "ic",            "label": "Iron Condor Tests",             "module": "test_iron_condor_rules"},
         {"id": "ic_integration","label": "IC Integration (DB + Polygon)", "module": "test_ic_rules_integration"},
     ],
-    "vix_spike_fade":    [{"id": "phase4", "label": "Phase 4 Bug Fixes", "module": "test_phase4_fixes"}],
-    "vol_arbitrage":     [{"id": "phase4", "label": "Phase 4 Bug Fixes", "module": "test_phase4_fixes"}],
-    "iron_condor_ai":    [{"id": "phase4", "label": "Phase 4 Bug Fixes", "module": "test_phase4_fixes"}],
-    "ivr_credit_spread": [{"id": "phase4", "label": "Phase 4 Bug Fixes", "module": "test_phase4_fixes"}],
-    "gex_positioning":   [],
+    "vix_spike_fade":        [{"id": "vsf",   "label": "VIX Spike Fade Tests",        "module": "test_vix_spike_fade"}],
+    "vol_arbitrage":         [{"id": "va",    "label": "Vol Arbitrage Tests",          "module": "test_vol_arbitrage"}],
+    "iron_condor_ai":        [{"id": "icai",  "label": "IC AI Tests",                 "module": "test_iron_condor_ai"}],
+    "ivr_credit_spread":     [{"id": "ivr",   "label": "IVR Credit Spread Tests",     "module": "test_ivr_credit_spread"}],
+    "gex_positioning":       [{"id": "gex",   "label": "GEX Positioning Tests",       "module": "test_gex_positioning"}],
+    "broken_wing_butterfly": [{"id": "bwb",   "label": "BWB Strategy Tests",          "module": "test_broken_wing_butterfly"}],
+    "calendar_spread":       [{"id": "cal",   "label": "Calendar Spread Tests",       "module": "test_calendar_spread"}],
+    "earnings_straddle":     [{"id": "earn",  "label": "Earnings Short Condor Tests", "module": "test_earnings_straddle"}],
+    "wheel_strategy":        [{"id": "wheel", "label": "Wheel (CSP) Tests",           "module": "test_wheel_strategy"}],
+    "bull_put_spread":       [{"id": "bps",   "label": "Bull Put Spread Tests",       "module": "test_bull_put_spread"}],
 }
 
 _TEST_MARK_OPTIONS = [
@@ -1211,6 +1219,7 @@ def _test_tab(slug: str) -> html.Div:
                     options=suite_options,
                     value=default_suite,
                     clearable=False,
+                    searchable=False,
                     style={"width": "260px", "fontSize": "12px",
                            "backgroundColor": T.BG_ELEVATED, "color": T.TEXT_PRIMARY},
                 ),
@@ -1219,6 +1228,7 @@ def _test_tab(slug: str) -> html.Div:
                     options=_TEST_MARK_OPTIONS,
                     value="all",
                     clearable=False,
+                    searchable=False,
                     style={"width": "160px", "fontSize": "12px",
                            "backgroundColor": T.BG_ELEVATED, "color": T.TEXT_PRIMARY},
                 ),
@@ -1232,9 +1242,14 @@ def _test_tab(slug: str) -> html.Div:
                   "paddingBottom": "8px", "marginBottom": "16px"}),
 
         html.Div(
-            html.P("Select a test suite and click ▶ Run Tests.",
-                   style={"color": T.TEXT_MUTED, "fontSize": "12px",
-                          "fontStyle": "italic", "margin": "4px 0"}),
+            html.Div([
+                html.Span("▸ ", style={"color": T.ACCENT}),
+                html.Span("Select a test suite and click ",
+                          style={"color": T.TEXT_MUTED, "fontSize": "12px"}),
+                html.Span("▶ Run Tests", style={"color": T.TEXT_PRIMARY,
+                          "fontSize": "12px", "fontWeight": "600"}),
+                html.Span(" to execute.", style={"color": T.TEXT_MUTED, "fontSize": "12px"}),
+            ]),
             id=f"str-{slug}-test-summary",
             style={"marginBottom": "10px"},
         ),
@@ -1951,18 +1966,23 @@ def _display_row_va(r: dict) -> dict:
 
 
 def _display_row_gex(r: dict) -> dict:
+    spy_w  = r.get("SPY Weight", 0)
+    score  = r.get("score", round(spy_w * 100))   # fallback: SPY weight as score proxy
+    status = "Trade-Ready" if spy_w >= 0.75 else ("Partial" if spy_w >= 0.35 else "Blocked")
     return {
         "Ticker":       r.get("Ticker", ""),
         "Price":        round(r.get("Price", 0), 2),
         "VIX":          round(r.get("VIX", 0), 2),
         "Regime":       r.get("Regime", "—"),
-        "SPY Weight":   f"{r.get('SPY Weight', 0)*100:.0f}%",
+        "SPY Weight":   f"{spy_w*100:.0f}%",
         "Signal":       r.get("Signal", "—"),
-        "ATR%":         f"{r.get('ATR%', 0):.2f}%",
+        "ATR%":         f"{r.get('ATR%', 0)*100:.2f}%",
         "5d Return":    f"{r.get('5d Return', 0)*100:.1f}%",
         "Regime Label": r.get("Regime Label", "—"),
-        "all_pass":     True,
-        "n_pass":       1,
+        "Score":        score,
+        "Status":       status,
+        "all_pass":     spy_w >= 0.75,
+        "n_pass":       1 if spy_w > 0 else 0,
     }
 
 
@@ -2354,12 +2374,17 @@ for _slug in [s["value"] for s in _STRATEGIES]:
 # ── Backtest tab ──────────────────────────────────────────────────────────────
 
 _STRATEGY_CLASSES_BT = {
-    "iron_condor_rules": ("alan_trader.strategies.iron_condor_rules", "IronCondorRulesStrategy"),
-    "iron_condor_ai":    ("alan_trader.strategies.iron_condor_ai",    "IronCondorAIStrategy"),
-    "vix_spike_fade":    ("alan_trader.strategies.vix_spike_fade",    "VixSpikeFadeStrategy"),
-    "ivr_credit_spread": ("alan_trader.strategies.ivr_credit_spread", "IVRCreditSpreadStrategy"),
-    "vol_arbitrage":     ("alan_trader.strategies.vol_arbitrage",     "VolArbitrageStrategy"),
-    "gex_positioning":   ("alan_trader.strategies.gex_positioning",   "GEXPositioningStrategy"),
+    "iron_condor_rules":     ("strategies.iron_condor_rules",     "IronCondorRulesStrategy"),
+    "iron_condor_ai":        ("strategies.iron_condor_ai",        "IronCondorAIStrategy"),
+    "vix_spike_fade":        ("strategies.vix_spike_fade",        "VixSpikeFadeStrategy"),
+    "ivr_credit_spread":     ("strategies.ivr_credit_spread",     "IVRCreditSpreadStrategy"),
+    "vol_arbitrage":         ("strategies.vol_arbitrage",         "VolArbitrageStrategy"),
+    "gex_positioning":       ("strategies.gex_positioning",       "GEXPositioningStrategy"),
+    "broken_wing_butterfly": ("strategies.broken_wing_butterfly", "BrokenWingButterflyStrategy"),
+    "calendar_spread":       ("strategies.calendar_spread",       "CalendarSpreadStrategy"),
+    "earnings_straddle":     ("strategies.earnings_straddle",     "EarningsStraddleStrategy"),
+    "wheel_strategy":        ("strategies.wheel_strategy",        "WheelStrategy"),
+    "bull_put_spread":       ("strategies.bull_put_spread",       "BullPutSpreadStrategy"),
 }
 
 
@@ -3059,6 +3084,27 @@ def _sig_chart(spots, pnl, spot_price, ticker, title, max_loss, max_profit, targ
                      style={"marginTop": "14px"})
 
 
+def _make_legs_table(rows: list[dict]) -> dag.AgGrid:
+    """Build a compact legs summary table for strategy modals."""
+    return dag.AgGrid(
+        columnDefs=[
+            {"field": "Leg",        "width": 200,
+             "cellStyle": {"function": "params.data.Leg && params.data.Leg.startsWith('NET') ? {'fontWeight':'700','borderTop':'1px solid #374151'} : {}"}},
+            {"field": "Strike",     "width": 110,
+             "cellStyle": {"function": "params.data.Leg && params.data.Leg.startsWith('NET') ? {'borderTop':'1px solid #374151'} : {}"}},
+            {"field": "Action",     "width": 100,
+             "cellStyle": {"function": "params.data.Leg && params.data.Leg.startsWith('NET') ? {'borderTop':'1px solid #374151'} : {}"}},
+            {"field": "~/Contract", "width": 130,
+             "cellStyle": {"function": "(() => { const v = params.value; const base = params.data.Leg && params.data.Leg.startsWith('NET') ? {'fontWeight':'700','borderTop':'1px solid #374151','fontFamily':'monospace'} : {'fontWeight':'600','fontFamily':'monospace'}; if (!v || v === '—') return base; return {...base, color: v.startsWith('+') ? '#10b981' : '#ef4444'}; })()"}},
+        ],
+        rowData=rows,
+        defaultColDef={"resizable": True},
+        dashGridOptions={"domLayout": "autoHeight"},
+        className=T.AGGRID_THEME,
+        style={"width": "100%", "marginBottom": "14px"},
+    )
+
+
 @callback(
     Output("str-sig-modal-body", "children"),
     Input("str-sig-row-store",   "data"),
@@ -3090,7 +3136,8 @@ def _build_signal_body(row):
                                "flexWrap": "wrap", "marginBottom": "14px"})
 
     # ── Strategy-specific content ─────────────────────────────────────────────
-    chart = html.Div()   # default: no chart; overridden by strategies that have P&L graphs
+    chart      = html.Div()   # default: no chart; overridden by strategies that have P&L graphs
+    legs_table = html.Div()   # default: no legs table
 
     if slug == "vix_spike_fade":
         vix     = row.get("VIX", "—")
@@ -3169,35 +3216,53 @@ def _build_signal_body(row):
             ww = float(str(wide_w)   or 0)
         except Exception:
             nw = ww = 0
+        # Risk metrics (rough — no live chain)
+        credit_rough = (0.20 + price * 0.015 * 0.1) if (price > 0 and nw > 0) else 0.0
+        max_profit_rough = (nw + credit_rough) * 100 if nw > 0 else None
+        max_loss_rough   = max((ww - nw - credit_rough), 0) * 100 if (ww > nw) else None
         signal  = ("Net-credit BWB entry — IVR low, range-bound. Pin at body for max profit."
                    if status == "Trade-Ready" else "Conditions not fully met — monitor")
-        metrics = _row(
-            _mc("ATM IV",     str(atm_iv)),
-            _mc("IVR",        str(ivr)),
-            _mc("VIX",        str(vix)),
-            _mc("ADX",        str(adx)),
-            _mc("Narrow Wing",str(narrow_w)),
-            _mc("Wide Wing",  str(wide_w)),
-            _mc("Status",     status, status_color),
-        )
-        # P&L chart: call BWB — buy body-5%, sell 2× body, buy 2× body+10%
+        metrics = html.Div([
+            _row(
+                _mc("ATM IV",     str(atm_iv)),
+                _mc("IVR",        str(ivr)),
+                _mc("VIX",        str(vix)),
+                _mc("ADX",        str(adx)),
+                _mc("Narrow Wing",str(narrow_w)),
+                _mc("Wide Wing",  str(wide_w)),
+                _mc("Status",     status, status_color),
+            ),
+            _row(
+                _mc("~Net Credit", f"+${credit_rough * 100:.0f} / contract" if credit_rough > 0 else "—", T.SUCCESS),
+                _mc("Max Profit",  f"+${max_profit_rough:.0f} / contract"   if max_profit_rough else "—", T.SUCCESS),
+                _mc("Max Loss",    f"-${max_loss_rough:.0f} / contract"     if max_loss_rough else "—",   T.DANGER),
+                _mc("Wide Wing Stop", f"within $1 of ${price * 1.10:.0f}" if price > 0 else "—",         T.WARNING),
+            ),
+        ])
+        # Legs table + P&L chart
         chart = html.Div()
         if price > 0 and nw > 0 and ww > 0:
             body_k   = round(price * 1.005 / nw) * nw
-            long1_k  = body_k - nw         # lower long call
-            short_k  = body_k              # short 2× call
-            long2_k  = body_k + ww         # upper wide long call
-            credit   = 0.20 + price * 0.015 * 0.1   # rough credit proxy
+            long1_k  = body_k - nw
+            short_k  = body_k
+            long2_k  = body_k + ww
+            credit   = credit_rough
+            legs_table = _make_legs_table([
+                {"Leg": "Long call (lower wing)", "Strike": f"${long1_k:.0f}", "Action": "BUY",  "~/Contract": f"-${credit * 30:.2f}"},
+                {"Leg": "Short call × 2 (body)",  "Strike": f"${short_k:.0f}", "Action": "SELL", "~/Contract": f"+${credit * 80:.2f}"},
+                {"Leg": "Long call (wide wing)",  "Strike": f"${long2_k:.0f}", "Action": "BUY",  "~/Contract": f"-${credit * 30:.2f}"},
+                {"Leg": "NET CREDIT",             "Strike": "",               "Action": "",     "~/Contract": f"+${credit * 100:.2f}"},
+            ])
             spots    = np.linspace(price * 0.75, price * 1.30, 300)
             def _bwb_pnl(s):
-                c1 = max(0, s - long1_k)   # long lower call
-                c2 = -2 * max(0, s - short_k)  # short 2× body
-                c3 = 2 * max(0, s - long2_k)   # long 2× wide
+                c1 = max(0, s - long1_k)     # long call lower wing  (×1)
+                c2 = -2 * max(0, s - short_k) # short calls at body   (×2)
+                c3 = max(0, s - long2_k)      # long call wide wing   (×1) — caps loss above
                 return (c1 + c2 + c3 + credit) * 100
             pnl = [_bwb_pnl(s) for s in spots]
             max_profit = max(pnl)
             chart = _sig_chart(spots, pnl, price, ticker, "Broken Wing Butterfly",
-                               credit * 100, max_profit, 0.75 * max_profit)
+                               -(ww - nw - credit) * 100, max_profit, 0.75 * max_profit)
 
     elif slug == "calendar_spread":
         atm_iv = row.get("ATM IV", "—")
@@ -3206,17 +3271,31 @@ def _build_signal_body(row):
         ivr    = row.get("IVR", "—")
         vix    = row.get("VIX", "—")
         adx    = row.get("ADX", "—")
+        price  = float(str(row.get("Price", 0)) or 0)
+        try:
+            iv_f_cal = float(str(atm_iv).rstrip("%")) / 100 if "%" in str(atm_iv) else float(str(atm_iv) or 0.25)
+        except Exception:
+            iv_f_cal = 0.25
+        debit_rough = price * iv_f_cal * (25 / 252) ** 0.5 * 0.3 if price > 0 else 0.0
         signal = ("Sell front-month, buy back-month — VRP positive, range-bound."
                   if status == "Trade-Ready" else "Conditions not fully met — monitor")
-        metrics = _row(
-            _mc("ATM IV", str(atm_iv)),
-            _mc("HV20",   str(hv20)),
-            _mc("VRP",    str(vrp),  T.SUCCESS if vrp not in ("—", None) else T.TEXT_MUTED),
-            _mc("IVR",    str(ivr)),
-            _mc("VIX",    str(vix)),
-            _mc("ADX",    str(adx)),
-            _mc("Status", status, status_color),
-        )
+        metrics = html.Div([
+            _row(
+                _mc("ATM IV", str(atm_iv)),
+                _mc("HV20",   str(hv20)),
+                _mc("VRP",    str(vrp),  T.SUCCESS if vrp not in ("—", None) else T.TEXT_MUTED),
+                _mc("IVR",    str(ivr)),
+                _mc("VIX",    str(vix)),
+                _mc("ADX",    str(adx)),
+                _mc("Status", status, status_color),
+            ),
+            _row(
+                _mc("~Net Debit",  f"-${debit_rough * 0.4 * 100:.0f} / contract" if debit_rough > 0 else "—", T.WARNING),
+                _mc("Max Loss",    f"-${debit_rough * 0.4 * 100:.0f} / contract" if debit_rough > 0 else "—", T.DANGER),
+                _mc("Max Profit",  f"+${debit_rough * 0.7 * 100:.0f} / contract" if debit_rough > 0 else "—", T.SUCCESS),
+                _mc("Risk Note",   "Defined — lose debit only", T.TEXT_MUTED),
+            ),
+        ])
         # Calendar spread P&L is IV-dependent; show a tent-shaped approximation
         price = float(str(row.get("Price", 0)) or 0)
         chart = html.Div()
@@ -3225,7 +3304,12 @@ def _build_signal_body(row):
                 iv_f = float(str(atm_iv).rstrip("%")) / 100 if "%" in str(atm_iv) else float(str(atm_iv) or 0.25)
             except Exception:
                 iv_f = 0.25
-            debit   = price * iv_f * (25 / 252) ** 0.5 * 0.3   # rough debit
+            debit      = price * iv_f * (25 / 252) ** 0.5 * 0.3   # rough debit
+            legs_table = _make_legs_table([
+                {"Leg": "Sell front-month ATM",  "Strike": f"${price:.0f}", "Action": "SELL", "~/Contract": f"+${debit * 0.6 * 100:.2f}"},
+                {"Leg": "Buy back-month ATM",    "Strike": f"${price:.0f}", "Action": "BUY",  "~/Contract": f"-${debit * 1.0 * 100:.2f}"},
+                {"Leg": "NET DEBIT",             "Strike": "",              "Action": "",     "~/Contract": f"-${debit * 0.4 * 100:.2f}"},
+            ])
             spots   = np.linspace(price * 0.85, price * 1.15, 300)
             def _cal_pnl(s):
                 dist = abs(s - price) / price
@@ -3242,34 +3326,61 @@ def _build_signal_body(row):
         credit  = row.get("Straddle Credit", "—")
         price   = float(str(row.get("Price", 0)) or 0)
         try:
-            _cred_ps = float(str(credit).lstrip("$") or 0)
-            credit_display = f"${_cred_ps * 100:.0f} / contract"
+            cred_f = float(str(credit).lstrip("$") or 0)
         except Exception:
-            credit_display = str(credit)
-        signal  = (f"Sell ATM straddle — earnings in {dte_e} days, IV crush expected post-event."
+            cred_f = price * 0.05 if price > 0 else 0.0
+        # Wing protection: buy OTM call + put at implied-move distance (~10% or impl_mv)
+        try:
+            impl_mv_f = float(str(impl_mv).rstrip("%")) / 100 if "%" in str(impl_mv) else float(str(impl_mv) or 0.08)
+        except Exception:
+            impl_mv_f = 0.08
+        wing_dist    = max(impl_mv_f * 1.5, 0.10) * price if price > 0 else 0.0
+        wing_cost_ps = cred_f * 0.20   # rough: OTM wing ≈ 20% of ATM value each
+        net_cred_ps  = cred_f - 2 * wing_cost_ps
+        max_loss_ps  = max(wing_dist / 100 - net_cred_ps, 0) * 100 if wing_dist > 0 else 0.0
+        credit_display = f"${cred_f * 100:.0f} / contract" if cred_f > 0 else "—"
+        net_cred_display = f"+${net_cred_ps * 100:.0f} / contract" if net_cred_ps > 0 else "—"
+        max_loss_display = f"-${max_loss_ps:.0f} / contract" if max_loss_ps > 0 else "—"
+        signal  = (f"Short iron condor — sell ATM straddle + buy OTM wings. Earnings in {dte_e} days, IV crush expected."
                    if status == "Trade-Ready" else "Outside earnings window or IV too low — monitor")
-        metrics = _row(
-            _mc("ATM IV",          str(atm_iv)),
-            _mc("IVR",             str(ivr),   T.SUCCESS if status == "Trade-Ready" else T.TEXT_MUTED),
-            _mc("Days to Earnings",str(dte_e)),
-            _mc("Impl. Move",      str(impl_mv)),
-            _mc("Straddle Credit", credit_display),
-            _mc("Status",          status, status_color),
-        )
+        metrics = html.Div([
+            _row(
+                _mc("ATM IV",           str(atm_iv)),
+                _mc("IVR",              str(ivr),          T.SUCCESS if status == "Trade-Ready" else T.TEXT_MUTED),
+                _mc("Days to Earnings", str(dte_e)),
+                _mc("Impl. Move",       str(impl_mv)),
+                _mc("Straddle Credit",  credit_display),
+                _mc("Status",           status, status_color),
+            ),
+            _row(
+                _mc("Net Credit (w/ wings)", net_cred_display,  T.SUCCESS),
+                _mc("Max Loss",              max_loss_display,  T.DANGER),
+                _mc("Wing Distance",         f"±{wing_dist:.0f}" if wing_dist > 0 else "—", T.WARNING),
+                _mc("Structure",             "Short Iron Condor — defined risk", T.TEXT_MUTED),
+            ),
+        ])
         chart = html.Div()
-        if price > 0:
-            try:
-                cred_f = float(str(credit).lstrip("$") or 0)
-            except Exception:
-                cred_f = price * 0.05
-            spots = np.linspace(price * 0.75, price * 1.25, 300)
+        if price > 0 and cred_f > 0:
+            call_wing_k = price + wing_dist
+            put_wing_k  = price - wing_dist
+            legs_table = _make_legs_table([
+                {"Leg": "Long OTM call (wing)",  "Strike": f"${call_wing_k:.0f}", "Action": "BUY",  "~/Contract": f"-${wing_cost_ps * 100:.2f}"},
+                {"Leg": "Short ATM call",        "Strike": f"${price:.0f}",       "Action": "SELL", "~/Contract": f"+${cred_f * 50:.2f}"},
+                {"Leg": "Short ATM put",         "Strike": f"${price:.0f}",       "Action": "SELL", "~/Contract": f"+${cred_f * 50:.2f}"},
+                {"Leg": "Long OTM put (wing)",   "Strike": f"${put_wing_k:.0f}",  "Action": "BUY",  "~/Contract": f"-${wing_cost_ps * 100:.2f}"},
+                {"Leg": "NET CREDIT",            "Strike": "",                    "Action": "",     "~/Contract": f"+${net_cred_ps * 100:.2f}"},
+            ])
+            spots = np.linspace(price * 0.70, price * 1.30, 300)
             def _strad_pnl(s):
-                intrinsic = abs(s - price)
-                return (cred_f - intrinsic) * 100
+                short_call = -max(0, s - price)
+                short_put  = -max(0, price - s)
+                long_call  =  max(0, s - call_wing_k)
+                long_put   =  max(0, put_wing_k - s)
+                return (net_cred_ps + short_call + short_put + long_call + long_put) * 100
             pnl = [_strad_pnl(s) for s in spots]
-            chart = _sig_chart(spots, pnl, price, ticker, "Earnings Straddle (Sell)",
-                               -cred_f * 2 * 100, cred_f * 100, cred_f * 0.5 * 100,
-                               stop_level=-cred_f * 2 * 100)
+            chart = _sig_chart(spots, pnl, price, ticker, "Earnings Short Condor (IV Crush)",
+                               min(pnl), net_cred_ps * 100, net_cred_ps * 0.5 * 100,
+                               stop_level=-net_cred_ps * 2 * 100)
 
     elif slug == "wheel_strategy":
         ma50    = row.get("MA50", "—")
@@ -3284,34 +3395,66 @@ def _build_signal_body(row):
             premium_display = f"${_prem_ps * 100:.0f} / contract"
         except Exception:
             premium_display = str(premium)
-        signal  = (f"Sell cash-secured put at {put_k} — IVR elevated, above MA50."
+        signal  = (f"Sell protected put spread at {put_k} — IVR elevated, above MA50."
                    if status == "Trade-Ready" else "Conditions not fully met — monitor")
-        metrics = _row(
-            _mc("ATM IV",    str(atm_iv)),
-            _mc("IVR",       str(ivr),     T.SUCCESS if status == "Trade-Ready" else T.TEXT_MUTED),
-            _mc("MA50",      str(ma50)),
-            _mc("Put Strike",str(put_k)),
-            _mc("~Premium",  premium_display, T.SUCCESS),
-            _mc("ADX",       str(adx)),
-            _mc("Status",    status, status_color),
-        )
+        try:
+            pk_pre    = float(str(put_k)  or 0)
+            prem_pre  = float(str(premium).lstrip("$") or 0)
+            # Add a long OTM put wing ~5% below short strike to cap downside
+            long_k_pre  = round(pk_pre * 0.95, 1)
+            wing_cost_pre = round(prem_pre * 0.25, 2)   # estimate long put ≈ 25% of credit
+            net_cred_pre  = round(prem_pre - wing_cost_pre, 2)
+            spread_width  = round(pk_pre - long_k_pre, 1)
+            wheel_max_loss = round((spread_width - net_cred_pre) * 100, 0)
+            wheel_be       = round(pk_pre - net_cred_pre, 2)
+        except Exception:
+            pk_pre = prem_pre = long_k_pre = wing_cost_pre = 0.0
+            net_cred_pre = None; wheel_max_loss = None; wheel_be = None
+        net_credit_display = f"${net_cred_pre * 100:.0f} / contract" if net_cred_pre else "—"
+        be_display         = f"${wheel_be:,.2f}"     if wheel_be      else "—"
+        metrics = html.Div([
+            _row(
+                _mc("ATM IV",    str(atm_iv)),
+                _mc("IVR",       str(ivr),     T.SUCCESS if status == "Trade-Ready" else T.TEXT_MUTED),
+                _mc("MA50",      str(ma50)),
+                _mc("Put Strike",str(put_k)),
+                _mc("~Premium",  premium_display, T.SUCCESS),
+                _mc("ADX",       str(adx)),
+                _mc("Status",    status, status_color),
+            ),
+            _row(
+                _mc("Net Credit", net_credit_display, T.SUCCESS),
+                _mc("Breakeven",  be_display,          T.WARNING),
+                _mc("Max Loss",   f"-${wheel_max_loss:,.0f} / contract" if wheel_max_loss else "—", T.DANGER),
+                _mc("Long Put",   f"${long_k_pre:.0f} wing — caps downside" if long_k_pre else "—", T.WARNING),
+            ),
+        ])
         chart = html.Div()
         if price > 0:
             try:
-                pk    = float(str(put_k) or price * 0.90)
-                prem  = float(str(premium).lstrip("$") or price * 0.02)
+                pk      = float(str(put_k) or price * 0.90)
+                prem    = float(str(premium).lstrip("$") or price * 0.02)
+                long_k  = round(pk * 0.95, 1)
+                wing_cost = round(prem * 0.25, 2)
+                net_cred  = round(prem - wing_cost, 2)
             except Exception:
-                pk    = price * 0.90
-                prem  = price * 0.02
+                pk = price * 0.90; prem = price * 0.02
+                long_k = pk * 0.95; wing_cost = prem * 0.25; net_cred = prem - wing_cost
+            legs_table = _make_legs_table([
+                {"Leg": "Short put (CSP)",  "Strike": f"${pk:.0f}",     "Action": "SELL", "~/Contract": f"+${prem * 100:.2f}"},
+                {"Leg": "Long put (wing)",  "Strike": f"${long_k:.0f}", "Action": "BUY",  "~/Contract": f"-${wing_cost * 100:.2f}"},
+                {"Leg": "NET CREDIT",       "Strike": "",               "Action": "",     "~/Contract": f"+${net_cred * 100:.2f}"},
+            ])
             spots = np.linspace(price * 0.70, price * 1.15, 300)
             def _wheel_pnl(s):
-                # Cash-secured put P&L at expiry
-                put_payoff = -max(0, pk - s)
-                return (prem + put_payoff) * 100
+                short_put = -max(0, pk - s)
+                long_put  =  max(0, long_k - s)
+                return (net_cred + short_put + long_put) * 100
             pnl = [_wheel_pnl(s) for s in spots]
-            chart = _sig_chart(spots, pnl, price, ticker, "Wheel — Cash-Secured Put",
-                               -(pk - prem) * 100, prem * 100, prem * 0.5 * 100,
-                               stop_level=-prem * 2 * 100)
+            true_max_loss = -(pk - long_k - net_cred) * 100
+            chart = _sig_chart(spots, pnl, price, ticker, "Wheel — Protected Put Spread",
+                               true_max_loss, net_cred * 100, net_cred * 0.5 * 100,
+                               stop_level=-net_cred * 2 * 100)
 
     elif slug == "bull_put_spread":
         ma50    = row.get("MA50", "—")
@@ -3330,16 +3473,32 @@ def _build_signal_body(row):
             credit_display = str(credit)
         signal  = (f"Sell put spread {short_k}/{long_k} — bullish, IVR elevated, price above MA50."
                    if status == "Trade-Ready" else "Conditions not fully met — monitor")
-        metrics = _row(
-            _mc("ATM IV",      str(atm_iv)),
-            _mc("IVR",         str(ivr),    T.SUCCESS if status == "Trade-Ready" else T.TEXT_MUTED),
-            _mc("MA50",        str(ma50)),
-            _mc("Short Strike",str(short_k)),
-            _mc("Long Strike", str(long_k)),
-            _mc("~Credit",     credit_display, T.SUCCESS),
-            _mc("Credit/Width",str(cw_r)),
-            _mc("Status",      status, status_color),
-        )
+        try:
+            sk_pre   = float(str(short_k) or 0)
+            lk_pre   = float(str(long_k)  or 0)
+            cred_pre = float(str(credit).lstrip("$") or 0)
+            w_pre    = sk_pre - lk_pre
+            bps_max_loss   = (w_pre - cred_pre) * 100
+            bps_net_credit = cred_pre * 100
+        except Exception:
+            bps_max_loss = bps_net_credit = None
+        metrics = html.Div([
+            _row(
+                _mc("ATM IV",      str(atm_iv)),
+                _mc("IVR",         str(ivr),    T.SUCCESS if status == "Trade-Ready" else T.TEXT_MUTED),
+                _mc("MA50",        str(ma50)),
+                _mc("Short Strike",str(short_k)),
+                _mc("Long Strike", str(long_k)),
+                _mc("~Credit",     credit_display, T.SUCCESS),
+                _mc("Credit/Width",str(cw_r)),
+                _mc("Status",      status, status_color),
+            ),
+            _row(
+                _mc("Net Credit", f"+${bps_net_credit:.0f} / contract" if bps_net_credit else "—", T.SUCCESS),
+                _mc("Max Loss",   f"-${bps_max_loss:.0f} / contract"   if bps_max_loss   else "—", T.DANGER),
+                _mc("Structure",  "Bull Put Spread — defined risk",  T.TEXT_MUTED),
+            ),
+        ])
         chart = html.Div()
         if price > 0:
             try:
@@ -3349,6 +3508,11 @@ def _build_signal_body(row):
                 w    = sk - lk
             except Exception:
                 sk = price * 0.92; lk = price * 0.87; cred = 1.0; w = sk - lk
+            legs_table = _make_legs_table([
+                {"Leg": "Short put (income)",    "Strike": f"${sk:.0f}", "Action": "SELL", "~/Contract": f"+${cred * 100:.2f}"},
+                {"Leg": "Long put (protection)", "Strike": f"${lk:.0f}", "Action": "BUY",  "~/Contract": f"-${(w - cred) * 100:.2f}"},
+                {"Leg": "NET CREDIT",            "Strike": "",           "Action": "",     "~/Contract": f"+${cred * 100:.2f}"},
+            ])
             spots = np.linspace(price * 0.75, price * 1.15, 300)
             def _bps_pnl(s):
                 short_put = -max(0, sk - s)
@@ -3366,17 +3530,86 @@ def _build_signal_body(row):
         atr     = row.get("ATR%", "—")
         ret5d   = row.get("5d Return", "—")
         label_r = row.get("Regime Label", "—")
+        vix_val = row.get("VIX", "—")
+        price   = float(str(row.get("Price", 0)) or 0)
         sig_color = (T.SUCCESS if str(sig).upper() == "LONG" else
                      T.DANGER  if str(sig).upper() == "SHORT" else T.TEXT_MUTED)
         signal  = str(label_r)
-        metrics = _row(
-            _mc("Signal",     str(sig), sig_color),
-            _mc("Regime",     str(regime)),
-            _mc("SPY Weight", str(weight)),
-            _mc("ATR%",       str(atr)),
-            _mc("5d Return",  str(ret5d)),
+        # Parse current weight for highlight
+        try:
+            cur_weight_pct = float(str(weight).rstrip("%") or 0)
+        except Exception:
+            cur_weight_pct = 0.0
+        # Position Value — SPY allocation on $100k example portfolio
+        pos_val_display = f"${cur_weight_pct * 1000:.0f} / $100k portfolio" if cur_weight_pct > 0 else "—"
+        cash_display    = f"${(100 - cur_weight_pct) * 1000:.0f} / $100k in cash" if cur_weight_pct > 0 else "—"
+        metrics = html.Div([
+            _row(
+                _mc("Signal",     str(sig),    sig_color),
+                _mc("Regime",     str(regime)),
+                _mc("SPY Weight", str(weight), T.SUCCESS if cur_weight_pct >= 60 else
+                                               T.WARNING if cur_weight_pct >= 35 else T.DANGER),
+                _mc("VIX",        str(vix_val),
+                    T.DANGER if float(str(vix_val) or 0) > 25 else
+                    T.WARNING if float(str(vix_val) or 0) > 18 else T.SUCCESS),
+                _mc("ATR%",       str(atr)),
+                _mc("5d Return",  str(ret5d)),
+                _mc("Status",     status, status_color),
+            ),
+            _row(
+                _mc("Position Value", pos_val_display, T.SUCCESS if cur_weight_pct >= 60 else T.WARNING),
+                _mc("Cash Reserve",   cash_display,    T.TEXT_MUTED),
+                _mc("Risk Note",      "Equity + cash allocation — no options, no leverage", T.TEXT_MUTED),
+            ),
+        ])
+        # Regime allocation ladder chart
+        _regimes   = ["Deep Negative\n(VIX>30)", "Negative\n(VIX 22-30)",
+                      "Neutral\n(VIX 18-22)", "Mild Positive\n(VIX 15-18)", "High Positive\n(VIX<15)"]
+        _allocs    = [15, 35, 60, 80, 90]
+        _colors    = ["#ef4444", "#f97316", "#f59e0b", "#84cc16", "#10b981"]
+        _cur_regime_map = {
+            "DeepNegative": 0, "Negative": 1, "Neutral": 2,
+            "MildPositive": 3, "HighPositive": 4,
+        }
+        cur_idx = _cur_regime_map.get(str(regime), -1)
+        bar_colors = [
+            "#818cf8" if i == cur_idx else c
+            for i, c in enumerate(_colors)
+        ]
+        gex_fig = go.Figure(go.Bar(
+            x=_regimes,
+            y=_allocs,
+            marker_color=bar_colors,
+            text=[f"{a}%" for a in _allocs],
+            textposition="outside",
+            textfont={"color": "#e2e8f0", "size": 12},
+        ))
+        if cur_idx >= 0:
+            gex_fig.add_shape(
+                type="rect",
+                x0=cur_idx - 0.4, x1=cur_idx + 0.4,
+                y0=0, y1=_allocs[cur_idx],
+                fillcolor="rgba(129,140,248,0.15)",
+                line={"color": "#818cf8", "width": 2},
+            )
+        gex_fig.add_hline(y=cur_weight_pct, line_dash="dash",
+                          line_color="#f59e0b", line_width=1.5,
+                          annotation_text=f"Current: {weight}",
+                          annotation_font_color="#f59e0b", annotation_font_size=11)
+        gex_fig.update_layout(
+            title={"text": f"{ticker}  GEX Regime → SPY Allocation",
+                   "font": {"size": 13, "color": "#e2e8f0"}, "x": 0.01},
+            paper_bgcolor="#1e293b", plot_bgcolor="#1e293b",
+            font={"color": "#94a3b8"},
+            margin={"l": 40, "r": 20, "t": 40, "b": 60},
+            height=300,
+            yaxis={"title": "SPY Allocation %", "range": [0, 105],
+                   "gridcolor": "rgba(255,255,255,0.06)", "ticksuffix": "%"},
+            xaxis={"gridcolor": "rgba(255,255,255,0.06)"},
+            showlegend=False,
         )
-        chart = html.Div()
+        chart = dcc.Graph(figure=gex_fig, config={"displayModeBar": False},
+                          style={"marginTop": "12px"})
 
     score_val = row.get("Score", 0)
     score_color = (T.SUCCESS if float(str(score_val) or 0) >= 70 else
@@ -3390,6 +3623,7 @@ def _build_signal_body(row):
                                       "marginBottom": "6px"}),
             html.Div(signal, style={"color": T.TEXT_PRIMARY, "fontSize": "13px"}),
         ], style={**T.STYLE_CARD, "marginBottom": "14px", "padding": "12px 16px"}),
+        legs_table,
         chart,
         html.Div([
             html.Span("Score  ", style={"color": T.TEXT_MUTED, "fontSize": "12px"}),

@@ -50,22 +50,6 @@ STRATEGY_METADATA: dict[str, dict] = {
         "required_data": ["price", "vix"],
         "has_screener": True,
     },
-    # ── Archived: replaced by iron_condor_ai / iron_condor_rules ──────────
-    "options_spread": {
-        "display_name": "Spread (archived)",
-        "type": "ai",
-        "status": "archived",
-        "icon": "🤖",
-        "description": "Archived — replaced by Iron Condor AI and Iron Condor Rules strategies.",
-        "asset_class": "equities_options",
-        "typical_holding_days": 5,
-        "target_sharpe": 1.2,
-        "class_path": "alan_trader.strategies.options_spread.OptionsSpreadStrategy",
-        "requires_training": True,
-        "uses_ml": True,
-        "requires_ticker": True,
-        "required_data": ["price", "vix", "rates", "news"],
-    },
     "conversion_arb": {
         "display_name": "Conversion Arb (Div)",
         "type": "rule",

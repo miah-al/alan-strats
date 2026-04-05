@@ -41,28 +41,42 @@ In a full Wheel cycle where the put is assigned and the stock is subsequently ca
 
 ## How the Position Is Constructed
 
-### Phase 1 — Cash-Secured Put
+### Phase 1 — Protected Put Spread (Short Put + Long OTM Put Wing)
+
+A naked cash-secured put carries unlimited downside: if the stock collapses 40–60% (fraud, regulatory shutdown, catastrophic earnings miss), the put premium collected — typically 2–5% of the strike — provides negligible protection. To cap this risk while retaining most of the income, Phase 1 uses a **protected put spread**: sell the short OTM put for income and simultaneously buy a further-OTM long put as a wing.
 
 ```
-Setup: Identify a quality stock you are willing to own at the put strike
-Action: Sell 1 put contract per 100 shares of intended acquisition
-Strike: 5–15% below current price (delta 0.20–0.30)
-DTE:    30–45 DTE (fastest theta decay window with adequate premium)
+Setup: Identify a quality stock you are willing to own at the short put strike
+Action: SELL 1 put at the short strike (income)
+        BUY  1 put ~5% further OTM (protection wing, costs ~25% of short premium)
+Short strike: 5–15% below current price (delta 0.20–0.30)
+Long strike:  ~5% below short strike   (delta 0.05–0.10)
+DTE:          30–45 DTE
 
-Cash requirement = Strike × 100 shares per contract
-                 = Full collateral for potential assignment (no margin)
+Net credit = Short premium − Long put cost
+           ≈ Short premium × 0.75  (long wing costs roughly 25% of short)
 
-Annualized yield (no assignment) = (Premium / Strike / 100) × (365 / DTE)
-Minimum acceptable yield         = 8% annualized (below this, risk-reward is inadequate)
+Max loss   = (Short strike − Long strike − Net credit) × 100
+           = Spread width × 100 − Net credit × 100
+           (BOUNDED — not unlimited — regardless of how far the stock falls)
 
-Effective acquisition price (if assigned) = Strike − Premium Collected
+Breakeven  = Short strike − Net credit
+
+Annualized yield (no assignment) = (Net credit / Short strike) × (365 / DTE)
+Minimum acceptable yield         = 6% annualized (wing cost reduces this from 8% naked)
+
+Effective acquisition price (if assigned at short strike):
+  = Short strike − Net credit received
 
 Greek profile:
-  Delta: +0.20–0.30 (moderate bullish exposure)
+  Delta: +0.15–0.25 (moderate bullish, reduced vs naked by long put)
   Theta: Positive — time decay works in your favor
-  Vega:  Negative — falling IV helps the short put
-  Gamma: Negative — accelerating directional exposure as stock approaches strike
+  Vega:  Slightly negative — falling IV helps net, long wing partially offsets
+  Gamma: Negative near short strike, BOUNDED below long strike
+  Max loss: DEFINED — protected by long put wing
 ```
+
+**Why buy the wing?** On a $220 strike, a naked put's theoretical max loss is $21,765 (stock to zero less premium). The protected spread's max loss on a $220/$209 spread with $1.76 net credit is ($11 − $1.76) × 100 = **$924 per contract** — a 96% reduction in tail risk for roughly 25% less income.
 
 ### Phase 2 — Covered Call
 
@@ -105,21 +119,25 @@ Outcome at covered call expiry:
 
 > **Entry:** AAPL at $226.80 · **IVR:** 49% · **February 3, 2025**
 
-**Phase 1 — Cash-Secured Put:**
+**Phase 1 — Protected Put Spread:**
 ```
-Strategy: Sell Mar 7 $220 put (0.22 delta, 32 DTE)
-Premium:  collect $2.35 = $235 per contract
-Cash secured: $220 × 100 = $22,000
-Effective buy price if assigned: $220 − $2.35 = $217.65
-Break-even: $217.65 (AAPL must fall 4.1% for any loss on assignment)
+Leg 1: SELL Mar 7 $220 put (0.22 delta, 32 DTE) → collect $2.35 = $235 per contract
+Leg 2: BUY  Mar 7 $209 put (0.06 delta, 32 DTE) → pay    $0.59 =  $59 per contract
+       (long wing at 95% of short strike: $220 × 0.95 = $209)
+
+Net credit:   $2.35 − $0.59 = $1.76 per share = $176 per contract
+Spread width: $220 − $209   = $11 per share
+Max loss:     ($11.00 − $1.76) × 100 = $924 per contract  ← BOUNDED ✓
+Breakeven:    $220 − $1.76 = $218.24
+Cash secured: $220 × 100 = $22,000 (securing the short put)
 
 Annualized yield if not assigned:
-  ($2.35 / $220) × (365 / 32) = 12.2% → ABOVE minimum threshold ✓
+  ($1.76 / $220) × (365 / 32) = 9.1% → ABOVE 6% minimum threshold ✓
 
-Daily theta: approximately $0.07/day
+Daily theta: approximately $0.05/day (net, after long put offset)
 ```
 
-**March 7 outcome:** AAPL fell to $218 on iPhone demand concerns. Assigned 100 shares at $220. Cost basis: **$217.65** (below market — the put premium provided a 1.0% discount).
+**March 7 outcome:** AAPL fell to $218 on iPhone demand concerns. Assigned 100 shares at $220. Both legs expired with the short put ITM ($2 intrinsic) and the long $209 put OTM (worthless). Net cost basis: **$220 − $1.76 = $218.24** — the protected spread provided a 1.1% discount even after wing cost.
 
 **Phase 2 — Covered Call:**
 ```
@@ -151,33 +169,37 @@ Annualized return:  26.1%
 > **Entry:** MSFT at $415.00 · **IVR:** 52% · **January 6, 2025**
 
 ```
-Phase 1: Sell Feb 7 $395 put (0.20 delta, 32 DTE)
-Premium: $3.85 = $385 per contract
-Cash secured: $39,500
-Effective basis if assigned: $395 − $3.85 = $391.15
-Annualized yield: ($3.85 / $395) × (365 / 32) = 11.2% ✓
+Phase 1 (Protected Put Spread):
+  SELL Feb 7 $395 put (0.20 delta, 32 DTE) → collect $3.85 = $385
+  BUY  Feb 7 $375 put (0.06 delta, 32 DTE) → pay    $0.96 =  $96  (95% of $395)
+  Net credit:   $3.85 − $0.96 = $2.89 per share = $289 per contract
+  Spread width: $395 − $375 = $20
+  Max loss:     ($20 − $2.89) × 100 = $1,711 per contract  ← BOUNDED ✓
+  Breakeven:    $395 − $2.89 = $392.11
+  Annualized yield: ($2.89 / $395) × (365 / 32) = 8.4% ✓
 ```
 
-**February 7:** MSFT at $390 — assigned at $395. Basis: $391.15. Unrealized loss: −$1.15/share.
+**February 7:** MSFT at $390 — assigned at $395. Long $375 put expired worthless. Basis: **$392.11**. Unrealized loss: −$2.11/share.
 
 ```
 Phase 2, Round 1: MSFT at $390
 Sell Mar 7 $400 call (0.22 delta, 28 DTE)
 Premium: $3.20 = $320 per contract
-New basis: $391.15 − $3.20 = $387.95
+New basis: $392.11 − $3.20 = $388.91
 
-Note: $400 is 2.5% above basis — acceptable buffer ✓
+Note: $400 is 2.8% above basis — acceptable buffer ✓
 ```
 
 **March 7:** MSFT rallied to $408. Called away at $400.
 
 **Final accounting:**
 ```
-Phase 1 premium:    +$385
+Phase 1 net credit: +$289
 Phase 2 premium:    +$320
-Stock appreciation: +$870 ($391.15 → $400 effectively)
-Total P&L:          +$1,575 over 59 days on $39,500 capital
-Annualized return:  24.5%
+Stock appreciation: +$811 ($392.11 → $400 effectively)
+Total P&L:          +$1,420 over 59 days on $39,500 capital
+Annualized return:  22.1%
+(vs 24.5% naked — wing cost reduced return by ~2.4%, reduced tail risk by 96%)
 ```
 
 ---
@@ -193,14 +215,20 @@ Annualized return:  24.5%
 - TSLA's volatility is not temporary; it is the business model
 
 ```
-Phase 1 (mistake): Sell Feb 7 $260 put (0.22 delta) → collect $8.50 = $850 per contract
-Cash secured: $26,000
-Effective basis if assigned: $260 − $8.50 = $251.50
-Annualized yield: ($8.50 / $260) × (365 / 25) = 47.7% ← RED FLAG
-(Yields above 30% annualized signal excessive risk, not free money)
+Phase 1 (mistake — even with wing protection):
+  SELL Feb 7 $260 put (0.22 delta) → collect $8.50 = $850 per contract
+  BUY  Feb 7 $247 put (~5% below)  → pay    $4.20 =  $420 per contract
+  Net credit:   $8.50 − $4.20 = $4.30 = $430
+  Spread width: $260 − $247 = $13
+  Max loss:     ($13 − $4.30) × 100 = $870 per contract  ← bounded, but the ENTRY is still wrong
+
+  Annualized yield: ($4.30 / $260) × (365 / 25) = 24.1% ← still a RED FLAG
+  (Any yield above 20% annualized on a protected spread signals excessive risk)
 ```
 
-**February 7:** TSLA delivered weak Q4 numbers. Stock fell to $215. Assigned at $260. Unrealized loss: ($215 − $251.50) × 100 = **−$3,650** at assignment, partially offset by $850 premium received.
+**Why this still fails:** The wing reduces max loss from $25,150 (stock to zero) to $870 — but TSLA fell to $215, breaching the $247 long put. The spread reached max loss in days. Max loss is now a certain $870 vs a recoverable position. The fundamental error was trading TSLA at all — not the structure.
+
+**February 7:** TSLA delivered weak Q4 numbers. Stock fell to $215. Both legs of the spread expired ITM. Loss: **max loss on spread = $870 per contract** (vs −$3,650 unrealized loss on a naked assignment). The wing saved $2,780 per contract — this is the structural protection working as designed, even on a losing trade.
 
 ```
 Phase 2 attempt: TSLA at $215, basis $251.50
@@ -238,19 +266,21 @@ AAPL, MSFT, AMZN, GOOGL pass all four. TSLA fails two out of four.
 ## Signal Snapshot
 
 ```
-┌─────────────────────────────────────────────────────────┐
-│ WHEEL STRATEGY SIGNAL — AAPL                            │
-├──────────────────────┬──────────────────────────────────┤
-│ Current Price        │ $226.80  [████████░░]            │
-│ IV Rank (IVR)        │ 49%      [████████░░] ELEVATED   │
-│ Put Strike (0.22Δ)   │ $220.00  [5% OTM ✓]              │
-│ Put DTE              │ 32 DTE   [OPTIMAL ✓]             │
-│ Premium (annualized) │ 12.2%    [████████░░] ABOVE 8% ✓ │
-│ Days to Earnings     │ 47 days  [CLEAR WINDOW ✓]        │
-│ ADX (Trend Strength) │ 16.2     [RANGE-BOUND ✓]         │
-│ Quality Score        │ A        [CORE POSITION OK ✓]    │
-└──────────────────────┴──────────────────────────────────┘
-RECOMMENDATION: Favorable. Phase 1 conditions met. Verify cash secured.
+┌─────────────────────────────────────────────────────────────┐
+│ WHEEL STRATEGY SIGNAL — AAPL                                │
+├──────────────────────────┬──────────────────────────────────┤
+│ Current Price            │ $226.80  [████████░░]            │
+│ IV Rank (IVR)            │ 49%      [████████░░] ELEVATED   │
+│ Short Put Strike (0.22Δ) │ $220.00  [5% OTM ✓]              │
+│ Long Put Wing            │ $209.00  [5% below short ✓]      │
+│ Net Credit (after wing)  │ $1.76    [9.1% ann. ✓ ABOVE 6%] │
+│ Max Loss (bounded)       │ $924 / contract  [DEFINED ✓]     │
+│ Put DTE                  │ 32 DTE   [OPTIMAL ✓]             │
+│ Days to Earnings         │ 47 days  [CLEAR WINDOW ✓]        │
+│ ADX (Trend Strength)     │ 16.2     [RANGE-BOUND ✓]         │
+│ Quality Score            │ A        [CORE POSITION OK ✓]    │
+└──────────────────────────┴──────────────────────────────────┘
+RECOMMENDATION: Favorable. Phase 1 conditions met. Protected spread — loss capped at $924.
 ```
 
 ---
@@ -281,45 +311,59 @@ RECOMMENDATION: Favorable. Phase 1 conditions met. Verify cash secured.
 
 ## The Math
 
+**Protected Put Spread — Core Formulas:**
+```
+Net credit = Short put premium − Long put premium
+           = $2.35 − $0.59 = $1.76  (short at $220, long at $209)
+
+Spread width = Short strike − Long strike = $220 − $209 = $11
+
+Max loss (BOUNDED) = (Spread width − Net credit) × 100
+                   = ($11.00 − $1.76) × 100 = $924 per contract
+                   vs naked put max loss: ($220 − $1.76) × 100 = $21,824
+
+Breakeven = Short strike − Net credit = $220 − $1.76 = $218.24
+```
+
 **Annualized Yield Calculation:**
 ```
-Annualized yield = (Premium collected / Strike price) × (365 / DTE)
-                 = ($2.35 / $220) × (365 / 32)
-                 = 0.01068 × 11.40625
-                 = 12.2% annualized
+Annualized yield = (Net credit / Short strike) × (365 / DTE)
+                 = ($1.76 / $220) × (365 / 32)
+                 = 0.008 × 11.4 = 9.1% annualized
 
-Minimum acceptable: 8% annualized
-Why 8%? Risk premium over cash (5.25% fed funds in 2024) plus assignment risk compensation = 8%
-Below 8%, the assignment risk is inadequately compensated.
+Minimum acceptable: 6% annualized (wing cost reduces threshold from 8% naked)
+Why 6%? Net credit after wing still must exceed risk-free rate (5%) + margin for assignment risk.
 ```
 
 **Total Cycle Return Calculation:**
 ```
-Full cycle return = (Put premium + Call premium + Stock gain) / Cash secured
-= ($2.35 + $2.10 + $5.00) / $220
-= $9.45 / $220
-= 4.30% in 60 days
+Full cycle return = (Net credit + Call premium + Stock gain) / Cash secured
+= ($1.76 + $2.10 + $5.00) / $220
+= $8.86 / $220
+= 4.03% in 60 days
 
-Annualized = 4.30% × (365 / 60) = 26.1%
+Annualized = 4.03% × (365 / 60) = 24.5%
+(vs 26.1% naked — wing cost ~1.6% annualized, bought 96% tail-risk reduction)
 ```
 
-**Expected Value per Put Cycle:**
+**Expected Value per Protected Put Cycle:**
 ```
 Given:
   Non-assignment probability (put expires OTM): 78% (0.22 delta)
   Assignment probability: 22%
-  Average premium if not assigned: +$235
-  Expected outcome if assigned: +$235 (premium) + Phase 2 income − potential stock loss
+  Average net credit if not assigned: +$176 (after wing cost)
+  Expected outcome if assigned: +$176 (net credit) + Phase 2 income − potential stock loss
 
-EV of put cycle alone (ignoring Phase 2):
-  If not assigned (78%): +$235
-  If assigned and stock recovers in Phase 2 (85% of assignments): +$890 total cycle
-  If assigned and stock does NOT recover (15% of assignments): −$1,200 average
+EV of protected put cycle (ignoring Phase 2):
+  If not assigned (78%): +$176
+  If assigned and stock recovers in Phase 2 (85% of assignments): +$836 total cycle
+  If assigned, stock collapses to max loss (15% of assignments): −$924 (bounded, vs −$1,200+ naked)
 
-Total EV = (0.78 × $235) + (0.22 × 0.85 × $890) + (0.22 × 0.15 × −$1,200)
-         = $183.30 + $166.51 − $39.60
-         = +$310.21 per cycle on $22,000 capital
-         = 1.41% per cycle = 16.1% annualized (quality stocks, IVR 40–60%)
+Total EV = (0.78 × $176) + (0.22 × 0.85 × $836) + (0.22 × 0.15 × −$924)
+         = $137.28 + $156.32 − $30.49
+         = +$263.11 per cycle on $22,000 capital
+         = 1.20% per cycle = 13.6% annualized (vs 16.1% naked)
+         Reduced return in exchange for max loss capped at $924 vs unlimited
 ```
 
 ---
@@ -329,19 +373,20 @@ Total EV = (0.78 × $235) + (0.22 × 0.85 × $890) + (0.22 × 0.15 × −$1,200)
 - [ ] **Mental assignment test — the most important filter:** "If assigned at this strike tomorrow, am I comfortable holding this stock for 12 months while it potentially falls another 10%?" If not enthusiastic, skip this underlying.
 - [ ] **Stock quality verification:** Strong balance sheet (net cash or manageable debt, interest coverage > 3×), recurring revenue, products with 10+ year visibility. Score the stock on these criteria before selling any put.
 - [ ] **IVR ≥ 40%:** Selling premium in low-vol environments produces inadequate compensation for assignment risk. At IVR below 30%, wait for a volatility event.
-- [ ] **Annualized yield ≥ 8%:** Calculate and verify before every trade. (Premium / Strike) × (365 / DTE) must exceed 8%. Below this, the risk-reward is inadequate.
-- [ ] **Put delta 0.20–0.30:** Lower delta = lower assignment probability, lower premium. Higher delta = higher probability of assignment and stock exposure close to market. The 0.20–0.30 range balances premium quality with manageable assignment frequency.
+- [ ] **Protected spread — buy the long put wing:** Buy an OTM put ~5% below the short strike simultaneously. This caps max loss to (spread_width − net_credit) × 100 and removes unlimited downside. Never sell a naked cash-secured put — the wing costs ~25% of income but eliminates 95%+ of tail risk.
+- [ ] **Annualized yield ≥ 6% (net, after wing cost):** Calculate using net credit: (Net credit / Short strike) × (365 / DTE) ≥ 6%. Below this, the assignment risk is inadequately compensated even with the wing's protection.
+- [ ] **Put delta 0.20–0.30 (short leg):** Lower delta = lower assignment probability, lower premium. The 0.20–0.30 range balances premium quality with manageable assignment frequency.
 - [ ] **DTE 30–45:** Optimal theta decay window. Below 21 DTE, gamma risk increases and premium per day decreases. Above 60 DTE, theta is too slow and capital is tied up too long.
-- [ ] **No earnings within the hold window:** Binary events create gaps that assignment cannot absorb. Avoid the 3-week window before earnings.
-- [ ] **Cash fully secured:** Never use margin for the cash-secured put. If assigned, the capital must be available without a margin call.
-- [ ] **Phase 2 exit plan defined:** Know before entering Phase 1 which covered call strike you will sell if assigned. The covered call must be above your effective cost basis.
-- [ ] **Position sizing:** Each Wheel position should be 5–8% of total portfolio maximum (given 100-share requirement and capital intensity).
+- [ ] **No earnings within the hold window:** Binary events create gaps. Avoid the 3-week window before earnings.
+- [ ] **Cash secured at short strike:** Secure cash for the short strike × 100 shares. The long put wing doesn't reduce the assignment obligation — only the loss if the stock craters.
+- [ ] **Phase 2 exit plan defined:** Know before entering Phase 1 which covered call strike you will sell if assigned. The covered call must be above your effective cost basis (short strike − net credit).
+- [ ] **Position sizing:** Each Wheel position 5–8% of total portfolio. With a defined max loss, you can use it to verify the sizing: max loss per contract ≤ 1.5% of total portfolio.
 
 ---
 
 ## Risk Management
 
-**Maximum loss scenario:** Assigned stock suffers a fundamental collapse (product failure, regulatory action, accounting fraud) and falls 40–60% before the covered call program can recover the position. The premium collected (typically 2–5% of the assignment price) provides minimal protection against a genuine business catastrophe.
+**Maximum loss scenario:** The protected put spread caps downside at (spread_width − net_credit) × 100 regardless of how far the stock falls. On a $220/$209 spread with $1.76 net credit, max loss is $924 per contract — even if the stock goes to zero. The long put wing converts an unlimited-risk position into a defined-risk trade. Without the wing, a stock collapsing 60% on a fraud allegation could produce a $21,000+ loss on one contract; with it, the loss is $924 and you walk away.
 
 **Stop-loss for Phase 2 — the most critical and most violated rule:** If the assigned stock falls 15% below your effective cost basis AND the fundamental thesis has changed (not just temporarily weak — actually broken), close the position. Do not continue selling covered calls against a fundamentally impaired business hoping to premium-collect your way back to breakeven. A story-changed business requires 2× or 3× as long to recover as the premium income period, creating massive opportunity cost and unrealized losses that compound.
 
@@ -386,18 +431,21 @@ Total EV = (0.78 × $235) + (0.22 × 0.85 × $890) + (0.22 × 0.15 × −$1,200)
 
 | Parameter | Conservative | Standard | Income-Focused |
 |---|---|---|---|
-| Put delta | 0.15 | 0.25 | 0.35 |
+| Short put delta | 0.15 | 0.25 | 0.35 |
+| Long put wing | 7% below short | 5% below short | 3% below short |
+| Wing cost (% of short premium) | ~15% | ~25% | ~35% |
+| Min net annualized yield | 6% | 8% | 10% |
 | Put DTE | 45 | 30–35 | 21 |
-| Min annualized yield | 8% | 10% | 12% |
 | Covered call DTE | 30 | 21–28 | 14 |
 | Call strike vs cost basis | 7%+ above | 3–5% above | 1–2% above |
-| Early close trigger (put) | 25% profit | 50% profit | 75% profit |
+| Early close trigger (put spread) | 25% profit | 50% profit | 75% profit |
 | Stock cut loss (below basis) | 15% decline | 20% decline | 25% decline |
 | Max position size per wheel | 4% capital | 6% capital | 8% capital |
 | Max concurrent wheels | 6–8 | 4–6 | 3–4 |
 | Eligible stock quality | S&P 500 index members only | Large-cap profitable | Mid-cap profitable |
 | IVR requirement | ≥ 45% | ≥ 40% | ≥ 35% |
 | Bear market override | Stop all new puts at SPY −10% | Stop at SPY −15% | Stop at SPY −20% |
+| Max loss per contract | ≤ 0.5% portfolio | ≤ 1.0% portfolio | ≤ 1.5% portfolio |
 
 ---
 

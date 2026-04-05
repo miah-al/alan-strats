@@ -206,11 +206,48 @@ body, html {
 [class*="-indicatorSeparator"] { background-color: #374151 !important; }
 
 /* Input inside react-select — background AND text */
+[class*="__input"],
+[class*="-Input"] {
+    background-color: transparent !important;
+    color: #f9fafb !important;
+}
 [class*="__input"] input,
 [class*="-Input"] input,
 .dash-dropdown input {
     background-color: transparent !important;
     color: #f9fafb !important;
+}
+/* Search box inside open dropdown menu — all inputs */
+input {
+    background-color: #161d2e !important;
+    color: #f9fafb !important;
+    border: 1px solid #374151 !important;
+    outline: none !important;
+    box-shadow: none !important;
+}
+input::placeholder {
+    color: #6b7280 !important;
+}
+input:focus {
+    border-color: #6366f1 !important;
+    outline: none !important;
+    box-shadow: 0 0 0 2px rgba(99,102,241,0.2) !important;
+}
+/* Nuclear: kill all white anywhere in dropdown ancestry */
+[class*="__menu"],
+[class*="__menu"] *,
+[class*="-menu"],
+[class*="-menu"] *,
+.VirtualizedSelectOption,
+.Select-menu-outer,
+.Select-menu,
+.Select-input,
+.Select-search-box {
+    background-color: #161d2e !important;
+    border-color: #374151 !important;
+    box-shadow: none !important;
+    color: #f9fafb !important;
+    outline: none !important;
 }
 /* Container background */
 .dash-dropdown,

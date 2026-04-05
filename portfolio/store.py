@@ -307,7 +307,7 @@ class PortfolioStore:
         return [
             {
                 "position_id": "demo_1",
-                "strategy": "options_spread",
+                "strategy": "iron_condor_rules",
                 "spread_type": "bull_call",
                 "long_strike": 520.0,
                 "short_strike": 525.0,

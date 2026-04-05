@@ -506,6 +506,8 @@ class TestIcRulesWithPolygonData:
         print(f"\n  IC scan result: score={row['score']:.1f}  n_pass={row['n_pass']}  "
               f"VIX={row['VIX']:.1f}  IVR={row['IVR']}  ATR%={row['ATR%']:.3f}")
 
+    @pytest.mark.polygon
+    @pytest.mark.slow
     def test_fetch_ic_strikes_from_polygon(self, polygon_client, spy_price_df):
         """
         Fetch real options chain from Polygon, run _fetch_ic_strikes,

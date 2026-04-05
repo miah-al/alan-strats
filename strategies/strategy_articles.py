@@ -1,6 +1,6 @@
 ARTICLES: dict[str, str] = {
 
-"options_spread": """
+"iron_condor_rules_legacy": """
 ## Options Spread (LSTM Neural Network Directional Spreads)
 
 ### What It Is
