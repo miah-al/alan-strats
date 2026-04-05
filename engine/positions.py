@@ -536,3 +536,98 @@ def insert_open_ic_trade(
         return None
     except Exception as e:
         return str(e)
+
+
+def insert_generic_paper_trade(
+    engine,
+    account_id: int,
+    ticker: str,
+    strategy_name: str,
+    contracts: int = 1,
+    details: dict | None = None,
+) -> str | None:
+    """
+    Insert a single-line paper trade record for non-IC strategies.
+    Stores the trade in portfolio.Transaction as a single SELL entry
+    (premium-collecting strategies) with details JSON in Notes.
+    Returns None on success, error string on failure.
+    """
+    import json
+    import uuid
+    from sqlalchemy import text
+
+    today = datetime.date.today()
+    tgid  = f"{ticker[:4].upper()}-{strategy_name[:6].upper()}-{uuid.uuid4().hex[:6].upper()}"
+    notes = json.dumps(details or {}, default=str)[:500]
+
+    try:
+        d = details or {}
+        # Extract strike and expiry from screener details if available
+        credit_str   = str(d.get("~Credit", d.get("~Premium", "0")) or "0")
+        short_k_str  = str(d.get("Short Strike", d.get("Put Strike", "0")) or "0")
+        long_k_str   = str(d.get("Long Strike",  "0") or "0")
+        try:
+            credit  = float(credit_str.lstrip("$"))
+        except Exception:
+            credit  = 0.0
+        try:
+            short_k = float(short_k_str) if short_k_str not in ("0", "", "—") else None
+        except Exception:
+            short_k = None
+        try:
+            long_k  = float(long_k_str) if long_k_str not in ("0", "", "—") else None
+        except Exception:
+            long_k  = None
+
+        expiry = (today + datetime.timedelta(days=30)).isoformat()
+
+        def _find_or_create_option(conn, sym: str, strike, opt_type: str):
+            row = conn.execute(text(
+                "SELECT SecurityId FROM portfolio.Security "
+                "WHERE Symbol = :sym AND SecurityType = 'Option' "
+                "  AND Strike = :k AND OptionType = :ot"
+            ), {"sym": sym, "k": float(strike) if strike else 0, "ot": opt_type}).fetchone()
+            if row is None:
+                conn.execute(text(
+                    "INSERT INTO portfolio.Security "
+                    "(Symbol, Underlying, SecurityType, OptionType, Strike, Expiration) "
+                    "VALUES (:sym, :und, 'Option', :ot, :k, :exp)"
+                ), {"sym": sym, "und": ticker, "ot": opt_type,
+                    "k": float(strike) if strike else 0, "exp": expiry})
+                row = conn.execute(text(
+                    "SELECT SecurityId FROM portfolio.Security "
+                    "WHERE Symbol = :sym AND SecurityType = 'Option' "
+                    "  AND Strike = :k AND OptionType = :ot"
+                ), {"sym": sym, "k": float(strike) if strike else 0, "ot": opt_type}).fetchone()
+            return row[0]
+
+        with engine.begin() as conn:
+            # Short leg (net credit carrier) — always present
+            short_sym = f"{ticker}-SHORT-{short_k or 0:.0f}P"
+            short_sid = _find_or_create_option(conn, short_sym, short_k or 0, "PUT")
+            conn.execute(text("""
+                INSERT INTO portfolio.[Transaction]
+                    (BusinessDate, AccountId, TradeGroupId, StrategyName, SecurityId,
+                     Direction, Quantity, TransactionPrice, Commission, LegType, Notes)
+                VALUES (:d, :aid, :tg, :strat, :sid,
+                        'Sell', :qty, :px, :comm, 'ShortLeg', :notes)
+            """), {"d": today, "aid": account_id, "tg": tgid, "strat": strategy_name,
+                   "sid": short_sid, "qty": float(contracts), "px": credit,
+                   "comm": _COMMISSION, "notes": notes})
+
+            # Long leg (protection / wing) — insert if we have the strike
+            if long_k and long_k != short_k:
+                long_sym = f"{ticker}-LONG-{long_k:.0f}P"
+                long_sid = _find_or_create_option(conn, long_sym, long_k, "PUT")
+                conn.execute(text("""
+                    INSERT INTO portfolio.[Transaction]
+                        (BusinessDate, AccountId, TradeGroupId, StrategyName, SecurityId,
+                         Direction, Quantity, TransactionPrice, Commission, LegType, Notes)
+                    VALUES (:d, :aid, :tg, :strat, :sid,
+                            'Buy', :qty, 0, :comm, 'LongLeg', :notes)
+                """), {"d": today, "aid": account_id, "tg": tgid, "strat": strategy_name,
+                       "sid": long_sid, "qty": float(contracts), "comm": _COMMISSION,
+                       "notes": ""})
+        return None
+    except Exception as e:
+        return str(e)

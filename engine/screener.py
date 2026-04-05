@@ -48,6 +48,23 @@ _DEFAULT_PARAMS = {
     "ivr_credit_spread": {
         "ivr_min": 0.40, "vix_max": 50.0,
     },
+    "broken_wing_butterfly": {
+        "ivr_max": 0.35, "adx_max": 28.0, "vix_max": 30.0,
+    },
+    "calendar_spread": {
+        "adx_max": 22.0, "vix_min": 14.0, "vix_max": 25.0,
+        "hv_iv_spread_min": 0.03,
+    },
+    "earnings_straddle": {
+        "ivr_min": 0.60, "atm_iv_min": 0.40, "implied_move_min": 0.05,
+        "dte_to_earnings_min": 5, "dte_to_earnings_max": 10,
+    },
+    "wheel_strategy": {
+        "ivr_min": 0.40, "adx_min": 15.0, "adx_max": 30.0, "vix_max": 35.0,
+    },
+    "bull_put_spread": {
+        "ivr_min": 0.40, "adx_max": 30.0, "vix_max": 35.0,
+    },
 }
 
 # ── Indicator helpers (price-only, no options needed) ─────────────────────────
@@ -384,6 +401,343 @@ def _score_ivr_credit_spread(
         return None
 
 
+def _score_broken_wing_butterfly(
+    ticker: str,
+    price_df: pd.DataFrame,
+    vix_series: pd.Series,
+    iv_metrics: dict,
+    params: dict,
+) -> Optional[dict]:
+    """Screen for low-IV, range-bound setups for BWB net-credit entry."""
+    if price_df.empty or len(price_df) < 20:
+        return None
+    try:
+        close = price_df["close"].astype(float)
+        high  = price_df.get("high", close).astype(float)
+        low   = price_df.get("low",  close).astype(float)
+
+        latest_price = float(close.iloc[-1])
+        latest_vix   = float(vix_series.iloc[-1]) if not vix_series.empty else 0.0
+        latest_adx   = _adx(high, low, close)
+        atm_iv         = iv_metrics.get("atm_iv")
+        ivr            = iv_metrics.get("ivr")
+        iv_source      = iv_metrics.get("iv_source", "no_options_data")
+
+        if ivr is None:
+            ivr = _vix_ivr(vix_series)
+        if atm_iv is None:
+            atm_iv = latest_vix / 100.0
+
+        ivr_ok = ivr  <= params["ivr_max"]
+        adx_ok = latest_adx <= params["adx_max"]
+        vix_ok = latest_vix <= params["vix_max"]
+        n_pass = sum([ivr_ok, adx_ok, vix_ok])
+
+        score = (
+            (1.0 - ivr / max(params["ivr_max"], 0.01)) * 40
+            + (1.0 - latest_adx / max(params["adx_max"], 1)) * 35
+            + (25 if vix_ok else 0)
+        )
+
+        narrow_w = round(latest_price * 0.05, 0)
+        wide_w   = narrow_w * 2.0
+
+        return {
+            "Ticker":       ticker,
+            "Price":        latest_price,
+            "ATM IV":       atm_iv,
+            "IVR":          ivr,
+            "VIX":          latest_vix,
+            "ADX":          latest_adx,
+            "Narrow Wing":  narrow_w,
+            "Wide Wing":    wide_w,
+            "IV source":    iv_source,
+            "ivr_ok":       ivr_ok,
+            "adx_ok":       adx_ok,
+            "vix_ok":       vix_ok,
+            "n_pass":       n_pass,
+            "all_pass":     n_pass == 3,
+            "score":        score,
+        }
+    except Exception as e:
+        logger.warning(f"BWB score error for {ticker}: {e}")
+        return None
+
+
+def _score_calendar_spread(
+    ticker: str,
+    price_df: pd.DataFrame,
+    vix_series: pd.Series,
+    iv_metrics: dict,
+    params: dict,
+) -> Optional[dict]:
+    """Screen for range-bound, stable-IV setups for calendar spread entry."""
+    if price_df.empty or len(price_df) < 25:
+        return None
+    try:
+        close = price_df["close"].astype(float)
+        high  = price_df.get("high", close).astype(float)
+        low   = price_df.get("low",  close).astype(float)
+
+        latest_price = float(close.iloc[-1])
+        latest_vix   = float(vix_series.iloc[-1]) if not vix_series.empty else 0.0
+        latest_adx   = _adx(high, low, close)
+        atm_iv       = iv_metrics.get("atm_iv")
+        hv20         = iv_metrics.get("hv20")
+        ivr          = iv_metrics.get("ivr")
+        iv_source    = iv_metrics.get("iv_source", "no_options_data")
+
+        if atm_iv is None:
+            atm_iv = latest_vix / 100.0
+        if hv20 is None:
+            ret  = close.pct_change()
+            hv20 = float(ret.rolling(20).std().iloc[-1]) * (252 ** 0.5)
+        if ivr is None:
+            ivr = _vix_ivr(vix_series)
+
+        vrp_ok = (atm_iv - hv20) >= params["hv_iv_spread_min"] if atm_iv and hv20 else False
+        adx_ok = latest_adx <= params["adx_max"]
+        vix_ok = params["vix_min"] <= latest_vix <= params["vix_max"]
+        n_pass = sum([vrp_ok, adx_ok, vix_ok])
+
+        score = (
+            (1.0 - latest_adx / max(params["adx_max"], 1)) * 40
+            + min((atm_iv - hv20) / 0.05, 1.0) * 35 if atm_iv and hv20 else 0
+            + (25 if vix_ok else 0)
+        )
+
+        return {
+            "Ticker":    ticker,
+            "Price":     latest_price,
+            "ATM IV":    atm_iv,
+            "HV20":      round(hv20, 4) if hv20 else None,
+            "VRP":       round(atm_iv - hv20, 4) if atm_iv and hv20 else None,
+            "IVR":       ivr,
+            "VIX":       latest_vix,
+            "ADX":       latest_adx,
+            "IV source": iv_source,
+            "vrp_ok":    vrp_ok,
+            "adx_ok":    adx_ok,
+            "vix_ok":    vix_ok,
+            "n_pass":    n_pass,
+            "all_pass":  n_pass == 3,
+            "score":     score,
+        }
+    except Exception as e:
+        logger.warning(f"CalendarSpread score error for {ticker}: {e}")
+        return None
+
+
+def _score_earnings_straddle(
+    ticker: str,
+    price_df: pd.DataFrame,
+    vix_series: pd.Series,
+    iv_metrics: dict,
+    params: dict,
+    days_to_earnings: Optional[int] = None,
+) -> Optional[dict]:
+    """Screen for pre-earnings IV crush candidates."""
+    if price_df.empty or len(price_df) < 20:
+        return None
+    try:
+        close = price_df["close"].astype(float)
+        latest_price = float(close.iloc[-1])
+        latest_vix   = float(vix_series.iloc[-1]) if not vix_series.empty else 0.0
+        atm_iv       = iv_metrics.get("atm_iv")
+        ivr          = iv_metrics.get("ivr")
+        iv_source    = iv_metrics.get("iv_source", "no_options_data")
+
+        if atm_iv is None:
+            atm_iv = latest_vix / 100.0
+        if ivr is None:
+            ivr = _vix_ivr(vix_series)
+
+        dte_ok  = (days_to_earnings is not None
+                   and params["dte_to_earnings_min"] <= days_to_earnings <= params["dte_to_earnings_max"])
+        ivr_ok  = ivr >= params["ivr_min"]
+        iv_ok   = atm_iv >= params["atm_iv_min"]
+        impl_move = atm_iv * (max(1, days_to_earnings or 7) / 252) ** 0.5 if atm_iv else 0
+        move_ok = impl_move >= params["implied_move_min"]
+        n_pass  = sum([dte_ok, ivr_ok, iv_ok, move_ok])
+
+        score = (
+            ivr * 40
+            + min(atm_iv / 0.80, 1.0) * 35
+            + (25 if dte_ok else 0)
+        )
+
+        return {
+            "Ticker":           ticker,
+            "Price":            latest_price,
+            "ATM IV":           atm_iv,
+            "IVR":              ivr,
+            "Days to Earnings": days_to_earnings,
+            "Impl. Move":       round(impl_move, 4),
+            "Straddle Credit":  round(latest_price * impl_move, 2) if latest_price else None,
+            "VIX":              latest_vix,
+            "IV source":        iv_source,
+            "dte_ok":           dte_ok,
+            "ivr_ok":           ivr_ok,
+            "iv_ok":            iv_ok,
+            "move_ok":          move_ok,
+            "n_pass":           n_pass,
+            "all_pass":         n_pass == 4,
+            "score":            score,
+        }
+    except Exception as e:
+        logger.warning(f"EarningsStraddle score error for {ticker}: {e}")
+        return None
+
+
+def _score_wheel_strategy(
+    ticker: str,
+    price_df: pd.DataFrame,
+    vix_series: pd.Series,
+    iv_metrics: dict,
+    params: dict,
+) -> Optional[dict]:
+    """Screen for Wheel strategy: IVR > 40, price above MA50, ADX 15–30."""
+    if price_df.empty or len(price_df) < 55:
+        return None
+    try:
+        close = price_df["close"].astype(float)
+        high  = price_df.get("high", close).astype(float)
+        low   = price_df.get("low",  close).astype(float)
+
+        latest_price = float(close.iloc[-1])
+        latest_vix   = float(vix_series.iloc[-1]) if not vix_series.empty else 0.0
+        latest_adx   = _adx(high, low, close)
+        ma50         = float(close.rolling(50, min_periods=20).mean().iloc[-1])
+        atm_iv       = iv_metrics.get("atm_iv")
+        ivr          = iv_metrics.get("ivr")
+        iv_source    = iv_metrics.get("iv_source", "no_options_data")
+
+        if ivr is None:
+            ivr = _vix_ivr(vix_series)
+        if atm_iv is None:
+            atm_iv = latest_vix / 100.0
+
+        ivr_ok   = ivr >= params["ivr_min"]
+        adx_ok   = params["adx_min"] <= latest_adx <= params["adx_max"]
+        vix_ok   = latest_vix <= params["vix_max"]
+        trend_ok = latest_price > ma50
+
+        n_pass = sum([ivr_ok, adx_ok, vix_ok, trend_ok])
+
+        dte_frac   = 28 / 252
+        put_delta  = 0.30
+        put_strike = round(latest_price * (1.0 - put_delta * atm_iv * (dte_frac ** 0.5)), 0)
+        premium    = latest_price * atm_iv * (dte_frac ** 0.5) * put_delta * 0.8
+
+        score = (
+            ivr * 40
+            + (1.0 - latest_adx / max(params["adx_max"], 1)) * 30
+            + (20 if trend_ok else 0)
+            + (10 if vix_ok else 0)
+        )
+
+        return {
+            "Ticker":       ticker,
+            "Price":        latest_price,
+            "MA50":         round(ma50, 2),
+            "ATM IV":       atm_iv,
+            "IVR":          ivr,
+            "VIX":          latest_vix,
+            "ADX":          latest_adx,
+            "Put Strike":   put_strike,
+            "~Premium":     round(premium, 2),
+            "IV source":    iv_source,
+            "ivr_ok":       ivr_ok,
+            "adx_ok":       adx_ok,
+            "vix_ok":       vix_ok,
+            "trend_ok":     trend_ok,
+            "n_pass":       n_pass,
+            "all_pass":     n_pass == 4,
+            "score":        score,
+        }
+    except Exception as e:
+        logger.warning(f"Wheel score error for {ticker}: {e}")
+        return None
+
+
+def _score_bull_put_spread(
+    ticker: str,
+    price_df: pd.DataFrame,
+    vix_series: pd.Series,
+    iv_metrics: dict,
+    params: dict,
+) -> Optional[dict]:
+    """Screen for bullish, high-IVR setups for bull put spread entry."""
+    if price_df.empty or len(price_df) < 55:
+        return None
+    try:
+        close = price_df["close"].astype(float)
+        high  = price_df.get("high", close).astype(float)
+        low   = price_df.get("low",  close).astype(float)
+
+        latest_price = float(close.iloc[-1])
+        latest_vix   = float(vix_series.iloc[-1]) if not vix_series.empty else 0.0
+        latest_adx   = _adx(high, low, close)
+        ma50         = float(close.rolling(50, min_periods=20).mean().iloc[-1])
+        atm_iv       = iv_metrics.get("atm_iv")
+        ivr          = iv_metrics.get("ivr")
+        iv_source    = iv_metrics.get("iv_source", "no_options_data")
+
+        if ivr is None:
+            ivr = _vix_ivr(vix_series)
+        if atm_iv is None:
+            atm_iv = latest_vix / 100.0
+
+        ivr_ok   = ivr >= params["ivr_min"]
+        adx_ok   = latest_adx <= params["adx_max"]
+        vix_ok   = latest_vix <= params["vix_max"]
+        trend_ok = latest_price > ma50
+
+        n_pass = sum([ivr_ok, adx_ok, vix_ok, trend_ok])
+
+        dte_frac     = 30 / 252
+        short_delta  = 0.30
+        long_delta   = 0.15
+        width        = round(latest_price * 0.05, 0)
+        short_k      = round(latest_price * (1.0 - short_delta * atm_iv * (dte_frac ** 0.5)), 0)
+        long_k       = short_k - width
+        credit       = latest_price * atm_iv * (dte_frac ** 0.5) * (short_delta - long_delta) * 0.85
+        credit_ratio = credit / width if width > 0 else 0
+
+        score = (
+            ivr * 45
+            + (1.0 - latest_adx / max(params["adx_max"], 1)) * 30
+            + (15 if trend_ok else 0)
+            + (10 if vix_ok else 0)
+        )
+
+        return {
+            "Ticker":        ticker,
+            "Price":         latest_price,
+            "MA50":          round(ma50, 2),
+            "ATM IV":        atm_iv,
+            "IVR":           ivr,
+            "VIX":           latest_vix,
+            "ADX":           latest_adx,
+            "Short Strike":  short_k,
+            "Long Strike":   long_k,
+            "Width":         width,
+            "~Credit":       round(credit, 2),
+            "Credit/Width":  round(credit_ratio, 3),
+            "IV source":     iv_source,
+            "ivr_ok":        ivr_ok,
+            "adx_ok":        adx_ok,
+            "vix_ok":        vix_ok,
+            "trend_ok":      trend_ok,
+            "n_pass":        n_pass,
+            "all_pass":      n_pass == 4,
+            "score":         score,
+        }
+    except Exception as e:
+        logger.warning(f"BullPutSpread score error for {ticker}: {e}")
+        return None
+
+
 def _score_vol_arbitrage(
     ticker: str,
     price_df: pd.DataFrame,
@@ -515,8 +869,8 @@ def _get_options_chain(ticker: str, api_key: str, spot: float,
             underlying=ticker,
             expiration_date_gte=exp_lo,
             expiration_date_lte=exp_hi,
-            strike_price_gte=spot * 0.80,
-            strike_price_lte=spot * 1.20,
+            strike_price_gte=spot * 0.70,
+            strike_price_lte=spot * 1.30,
         )
     except Exception as e:
         return None, None, None, str(e)

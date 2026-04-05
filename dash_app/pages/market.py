@@ -14,8 +14,9 @@ from typing import Optional
 import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
-from dash import html, dcc, callback, Input, Output, State, no_update, ALL
+from dash import html, dcc, callback, Input, Output, State, no_update, ALL, ctx
 import dash_bootstrap_components as dbc
+import dash_ag_grid as dag
 
 from dash_app import theme as T, get_polygon_api_key
 from engine.screener import UNIVERSES
@@ -1139,17 +1140,61 @@ def layout() -> html.Div:
         ], style={**T.STYLE_CARD, "marginBottom": "16px"}),
         html.Div([
             html.Div([
-                html.Div("Volatility Surface 3D", style={
-                    "color": T.TEXT_SEC, "fontSize": "11px", "fontWeight": "600",
-                    "textTransform": "uppercase", "letterSpacing": "0.07em",
-                }),
+                html.Div([
+                    html.Div("Volatility Surface", style={
+                        "color": T.TEXT_SEC, "fontSize": "11px", "fontWeight": "600",
+                        "textTransform": "uppercase", "letterSpacing": "0.07em",
+                        "marginRight": "10px",
+                    }),
+                    html.Div([
+                        dbc.Button("3D Surface", id="mkt-vol-3d-btn", size="sm",
+                                   color="secondary", outline=True,
+                                   style={"fontSize": "11px", "padding": "2px 10px",
+                                          "borderRadius": "4px 0 0 4px"}),
+                        dbc.Button("Chain Table", id="mkt-vol-chain-btn", size="sm",
+                                   color="primary",
+                                   style={"fontSize": "11px", "padding": "2px 10px",
+                                          "borderRadius": "0 4px 4px 0"}),
+                    ], style={"display": "flex"}),
+                ], style={"display": "flex", "alignItems": "center"}),
                 dbc.Button("How to read this chart", id="mkt-vol-guide-toggle",
                            size="sm", color="link",
                            style={"color": T.ACCENT, "fontSize": "11px",
                                   "padding": "0", "fontWeight": "500"}),
             ], style={"display": "flex", "justifyContent": "space-between",
                       "alignItems": "center", "borderBottom": f"1px solid {T.BORDER}",
-                      "paddingBottom": "8px", "marginBottom": "12px"}),
+                      "paddingBottom": "8px", "marginBottom": "8px"}),
+            # Expiry + moneyness controls — shown only in chain view
+            html.Div([
+                html.Label("Expiry:", style={"color": T.TEXT_MUTED, "fontSize": "12px",
+                                             "marginRight": "8px", "whiteSpace": "nowrap",
+                                             "lineHeight": "32px"}),
+                dbc.Select(id="mkt-chain-expiry", options=[], value=None,
+                           placeholder="Loading expiries…",
+                           style={"width": "220px", "fontSize": "12px",
+                                  "backgroundColor": T.BG_ELEVATED,
+                                  "color": T.TEXT_PRIMARY,
+                                  "border": f"1px solid {T.BORDER}"}),
+                html.Div(style={"width": "20px"}),
+                html.Label("Show:", style={"color": T.TEXT_MUTED, "fontSize": "12px",
+                                           "marginRight": "8px", "whiteSpace": "nowrap",
+                                           "lineHeight": "32px"}),
+                dbc.RadioItems(
+                    id="mkt-chain-moneyness",
+                    options=[
+                        {"label": "All",  "value": "all"},
+                        {"label": "ITM",  "value": "itm"},
+                        {"label": "OTM",  "value": "otm"},
+                        {"label": "±10%", "value": "near"},
+                    ],
+                    value="all", inline=True,
+                    inputStyle={"marginRight": "4px"},
+                    labelStyle={"marginRight": "14px", "fontSize": "12px",
+                                "color": T.TEXT_SEC, "cursor": "pointer"},
+                ),
+            ], id="mkt-chain-expiry-row",
+               style={"display": "flex", "alignItems": "center",
+                      "marginBottom": "10px"}),
             dcc.Loading(html.Div(id="mkt-vol-content", children=_hint("Loading…")),
                         type="circle", color=T.ACCENT),
             dbc.Collapse(_vol_surface_guide(), id="mkt-vol-guide-collapse", is_open=False),
@@ -1311,8 +1356,10 @@ def layout() -> html.Div:
             ])),
         ], style={**T.STYLE_CARD, "marginBottom": "16px"}),
 
-        dcc.Store(id="mkt-ticker-store", data="F"),
-        dcc.Store(id="mkt-apikey-store", data=get_polygon_api_key()),
+        dcc.Store(id="mkt-ticker-store",    data="F"),
+        dcc.Store(id="mkt-apikey-store",    data=get_polygon_api_key()),
+        dcc.Store(id="mkt-vol-view-store",  data="chain"),
+        dcc.Store(id="mkt-chain-data-store"),
     ], style=T.STYLE_PAGE)
 
 
@@ -1762,29 +1809,209 @@ def _render_yield_inner():
     ])
 
 
+# ── Vol view toggle ────────────────────────────────────────────────────────────
+
+@callback(
+    Output("mkt-vol-view-store",  "data"),
+    Output("mkt-vol-3d-btn",      "color"),
+    Output("mkt-vol-3d-btn",      "outline"),
+    Output("mkt-vol-chain-btn",   "color"),
+    Output("mkt-vol-chain-btn",   "outline"),
+    Input("mkt-vol-3d-btn",       "n_clicks"),
+    Input("mkt-vol-chain-btn",    "n_clicks"),
+    prevent_initial_call=True,
+)
+def toggle_vol_view(_n3d, _nchain):
+    if ctx.triggered_id == "mkt-vol-chain-btn":
+        return "chain", "secondary", True, "primary", False
+    return "surface", "primary", False, "secondary", True
+
+
+# ── Chain view: populate expiry dropdown + cache full chain ───────────────────
+
+@callback(
+    Output("mkt-chain-expiry",     "options"),
+    Output("mkt-chain-expiry",     "value"),
+    Output("mkt-chain-expiry-row", "style"),
+    Output("mkt-chain-data-store", "data"),
+    Input("mkt-vol-view-store",    "data"),
+    Input("mkt-ticker-store",      "data"),
+    State("mkt-apikey-store",      "data"),
+)
+def update_chain_expiry(view, ticker, api_key):
+    _hidden  = {"display": "none"}
+    _visible = {"display": "flex", "alignItems": "center", "marginBottom": "10px"}
+    if view != "chain" or not ticker or not api_key:
+        return [], None, _hidden, None
+    try:
+        from data.loader import fetch_options_snapshot
+        c  = _polygon_client(api_key)
+        df = fetch_options_snapshot(c, ticker, min_dte=7, max_dte=180)
+        if df.empty:
+            return [], None, _visible, None
+        exps = (df[["expiration", "dte"]].drop_duplicates()
+                  .sort_values("expiration"))
+        options = [{"label": f"{r['expiration']}  ({int(r['dte'])}d)", "value": r["expiration"]}
+                   for _, r in exps.iterrows()]
+        best = exps.iloc[(exps["dte"] - 45).abs().argsort().iloc[0]]["expiration"]
+        return options, best, _visible, df.to_json(orient="records")
+    except Exception as e:
+        return [], None, _visible, None
+
+
+# ── Build OMON-style chain table for one expiry ────────────────────────────────
+
+def _build_chain_table(df: "pd.DataFrame", expiry: str, spot: float,
+                       moneyness: str = "all") -> "dag.AgGrid":
+    """Returns an AG Grid in OMON style: calls left | strike centre | puts right."""
+    exp = df[df["expiration"] == expiry].copy()
+    calls = exp[exp["type"] == "call"].set_index("strike")
+    puts  = exp[exp["type"] == "put"].set_index("strike")
+    all_strikes = sorted(set(calls.index) | set(puts.index))
+
+    # Moneyness filter
+    if moneyness == "itm":
+        strikes = [k for k in all_strikes if k < spot]          # ITM calls = below spot
+    elif moneyness == "otm":
+        strikes = [k for k in all_strikes if k > spot]          # OTM calls = above spot
+    elif moneyness == "near":
+        strikes = [k for k in all_strikes if abs(k - spot) / spot <= 0.10]
+    else:
+        strikes = all_strikes
+
+    def _pct(v):
+        return f"{v*100:.1f}%" if v and float(v) > 0 else "—"
+    def _px(v):
+        return f"{v:.2f}" if v and float(v) > 0 else "—"
+    def _vol(v):
+        return f"{int(v):,}" if v and float(v) > 0 else "—"
+
+    atm_dist = min(abs(s - spot) for s in strikes) if strikes else 0
+    rows = []
+    for k in strikes:
+        c = calls.loc[k].to_dict() if k in calls.index else {}
+        p = puts.loc[k].to_dict()  if k in puts.index  else {}
+        is_atm = abs(k - spot) == atm_dist
+        rows.append({
+            "c_iv":      _pct(c.get("iv")),
+            "c_bid":     _px( c.get("bid")),
+            "c_ask":     _px( c.get("ask")),
+            "c_vol":     _vol(c.get("volume")),
+            "strike":    f"${k:.0f}",
+            "p_bid":     _px( p.get("bid")),
+            "p_ask":     _px( p.get("ask")),
+            "p_iv":      _pct(p.get("iv")),
+            "p_vol":     _vol(p.get("volume")),
+            "_atm":      is_atm,
+            "_itm_call": k < spot,
+            "_itm_put":  k > spot,
+        })
+
+    # ATM-based row style + ITM dimming
+    _atm_base  = "{'backgroundColor':'#0d2b1a','fontWeight':'700'}"
+    _dim_call  = "{'color':'#6b7280'}"   # OTM call (strike > spot) dimmed
+    _dim_put   = "{'color':'#6b7280'}"   # OTM put  (strike < spot) dimmed
+    _bright    = "{}"
+
+    def _cs(field, itm_key):
+        return {"function":
+            f"params.data._atm ? {_atm_base} : "
+            f"(params.data.{itm_key} ? {_bright} : {_dim_call})"}
+
+    # Bloomberg mirror: Vol | IV | Bid | Ask  ·  STRIKE  ·  Bid | Ask | IV | Vol
+    c_vol = {"field": "c_vol", "headerName": "Vol",   "width": 85,
+             "cellStyle": _cs("c_vol", "_itm_call"),
+             "headerClass": "ag-right-aligned-header"}
+    c_iv  = {"field": "c_iv",  "headerName": "IV",    "width": 80,
+             "cellStyle": _cs("c_iv",  "_itm_call"),
+             "headerClass": "ag-right-aligned-header"}
+    c_bid = {"field": "c_bid", "headerName": "Bid",   "width": 75,
+             "cellStyle": _cs("c_bid", "_itm_call"),
+             "headerClass": "ag-right-aligned-header"}
+    c_ask = {"field": "c_ask", "headerName": "Ask",   "width": 75,
+             "cellStyle": _cs("c_ask", "_itm_call"),
+             "headerClass": "ag-right-aligned-header"}
+    strike_col = {"field": "strike", "headerName": "Strike", "width": 90,
+                  "cellStyle": {"function":
+                      "params.data._atm "
+                      "? {'backgroundColor':'#0d2b1a','fontWeight':'700','color':'#69f0ae','textAlign':'center'} "
+                      ": {'textAlign':'center','color':'#e0e0e0'}"}}
+    p_bid = {"field": "p_bid", "headerName": "Bid",   "width": 75,
+             "cellStyle": _cs("p_bid", "_itm_put"),
+             "headerClass": "ag-right-aligned-header"}
+    p_ask = {"field": "p_ask", "headerName": "Ask",   "width": 75,
+             "cellStyle": _cs("p_ask", "_itm_put"),
+             "headerClass": "ag-right-aligned-header"}
+    p_iv  = {"field": "p_iv",  "headerName": "IV",    "width": 80,
+             "cellStyle": _cs("p_iv",  "_itm_put"),
+             "headerClass": "ag-right-aligned-header"}
+    p_vol = {"field": "p_vol", "headerName": "Vol",   "width": 85,
+             "cellStyle": _cs("p_vol", "_itm_put"),
+             "headerClass": "ag-right-aligned-header"}
+
+    # Column group headers (calls | strike | puts)
+    col_groups = [
+        {"headerName": "Calls", "headerClass": "calls-header",
+         "children": [c_vol, c_iv, c_bid, c_ask]},
+        {"headerName": "", "children": [strike_col]},
+        {"headerName": "Puts",  "headerClass": "puts-header",
+         "children": [p_bid, p_ask, p_iv, p_vol]},
+    ]
+
+    return dag.AgGrid(
+        columnDefs=col_groups,
+        rowData=rows,
+        defaultColDef={"resizable": True, "sortable": False},
+        dashGridOptions={
+            "domLayout":        "normal",
+            "headerHeight":     28,
+            "groupHeaderHeight":24,
+            "rowHeight":        26,
+            "suppressMovableColumns": True,
+        },
+        className=T.AGGRID_THEME,
+        style={"width": "100%", "height": "520px"},
+    )
+
+
 # ── Volatility Surface 3D ──────────────────────────────────────────────────────
 
 @callback(
-    Output("mkt-vol-content",  "children"),
-    Input("mkt-ticker-store",  "data"),
-    State("mkt-apikey-store",  "data"),
+    Output("mkt-vol-content",       "children"),
+    Input("mkt-ticker-store",       "data"),
+    Input("mkt-vol-view-store",     "data"),
+    Input("mkt-chain-data-store",   "data"),
+    Input("mkt-chain-expiry",       "value"),
+    Input("mkt-chain-moneyness",    "value"),
+    State("mkt-apikey-store",       "data"),
 )
-def render_vol_surface(ticker, api_key):
+def render_vol_surface(ticker, view, chain_json, expiry, moneyness, api_key):
     if not ticker:
         return _hint("Loading…")
     if not api_key:
         return _hint("No API key — enter above and click Load")
     try:
         import datetime as _dt
-        from data.loader import fetch_live_vol_surface
         c     = _polygon_client(api_key)
-        today = _dt.date.today()
         agg   = c._get(f"/v2/aggs/ticker/{ticker}/prev", {"adjusted": "true"})
         res   = agg.get("results", [])
         if not res:
             return html.P(f"Could not fetch spot price for {ticker}.", style={"color": T.WARNING})
         spot  = float(res[0]["c"])
 
+        # ── Chain table view ──────────────────────────────────────────────
+        if view == "chain":
+            if not chain_json or not expiry:
+                return _hint("Loading chain…")
+            from io import StringIO
+            df = pd.read_json(StringIO(chain_json), orient="records")
+            if df.empty or expiry not in df["expiration"].values:
+                return html.P("No chain data for selected expiry.", style={"color": T.WARNING})
+            return _build_chain_table(df, expiry, spot, moneyness or "all")
+
+        # ── 3D surface view (default) ─────────────────────────────────────
+        from data.loader import fetch_live_vol_surface
+        today   = _dt.date.today()
         surf_df = fetch_live_vol_surface(c, ticker, spot, min_dte=7, max_dte=180, step_pct=0.05)
         if surf_df is None or surf_df.empty:
             return html.P("No vol surface data.", style={"color": T.WARNING})

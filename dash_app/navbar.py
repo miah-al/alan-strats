@@ -8,11 +8,9 @@ from dash import html
 from dash_app import theme as T
 
 NAV_ITEMS = [
-    ("Blotter",       "🏠", "/"),
     ("Paper Trading", "📋", "/paper-trading"),
     ("Market Data",   "📈", "/market"),
     ("Strategies",    "🧠", "/strategies"),
-    ("Backtest",      "📊", "/backtest"),
     ("Tools",         "🛠",  "/tools"),
 ]
 

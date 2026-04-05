@@ -494,7 +494,7 @@ def _metric_card(label: str, value: str, color: str = T.TEXT_PRIMARY) -> html.Di
 
 # ── Legs table (AgGrid) ───────────────────────────────────────────────────────
 
-def _build_legs_table(grp: pd.DataFrame) -> dag.AgGrid:
+def _build_legs_table(grp: pd.DataFrame, live_prices: dict | None = None) -> dag.AgGrid:
     legs = []
     for _, r in grp.iterrows():
         stype = str(r.get("SecurityType", "")).lower()
@@ -504,11 +504,16 @@ def _build_legs_table(grp: pd.DataFrame) -> dag.AgGrid:
         qty  = float(r.get("Quantity")   or 0)
         mult = float(r.get("Multiplier") or 100)
         dirn = str(r.get("Direction", "")).upper()
-        # Mkt value at entry: SELL = credit (positive), BUY = debit (negative)
         sign = 1.0 if dirn == "SELL" else -1.0
-        mkt_val = sign * float(px) * abs(qty) * mult if px is not None else None
+        sym  = str(r.get("Symbol", ""))
+
+        # Current mark price → live MKT VALUE; fall back to entry price
+        live    = (live_prices or {}).get(sym, {})
+        cur_px  = live.get("price") if isinstance(live, dict) else None
+        mkt_val = sign * cur_px * abs(qty) * mult if cur_px is not None else None
+
         legs.append({
-            "Symbol":    str(r.get("Symbol", "")),
+            "Symbol":    sym,
             "Type":      str(r.get("OptionType") or stype).upper(),
             "Strike":    str(r.get("Strike") or "—"),
             "Expiry":    str(r.get("Expiration") or "—")[:10],
@@ -547,6 +552,19 @@ def _build_ic_modal_body(
     tgid: str,
 ) -> list:
     """Full Iron Condor position detail modal body."""
+    # Live prices for current-price marker + position value
+    spot: float | None = None
+    live_prices: dict = {}
+    try:
+        from dash_app import get_api_key
+        from engine.positions import fetch_stock_price, fetch_option_prices
+        api_key = get_api_key()
+        if api_key:
+            spot = fetch_stock_price(api_key, underlying)
+            live_prices = fetch_option_prices(api_key, grp)
+    except Exception:
+        pass
+
     opt = grp[grp["SecurityType"].str.lower() == "option"].copy()
 
     opt["Strike"]           = pd.to_numeric(opt["Strike"],           errors="coerce")
@@ -632,15 +650,39 @@ def _build_ic_modal_body(
     dte_str  = str(dte_remaining) if dte_remaining is not None else "—"
     days_str = str(days_held)     if days_held     is not None else "—"
     max_loss_str = f"${max_loss:,.2f}" if spread_width > 0 else "—"
+
+    # Current position value from live marks
+    pos_val: float | None = None
+    if live_prices:
+        running, all_ok = 0.0, True
+        for _, r in grp.iterrows():
+            sym  = str(r.get("Symbol", ""))
+            dirn = str(r.get("Direction", "")).upper()
+            qty  = float(r.get("Quantity") or 0)
+            mult = float(r.get("Multiplier") or 100)
+            live = live_prices.get(sym, {})
+            cur  = live.get("price") if isinstance(live, dict) else None
+            if cur is None:
+                all_ok = False; break
+            sign = 1.0 if dirn == "SELL" else -1.0
+            running += sign * cur * abs(qty) * mult
+        if all_ok:
+            pos_val = round(running, 2)
+
+    pos_val_str   = f"${pos_val:,.2f}"  if pos_val is not None else "—"
+    pos_val_color = (T.SUCCESS if pos_val is not None and pos_val >= 0
+                     else T.DANGER if pos_val is not None else T.TEXT_MUTED)
+
     metrics  = html.Div([
-        _metric_card("Net Credit",    f"${net_credit_dollar:,.2f}",    T.SUCCESS if net_credit >= 0 else T.DANGER),
-        _metric_card("Max Loss",      max_loss_str,                    T.DANGER),
-        _metric_card("50% Target",    f"${profit_target_dollar:,.2f}", T.SUCCESS),
-        _metric_card("2× Stop",       f"${stop_loss_dollar:,.2f}",     T.DANGER),
-        _metric_card("DTE Remaining", dte_str,
+        _metric_card("Net Credit",      f"${net_credit_dollar:,.2f}",    T.SUCCESS if net_credit >= 0 else T.DANGER),
+        _metric_card("Max Loss",        max_loss_str,                    T.DANGER),
+        _metric_card("50% Target",      f"${profit_target_dollar:,.2f}", T.SUCCESS),
+        _metric_card("2× Stop",         f"${stop_loss_dollar:,.2f}",     T.DANGER),
+        _metric_card("Position Value",  pos_val_str,                     pos_val_color),
+        _metric_card("DTE Remaining",   dte_str,
                      T.DANGER if (dte_remaining or 999) <= 7 else
                      (T.WARNING if (dte_remaining or 999) <= 21 else T.TEXT_PRIMARY)),
-        _metric_card("Days Held",     days_str),
+        _metric_card("Days Held",       days_str),
     ], style={"display": "flex", "gap": "10px", "flexWrap": "wrap", "marginBottom": "14px"})
 
     # Payoff chart
@@ -652,7 +694,7 @@ def _build_ic_modal_body(
         profit_target=profit_target, stop_loss=stop_loss,
         be_upper=be_upper, be_lower=be_lower,
         dte_remaining=dte_remaining, expiry_str=expiry_str,
-        spot=None,
+        spot=spot,
     )
     chart = dcc.Graph(figure=ic_fig, config={"displayModeBar": False}) if ic_fig else html.P(
         "No payoff chart available.", style={"color": T.TEXT_MUTED}
@@ -672,7 +714,7 @@ def _build_ic_modal_body(
         if otype == "call" and dirn == "BUY":  return 3
         return 4
     grp_sorted = grp.loc[sorted(grp.index, key=lambda i: _ic_leg_order(grp.loc[i]))]
-    legs_table = _build_legs_table(grp_sorted)
+    legs_table = _build_legs_table(grp_sorted, live_prices)
 
     children = [
         _render_alert_badges(alerts),
@@ -701,16 +743,29 @@ def _build_screener_modal_body(
     open_date,
 ) -> list:
     """Options spread / screener position detail modal body."""
+    # Live prices: spot for chart marker, option marks for position value + legs table
+    spot: float | None = None
+    live_prices: dict  = {}
+    try:
+        from dash_app import get_api_key
+        from engine.positions import fetch_stock_price, fetch_option_prices
+        api_key = get_api_key()
+        if api_key and underlying:
+            spot        = fetch_stock_price(api_key, underlying)
+            live_prices = fetch_option_prices(api_key, grp)
+    except Exception:
+        pass
+
     opt = grp[grp["SecurityType"].str.lower() == "option"].copy() \
         if "SecurityType" in grp.columns else pd.DataFrame()
 
     if opt.empty:
         # No options — fall through to generic payoff
-        fig = _plot_payoff(grp, None)
+        fig = _plot_payoff(grp, spot)
         return [
             html.P("No option legs found.", style={"color": T.TEXT_MUTED}),
             dcc.Graph(figure=fig, config={"displayModeBar": False}) if fig else html.Div(),
-            _build_legs_table(grp),
+            _build_legs_table(grp, live_prices),
         ]
 
     opt["Strike"]           = pd.to_numeric(opt["Strike"],           errors="coerce")
@@ -754,13 +809,37 @@ def _build_screener_modal_body(
     profit_target_dollar_gen = abs(net_credit_dollar_gen) * 0.50
     dte_str  = str(dte_remaining) if dte_remaining is not None else "—"
     days_str = str(days_held)     if days_held     is not None else "—"
+
+    # Current position value from live marks
+    pos_val: float | None = None
+    if live_prices:
+        running, all_ok = 0.0, True
+        for _, r in grp.iterrows():
+            sym  = str(r.get("Symbol", ""))
+            dirn = str(r.get("Direction", "")).upper()
+            qty  = float(r.get("Quantity") or 0)
+            mult = float(r.get("Multiplier") or 100)
+            live = live_prices.get(sym, {})
+            cur  = live.get("price") if isinstance(live, dict) else None
+            if cur is None:
+                all_ok = False; break
+            sign = 1.0 if dirn == "SELL" else -1.0
+            running += sign * cur * abs(qty) * mult
+        if all_ok:
+            pos_val = round(running, 2)
+
+    pos_val_str   = f"${pos_val:,.2f}"  if pos_val is not None else "—"
+    pos_val_color = (T.SUCCESS if pos_val is not None and pos_val >= 0
+                     else T.DANGER if pos_val is not None else T.TEXT_MUTED)
+
     metrics  = html.Div([
-        _metric_card(label_type,      f"${net_credit_dollar_gen:,.2f}",    T.SUCCESS if is_credit else T.DANGER),
-        _metric_card("50% Target",    f"${profit_target_dollar_gen:,.2f}", T.SUCCESS),
-        _metric_card("DTE Remaining", dte_str,
+        _metric_card(label_type,       f"${net_credit_dollar_gen:,.2f}",    T.SUCCESS if is_credit else T.DANGER),
+        _metric_card("50% Target",     f"${profit_target_dollar_gen:,.2f}", T.SUCCESS),
+        _metric_card("Position Value", pos_val_str,                         pos_val_color),
+        _metric_card("DTE Remaining",  dte_str,
                      T.DANGER if (dte_remaining or 999) <= 7 else
                      (T.WARNING if (dte_remaining or 999) <= 21 else T.TEXT_PRIMARY)),
-        _metric_card("Days Held",     days_str),
+        _metric_card("Days Held",      days_str),
     ], style={"display": "flex", "gap": "10px", "flexWrap": "wrap", "marginBottom": "14px"})
 
     # Exit hints
@@ -780,7 +859,7 @@ def _build_screener_modal_body(
             }
         ))
 
-    payoff_fig = _plot_payoff(grp, None)
+    payoff_fig = _plot_payoff(grp, spot)
     chart      = dcc.Graph(figure=payoff_fig, config={"displayModeBar": False}) if payoff_fig else html.Div()
     caption    = html.P(
         "Payoff at expiration · Coloured dotted lines = strike levels · "
@@ -788,7 +867,7 @@ def _build_screener_modal_body(
         style={"color": T.TEXT_MUTED, "fontSize": "11px", "marginTop": "4px"},
     )
 
-    legs_table = _build_legs_table(grp)
+    legs_table = _build_legs_table(grp, live_prices)
 
     return [
         _render_alert_badges(alerts),
@@ -1244,7 +1323,7 @@ def refresh_all(_n, _btn):
             "Strategy":    strategy,
             "Open Date":   str(grp["BusinessDate"].min())[:10],
             "Legs":        len(grp),
-            "DTE":         dte if dte is not None else "—",
+            "DTE":         dte,
             "Net Entry":   f"{'+' if ne >= 0 else ''}${ne:,.2f}",
             "Alerts":      alert_str,
             "_net":        ne,

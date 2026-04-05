@@ -355,11 +355,11 @@ def fetch_options_snapshot(client, ticker: str,
 
     rows = []
     for r in results:
-        d  = r.get("details",    {})
-        g  = r.get("greeks",     {})
-        q  = r.get("last_quote", {})
-        bid = q.get("bid", 0) or 0
-        ask = q.get("ask", 0) or 0
+        d   = r.get("details",    {})
+        g   = r.get("greeks",     {})
+        q   = r.get("last_quote", {})
+        bid = q.get("bid") or 0
+        ask = q.get("ask") or 0
         exp = d.get("expiration_date", "")
         dte = (pd.to_datetime(exp).date() - today).days if exp else None
         rows.append({

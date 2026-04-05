@@ -21,7 +21,7 @@ from scipy.stats import norm as _scipy_norm
 import dash_ag_grid as dag
 import dash_bootstrap_components as dbc
 import plotly.graph_objects as go
-from dash import html, dcc, callback, Input, Output, State, no_update
+from dash import html, dcc, callback, Input, Output, State, no_update, ALL
 
 from dash_app import theme as T, get_polygon_api_key
 
@@ -32,11 +32,16 @@ logger = logging.getLogger(__name__)
 # ── Strategy registry ─────────────────────────────────────────────────────────
 
 _STRATEGIES_RULES = [
-    {"label": "Iron Condor (Rules)", "value": "iron_condor_rules"},
-    {"label": "VIX Spike Fade",      "value": "vix_spike_fade"},
-    {"label": "IVR Credit Spread",   "value": "ivr_credit_spread"},
-    {"label": "Vol Arbitrage",       "value": "vol_arbitrage"},
-    {"label": "GEX Positioning",     "value": "gex_positioning"},
+    {"label": "Iron Condor (Rules)",   "value": "iron_condor_rules"},
+    {"label": "VIX Spike Fade",        "value": "vix_spike_fade"},
+    {"label": "IVR Credit Spread",     "value": "ivr_credit_spread"},
+    {"label": "Vol Arbitrage",         "value": "vol_arbitrage"},
+    {"label": "GEX Positioning",       "value": "gex_positioning"},
+    {"label": "Broken Wing Butterfly", "value": "broken_wing_butterfly"},
+    {"label": "Calendar Spread",       "value": "calendar_spread"},
+    {"label": "Earnings Straddle",     "value": "earnings_straddle"},
+    {"label": "Wheel Strategy",        "value": "wheel_strategy"},
+    {"label": "Bull Put Spread",       "value": "bull_put_spread"},
 ]
 
 _STRATEGIES_AI = [
@@ -103,6 +108,7 @@ _IC_COLS = [
      "valueGetter": {"function": "'📊 View'"},
      "cellClass": "ic-chart-btn"},
     {"field": "_chain",      "hide": True},
+    {"field": "_chain_err",  "hide": True},
     {"field": "_atm_iv_raw", "hide": True},
 ]
 
@@ -164,13 +170,96 @@ _GEX_COLS = [
     _col("Regime Label", width=200),
 ]
 
+_VIEW_BTN = {"field": "Details", "width": 110, "sortable": False, "filter": False,
+             "cellStyle": {"textAlign": "center", "cursor": "pointer"},
+             "valueGetter": {"function": "'📊 View'"},
+             "cellClass": "ic-chart-btn"}
+
+_BWB_COLS = [
+    _col("Ticker",      width=150, pinned="left"),
+    _col("Price",       width=120, numeric=True),
+    _col("ATM IV",      width=120, numeric=True),
+    _col("IVR",         width=120, numeric=True),
+    _col("VIX",         width=120, numeric=True),
+    _col("ADX",         width=120, numeric=True),
+    _col("Narrow Wing", width=130, numeric=True),
+    _col("Wide Wing",   width=120, numeric=True),
+    _col("Score",       width=120, numeric=True, sort="desc"),
+    _col("Status",      width=130),
+    _VIEW_BTN,
+]
+
+_CAL_COLS = [
+    _col("Ticker",  width=150, pinned="left"),
+    _col("Price",   width=120, numeric=True),
+    _col("ATM IV",  width=120, numeric=True),
+    _col("HV20",    width=120, numeric=True),
+    _col("VRP",     width=120, numeric=True),
+    _col("IVR",     width=120, numeric=True),
+    _col("VIX",     width=120, numeric=True),
+    _col("ADX",     width=120, numeric=True),
+    _col("Score",   width=120, numeric=True, sort="desc"),
+    _col("Status",  width=130),
+    _VIEW_BTN,
+]
+
+_EARN_COLS = [
+    _col("Ticker",           width=150, pinned="left"),
+    _col("Price",            width=120, numeric=True),
+    _col("ATM IV",           width=120, numeric=True),
+    _col("IVR",              width=120, numeric=True),
+    _col("Days to Earnings", width=150, numeric=True),
+    _col("Impl. Move",       width=130, numeric=True),
+    _col("Straddle Credit",  width=150, numeric=True),
+    _col("VIX",              width=120, numeric=True),
+    _col("Score",            width=120, numeric=True, sort="desc"),
+    _col("Status",           width=130),
+    _VIEW_BTN,
+]
+
+_WHEEL_COLS = [
+    _col("Ticker",    width=150, pinned="left"),
+    _col("Price",     width=120, numeric=True),
+    _col("MA50",      width=120, numeric=True),
+    _col("ATM IV",    width=120, numeric=True),
+    _col("IVR",       width=120, numeric=True),
+    _col("VIX",       width=120, numeric=True),
+    _col("ADX",       width=120, numeric=True),
+    _col("Put Strike",width=130, numeric=True),
+    _col("~Premium",  width=120, numeric=True),
+    _col("Score",     width=120, numeric=True, sort="desc"),
+    _col("Status",    width=130),
+    _VIEW_BTN,
+]
+
+_BPS_COLS = [
+    _col("Ticker",       width=150, pinned="left"),
+    _col("Price",        width=120, numeric=True),
+    _col("MA50",         width=120, numeric=True),
+    _col("ATM IV",       width=120, numeric=True),
+    _col("IVR",          width=120, numeric=True),
+    _col("Short Strike", width=130, numeric=True),
+    _col("Long Strike",  width=130, numeric=True),
+    _col("Width",        width=100, numeric=True),
+    _col("~Credit",      width=110, numeric=True),
+    _col("Credit/Width", width=130, numeric=True),
+    _col("Score",        width=120, numeric=True, sort="desc"),
+    _col("Status",       width=130),
+    _VIEW_BTN,
+]
+
 _COLS_BY_SLUG: dict[str, list[dict]] = {
-    "iron_condor_rules": _IC_COLS,
-    "iron_condor_ai":    _IC_COLS,
-    "vix_spike_fade":    _VSF_COLS,
-    "ivr_credit_spread": _IVR_COLS,
-    "vol_arbitrage":     _VA_COLS,
-    "gex_positioning":   _GEX_COLS,
+    "iron_condor_rules":    _IC_COLS,
+    "iron_condor_ai":       _IC_COLS,
+    "vix_spike_fade":       _VSF_COLS,
+    "ivr_credit_spread":    _IVR_COLS,
+    "vol_arbitrage":        _VA_COLS,
+    "gex_positioning":      _GEX_COLS,
+    "broken_wing_butterfly": _BWB_COLS,
+    "calendar_spread":      _CAL_COLS,
+    "earnings_straddle":    _EARN_COLS,
+    "wheel_strategy":       _WHEEL_COLS,
+    "bull_put_spread":      _BPS_COLS,
 }
 
 
@@ -307,6 +396,75 @@ def _load_guide(slug: str) -> str:
     return f"*No guide article found for `{slug}`.*"
 
 
+# ── Screener filter param specs ───────────────────────────────────────────────
+
+_SCREENER_PARAMS: dict[str, list[dict]] = {
+    "iron_condor_rules": [
+        {"id": "ivr_min",    "label": "IVR min",    "min": 0.0, "max": 1.0,  "step": 0.05, "default": 0.20, "fmt": ".0%"},
+        {"id": "vix_min",    "label": "VIX min",    "min": 0.0, "max": 80.0, "step": 1.0,  "default": 14.0, "fmt": ".0f"},
+        {"id": "vix_max",    "label": "VIX max",    "min": 0.0, "max": 80.0, "step": 1.0,  "default": 45.0, "fmt": ".0f"},
+        {"id": "adx_max",    "label": "ADX max",    "min": 0.0, "max": 80.0, "step": 1.0,  "default": 35.0, "fmt": ".0f"},
+        {"id": "atr_pct_max","label": "ATR% max",   "min": 0.0, "max": 0.10, "step": 0.005,"default": 0.030,"fmt": ".1%"},
+    ],
+    "iron_condor_ai": [
+        {"id": "ivr_min",    "label": "IVR min",    "min": 0.0, "max": 1.0,  "step": 0.05, "default": 0.20, "fmt": ".0%"},
+        {"id": "vix_min",    "label": "VIX min",    "min": 0.0, "max": 80.0, "step": 1.0,  "default": 14.0, "fmt": ".0f"},
+        {"id": "vix_max",    "label": "VIX max",    "min": 0.0, "max": 80.0, "step": 1.0,  "default": 45.0, "fmt": ".0f"},
+        {"id": "adx_max",    "label": "ADX max",    "min": 0.0, "max": 80.0, "step": 1.0,  "default": 35.0, "fmt": ".0f"},
+        {"id": "atr_pct_max","label": "ATR% max",   "min": 0.0, "max": 0.10, "step": 0.005,"default": 0.030,"fmt": ".1%"},
+    ],
+    "vix_spike_fade": [
+        {"id": "vix_spike_ratio","label": "VIX spike ratio","min": 1.0,"max": 3.0,"step": 0.1,"default": 1.20,"fmt": ".1f"},
+        {"id": "vix_max",        "label": "VIX max",        "min": 0.0,"max": 80.0,"step": 1.0,"default": 45.0,"fmt": ".0f"},
+    ],
+    "ivr_credit_spread": [
+        {"id": "ivr_min",    "label": "IVR min",    "min": 0.0, "max": 1.0,  "step": 0.05, "default": 0.40, "fmt": ".0%"},
+        {"id": "vix_max",    "label": "VIX max",    "min": 0.0, "max": 80.0, "step": 1.0,  "default": 50.0, "fmt": ".0f"},
+    ],
+    "broken_wing_butterfly": [
+        {"id": "ivr_max",    "label": "IVR max",    "min": 0.0, "max": 1.0,  "step": 0.05, "default": 0.35, "fmt": ".0%"},
+        {"id": "adx_max",    "label": "ADX max",    "min": 0.0, "max": 80.0, "step": 1.0,  "default": 28.0, "fmt": ".0f"},
+        {"id": "vix_max",    "label": "VIX max",    "min": 0.0, "max": 80.0, "step": 1.0,  "default": 30.0, "fmt": ".0f"},
+    ],
+    "calendar_spread": [
+        {"id": "adx_max",           "label": "ADX max",        "min": 0.0, "max": 80.0, "step": 1.0,  "default": 22.0, "fmt": ".0f"},
+        {"id": "vix_min",           "label": "VIX min",        "min": 0.0, "max": 40.0, "step": 1.0,  "default": 14.0, "fmt": ".0f"},
+        {"id": "vix_max",           "label": "VIX max",        "min": 0.0, "max": 80.0, "step": 1.0,  "default": 25.0, "fmt": ".0f"},
+        {"id": "hv_iv_spread_min",  "label": "IV>HV spread",   "min": 0.0, "max": 0.20, "step": 0.01, "default": 0.03, "fmt": ".0%"},
+    ],
+    "earnings_straddle": [
+        {"id": "ivr_min",              "label": "IVR min",          "min": 0.0, "max": 1.0,  "step": 0.05, "default": 0.60, "fmt": ".0%"},
+        {"id": "atm_iv_min",           "label": "ATM IV min",       "min": 0.0, "max": 1.0,  "step": 0.05, "default": 0.40, "fmt": ".0%"},
+        {"id": "dte_to_earnings_min",  "label": "DTE to earn. min", "min": 1,   "max": 30,   "step": 1,    "default": 5,    "fmt": ".0f"},
+        {"id": "dte_to_earnings_max",  "label": "DTE to earn. max", "min": 1,   "max": 30,   "step": 1,    "default": 10,   "fmt": ".0f"},
+    ],
+    "wheel_strategy": [
+        {"id": "ivr_min",    "label": "IVR min",    "min": 0.0, "max": 1.0,  "step": 0.05, "default": 0.40, "fmt": ".0%"},
+        {"id": "adx_max",    "label": "ADX max",    "min": 0.0, "max": 80.0, "step": 1.0,  "default": 30.0, "fmt": ".0f"},
+        {"id": "vix_max",    "label": "VIX max",    "min": 0.0, "max": 80.0, "step": 1.0,  "default": 35.0, "fmt": ".0f"},
+    ],
+    "bull_put_spread": [
+        {"id": "ivr_min",    "label": "IVR min",    "min": 0.0, "max": 1.0,  "step": 0.05, "default": 0.40, "fmt": ".0%"},
+        {"id": "adx_max",    "label": "ADX max",    "min": 0.0, "max": 80.0, "step": 1.0,  "default": 30.0, "fmt": ".0f"},
+        {"id": "vix_max",    "label": "VIX max",    "min": 0.0, "max": 80.0, "step": 1.0,  "default": 35.0, "fmt": ".0f"},
+    ],
+}
+
+
+def _param_input(slug: str, p: dict) -> html.Div:
+    """Single labelled number input for one screener filter param."""
+    inp_id = {"type": f"str-{slug}-param", "index": p["id"]}
+    return html.Div([
+        html.Label(p["label"], style={"color": T.TEXT_MUTED, "fontSize": "11px",
+                                      "marginBottom": "2px", "display": "block"}),
+        dbc.Input(id=inp_id, type="number", value=p["default"],
+                  min=p["min"], max=p["max"], step=p["step"],
+                  style={"width": "90px", "fontSize": "12px", "height": "30px",
+                         "backgroundColor": T.BG_ELEVATED, "color": T.TEXT_PRIMARY,
+                         "border": f"1px solid {T.BORDER}"}),
+    ], style={"display": "flex", "flexDirection": "column"})
+
+
 # ── Per-strategy screener layouts ─────────────────────────────────────────────
 
 def _screener_layout(slug: str) -> html.Div:
@@ -320,12 +478,16 @@ def _screener_layout(slug: str) -> html.Div:
     loading_id    = f"str-{slug}-loading"
     cols          = _COLS_BY_SLUG.get(slug, _IC_COLS)
 
+    params_spec  = _SCREENER_PARAMS.get(slug, [])
+    filter_tog   = f"str-{slug}-filter-toggle"
+    filter_col   = f"str-{slug}-filter-collapse"
+
     return html.Div([
         # VIX banner — populated by callback
         html.Div(id=vix_banner_id),
 
-        # Controls
-        html.Div(
+        # Controls row
+        html.Div([
             html.Div([
                 dbc.Select(
                     id=universe_id,
@@ -348,9 +510,31 @@ def _screener_layout(slug: str) -> html.Div:
                            "fontSize": "13px", "fontWeight": "600",
                            "height": "34px", "padding": "0 20px",
                            "whiteSpace": "nowrap"}),
+                dbc.Button("⚙ Filters", id=filter_tog, size="sm", color="secondary",
+                           outline=True,
+                           style={"fontSize": "12px", "height": "34px",
+                                  "padding": "0 12px"}) if params_spec else html.Div(),
             ], style={"display": "flex", "gap": "8px", "alignItems": "center",
-                      "padding": "10px 0", "marginBottom": "10px"}),
-        ),
+                      "padding": "10px 0"}),
+
+            # Collapsible filter panel
+            dbc.Collapse(
+                html.Div([
+                    *[_param_input(slug, p) for p in params_spec],
+                    html.Div(
+                        dbc.Button("Reset defaults", id=f"str-{slug}-param-reset",
+                                   size="sm", color="secondary", outline=True,
+                                   style={"fontSize": "11px", "height": "30px",
+                                          "alignSelf": "flex-end"}),
+                        style={"display": "flex", "alignItems": "flex-end"}
+                    ),
+                ], style={"display": "flex", "gap": "12px", "flexWrap": "wrap",
+                          "padding": "10px 12px", "marginBottom": "8px",
+                          "backgroundColor": T.BG_ELEVATED,
+                          "borderRadius": "6px", "border": f"1px solid {T.BORDER}"}),
+                id=filter_col, is_open=False,
+            ) if params_spec else html.Div(),
+        ], style={"marginBottom": "10px"}),
 
         # Status pills
         html.Div(id=status_id),
@@ -402,12 +586,17 @@ def _backtest_tab(slug: str) -> html.Div:
     """Full backtest UI — controls, dynamic parameter sliders, results area."""
     # ── Load strategy's UI params (needs the class) ───────────────────────────
     _STRATEGY_CLASSES = {
-        "iron_condor_rules": ("alan_trader.strategies.iron_condor_rules", "IronCondorRulesStrategy"),
-        "iron_condor_ai":    ("alan_trader.strategies.iron_condor_ai",    "IronCondorAIStrategy"),
-        "vix_spike_fade":    ("alan_trader.strategies.vix_spike_fade",    "VixSpikeFadeStrategy"),
-        "ivr_credit_spread": ("alan_trader.strategies.ivr_credit_spread", "IVRCreditSpreadStrategy"),
-        "vol_arbitrage":     ("alan_trader.strategies.vol_arbitrage",     "VolArbitrageStrategy"),
-        "gex_positioning":   ("alan_trader.strategies.gex_positioning",   "GEXPositioningStrategy"),
+        "iron_condor_rules":    ("alan_trader.strategies.iron_condor_rules",    "IronCondorRulesStrategy"),
+        "iron_condor_ai":       ("alan_trader.strategies.iron_condor_ai",       "IronCondorAIStrategy"),
+        "vix_spike_fade":       ("alan_trader.strategies.vix_spike_fade",       "VixSpikeFadeStrategy"),
+        "ivr_credit_spread":    ("alan_trader.strategies.ivr_credit_spread",    "IVRCreditSpreadStrategy"),
+        "vol_arbitrage":        ("alan_trader.strategies.vol_arbitrage",        "VolArbitrageStrategy"),
+        "gex_positioning":      ("alan_trader.strategies.gex_positioning",      "GEXPositioningStrategy"),
+        "broken_wing_butterfly": ("alan_trader.strategies.broken_wing_butterfly", "BrokenWingButterflyStrategy"),
+        "calendar_spread":      ("alan_trader.strategies.calendar_spread",      "CalendarSpreadStrategy"),
+        "earnings_straddle":    ("alan_trader.strategies.earnings_straddle",    "EarningsStraddleStrategy"),
+        "wheel_strategy":       ("alan_trader.strategies.wheel_strategy",       "WheelStrategy"),
+        "bull_put_spread":      ("alan_trader.strategies.bull_put_spread",      "BullPutSpreadStrategy"),
     }
 
     ui_params = []
@@ -1337,7 +1526,7 @@ def layout() -> html.Div:
                     ], style={"display": "flex", "alignItems": "center",
                               "gap": "6px"}),
                     dbc.Button("Paper Trade", id="str-ic-paper-btn",
-                        color="success", size="sm",
+                        color="success", size="sm", disabled=True,
                         style={"fontWeight": "600"}),
                     html.Div(id="str-ic-paper-feedback",
                              style={"fontSize": "12px", "lineHeight": "32px"}),
@@ -1362,12 +1551,32 @@ def layout() -> html.Div:
                                 type="circle", color=T.ACCENT),
                     style={"backgroundColor": T.BG_BASE, "padding": "20px"},
                 ),
-                dbc.ModalFooter(
+                dbc.ModalFooter([
+                    html.Span(id="str-sig-paper-feedback",
+                              style={"fontSize": "12px", "marginRight": "auto"}),
+                    html.Div([
+                        html.Span("Contracts",
+                                  style={"color": T.TEXT_MUTED, "fontSize": "12px",
+                                         "alignSelf": "center", "marginRight": "6px"}),
+                        dbc.Input(id="str-sig-contracts", type="number", value=1,
+                                  min=1, max=50, step=1,
+                                  style={"width": "60px", "fontSize": "13px",
+                                         "height": "32px",
+                                         "backgroundColor": T.BG_ELEVATED,
+                                         "border": f"1px solid {T.BORDER}",
+                                         "color": T.TEXT_PRIMARY}),
+                    ], style={"display": "flex", "alignItems": "center",
+                              "marginRight": "10px"}),
+                    dbc.Button("Paper Trade", id="str-sig-paper-btn",
+                               disabled=False,
+                               style={"backgroundColor": T.SUCCESS, "border": "none",
+                                      "fontWeight": "600", "fontSize": "13px",
+                                      "marginRight": "8px"}),
                     dbc.Button("Dismiss", id="str-sig-modal-dismiss",
                                color="secondary", size="sm"),
-                    style={"backgroundColor": T.BG_ELEVATED,
-                           "borderTop": f"1px solid {T.BORDER}"},
-                ),
+                ], style={"backgroundColor": T.BG_ELEVATED,
+                          "borderTop": f"1px solid {T.BORDER}",
+                          "display": "flex", "alignItems": "center"}),
             ], id="str-sig-modal", size="lg", is_open=False, scrollable=True),
             dcc.Store(id="str-sig-row-store"),
 
@@ -1465,21 +1674,23 @@ def _get_vix_series(api_key: str | None = None):
 
 
 def _resolve_tickers(universe: str, custom: str | None) -> list[str]:
-    if universe == "Custom":
-        raw = custom or ""
-        return [t.strip().upper() for t in raw.split(",") if t.strip()]
+    # If user typed anything in the custom field, always use it (overrides dropdown)
+    if custom and custom.strip():
+        return [t.strip().upper() for t in custom.split(",") if t.strip()]
     return _UNIVERSE_TICKERS.get(universe, [])
 
 
-def _fetch_ic_strikes(ticker: str, api_key: str, spot: float, adx_ok: bool) -> dict | None:
-    """Fetch real options chain for ticker and return IC strike data. Returns None on failure."""
+def _fetch_ic_strikes(ticker: str, api_key: str, spot: float, adx_ok: bool) -> tuple[dict | None, str | None]:
+    """Fetch real options chain for ticker and return (chain_dict, err_str). chain is None on failure."""
     from engine.screener import _get_options_chain, _find_strike, _get_chain_mid
     target_delta = 0.16 if adx_ok else 0.10
     wing_pct     = 0.05
 
     exp_chain, best_exp, dte_used, err = _get_options_chain(ticker, api_key, spot)
-    if err or exp_chain is None or exp_chain.empty:
-        return None
+    if err:
+        return None, err
+    if exp_chain is None or exp_chain.empty:
+        return None, "Polygon returned no contracts in the 30–60 DTE window"
 
     calls = exp_chain[exp_chain["type"].str.lower() == "call"].sort_values("strike")
     puts  = exp_chain[exp_chain["type"].str.lower() == "put"].sort_values("strike", ascending=False)
@@ -1487,23 +1698,28 @@ def _fetch_ic_strikes(ticker: str, api_key: str, spot: float, adx_ok: bool) -> d
     short_call_k, short_call_mid = _find_strike(calls, "call", spot, target_delta)
     short_put_k,  short_put_mid  = _find_strike(puts,  "put",  spot, target_delta)
     if short_call_k is None or short_put_k is None:
-        return None
+        n_calls = len(calls); n_puts = len(puts)
+        return None, f"Could not find {target_delta:.0%}-delta strikes (chain had {n_calls} calls, {n_puts} puts in window)"
 
     wing_w = round(spot * wing_pct, 0)
 
-    # Long call wing must be ABOVE short call (further OTM). Filter to calls > short_call_k.
+    # Long call wing must be ABOVE short call (further OTM).
     calls_above = calls[calls["strike"] > short_call_k]
     if calls_above.empty:
-        return None
+        return None, f"No call strikes above short call ${short_call_k:.0f} — chain too narrow"
     long_call_mid, long_call_k = _get_chain_mid(calls_above, short_call_k + wing_w,
                                                  exclude_strike=short_call_k)
+    if long_call_k <= short_call_k:
+        return None, f"Call wing ${long_call_k:.0f} ≤ short call ${short_call_k:.0f} — invalid spread"
 
-    # Long put wing must be BELOW short put (further OTM). Filter to puts < short_put_k.
+    # Long put wing must be BELOW short put (further OTM).
     puts_below = puts[puts["strike"] < short_put_k]
     if puts_below.empty:
-        return None
+        return None, f"No put strikes below short put ${short_put_k:.0f} — chain too narrow"
     long_put_mid, long_put_k = _get_chain_mid(puts_below, short_put_k - wing_w,
                                                exclude_strike=short_put_k)
+    if long_put_k >= short_put_k:
+        return None, f"Put wing ${long_put_k:.0f} ≥ short put ${short_put_k:.0f} — invalid spread"
 
     def _m(v): return v if v is not None else 0.0
 
@@ -1526,7 +1742,7 @@ def _fetch_ic_strikes(ticker: str, api_key: str, spot: float, adx_ok: bool) -> d
         "best_exp":       best_exp,
         "dte_used":       dte_used,
         "target_delta":   target_delta,
-    }
+    }, None
 
 
 def _build_ic_payoff_fig(spot, short_call_k, long_call_k, short_put_k, long_put_k,
@@ -1643,7 +1859,7 @@ def _status_pill_row(rows: list[dict]) -> html.Div:
 # ── Format display rows ───────────────────────────────────────────────────────
 
 def _display_row_ic(r: dict) -> dict:
-    status = "Trade-Ready" if r.get("all_pass") else (
+    status = "Trade-Ready" if (r.get("all_pass") and r.get("_chain")) else (
         "Partial" if r.get("n_pass", 0) > 0 else "Blocked"
     )
     return {
@@ -1661,8 +1877,9 @@ def _display_row_ic(r: dict) -> dict:
         "Status":      status,
         "all_pass":    r.get("all_pass", False),
         "n_pass":      r.get("n_pass", 0),
-        "_chain":      r.get("_chain"),        # real strikes dict or None
-        "_atm_iv_raw": r.get("ATM IV"),        # raw float for BS calc
+        "_chain":      r.get("_chain"),          # real strikes dict or None
+        "_chain_err":  r.get("_chain_err"),     # error string if chain fetch failed
+        "_atm_iv_raw": r.get("ATM IV"),         # raw float for BS calc
     }
 
 
@@ -1749,9 +1966,114 @@ def _display_row_gex(r: dict) -> dict:
     }
 
 
+def _display_row_bwb(r: dict) -> dict:
+    status = "Trade-Ready" if r.get("all_pass") else (
+        "Partial" if r.get("n_pass", 0) > 0 else "Blocked"
+    )
+    return {
+        "Ticker":       r.get("Ticker", ""),
+        "Price":        round(r.get("Price", 0), 2),
+        "ATM IV":       _fmt_pct(r.get("ATM IV")),
+        "IVR":          _fmt_pct(r.get("IVR")),
+        "VIX":          round(r.get("VIX", 0), 2),
+        "ADX":          round(r.get("ADX", 0), 1),
+        "Narrow Wing":  _fmt2(r.get("Narrow Wing")),
+        "Wide Wing":    _fmt2(r.get("Wide Wing")),
+        "Score":        round(r.get("score", 0), 1),
+        "Status":       status,
+        "all_pass":     r.get("all_pass", False),
+        "n_pass":       r.get("n_pass", 0),
+    }
+
+
+def _display_row_cal(r: dict) -> dict:
+    status = "Trade-Ready" if r.get("all_pass") else (
+        "Partial" if r.get("n_pass", 0) > 0 else "Blocked"
+    )
+    return {
+        "Ticker":   r.get("Ticker", ""),
+        "Price":    round(r.get("Price", 0), 2),
+        "ATM IV":   _fmt_pct(r.get("ATM IV")),
+        "HV20":     _fmt_pct(r.get("HV20")),
+        "VRP":      _fmt_pct(r.get("VRP")),
+        "IVR":      _fmt_pct(r.get("IVR")),
+        "VIX":      round(r.get("VIX", 0), 2),
+        "ADX":      round(r.get("ADX", 0), 1),
+        "Score":    round(r.get("score", 0), 1),
+        "Status":   status,
+        "all_pass": r.get("all_pass", False),
+        "n_pass":   r.get("n_pass", 0),
+    }
+
+
+def _display_row_earn(r: dict) -> dict:
+    status = "Trade-Ready" if r.get("all_pass") else (
+        "Partial" if r.get("n_pass", 0) > 0 else "Blocked"
+    )
+    dte = r.get("Days to Earnings")
+    return {
+        "Ticker":           r.get("Ticker", ""),
+        "Price":            round(r.get("Price", 0), 2),
+        "ATM IV":           _fmt_pct(r.get("ATM IV")),
+        "IVR":              _fmt_pct(r.get("IVR")),
+        "Days to Earnings": str(dte) if dte is not None else "—",
+        "Impl. Move":       _fmt_pct(r.get("Impl. Move")),
+        "Straddle Credit":  _fmt_price(r.get("Straddle Credit")),
+        "VIX":              round(r.get("VIX", 0), 2),
+        "Score":            round(r.get("score", 0), 1),
+        "Status":           status,
+        "all_pass":         r.get("all_pass", False),
+        "n_pass":           r.get("n_pass", 0),
+    }
+
+
+def _display_row_wheel(r: dict) -> dict:
+    status = "Trade-Ready" if r.get("all_pass") else (
+        "Partial" if r.get("n_pass", 0) > 0 else "Blocked"
+    )
+    return {
+        "Ticker":     r.get("Ticker", ""),
+        "Price":      round(r.get("Price", 0), 2),
+        "MA50":       _fmt2(r.get("MA50")),
+        "ATM IV":     _fmt_pct(r.get("ATM IV")),
+        "IVR":        _fmt_pct(r.get("IVR")),
+        "VIX":        round(r.get("VIX", 0), 2),
+        "ADX":        round(r.get("ADX", 0), 1),
+        "Put Strike": _fmt2(r.get("Put Strike")),
+        "~Premium":   _fmt_price(r.get("~Premium")),
+        "Score":      round(r.get("score", 0), 1),
+        "Status":     status,
+        "all_pass":   r.get("all_pass", False),
+        "n_pass":     r.get("n_pass", 0),
+    }
+
+
+def _display_row_bps(r: dict) -> dict:
+    status = "Trade-Ready" if r.get("all_pass") else (
+        "Partial" if r.get("n_pass", 0) > 0 else "Blocked"
+    )
+    return {
+        "Ticker":       r.get("Ticker", ""),
+        "Price":        round(r.get("Price", 0), 2),
+        "MA50":         _fmt2(r.get("MA50")),
+        "ATM IV":       _fmt_pct(r.get("ATM IV")),
+        "IVR":          _fmt_pct(r.get("IVR")),
+        "Short Strike": _fmt2(r.get("Short Strike")),
+        "Long Strike":  _fmt2(r.get("Long Strike")),
+        "Width":        _fmt2(r.get("Width")),
+        "~Credit":      _fmt_price(r.get("~Credit")),
+        "Credit/Width": _fmt2(r.get("Credit/Width")),
+        "Score":        round(r.get("score", 0), 1),
+        "Status":       status,
+        "all_pass":     r.get("all_pass", False),
+        "n_pass":       r.get("n_pass", 0),
+    }
+
+
 # ── Core scan logic ───────────────────────────────────────────────────────────
 
-def _run_scan(slug: str, universe: str, custom: str | None, api_key: str):
+def _run_scan(slug: str, universe: str, custom: str | None, api_key: str,
+              param_overrides: dict | None = None):
     """
     Returns (row_data, status_children, vix_banner_children) or raises.
     All error handling is done by callers via try/except.
@@ -1762,6 +2084,11 @@ def _run_scan(slug: str, universe: str, custom: str | None, api_key: str):
         _score_ivr_credit_spread,
         _score_vol_arbitrage,
         _score_gex_positioning,
+        _score_broken_wing_butterfly,
+        _score_calendar_spread,
+        _score_earnings_straddle,
+        _score_wheel_strategy,
+        _score_bull_put_spread,
         _DEFAULT_PARAMS,
     )
 
@@ -1770,7 +2097,7 @@ def _run_scan(slug: str, universe: str, custom: str | None, api_key: str):
         return [], html.P("No tickers in universe.", style={"color": T.WARNING}), html.Div()
 
     vix_series, price_dfs, iv_all = _fetch_data(tickers, api_key)
-    params = _DEFAULT_PARAMS.get(slug, {})
+    params = {**_DEFAULT_PARAMS.get(slug, {}), **(param_overrides or {})}
 
     raw_rows: list[dict] = []
 
@@ -1787,12 +2114,13 @@ def _run_scan(slug: str, universe: str, custom: str | None, api_key: str):
             )
             if r:
                 # Fetch real options chain for real strikes
-                chain = _fetch_ic_strikes(
+                chain, chain_err = _fetch_ic_strikes(
                     ticker, api_key,
                     spot=r["Price"],
                     adx_ok=r.get("adx_ok", True),
                 )
-                r["_chain"] = chain
+                r["_chain"]     = chain
+                r["_chain_err"] = chain_err
                 raw_rows.append(r)
 
     elif slug == "vix_spike_fade":
@@ -1838,14 +2166,80 @@ def _run_scan(slug: str, universe: str, custom: str | None, api_key: str):
             params={},
         )
 
+    elif slug == "broken_wing_butterfly":
+        for ticker in price_dfs:
+            r = _score_broken_wing_butterfly(
+                ticker,
+                price_dfs[ticker],
+                vix_series,
+                iv_all.get(ticker, {}),
+                params,
+            )
+            if r:
+                raw_rows.append(r)
+
+    elif slug == "calendar_spread":
+        for ticker in price_dfs:
+            r = _score_calendar_spread(
+                ticker,
+                price_dfs[ticker],
+                vix_series,
+                iv_all.get(ticker, {}),
+                params,
+            )
+            if r:
+                raw_rows.append(r)
+
+    elif slug == "earnings_straddle":
+        for ticker in price_dfs:
+            r = _score_earnings_straddle(
+                ticker,
+                price_dfs[ticker],
+                vix_series,
+                iv_all.get(ticker, {}),
+                params,
+                days_to_earnings=None,   # live days-to-earnings not yet wired
+            )
+            if r:
+                raw_rows.append(r)
+
+    elif slug == "wheel_strategy":
+        for ticker in price_dfs:
+            r = _score_wheel_strategy(
+                ticker,
+                price_dfs[ticker],
+                vix_series,
+                iv_all.get(ticker, {}),
+                params,
+            )
+            if r:
+                raw_rows.append(r)
+
+    elif slug == "bull_put_spread":
+        for ticker in price_dfs:
+            r = _score_bull_put_spread(
+                ticker,
+                price_dfs[ticker],
+                vix_series,
+                iv_all.get(ticker, {}),
+                params,
+            )
+            if r:
+                raw_rows.append(r)
+
     # Format rows for AG Grid
     fmt_map = {
-        "iron_condor_rules": _display_row_ic,
-        "iron_condor_ai":    _display_row_ic,
-        "vix_spike_fade":    _display_row_vsf,
-        "ivr_credit_spread": _display_row_ivr,
-        "vol_arbitrage":     _display_row_va,
-        "gex_positioning":   _display_row_gex,
+        "iron_condor_rules":    _display_row_ic,
+        "iron_condor_ai":       _display_row_ic,
+        "vix_spike_fade":       _display_row_vsf,
+        "ivr_credit_spread":    _display_row_ivr,
+        "vol_arbitrage":        _display_row_va,
+        "gex_positioning":      _display_row_gex,
+        "broken_wing_butterfly": _display_row_bwb,
+        "calendar_spread":      _display_row_cal,
+        "earnings_straddle":    _display_row_earn,
+        "wheel_strategy":       _display_row_wheel,
+        "bull_put_spread":      _display_row_bps,
     }
     fmt_fn = fmt_map.get(slug, _display_row_ic)
     display_rows = [fmt_fn(r) for r in raw_rows]
@@ -1889,6 +2283,8 @@ def _make_scan_callback(slug: str):
     scan_id      = f"str-{slug}-scan-btn"
     universe_id  = f"str-{slug}-universe"
     custom_id    = f"str-{slug}-custom"
+    params_spec  = _SCREENER_PARAMS.get(slug, [])
+    param_ids    = [{"type": f"str-{slug}-param", "index": p["id"]} for p in params_spec]
 
     @callback(
         Output(grid_id,   "rowData"),
@@ -1897,9 +2293,12 @@ def _make_scan_callback(slug: str):
         Input(scan_id,    "n_clicks"),
         State(universe_id, "value"),
         State(custom_id,   "value"),
+        *([State({"type": f"str-{slug}-param", "index": ALL}, "value")] if params_spec else []),
         prevent_initial_call=True,
     )
-    def _scan(n_clicks, universe, custom):
+    def _scan(n_clicks, universe, custom, *args):
+        param_vals = args[0] if args else []
+        overrides  = {p["id"]: v for p, v in zip(params_spec, param_vals) if v is not None}
         api_key = get_polygon_api_key()
         if not api_key:
             msg = html.P(
@@ -1909,15 +2308,41 @@ def _make_scan_callback(slug: str):
             return no_update, msg, no_update
 
         try:
-            rows, status_div, vix_div = _run_scan(slug, universe or "ETF Core", custom, api_key)
+            rows, status_div, vix_div = _run_scan(slug, universe or "ETF Core", custom, api_key,
+                                                   param_overrides=overrides)
             return rows, status_div, vix_div
         except Exception as exc:
             logger.exception(f"Scan error for {slug}: {exc}")
             err = html.P(f"Scan error: {exc}", style={"color": T.DANGER, "fontSize": "13px"})
             return [], err, no_update
 
-    # Give the function a unique name so Dash doesn't complain about duplicates
     _scan.__name__ = f"_scan_{slug}"
+
+    # Filter toggle
+    if params_spec:
+        filter_tog = f"str-{slug}-filter-toggle"
+        filter_col = f"str-{slug}-filter-collapse"
+        reset_id   = f"str-{slug}-param-reset"
+
+        @callback(
+            Output(filter_col, "is_open"),
+            Input(filter_tog,  "n_clicks"),
+            State(filter_col,  "is_open"),
+            prevent_initial_call=True,
+        )
+        def _toggle_filters(n, is_open):
+            return not is_open
+        _toggle_filters.__name__ = f"_toggle_filters_{slug}"
+
+        @callback(
+            Output({"type": f"str-{slug}-param", "index": ALL}, "value"),
+            Input(reset_id, "n_clicks"),
+            prevent_initial_call=True,
+        )
+        def _reset_params(_):
+            return [p["default"] for p in params_spec]
+        _reset_params.__name__ = f"_reset_params_{slug}"
+
     return _scan
 
 
@@ -2304,27 +2729,33 @@ for _slug in [s["value"] for s in _STRATEGIES]:
 def _make_ic_chart_callback(slug: str):
     grid_id = f"str-{slug}-grid"
 
-    # Step 1: row selected → open modal immediately + store row data
+    # Step 1: row clicked → open modal immediately + store row data
     @callback(
-        Output("str-ic-modal",      "is_open",  allow_duplicate=True),
-        Output("str-ic-modal-title","children", allow_duplicate=True),
-        Output("str-ic-row-store",  "data",     allow_duplicate=True),
-        Input(grid_id, "selectedRows"),
+        Output("str-ic-modal",       "is_open",  allow_duplicate=True),
+        Output("str-ic-modal-title", "children", allow_duplicate=True),
+        Output("str-ic-row-store",   "data",     allow_duplicate=True),
+        Output("str-ic-paper-btn",   "disabled", allow_duplicate=True),
+        Input(grid_id,  "cellClicked"),
+        State(grid_id,  "virtualRowData"),
         prevent_initial_call=True,
     )
-    def _open_modal(selected_rows):
-        if not selected_rows:
-            return no_update, no_update, no_update
-        row = selected_rows[0]
+    def _open_modal(cell_clicked, virtual_row_data):
+        if not cell_clicked or not virtual_row_data:
+            return no_update, no_update, no_update, no_update
+        row_index = cell_clicked.get("rowIndex")
+        if row_index is None or row_index >= len(virtual_row_data):
+            return no_update, no_update, no_update, no_update
+        row = virtual_row_data[row_index]
         if not row:
-            return no_update, no_update, no_update
+            return no_update, no_update, no_update, no_update
         row = {**row, "_slug": slug}   # tag the strategy slug for paper trade
         ticker = row.get("Ticker", "")
         chain  = row.get("_chain")
         title  = (f"{ticker} Iron Condor  ·  {chain['best_exp']} ({chain['dte_used']} DTE)  ·  "
-                  f"~{chain['target_delta']:.0%}-delta  ·  Net credit ${chain['net_credit']*100:.0f}/contract"
+                  f"~{chain['target_delta']:.0%}-delta  ·  Net credit ${chain['net_credit']*100:.2f}"
                   if chain else ticker)
-        return True, title, row
+        # Disable Paper Trade immediately; Step 2 re-enables only when chain is valid
+        return True, title, row, True
 
     _open_modal.__name__ = f"_open_modal_{slug}"
     return _open_modal
@@ -2332,22 +2763,23 @@ def _make_ic_chart_callback(slug: str):
 
 # Step 2: store change → build and populate modal body (runs after modal is open)
 @callback(
-    Output("str-ic-modal-body", "children"),
+    Output("str-ic-modal-body",  "children"),
+    Output("str-ic-paper-btn",   "disabled"),
     Input("str-ic-row-store", "data"),
     prevent_initial_call=True,
 )
 def _build_modal_body(row):
     if not row:
-        return no_update
+        return no_update, no_update
     ticker = row.get("Ticker", "")
     chain  = row.get("_chain")
 
     if not chain:
+        err_detail = row.get("_chain_err") or "Polygon returned no data for the 30–60 DTE window"
         return dbc.Alert(
-            f"No options chain data for {ticker} "
-            "(Polygon returned no data for the 30–60 DTE window).",
+            [html.Strong(f"{ticker}: "), err_detail],
             color="warning",
-        )
+        ), True
 
     spot          = row.get("Price", 0)
     atm_iv        = row.get("_atm_iv_raw") or 0.25
@@ -2373,10 +2805,10 @@ def _build_modal_body(row):
                       for k in ["short_call_mid", "short_put_mid",
                                 "long_call_mid",  "long_put_mid"])
     metrics = html.Div([
-        _mc("Net Credit",   f"${nc100:.0f}/contract" if _has_prices else "— (no quotes)",
+        _mc("Net Credit",   f"${nc100:.2f}" if _has_prices else "— (no quotes)",
             T.SUCCESS if net_credit > 0 else (T.WARNING if not _has_prices else T.DANGER)),
-        _mc("Max Loss",     f"${ml100:.0f}/contract" if _has_prices else "—", T.DANGER),
-        _mc("50% Target",   f"${pt100:.0f}/contract" if _has_prices else "—", T.SUCCESS),
+        _mc("Max Loss",     f"-${ml100:.2f}" if _has_prices else "—", T.DANGER),
+        _mc("50% Target",   f"${pt100:.2f}" if _has_prices else "—", T.SUCCESS),
         _mc("Upper BE",     f"${be_upper:.2f}"),
         _mc("Lower BE",     f"${be_lower:.2f}"),
         _mc("Expiry",       f"{chain['best_exp']} ({chain['dte_used']} DTE)"),
@@ -2390,7 +2822,7 @@ def _build_modal_body(row):
         if not mid or mid == 0:
             return "—"
         val = mid * 100 * (1 if action == "SELL" else -1)
-        return f"+${val:.0f}" if val >= 0 else f"-${abs(val):.0f}"
+        return f"+${val:.2f}" if val >= 0 else f"-${abs(val):.2f}"
 
     net_cash = net_credit * 100
     leg_rows = [
@@ -2407,7 +2839,7 @@ def _build_modal_body(row):
          "Mid": _fmt_mid(chain['long_put_mid']), "Action": "BUY",
          "$/Contract": _cash(chain['long_put_mid'], "BUY")},
         {"Leg": "NET CREDIT", "Strike": "", "Mid": "", "Action": "",
-         "$/Contract": (f"+${net_cash:.0f}" if net_cash >= 0 else f"-${abs(net_cash):.0f}")
+         "$/Contract": (f"+${net_cash:.2f}" if net_cash >= 0 else f"-${abs(net_cash):.2f}")
                        if _has_prices else "—"},
     ]
     leg_table = dag.AgGrid(
@@ -2421,7 +2853,7 @@ def _build_modal_body(row):
             {"field": "Action",     "width": 150,
              "cellStyle": {"function": "params.data.Leg === 'NET CREDIT' ? {'borderTop':'1px solid #374151'} : {}"}},
             {"field": "$/Contract", "flex": 1, "minWidth": 150,
-             "cellStyle": {"function": "params.data.Leg === 'NET CREDIT' ? {'fontWeight':'700','borderTop':'1px solid #374151','color': params.value.startsWith('+') ? '#10b981' : '#ef4444'} : params.value.startsWith('+') ? {'color':'#10b981','fontWeight':'600'} : {'color':'#ef4444','fontWeight':'600'}"}},
+             "cellStyle": {"function": "(() => { const v = params.value; const base = params.data.Leg === 'NET CREDIT' ? {'fontWeight':'700','borderTop':'1px solid #374151'} : {'fontWeight':'600'}; if (v === '—') return base; return {...base, color: v.startsWith('+') ? '#10b981' : '#ef4444'}; })()"}},
         ],
         rowData=leg_rows,
         defaultColDef={"resizable": True},
@@ -2447,7 +2879,7 @@ def _build_modal_body(row):
             "Green dashed = 50% profit target · Red dashed = 2× stop",
             style={"color": T.TEXT_MUTED, "fontSize": "11px", "marginTop": "8px"},
         ),
-    ])
+    ]), False
 
 
 for _slug in ("iron_condor_rules", "iron_condor_ai"):
@@ -2495,6 +2927,48 @@ def _paper_trade_ic(n_clicks, row, contracts):
         return html.Span(f"Error: {e}", style={"color": T.DANGER})
 
 
+# ── Paper Trade callback for signal-modal strategies ──────────────────────────
+
+@callback(
+    Output("str-sig-paper-feedback", "children"),
+    Input("str-sig-paper-btn", "n_clicks"),
+    State("str-sig-row-store", "data"),
+    State("str-sig-contracts", "value"),
+    prevent_initial_call=True,
+)
+def _paper_trade_sig(n_clicks, row, contracts):
+    if not n_clicks or not row:
+        return no_update
+    ticker  = row.get("Ticker", "")
+    slug    = row.get("_slug", "")
+    label   = _SLUG_TO_LABEL.get(slug, slug)
+    status  = row.get("Status", "")
+    n       = int(contracts or 1)
+    try:
+        from engine.positions import insert_generic_paper_trade
+        from db.client import get_engine
+        engine = get_engine()
+        # Build a summary of the key trade parameters
+        details = {k: v for k, v in row.items()
+                   if k not in ("_slug", "all_pass", "n_pass") and v not in (None, "—", "")}
+        err = insert_generic_paper_trade(
+            engine=engine,
+            account_id=1,
+            ticker=ticker,
+            strategy_name=label,
+            contracts=n,
+            details=details,
+        )
+        if err:
+            return html.Span(f"Error: {err}", style={"color": T.DANGER, "fontSize": "12px"})
+        return html.Span(
+            f"✓ {ticker} {label} saved ({n} contract(s))",
+            style={"color": T.SUCCESS, "fontSize": "12px"},
+        )
+    except Exception as e:
+        return html.Span(f"Error: {e}", style={"color": T.DANGER, "fontSize": "12px"})
+
+
 # ── Signal detail modal for VSF / IVR / VA / GEX ─────────────────────────────
 
 def _make_signal_callback(slug: str):
@@ -2504,13 +2978,20 @@ def _make_signal_callback(slug: str):
         Output("str-sig-modal",       "is_open",  allow_duplicate=True),
         Output("str-sig-modal-title", "children", allow_duplicate=True),
         Output("str-sig-row-store",   "data",     allow_duplicate=True),
-        Input(grid_id, "selectedRows"),
+        Input(grid_id,  "cellClicked"),
+        State(grid_id,  "virtualRowData"),
         prevent_initial_call=True,
     )
-    def _open_sig_modal(selected_rows):
-        if not selected_rows:
+    def _open_sig_modal(cell_clicked, virtual_row_data):
+        if not cell_clicked or not virtual_row_data:
             return no_update, no_update, no_update
-        row    = {**selected_rows[0], "_slug": slug}
+        row_index = cell_clicked.get("rowIndex")
+        if row_index is None or row_index >= len(virtual_row_data):
+            return no_update, no_update, no_update
+        row = virtual_row_data[row_index]
+        if not row:
+            return no_update, no_update, no_update
+        row    = {**row, "_slug": slug}
         ticker = row.get("Ticker", "")
         label  = _SLUG_TO_LABEL.get(slug, slug)
         score  = row.get("Score", "")
@@ -2519,6 +3000,63 @@ def _make_signal_callback(slug: str):
 
     _open_sig_modal.__name__ = f"_open_sig_modal_{slug}"
     return _open_sig_modal
+
+
+def _sig_chart(spots, pnl, spot_price, ticker, title, max_loss, max_profit, target,
+               stop_level=None):
+    """Reusable P&L-at-expiry chart for signal modals.
+    stop_level: explicit stop P&L line (e.g. -2×credit). Defaults to max_loss if None."""
+    if stop_level is None:
+        stop_level = max_loss
+    be_prices = []
+    for i in range(1, len(spots)):
+        if pnl[i-1] * pnl[i] <= 0:
+            be_prices.append(float(spots[i]))
+
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(
+        x=list(spots), y=pnl,
+        mode="lines", name="P&L at expiry",
+        line={"color": "#818cf8", "width": 2},
+        fill="tozeroy",
+        fillcolor="rgba(129,140,248,0.08)",
+    ))
+    # Colour the loss zone red
+    fig.add_trace(go.Scatter(
+        x=list(spots), y=[min(p, 0) for p in pnl],
+        mode="lines", name="Loss zone",
+        line={"width": 0},
+        fill="tozeroy",
+        fillcolor="rgba(239,68,68,0.12)",
+        showlegend=False,
+    ))
+    # Reference lines
+    fig.add_hline(y=0,      line_dash="solid", line_color="rgba(255,255,255,0.15)", line_width=1)
+    fig.add_hline(y=target, line_dash="dash",  line_color="#10b981", line_width=1.5,
+                  annotation_text=f"50% target: {target:+.0f}",
+                  annotation_font_color="#10b981", annotation_font_size=11)
+    fig.add_hline(y=stop_level, line_dash="dash", line_color="#ef4444", line_width=1.5,
+                  annotation_text=f"2× stop: {stop_level:+.0f}",
+                  annotation_font_color="#ef4444", annotation_font_size=11)
+    fig.add_vline(x=spot_price, line_dash="dash", line_color="#f59e0b", line_width=1.5,
+                  annotation_text=f"Spot ${spot_price:.0f}",
+                  annotation_font_color="#f59e0b", annotation_font_size=11)
+    for be in be_prices:
+        fig.add_vline(x=be, line_dash="dot", line_color="rgba(255,255,255,0.4)", line_width=1,
+                      annotation_text=f"BE ${be:.0f}",
+                      annotation_font_color="rgba(255,255,255,0.6)", annotation_font_size=10)
+    fig.update_layout(
+        title={"text": f"{ticker} {title}", "font": {"size": 13, "color": "#e2e8f0"}, "x": 0.01},
+        paper_bgcolor="#1e293b", plot_bgcolor="#1e293b",
+        font={"color": "#94a3b8"},
+        margin={"l": 50, "r": 20, "t": 40, "b": 40},
+        height=320,
+        xaxis={"title": "Underlying Price", "gridcolor": "#334155", "tickprefix": "$"},
+        yaxis={"title": "P&L per Contract ($)", "gridcolor": "#334155", "tickprefix": "$"},
+        showlegend=False,
+    )
+    return dcc.Graph(figure=fig, config={"displayModeBar": False},
+                     style={"marginTop": "14px"})
 
 
 @callback(
@@ -2552,6 +3090,8 @@ def _build_signal_body(row):
                                "flexWrap": "wrap", "marginBottom": "14px"})
 
     # ── Strategy-specific content ─────────────────────────────────────────────
+    chart = html.Div()   # default: no chart; overridden by strategies that have P&L graphs
+
     if slug == "vix_spike_fade":
         vix     = row.get("VIX", "—")
         vix20   = row.get("VIX 20d avg", "—")
@@ -2616,6 +3156,209 @@ def _build_signal_body(row):
             _mc("Status", status, status_color),
         )
 
+    elif slug == "broken_wing_butterfly":
+        atm_iv   = row.get("ATM IV", "—")
+        ivr      = row.get("IVR", "—")
+        vix      = row.get("VIX", "—")
+        adx      = row.get("ADX", "—")
+        narrow_w = row.get("Narrow Wing", "—")
+        wide_w   = row.get("Wide Wing", "—")
+        price    = float(str(row.get("Price", 0)) or 0)
+        try:
+            nw = float(str(narrow_w) or 0)
+            ww = float(str(wide_w)   or 0)
+        except Exception:
+            nw = ww = 0
+        signal  = ("Net-credit BWB entry — IVR low, range-bound. Pin at body for max profit."
+                   if status == "Trade-Ready" else "Conditions not fully met — monitor")
+        metrics = _row(
+            _mc("ATM IV",     str(atm_iv)),
+            _mc("IVR",        str(ivr)),
+            _mc("VIX",        str(vix)),
+            _mc("ADX",        str(adx)),
+            _mc("Narrow Wing",str(narrow_w)),
+            _mc("Wide Wing",  str(wide_w)),
+            _mc("Status",     status, status_color),
+        )
+        # P&L chart: call BWB — buy body-5%, sell 2× body, buy 2× body+10%
+        chart = html.Div()
+        if price > 0 and nw > 0 and ww > 0:
+            body_k   = round(price * 1.005 / nw) * nw
+            long1_k  = body_k - nw         # lower long call
+            short_k  = body_k              # short 2× call
+            long2_k  = body_k + ww         # upper wide long call
+            credit   = 0.20 + price * 0.015 * 0.1   # rough credit proxy
+            spots    = np.linspace(price * 0.75, price * 1.30, 300)
+            def _bwb_pnl(s):
+                c1 = max(0, s - long1_k)   # long lower call
+                c2 = -2 * max(0, s - short_k)  # short 2× body
+                c3 = 2 * max(0, s - long2_k)   # long 2× wide
+                return (c1 + c2 + c3 + credit) * 100
+            pnl = [_bwb_pnl(s) for s in spots]
+            max_profit = max(pnl)
+            chart = _sig_chart(spots, pnl, price, ticker, "Broken Wing Butterfly",
+                               credit * 100, max_profit, 0.75 * max_profit)
+
+    elif slug == "calendar_spread":
+        atm_iv = row.get("ATM IV", "—")
+        hv20   = row.get("HV20", "—")
+        vrp    = row.get("VRP", "—")
+        ivr    = row.get("IVR", "—")
+        vix    = row.get("VIX", "—")
+        adx    = row.get("ADX", "—")
+        signal = ("Sell front-month, buy back-month — VRP positive, range-bound."
+                  if status == "Trade-Ready" else "Conditions not fully met — monitor")
+        metrics = _row(
+            _mc("ATM IV", str(atm_iv)),
+            _mc("HV20",   str(hv20)),
+            _mc("VRP",    str(vrp),  T.SUCCESS if vrp not in ("—", None) else T.TEXT_MUTED),
+            _mc("IVR",    str(ivr)),
+            _mc("VIX",    str(vix)),
+            _mc("ADX",    str(adx)),
+            _mc("Status", status, status_color),
+        )
+        # Calendar spread P&L is IV-dependent; show a tent-shaped approximation
+        price = float(str(row.get("Price", 0)) or 0)
+        chart = html.Div()
+        if price > 0:
+            try:
+                iv_f = float(str(atm_iv).rstrip("%")) / 100 if "%" in str(atm_iv) else float(str(atm_iv) or 0.25)
+            except Exception:
+                iv_f = 0.25
+            debit   = price * iv_f * (25 / 252) ** 0.5 * 0.3   # rough debit
+            spots   = np.linspace(price * 0.85, price * 1.15, 300)
+            def _cal_pnl(s):
+                dist = abs(s - price) / price
+                return (debit * max(0, 1 - dist / (iv_f * 0.5)) - debit * 0.3) * 100
+            pnl = [_cal_pnl(s) for s in spots]
+            chart = _sig_chart(spots, pnl, price, ticker, "Calendar Spread",
+                               -debit * 100, debit * 0.7 * 100, debit * 0.3 * 100)
+
+    elif slug == "earnings_straddle":
+        atm_iv  = row.get("ATM IV", "—")
+        ivr     = row.get("IVR", "—")
+        dte_e   = row.get("Days to Earnings", "—")
+        impl_mv = row.get("Impl. Move", "—")
+        credit  = row.get("Straddle Credit", "—")
+        price   = float(str(row.get("Price", 0)) or 0)
+        try:
+            _cred_ps = float(str(credit).lstrip("$") or 0)
+            credit_display = f"${_cred_ps * 100:.0f} / contract"
+        except Exception:
+            credit_display = str(credit)
+        signal  = (f"Sell ATM straddle — earnings in {dte_e} days, IV crush expected post-event."
+                   if status == "Trade-Ready" else "Outside earnings window or IV too low — monitor")
+        metrics = _row(
+            _mc("ATM IV",          str(atm_iv)),
+            _mc("IVR",             str(ivr),   T.SUCCESS if status == "Trade-Ready" else T.TEXT_MUTED),
+            _mc("Days to Earnings",str(dte_e)),
+            _mc("Impl. Move",      str(impl_mv)),
+            _mc("Straddle Credit", credit_display),
+            _mc("Status",          status, status_color),
+        )
+        chart = html.Div()
+        if price > 0:
+            try:
+                cred_f = float(str(credit).lstrip("$") or 0)
+            except Exception:
+                cred_f = price * 0.05
+            spots = np.linspace(price * 0.75, price * 1.25, 300)
+            def _strad_pnl(s):
+                intrinsic = abs(s - price)
+                return (cred_f - intrinsic) * 100
+            pnl = [_strad_pnl(s) for s in spots]
+            chart = _sig_chart(spots, pnl, price, ticker, "Earnings Straddle (Sell)",
+                               -cred_f * 2 * 100, cred_f * 100, cred_f * 0.5 * 100,
+                               stop_level=-cred_f * 2 * 100)
+
+    elif slug == "wheel_strategy":
+        ma50    = row.get("MA50", "—")
+        atm_iv  = row.get("ATM IV", "—")
+        ivr     = row.get("IVR", "—")
+        put_k   = row.get("Put Strike", "—")
+        premium = row.get("~Premium", "—")
+        adx     = row.get("ADX", "—")
+        price   = float(str(row.get("Price", 0)) or 0)
+        try:
+            _prem_ps = float(str(premium).lstrip("$") or 0)
+            premium_display = f"${_prem_ps * 100:.0f} / contract"
+        except Exception:
+            premium_display = str(premium)
+        signal  = (f"Sell cash-secured put at {put_k} — IVR elevated, above MA50."
+                   if status == "Trade-Ready" else "Conditions not fully met — monitor")
+        metrics = _row(
+            _mc("ATM IV",    str(atm_iv)),
+            _mc("IVR",       str(ivr),     T.SUCCESS if status == "Trade-Ready" else T.TEXT_MUTED),
+            _mc("MA50",      str(ma50)),
+            _mc("Put Strike",str(put_k)),
+            _mc("~Premium",  premium_display, T.SUCCESS),
+            _mc("ADX",       str(adx)),
+            _mc("Status",    status, status_color),
+        )
+        chart = html.Div()
+        if price > 0:
+            try:
+                pk    = float(str(put_k) or price * 0.90)
+                prem  = float(str(premium).lstrip("$") or price * 0.02)
+            except Exception:
+                pk    = price * 0.90
+                prem  = price * 0.02
+            spots = np.linspace(price * 0.70, price * 1.15, 300)
+            def _wheel_pnl(s):
+                # Cash-secured put P&L at expiry
+                put_payoff = -max(0, pk - s)
+                return (prem + put_payoff) * 100
+            pnl = [_wheel_pnl(s) for s in spots]
+            chart = _sig_chart(spots, pnl, price, ticker, "Wheel — Cash-Secured Put",
+                               -(pk - prem) * 100, prem * 100, prem * 0.5 * 100,
+                               stop_level=-prem * 2 * 100)
+
+    elif slug == "bull_put_spread":
+        ma50    = row.get("MA50", "—")
+        atm_iv  = row.get("ATM IV", "—")
+        ivr     = row.get("IVR", "—")
+        short_k = row.get("Short Strike", "—")
+        long_k  = row.get("Long Strike", "—")
+        width   = row.get("Width", "—")
+        credit  = row.get("~Credit", "—")
+        cw_r    = row.get("Credit/Width", "—")
+        price   = float(str(row.get("Price", 0)) or 0)
+        try:
+            _cred_ps = float(str(credit).lstrip("$") or 0)
+            credit_display = f"${_cred_ps * 100:.0f} / contract"
+        except Exception:
+            credit_display = str(credit)
+        signal  = (f"Sell put spread {short_k}/{long_k} — bullish, IVR elevated, price above MA50."
+                   if status == "Trade-Ready" else "Conditions not fully met — monitor")
+        metrics = _row(
+            _mc("ATM IV",      str(atm_iv)),
+            _mc("IVR",         str(ivr),    T.SUCCESS if status == "Trade-Ready" else T.TEXT_MUTED),
+            _mc("MA50",        str(ma50)),
+            _mc("Short Strike",str(short_k)),
+            _mc("Long Strike", str(long_k)),
+            _mc("~Credit",     credit_display, T.SUCCESS),
+            _mc("Credit/Width",str(cw_r)),
+            _mc("Status",      status, status_color),
+        )
+        chart = html.Div()
+        if price > 0:
+            try:
+                sk   = float(str(short_k) or price * 0.92)
+                lk   = float(str(long_k)  or price * 0.87)
+                cred = float(str(credit).lstrip("$") or 1.0)
+                w    = sk - lk
+            except Exception:
+                sk = price * 0.92; lk = price * 0.87; cred = 1.0; w = sk - lk
+            spots = np.linspace(price * 0.75, price * 1.15, 300)
+            def _bps_pnl(s):
+                short_put = -max(0, sk - s)
+                long_put  =  max(0, lk - s)
+                return (cred + short_put + long_put) * 100
+            pnl = [_bps_pnl(s) for s in spots]
+            chart = _sig_chart(spots, pnl, price, ticker, "Bull Put Spread",
+                               -(w - cred) * 100, cred * 100, cred * 0.5 * 100,
+                               stop_level=-cred * 2 * 100)
+
     else:  # gex_positioning
         regime  = row.get("Regime", "—")
         sig     = row.get("Signal", "—")
@@ -2633,6 +3376,7 @@ def _build_signal_body(row):
             _mc("ATR%",       str(atr)),
             _mc("5d Return",  str(ret5d)),
         )
+        chart = html.Div()
 
     score_val = row.get("Score", 0)
     score_color = (T.SUCCESS if float(str(score_val) or 0) >= 70 else
@@ -2646,6 +3390,7 @@ def _build_signal_body(row):
                                       "marginBottom": "6px"}),
             html.Div(signal, style={"color": T.TEXT_PRIMARY, "fontSize": "13px"}),
         ], style={**T.STYLE_CARD, "marginBottom": "14px", "padding": "12px 16px"}),
+        chart,
         html.Div([
             html.Span("Score  ", style={"color": T.TEXT_MUTED, "fontSize": "12px"}),
             html.Span(str(score_val), style={"color": score_color,
@@ -2664,5 +3409,9 @@ def _dismiss_sig_modal(n):
     return False
 
 
-for _slug in ("vix_spike_fade", "ivr_credit_spread", "vol_arbitrage", "gex_positioning"):
+for _slug in (
+    "vix_spike_fade", "ivr_credit_spread", "vol_arbitrage", "gex_positioning",
+    "broken_wing_butterfly", "calendar_spread", "earnings_straddle",
+    "wheel_strategy", "bull_put_spread",
+):
     _make_signal_callback(_slug)
