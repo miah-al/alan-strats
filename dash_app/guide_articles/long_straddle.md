@@ -92,13 +92,15 @@ Historical-to-implied ratio: 1.41 / 1.06 = 1.33× → ABOVE threshold ✓
 
 **FOMC result (January 29):** Fed holds as expected, but Powell's language in the press conference signals fewer cuts than consensus expected for 2025. "Higher for longer" messaging, emphasis on inflation stickiness. SPY falls to $584 by 4pm — a 1.68% decline.
 
-| Date | SPY | Call Value | Put Value | Straddle | P&L |
-|---|---|---|---|---|---|
-| Jan 27 (entry) | $594.00 | $3.20 | $3.10 | $6.30 | $0 |
-| Jan 28 (pre-FOMC) | $592.50 | $2.90 | $3.60 | $6.50 | +$20 |
-| Jan 29 2:00pm | $590.00 | $2.15 | $5.85 | $8.00 | +$170 |
-| Jan 29 2:31pm (close) | $584.00 | $0.30 | $10.10 | $10.40 | **+$410** |
-| Jan 31 (expiry if held) | $582.50 | $0 | $11.50 | $11.50 | +$520 |
+```
+Date                     SPY      Call Value  Put Value  Straddle  P&L
+-----------------------  -------  ----------  ---------  --------  -----
+Jan 27 (entry)           $594.00  $3.20       $3.10      $6.30     $0
+Jan 28 (pre-FOMC)        $592.50  $2.90       $3.60      $6.50     +$20
+Jan 29 2:00pm            $590.00  $2.15       $5.85      $8.00     +$170
+Jan 29 2:31pm (close)    $584.00  $0.30       $10.10     $10.40    +$410
+Jan 31 (expiry if held)  $582.50  $0          $11.50     $11.50    +$520
+```
 
 **Immediate post-FOMC action at 2:31pm:** Close the straddle at $10.40. Do not hold through the weekend — theta decay and IV compression will reduce the remaining $11.50 intrinsic value opportunity while also eliminating extrinsic value that currently cushions the put side. **Realized profit: +$410 per contract (+65.1% on $630 cost in 2 days.**
 
@@ -106,18 +108,20 @@ Historical-to-implied ratio: 1.41 / 1.06 = 1.33× → ABOVE threshold ✓
 
 **Scenario table at various SPY levels at Jan 29 close:**
 
-| SPY at Jan 29 4pm | Call P&L | Put P&L | Straddle Value | Net P&L |
-|---|---|---|---|---|
-| $610 (+2.7%) | +$16.00 | $0 | $16.30 | **+$970** |
-| $605 (+1.9%) | +$11.00 | $0 | $11.35 | **+$505** |
-| $600 (+1.0%) | +$6.00 | $0 | $7.40 | **+$110** |
-| $600.30 (+1.1%) | +$6.30 | $0 | $7.95 | **+$165** |
-| $597 (+0.5%) | +$3.00 | $0.50 | $5.20 | **−$110** |
-| $594 (flat) | $3.00 | $3.00 | $5.20 | **−$110** |
-| $590 (−0.7%) | $0.60 | $5.00 | $7.25 | **+$95** |
-| $587.70 (−1.1%) | $0.20 | $6.50 | $8.08 | **$0** |
-| $584 (−1.7%) | $0.05 | $10.15 | $11.60 | **+$530** |
-| $580 (−2.4%) | $0.02 | $14.20 | $15.50 | **+$920** |
+```
+SPY at Jan 29 4pm  Call P&L  Put P&L  Straddle Value  Net P&L
+-----------------  --------  -------  --------------  -------
+$610 (+2.7%)       +$16.00   $0       $16.30          +$970
+$605 (+1.9%)       +$11.00   $0       $11.35          +$505
+$600 (+1.0%)       +$6.00    $0       $7.40           +$110
+$600.30 (+1.1%)    +$6.30    $0       $7.95           +$165
+$597 (+0.5%)       +$3.00    $0.50    $5.20           −$110
+$594 (flat)        $3.00     $3.00    $5.20           −$110
+$590 (−0.7%)       $0.60     $5.00    $7.25           +$95
+$587.70 (−1.1%)    $0.20     $6.50    $8.08           $0
+$584 (−1.7%)       $0.05     $10.15   $11.60          +$530
+$580 (−2.4%)       $0.02     $14.20   $15.50          +$920
+```
 
 ### Trade 2 — Earnings Straddle Win: NVDA Blowout Quarter
 
@@ -172,11 +176,13 @@ Historical FOMC moves at low VIX: 0.70% average — essentially no edge
 
 **March 19 result:** Fed holds as universally expected. Powell's press conference: "consistent with expectations... data-dependent going forward." No surprise language. SPY moves from $560.00 to $561.80 — a 0.32% gain. Within the straddle's break-even zone.
 
-| Date | SPY | Straddle Value | P&L | Notes |
-|---|---|---|---|---|
-| Mar 18 (entry) | $560.00 | $4.05 | $0 | At cost |
-| Mar 19 2:31pm (post-FOMC) | $561.80 | $2.40 | −$165 | Small move; IV collapsed |
-| Mar 21 (expiry) | $562.10 | $2.10 (put $0, call $2.10) | −$195 | Barely moved; loss |
+```
+Date                       SPY      Straddle Value              P&L    Notes
+-------------------------  -------  --------------------------  -----  ------------------------
+Mar 18 (entry)             $560.00  $4.05                       $0     At cost
+Mar 19 2:31pm (post-FOMC)  $561.80  $2.40                       −$165  Small move; IV collapsed
+Mar 21 (expiry)            $562.10  $2.10 (put $0, call $2.10)  −$195  Barely moved; loss
+```
 
 **Final result: −$195 per contract (−48% of premium).** The straddle expired nearly worthless. The low-VIX environment and highly anticipated outcome produced a muted event. The lesson: at VIX below 15, even FOMC straddles require exceptional historical-to-implied ratios to justify entry. This setup showed 0.72% implied vs 0.70% historical — essentially no edge.
 
@@ -208,21 +214,23 @@ RECOMMENDATION: Conditions support straddle entry. Close within 30 min post-even
 
 **SPY FOMC-day straddles, 2018–2025 (buy 1 DTE, close at 2:31pm EST):**
 
-| Metric | Value |
-|---|---|
-| Total events | 56 FOMC meetings |
-| Profitable straddles | 34 (60.7%) |
-| Average winning trade | +$310 per contract |
-| Average losing trade | −$205 per contract |
-| Profit factor | 1.48 |
-| Median move (actual) | 0.94% |
-| Median implied move | 0.78% |
-| Historical-to-implied ratio | 1.21:1 |
-| Best trade | +$1,420 (March 2020) |
-| Worst trade | −$385 (Jan 2020, pre-COVID) |
-| VIX < 15 subset win rate | 43% |
-| VIX 15–25 subset win rate | 64% |
-| VIX > 25 subset win rate | 71% |
+```
+Metric                       Value
+---------------------------  ---------------------------
+Total events                 56 FOMC meetings
+Profitable straddles         34 (60.7%)
+Average winning trade        +$310 per contract
+Average losing trade         −$205 per contract
+Profit factor                1.48
+Median move (actual)         0.94%
+Median implied move          0.78%
+Historical-to-implied ratio  1.21:1
+Best trade                   +$1,420 (March 2020)
+Worst trade                  −$385 (Jan 2020, pre-COVID)
+VIX < 15 subset win rate     43%
+VIX 15–25 subset win rate    64%
+VIX > 25 subset win rate     71%
+```
 
 **Key finding:** Win rate jumps dramatically with VIX. At VIX below 15, FOMC straddles are near a coin flip. The additional filter of requiring Historical/Implied ≥ 1.25 improves the VIX < 15 subset win rate to 53% — still marginal, but positive expected value.
 
@@ -315,15 +323,17 @@ Example: $100,000 × 0.03 / $630 = 4.76 → enter 4 contracts
 
 ## When This Strategy Works Best
 
-| Condition | Straddle Outcome | Notes |
-|---|---|---|
-| VIX 15–25, FOMC with surprise potential | Excellent | Sweet spot — moderate premium, real uncertainty |
-| VIX > 25, genuine macro uncertainty | Good-Excellent | Higher cost but historical moves also larger |
-| Earnings on transitional company | Excellent | NVDA AI data center, TSLA ramp years — wide historical distributions |
-| VIX < 14, routine FOMC hold | Poor | Premium too cheap in absolute terms; move rarely exceeds tiny implied move |
-| VIX > 40, crash environment | Marginal | Premium explodes; very large moves needed to break even |
-| No catalyst within 5 DTE | Avoid | Pure theta bleed with no event to catalyze movement |
-| IVR > 80%, event already priced at large move | Avoid | You are buying after the vol has already spiked; negative edge |
+```
+Condition                                      Straddle Outcome  Notes
+---------------------------------------------  ----------------  --------------------------------------------------------------------------
+VIX 15–25, FOMC with surprise potential        Excellent         Sweet spot — moderate premium, real uncertainty
+VIX > 25, genuine macro uncertainty            Good-Excellent    Higher cost but historical moves also larger
+Earnings on transitional company               Excellent         NVDA AI data center, TSLA ramp years — wide historical distributions
+VIX < 14, routine FOMC hold                    Poor              Premium too cheap in absolute terms; move rarely exceeds tiny implied move
+VIX > 40, crash environment                    Marginal          Premium explodes; very large moves needed to break even
+No catalyst within 5 DTE                       Avoid             Pure theta bleed with no event to catalyze movement
+IVR > 80%, event already priced at large move  Avoid             You are buying after the vol has already spiked; negative edge
+```
 
 ---
 
@@ -347,31 +357,35 @@ Example: $100,000 × 0.03 / $630 = 4.76 → enter 4 contracts
 
 ## Strategy Parameters
 
-| Parameter | Event Play (FOMC) | Earnings Play | Macro Uncertainty |
-|---|---|---|---|
-| DTE at entry | 1–2 DTE | 2–4 DTE | 3–7 DTE |
-| Strike | ATM (spot ± 0.1%) | ATM | ATM |
-| Historical/Implied min | ≥ 1.25× | ≥ 1.30× | ≥ 1.20× |
-| IVR target range | 40–70% | 40–70% | 30–60% |
-| VIX minimum | 14 | 12 | 13 |
-| Max debit as % of spot | 1.5% | 3.0% | 2.5% |
-| Exit timing | Within 30 min of event | Market open post-earnings | 24 hrs post-event |
-| Profit target | 50%+ of debit gained | 75%+ of debit gained | 50–75% |
-| Stop loss (time-based) | Close at event regardless | Close within 2 hrs of earnings | Close 24 hrs post-event |
-| Max position size | 2% capital | 2% capital | 2% capital |
-| Max concurrent straddles | 2 | 2 | 2 |
+```
+Parameter                 Event Play (FOMC)          Earnings Play                   Macro Uncertainty
+------------------------  -------------------------  ------------------------------  -----------------------
+DTE at entry              1–2 DTE                    2–4 DTE                         3–7 DTE
+Strike                    ATM (spot ± 0.1%)          ATM                             ATM
+Historical/Implied min    ≥ 1.25×                    ≥ 1.30×                         ≥ 1.20×
+IVR target range          40–70%                     40–70%                          30–60%
+VIX minimum               14                         12                              13
+Max debit as % of spot    1.5%                       3.0%                            2.5%
+Exit timing               Within 30 min of event     Market open post-earnings       24 hrs post-event
+Profit target             50%+ of debit gained       75%+ of debit gained            50–75%
+Stop loss (time-based)    Close at event regardless  Close within 2 hrs of earnings  Close 24 hrs post-event
+Max position size         2% capital                 2% capital                      2% capital
+Max concurrent straddles  2                          2                               2
+```
 
 ---
 
 ## Data Requirements
 
-| Data Point | Source | Update Frequency | Purpose |
-|---|---|---|---|
-| ATM call premium | Broker / options chain | Real-time | Calculate implied move |
-| ATM put premium | Broker / options chain | Real-time | Calculate implied move |
-| Historical event moves | Earnings Whispers / FRED / own records | Before entry | Compute historical/implied ratio |
-| IV Rank (IVR) | Broker / TastyTrade | Daily | Confirm elevated premium |
-| VIX level | CBOE / Yahoo Finance | Real-time | Regime filter |
-| Event calendar (FOMC, CPI, earnings) | FedReserve.gov / Earnings Whispers | Weekly | Confirm catalyst within 1–5 DTE |
-| Bid-ask spread on options | Broker real-time quote | Real-time | Confirm liquidity before entry |
-| Post-event IV (implied vol after event) | Broker | Within 30 min of event | Close signal — IV crush is underway |
+```
+Data Point                               Source                                  Update Frequency        Purpose
+---------------------------------------  --------------------------------------  ----------------------  -----------------------------------
+ATM call premium                         Broker / options chain                  Real-time               Calculate implied move
+ATM put premium                          Broker / options chain                  Real-time               Calculate implied move
+Historical event moves                   Earnings Whispers / FRED / own records  Before entry            Compute historical/implied ratio
+IV Rank (IVR)                            Broker / TastyTrade                     Daily                   Confirm elevated premium
+VIX level                                CBOE / Yahoo Finance                    Real-time               Regime filter
+Event calendar (FOMC, CPI, earnings)     FedReserve.gov / Earnings Whispers      Weekly                  Confirm catalyst within 1–5 DTE
+Bid-ask spread on options                Broker real-time quote                  Real-time               Confirm liquidity before entry
+Post-event IV (implied vol after event)  Broker                                  Within 30 min of event  Close signal — IV crush is underway
+```

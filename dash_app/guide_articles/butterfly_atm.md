@@ -69,12 +69,14 @@ Break-evens: $566.30 ($565 + $1.30) and $573.70 ($575 − $1.30)
 
 **Greek profile on expiry day:**
 
-| Greek | Sign | Expiry-day dynamics |
-|---|---|---|
-| Delta | Near zero at body | Balanced directional exposure when underlying at body strike |
-| Theta | Rapidly positive near body | Every hour of time passing near body accelerates profit |
-| Vega | Slightly negative | Moderate IV compression is neutral to helpful |
-| Gamma | Strongly negative | Rapid gains near body, rapid losses away from body |
+```
+Greek  Sign                        Expiry-day dynamics
+-----  --------------------------  ------------------------------------------------------------
+Delta  Near zero at body           Balanced directional exposure when underlying at body strike
+Theta  Rapidly positive near body  Every hour of time passing near body accelerates profit
+Vega   Slightly negative           Moderate IV compression is neutral to helpful
+Gamma  Strongly negative           Rapid gains near body, rapid losses away from body
+```
 
 The gamma profile is the key dynamic: near the body strike, positive P&L accelerates sharply as the underlying sits still. Away from the body, losses accumulate but are capped at the debit paid.
 
@@ -132,12 +134,14 @@ Same dynamic for short puts at $570:
 
 **Historical frequency of expiration pinning (SPY, 2018–2024, n=312 expirations):**
 
-| SPY proximity to highest-OI strike (at 11am) | Close within $0.50 at 4pm |
-|---|---|
-| Within 1.0% of high-OI strike | 41% (vs 22% baseline) |
-| Within 0.5% of high-OI strike | 61% (vs 22% baseline) |
-| Within 0.2% of high-OI strike | 74% (vs 22% baseline) |
-| More than 2.0% away from strike | 14% (below baseline) |
+```
+SPY proximity to highest-OI strike (at 11am)  Close within $0.50 at 4pm
+--------------------------------------------  -------------------------
+Within 1.0% of high-OI strike                 41% (vs 22% baseline)
+Within 0.5% of high-OI strike                 61% (vs 22% baseline)
+Within 0.2% of high-OI strike                 74% (vs 22% baseline)
+More than 2.0% away from strike               14% (below baseline)
+```
 
 **The edge is strictly proximity-dependent.** Don't enter a butterfly targeting a strike 2% away — the gravitational pull is insufficient to move the underlying that far AND hold it. Wait until SPY is within 0.5% of the target before entering.
 
@@ -156,12 +160,14 @@ Same dynamic for short puts at $570:
 
 SPY at $569.40 — 0.1% below the heavy $570 strike. Classic pin setup with 4.75 hours to expiry.
 
-| Leg | Strike | Action | Premium | Contracts |
-|---|---|---|---|---|
-| Long call | $565 | Buy 3× | $4.50 | −$1,350 |
-| Short call | $570 | Sell 6× | $1.90 | +$1,140 |
-| Long call | $575 | Buy 3× | $0.60 | −$180 |
-| **Net debit** | | | | **−$390 (3 contracts, $1.30 each)** |
+```
+Leg         Strike  Action   Premium  Contracts
+----------  ------  -------  -------  -------------------------------
+Long call   $565    Buy 3×   $4.50    −$1,350
+Short call  $570    Sell 6×  $1.90    +$1,140
+Long call   $575    Buy 3×   $0.60    −$180
+Net debit                             −$390 (3 contracts, $1.30 each)
+```
 
 Entry rationale: Quarterly expiry (strongest pinning dynamics). $570 strike has 4× higher OI than adjacent strikes. SPY within 0.1% of target. VIX 14.8 — calm macro, no afternoon events. ADX at 9 — no directional momentum. Perfect setup.
 
@@ -186,12 +192,14 @@ Spread worth approximately $3.60 at 3:30pm → profit +$690 (3 contracts). A cor
 
 OI check showed $555 strike had 78,000 contracts (3.2× adjacent strikes). SPY at $553 — within 0.36% of the $555 target.
 
-| Leg | Strike | Action | Premium | Contracts |
-|---|---|---|---|---|
-| Long call | $550 | Buy 2× | $3.80 | −$760 |
-| Short call | $555 | Sell 4× | $1.60 | +$640 |
-| Long call | $560 | Buy 2× | $0.45 | −$90 |
-| **Net debit** | | | | **−$210 (2 contracts, $1.05 each)** |
+```
+Leg         Strike  Action   Premium  Contracts
+----------  ------  -------  -------  -------------------------------
+Long call   $550    Buy 2×   $3.80    −$760
+Short call  $555    Sell 4×  $1.60    +$640
+Long call   $560    Buy 2×   $0.45    −$90
+Net debit                             −$210 (2 contracts, $1.05 each)
+```
 
 A technology sector headline moved markets at 1:30pm. SPY gapped to $558 — above both the body and the break-even. The pinning mechanics were overwhelmed by directional news flow.
 
@@ -261,12 +269,14 @@ Annual return:  +8.8% on debit capital (approximately 17 qualifying setups per y
 
 **Performance by OI concentration and proximity:**
 
-| Setup Quality | OI at Body | Proximity at Entry | Win Rate | Avg P&L |
-|---|---|---|---|---|
-| Excellent | > 80,000 contracts | within 0.2% | 62% | +$215 |
-| Good | 50,000–80,000 | within 0.5% | 48% | +$140 |
-| Marginal | 30,000–50,000 | within 1.0% | 35% | +$40 |
-| Poor | < 30,000 | > 1.0% away | 21% | −$35 |
+```
+Setup Quality  OI at Body          Proximity at Entry  Win Rate  Avg P&L
+-------------  ------------------  ------------------  --------  -------
+Excellent      > 80,000 contracts  within 0.2%         62%       +$215
+Good           50,000–80,000       within 0.5%         48%       +$140
+Marginal       30,000–50,000       within 1.0%         35%       +$40
+Poor           < 30,000            > 1.0% away         21%       −$35
+```
 
 ---
 
@@ -393,30 +403,34 @@ Annual expected contribution: +$2,468 per 3-contract position (on $390 at-risk c
 
 ## Strategy Parameters
 
-| Parameter | Default | Range | Description |
-|---|---|---|---|
-| Wing width | $5 | $3–$10 | Match to ~60% of current daily ATR |
-| Body strike | Highest OI within 0.5% | Nearest high-OI | Always target the highest OI concentration |
-| Entry time | 10:30am – 12:00pm | 10:00am – 1:00pm | After opening volatility settles |
-| DTE at entry | 0 (expiry day only) | 0–1 | Pinning effect only manifests near expiry |
-| Minimum OI at body | 50,000 contracts | 30,000+ | Lower OI = weaker pinning force |
-| Maximum proximity | 0.5% from body | 0–1.0% | SPY must be near target at entry |
-| Profit target | 70–80% of max | 50–90% | Take gains before final-minute volatility |
-| Close by | 3:45pm | 3:30–3:50pm | Never hold to the final bell |
-| Max position size | 1–5 contracts | 1–5 | Small precision trade; not a primary position |
-| Max VIX | 20 | 14–22 | Above this, directional momentum beats pinning |
-| Stop: distance from body | 1.5× wing width | 1–2× | Close if underlying moves this far from body |
+```
+Parameter                 Default                 Range             Description
+------------------------  ----------------------  ----------------  ----------------------------------------------
+Wing width                $5                      $3–$10            Match to ~60% of current daily ATR
+Body strike               Highest OI within 0.5%  Nearest high-OI   Always target the highest OI concentration
+Entry time                10:30am – 12:00pm       10:00am – 1:00pm  After opening volatility settles
+DTE at entry              0 (expiry day only)     0–1               Pinning effect only manifests near expiry
+Minimum OI at body        50,000 contracts        30,000+           Lower OI = weaker pinning force
+Maximum proximity         0.5% from body          0–1.0%            SPY must be near target at entry
+Profit target             70–80% of max           50–90%            Take gains before final-minute volatility
+Close by                  3:45pm                  3:30–3:50pm       Never hold to the final bell
+Max position size         1–5 contracts           1–5               Small precision trade; not a primary position
+Max VIX                   20                      14–22             Above this, directional momentum beats pinning
+Stop: distance from body  1.5× wing width         1–2×              Close if underlying moves this far from body
+```
 
 ---
 
 ## Data Requirements
 
-| Data | Source | Usage |
-|---|---|---|
-| SPY OHLCV intraday (1-min) | Polygon | Spot price tracking, intraday proximity check |
-| Open interest by strike (total) | Polygon options chain | Identify high-OI body strike |
-| VIX real-time | Polygon `VIXIND` | Vol regime filter (< 20) at time of entry |
-| Options pricing (calls) | Polygon | Calculate debit, verify break-even levels |
-| Expiry calendar | Exchange | Confirm quarterly vs monthly expiration |
-| Economic release calendar | Fed/BLS/BEA | Identify any afternoon scheduled releases |
-| ADX (intraday, 14-bar) | Computed from OHLCV | Intraday trend check |
+```
+Data                             Source                 Usage
+-------------------------------  ---------------------  ---------------------------------------------
+SPY OHLCV intraday (1-min)       Polygon                Spot price tracking, intraday proximity check
+Open interest by strike (total)  Polygon options chain  Identify high-OI body strike
+VIX real-time                    Polygon `VIXIND`       Vol regime filter (< 20) at time of entry
+Options pricing (calls)          Polygon                Calculate debit, verify break-even levels
+Expiry calendar                  Exchange               Confirm quarterly vs monthly expiration
+Economic release calendar        Fed/BLS/BEA            Identify any afternoon scheduled releases
+ADX (intraday, 14-bar)           Computed from OHLCV    Intraday trend check
+```

@@ -98,13 +98,15 @@ The *event* drove IV up. The *resolution* — whatever it is — drives IV back 
 
 ### Implied vs Realized: The Historical Record
 
-| Scenario | Implied Move | Realized Move | Overpricing |
-|---|---|---|---|
-| Large-cap tech earnings | 6–10% | 4–7% | 20–30% overpricing |
-| Mid-cap growth names | 8–15% | 5–11% | 25–35% overpricing |
-| S&P 500 index earnings seasons | 1–2% | 0.6–1.3% | 30–45% overpricing |
-| High-profile single names (NVDA, TSLA) | 8–14% | 5–10% | 15–30% overpricing |
-| Small-cap thin options | 15–25% | 10–20% | Highly variable |
+```
+Scenario                                Implied Move  Realized Move  Overpricing
+--------------------------------------  ------------  -------------  ------------------
+Large-cap tech earnings                 6–10%         4–7%           20–30% overpricing
+Mid-cap growth names                    8–15%         5–11%          25–35% overpricing
+S&P 500 index earnings seasons          1–2%          0.6–1.3%       30–45% overpricing
+High-profile single names (NVDA, TSLA)  8–14%         5–10%          15–30% overpricing
+Small-cap thin options                  15–25%        10–20%         Highly variable
+```
 
 ---
 
@@ -568,14 +570,16 @@ Key notes for Robinhood:
 
 ## Data Requirements
 
-| Data | Source | Usage |
-|---|---|---|
-| SPY/individual OHLCV with open prices | Polygon | Spot, exit price calculation |
-| VIX daily close | Polygon `VIXIND` | IV proxy for option pricing |
-| Earnings calendar | DB earnings table | Event dates, EPS actuals, EPS estimates |
-| Implied move estimates | Earnings table or BS approximation | iv_ratio filter computation |
-| 10-year Treasury rate | Polygon (`DGS10`) | Risk-free rate for Black-Scholes |
-| Historical earnings returns | Computed from earnings table + OHLCV | Historical avg move for iv_ratio |
+```
+Data                                   Source                                Usage
+-------------------------------------  ------------------------------------  ---------------------------------------
+SPY/individual OHLCV with open prices  Polygon                               Spot, exit price calculation
+VIX daily close                        Polygon `VIXIND`                      IV proxy for option pricing
+Earnings calendar                      DB earnings table                     Event dates, EPS actuals, EPS estimates
+Implied move estimates                 Earnings table or BS approximation    iv_ratio filter computation
+10-year Treasury rate                  Polygon (`DGS10`)                     Risk-free rate for Black-Scholes
+Historical earnings returns            Computed from earnings table + OHLCV  Historical avg move for iv_ratio
+```
 
 The earnings table must contain at minimum: date, ticker, and optionally `implied_move_pct`.
 If `implied_move_pct` is absent, the strategy approximates it from Black-Scholes pricing.
@@ -594,16 +598,18 @@ If `implied_move_pct` is absent, the strategy approximates it from Black-Scholes
 
 ## Quick Reference
 
-| Parameter | Default | Description |
-|---|---|---|
-| `min_implied_move` | 4% of spot | Minimum straddle-implied move to enter |
-| `min_iv_ratio` | 1.2 | Implied move / historical move filter |
-| `wing_width_pct` | 8% of spot | OTM wing distance each side |
-| `dte_entry` | 1 day before earnings | Entry timing |
-| `iv_crush_assumed` | 40% | Expected IV drop at next-day open (simulation) |
-| `profit_target_pct` | 50% of credit | Optional early close trigger |
-| `position_size_pct` | 3% | Capital at risk per trade |
-| Hold duration | ~1 trading day | Entry eve of earnings, exit next open |
-| Legs | 4 (iron condor) | Short ATM strangle + long OTM strangle |
-| Max loss | (wing_width − credit) × 100 | Per contract, fully defined |
-| Target Sharpe | 1.7 | Strategy performance target |
+```
+Parameter            Default                      Description
+-------------------  ---------------------------  ----------------------------------------------
+`min_implied_move`   4% of spot                   Minimum straddle-implied move to enter
+`min_iv_ratio`       1.2                          Implied move / historical move filter
+`wing_width_pct`     8% of spot                   OTM wing distance each side
+`dte_entry`          1 day before earnings        Entry timing
+`iv_crush_assumed`   40%                          Expected IV drop at next-day open (simulation)
+`profit_target_pct`  50% of credit                Optional early close trigger
+`position_size_pct`  3%                           Capital at risk per trade
+Hold duration        ~1 trading day               Entry eve of earnings, exit next open
+Legs                 4 (iron condor)              Short ATM strangle + long OTM strangle
+Max loss             (wing_width − credit) × 100  Per contract, fully defined
+Target Sharpe        1.7                          Strategy performance target
+```

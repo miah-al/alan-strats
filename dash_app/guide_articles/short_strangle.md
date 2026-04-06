@@ -66,12 +66,14 @@ Historical 25-day 1-sigma SPY move at VIX 22: ~4.5%
 
 **Greek profile:**
 
-| Greek | Sign | Practical meaning |
-|---|---|---|
-| Delta | Near zero (slightly negative due to put skew) | Direction-neutral at entry |
-| Theta | Strongly positive (+$18–35/day) | Highest theta yield of any premium strategy |
-| Vega | Strongly negative | The primary risk — IV spikes are immediately painful |
-| Gamma | Strongly negative | Near expiry or near strikes, losses accelerate rapidly |
+```
+Greek  Sign                                           Practical meaning
+-----  ---------------------------------------------  ------------------------------------------------------
+Delta  Near zero (slightly negative due to put skew)  Direction-neutral at entry
+Theta  Strongly positive (+$18–35/day)                Highest theta yield of any premium strategy
+Vega   Strongly negative                              The primary risk — IV spikes are immediately painful
+Gamma  Strongly negative                              Near expiry or near strikes, losses accelerate rapidly
+```
 
 ---
 
@@ -83,11 +85,13 @@ Historical 25-day 1-sigma SPY move at VIX 22: ~4.5%
 
 Market context: VIX elevated at 22, IV rank at 65% — premium was rich. SPY bouncing between $515–$545 for the past month. No events for 3 weeks.
 
-| Leg | Strike | Action | Premium | Contract Value |
-|---|---|---|---|---|
-| Short call | May 9 $555 (16-delta) | Sell 3× | $2.95 | +$885 |
-| Short put | May 9 $510 (16-delta) | Sell 3× | $2.70 | +$810 |
-| **Total credit** | | | | **+$1,695 (3 contracts, $5.65 each)** |
+```
+Leg           Strike                 Action   Premium  Contract Value
+------------  ---------------------  -------  -------  ---------------------------------
+Short call    May 9 $555 (16-delta)  Sell 3×  $2.95    +$885
+Short put     May 9 $510 (16-delta)  Sell 3×  $2.70    +$810
+Total credit                                           +$1,695 (3 contracts, $5.65 each)
+```
 
 Entry rationale: IVR 65% — structural premium overpricing at its richest. VIX 22.4 in the 18–30 optimal zone. No events for 3 weeks. 1-sigma on both sides with clear range-bound market.
 
@@ -193,15 +197,17 @@ The MANAGED strangle (with 30-delta roll rule, 200% loss close, 50% profit targe
 
 The short strangle has no wings — management is your only protection:
 
-| Condition | Action |
-|---|---|
-| 50% of credit captured | Close the entire strangle |
-| 21 DTE reached without 50% close | Close or roll out 30 more days |
-| One side reaches 30-delta | Roll that side further OTM (same expiry, collect additional credit) |
-| One side breached (in-the-money) | Roll the breached side out AND further OTM, or close entirely |
-| VIX spikes 5+ points intraday | Emergency close — vol expansion kills short strangles |
-| News of major catalyst | Close immediately; don't wait for confirmation |
-| IV Rank drops below 30% | Consider closing; the premium edge has diminished |
+```
+Condition                         Action
+--------------------------------  -------------------------------------------------------------------
+50% of credit captured            Close the entire strangle
+21 DTE reached without 50% close  Close or roll out 30 more days
+One side reaches 30-delta         Roll that side further OTM (same expiry, collect additional credit)
+One side breached (in-the-money)  Roll the breached side out AND further OTM, or close entirely
+VIX spikes 5+ points intraday     Emergency close — vol expansion kills short strangles
+News of major catalyst            Close immediately; don't wait for confirmation
+IV Rank drops below 30%           Consider closing; the premium edge has diminished
+```
 
 **The 30-delta roll in detail:**
 ```
@@ -275,44 +281,50 @@ Never roll more than twice — that is compounding the problem, not managing it.
 
 ## Short Strangle vs Iron Condor
 
-| Feature | Short Strangle | Iron Condor |
-|---|---|---|
-| Max loss | Very large (no wings) | Defined (wing width − credit) |
-| Premium collected | Higher ($4–$8) | Lower ($1.50–$3) |
-| Margin required | High (naked options — Reg-T or portfolio margin) | Lower (defined-risk = smaller margin) |
-| Management | More critical — no safety net | Still important but has defined floor |
-| Best for | Experienced, well-capitalized, strict discipline | Retail traders, accounts with defined-risk approval |
-| Expected value | Negative without rigorous management | Positive with proper filters |
-| Robinhood eligible | NO (naked calls require Level 3) | YES (defined-risk spreads) |
+```
+Feature             Short Strangle                                    Iron Condor
+------------------  ------------------------------------------------  ---------------------------------------------------
+Max loss            Very large (no wings)                             Defined (wing width − credit)
+Premium collected   Higher ($4–$8)                                    Lower ($1.50–$3)
+Margin required     High (naked options — Reg-T or portfolio margin)  Lower (defined-risk = smaller margin)
+Management          More critical — no safety net                     Still important but has defined floor
+Best for            Experienced, well-capitalized, strict discipline  Retail traders, accounts with defined-risk approval
+Expected value      Negative without rigorous management              Positive with proper filters
+Robinhood eligible  NO (naked calls require Level 3)                  YES (defined-risk spreads)
+```
 
 ---
 
 ## Strategy Parameters
 
-| Parameter | Conservative | Standard | Aggressive | Description |
-|---|---|---|---|---|
-| Short delta | 12-delta | 16-delta | 20-delta | Lower = higher win rate, lower premium |
-| DTE at entry | 45 | 30 | 21 | 30 DTE is the theta sweet spot |
-| Profit target | 25% of credit | 50% of credit | 75% of credit | 50% is strongly recommended |
-| Roll trigger | 25-delta | 30-delta | 35-delta | When to roll the tested side further OTM |
-| Stop-loss | 1.5× credit | 2× credit | 3× credit | Maximum loss before closing |
-| IVR minimum | 60% | 50% | 40% | Higher IVR = more premium justifies the risk |
-| Max position size | 2% capital | 4% capital | 6% capital | Never exceed these as single-position limits |
-| Max total strangle exposure | 10% portfolio | 15% portfolio | 20% portfolio | Total strangle book limit |
+```
+Parameter                    Conservative   Standard       Aggressive     Description
+---------------------------  -------------  -------------  -------------  --------------------------------------------
+Short delta                  12-delta       16-delta       20-delta       Lower = higher win rate, lower premium
+DTE at entry                 45             30             21             30 DTE is the theta sweet spot
+Profit target                25% of credit  50% of credit  75% of credit  50% is strongly recommended
+Roll trigger                 25-delta       30-delta       35-delta       When to roll the tested side further OTM
+Stop-loss                    1.5× credit    2× credit      3× credit      Maximum loss before closing
+IVR minimum                  60%            50%            40%            Higher IVR = more premium justifies the risk
+Max position size            2% capital     4% capital     6% capital     Never exceed these as single-position limits
+Max total strangle exposure  10% portfolio  15% portfolio  20% portfolio  Total strangle book limit
+```
 
 ---
 
 ## Data Requirements
 
-| Data | Source | Usage |
-|---|---|---|
-| SPY OHLCV daily | Polygon | Spot price, ADX, recent move assessment |
-| VIX daily close | Polygon `VIXIND` | Entry filter (18–32 range), spike monitoring |
-| Options chain by strike/expiry | Polygon | Credit calculation, delta verification |
-| IVR (52-week rolling) | Computed from VIX | Entry filter (≥ 50%) |
-| Economic calendar | Fed/BLS/Earnings | Binary event exclusion — most critical data |
-| Real-time delta tracker | Broker | Management trigger (30-delta rule requires intraday monitoring) |
-| Position P&L tracker | Broker | 50% profit and 200% loss management triggers |
+```
+Data                            Source             Usage
+------------------------------  -----------------  ---------------------------------------------------------------
+SPY OHLCV daily                 Polygon            Spot price, ADX, recent move assessment
+VIX daily close                 Polygon `VIXIND`   Entry filter (18–32 range), spike monitoring
+Options chain by strike/expiry  Polygon            Credit calculation, delta verification
+IVR (52-week rolling)           Computed from VIX  Entry filter (≥ 50%)
+Economic calendar               Fed/BLS/Earnings   Binary event exclusion — most critical data
+Real-time delta tracker         Broker             Management trigger (30-delta rule requires intraday monitoring)
+Position P&L tracker            Broker             50% profit and 200% loss management triggers
+```
 
 
 ## Introduction
@@ -357,12 +369,14 @@ You are outside 1σ on both sides — probability-wise you have the edge.
 
 **Greek profile:**
 
-| Greek | Sign | Practical meaning |
-|---|---|---|
-| Delta | Near zero | Both strikes OTM; small net exposure |
-| Theta | Strongly positive | Two full premiums decaying daily — your income stream |
-| Vega | Strongly negative | Rising IV is the strangle's primary enemy — both options get more expensive |
-| Gamma | Strongly negative | Near strikes, loss acceleration is dramatic and unhedged |
+```
+Greek  Sign               Practical meaning
+-----  -----------------  ---------------------------------------------------------------------------
+Delta  Near zero          Both strikes OTM; small net exposure
+Theta  Strongly positive  Two full premiums decaying daily — your income stream
+Vega   Strongly negative  Rising IV is the strangle's primary enemy — both options get more expensive
+Gamma  Strongly negative  Near strikes, loss acceleration is dramatic and unhedged
+```
 
 **The gamma danger is the key difference from an iron condor.** When one of your short strikes is tested and you are unprotected by a wing, the gamma exposure is open-ended until you close.
 
@@ -386,14 +400,16 @@ Profit if closed: $5.65 − $1.95 = $3.70 = $370 in 12 days
 
 **Scenario table (if held to May 9):**
 
-| SPY at May 9 | P&L | Notes |
-|---|---|---|
-| $531 (flat) | **+$565** | Full credit; perfect outcome |
-| $540 (inside range) | **+$565** | Both expire worthless |
-| $560.65 (upper B/E) | **$0** | Break-even on the call side |
-| $570 | **−$375** | Short call $15 ITM; credit offsets partially |
-| $480 (sharp decline) | **−$1,435** | Short put $30 ITM minus $5.65 credit |
-| $450 (crash) | **−$3,435** | No wing stops the loss |
+```
+SPY at May 9          P&L      Notes
+--------------------  -------  --------------------------------------------
+$531 (flat)           +$565    Full credit; perfect outcome
+$540 (inside range)   +$565    Both expire worthless
+$560.65 (upper B/E)   $0       Break-even on the call side
+$570                  −$375    Short call $15 ITM; credit offsets partially
+$480 (sharp decline)  −$1,435  Short put $30 ITM minus $5.65 credit
+$450 (crash)          −$3,435  No wing stops the loss
+```
 
 ---
 
@@ -413,14 +429,16 @@ Profit if closed: $5.65 − $1.95 = $3.70 = $370 in 12 days
 
 The strangle has no wings — your management discipline is your only protection.
 
-| Condition | Action |
-|---|---|
-| 50% of credit captured at any time | Close the entire strangle immediately |
-| 21 DTE remaining | Close or roll out 30 days at current strikes |
-| One short strike reaches 30-delta | Roll that strike further OTM (same expiry) — collect a credit for the roll |
-| Short strike goes ITM | Roll the breached side out 30 days AND further OTM; or close entirely |
-| VIX spikes 4+ points intraday | Emergency close — vol expansion will keep hurting you |
-| Any unexpected news catalyst | Close immediately; don't wait to see how it develops |
+```
+Condition                           Action
+----------------------------------  --------------------------------------------------------------------------
+50% of credit captured at any time  Close the entire strangle immediately
+21 DTE remaining                    Close or roll out 30 days at current strikes
+One short strike reaches 30-delta   Roll that strike further OTM (same expiry) — collect a credit for the roll
+Short strike goes ITM               Roll the breached side out 30 days AND further OTM; or close entirely
+VIX spikes 4+ points intraday       Emergency close — vol expansion will keep hurting you
+Any unexpected news catalyst        Close immediately; don't wait to see how it develops
+```
 
 **The roll mechanics:** When the short call reaches 30-delta, buy it back and sell a new call at the next strike above. You will typically collect $0.50–$1.00 in credit on the roll, extending your breakeven and buying time. This is not a rescue — it is a tactical adjustment that works only when you have 15+ DTE remaining.
 
@@ -454,25 +472,29 @@ The strangle has no wings — your management discipline is your only protection
 
 ## Short Strangle vs Iron Condor
 
-| Feature | Short Strangle | Iron Condor |
-|---|---|---|
-| Max loss | Very large (no wings) | Defined (wing width − credit) |
-| Premium collected | Higher ($5–$8 typical) | Lower ($2–$4 typical) |
-| Margin required | Higher (naked options, Reg T or PM) | Lower (defined-risk spread) |
-| Management criticality | Extremely high | High |
-| Win rate (with filters) | 65–70% | 65–70% |
-| Best for | Experienced, well-capitalized, actively managed | Retail traders seeking defined risk |
+```
+Feature                  Short Strangle                                   Iron Condor
+-----------------------  -----------------------------------------------  -----------------------------------
+Max loss                 Very large (no wings)                            Defined (wing width − credit)
+Premium collected        Higher ($5–$8 typical)                           Lower ($2–$4 typical)
+Margin required          Higher (naked options, Reg T or PM)              Lower (defined-risk spread)
+Management criticality   Extremely high                                   High
+Win rate (with filters)  65–70%                                           65–70%
+Best for                 Experienced, well-capitalized, actively managed  Retail traders seeking defined risk
+```
 
 ---
 
 ## Strategy Parameters
 
-| Parameter | Conservative | Standard | Aggressive | Description |
-|---|---|---|---|---|
-| Short strike delta | 12-delta | 16-delta | 20-delta | Higher delta = more premium, less buffer |
-| DTE at entry | 45 | 30 | 21 | 30 DTE balances theta and risk window |
-| IVR minimum | 60% | 50% | 40% | Do not compromise on this filter |
-| Profit target | 25% of credit | 50% of credit | 75% of credit | 50% is the risk-adjusted sweet spot |
-| Stop-loss (one side) | 30-delta | 30-delta | 35-delta | Roll or close when tested |
-| Max position size | 2% capital | 4% capital | 6% capital | Never more than this per strangle |
-| VIX range | 20–28 | 18–32 | 18–35 | Tighter VIX range = better risk management |
+```
+Parameter             Conservative   Standard       Aggressive     Description
+--------------------  -------------  -------------  -------------  ------------------------------------------
+Short strike delta    12-delta       16-delta       20-delta       Higher delta = more premium, less buffer
+DTE at entry          45             30             21             30 DTE balances theta and risk window
+IVR minimum           60%            50%            40%            Do not compromise on this filter
+Profit target         25% of credit  50% of credit  75% of credit  50% is the risk-adjusted sweet spot
+Stop-loss (one side)  30-delta       30-delta       35-delta       Roll or close when tested
+Max position size     2% capital     4% capital     6% capital     Never more than this per strangle
+VIX range             20–28          18–32          18–35          Tighter VIX range = better risk management
+```

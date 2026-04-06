@@ -235,12 +235,14 @@ SPY/IWM Pairs Signal — February 3, 2025:
 
 **Win rate by macro regime:**
 
-| Fed Policy | Win Rate | Avg P&L | Notes |
-|---|---|---|---|
-| Hiking (tightening) | 68% | +2.8% | IWM compression → shorting IWM works |
-| Neutral (holding) | 63% | +2.2% | OK environment |
-| Cutting | 43% | -0.8% | Rate cuts benefit IWM — do not short IWM |
-| Post-cut (first 3 months) | 39% | -1.4% | Avoid — small-cap premium sustained |
+```
+Fed Policy                 Win Rate  Avg P&L  Notes
+-------------------------  --------  -------  ----------------------------------------
+Hiking (tightening)        68%       +2.8%    IWM compression → shorting IWM works
+Neutral (holding)          63%       +2.2%    OK environment
+Cutting                    43%       -0.8%    Rate cuts benefit IWM — do not short IWM
+Post-cut (first 3 months)  39%       -1.4%    Avoid — small-cap premium sustained
+```
 
 The Fed policy table reveals the clearest filter: **never short IWM when the Fed is cutting or recently cut.** This single rule would have avoided 6 of the strategy's 8 largest individual losses.
 
@@ -327,15 +329,17 @@ spreads that the strategy trades.
 
 ## When This Strategy Works Best
 
-| Condition | Optimal Value | Why |
-|---|---|---|
-| Fed policy | Neutral (holding) | Neither cutting (boost IWM) nor hiking (hurt IWM) |
-| Credit conditions | Stable | Credit-sensitive IWM behaves predictably when credit is stable |
-| IWM/SPY Z-score history | Recently stable | If spread was at ±2.0 and reverted quickly before, expect similar |
-| Small-cap earnings quality | Mixed | When small-cap earnings are variable, the spread oscillates vs trending |
-| VIX | 14–22 | Moderate vol → IWM amplification predictable |
-| Business cycle phase | Mid-to-late cycle | Rate sensitivity of IWM most pronounced |
-| No structural catalyst | — | No vaccine, no fiscal stimulus — statistical signal, not fundamental |
+```
+Condition                   Optimal Value      Why
+--------------------------  -----------------  -----------------------------------------------------------------------
+Fed policy                  Neutral (holding)  Neither cutting (boost IWM) nor hiking (hurt IWM)
+Credit conditions           Stable             Credit-sensitive IWM behaves predictably when credit is stable
+IWM/SPY Z-score history     Recently stable    If spread was at ±2.0 and reverted quickly before, expect similar
+Small-cap earnings quality  Mixed              When small-cap earnings are variable, the spread oscillates vs trending
+VIX                         14–22              Moderate vol → IWM amplification predictable
+Business cycle phase        Mid-to-late cycle  Rate sensitivity of IWM most pronounced
+No structural catalyst      —                  No vaccine, no fiscal stimulus — statistical signal, not fundamental
+```
 
 ---
 
@@ -359,38 +363,42 @@ spreads that the strategy trades.
 
 ## Strategy Parameters
 
-| Parameter | Default | Range | Description |
-|---|---|---|---|
-| Spread measure | IWM/SPY log ratio | Log or price ratio | Logarithmic for better stationarity |
-| Z-score lookback | 60 days | 40–90 | Window for mean and std |
-| Entry Z-score | ±2.0 | ±1.8–2.5 | Entry threshold |
-| Exit Z-score | ±0.5 | ±0.3–1.0 | Target reversion level |
-| Stop Z-score | ±3.5 | ±3.0–4.0 | Emergency exit |
-| Time stop | 15 days | 10–20 | Maximum hold |
-| Beta-neutral sizing | IWM β × SPY $ | Preferred | Adjust for IWM's higher beta |
-| Dollar-neutral sizing | Equal $ both legs | Alternative | Simpler but carries net short-beta exposure |
-| IWM beta estimation | 60-day rolling | Updated monthly | Use actual rolling beta, not fixed 1.35 |
-| VIX cap | 25 | 20–28 | Skip in high-vol regime |
-| Credit check | HYG 20d return > -2% | Required | IWM is credit-sensitive |
-| Fed rate check | No cut expected | Required | Never short IWM in rate-cut environment |
-| Position size | 8% notional | 5–12% | Combined both legs |
-| Options DTE (if used) | 21–35 | 14–45 | Defined-risk spread expression |
-| Macro override | Immediate exit on Fed cut | Non-negotiable | Protect against rate-driven IWM surge |
+```
+Parameter              Default                    Range               Description
+---------------------  -------------------------  ------------------  -------------------------------------------
+Spread measure         IWM/SPY log ratio          Log or price ratio  Logarithmic for better stationarity
+Z-score lookback       60 days                    40–90               Window for mean and std
+Entry Z-score          ±2.0                       ±1.8–2.5            Entry threshold
+Exit Z-score           ±0.5                       ±0.3–1.0            Target reversion level
+Stop Z-score           ±3.5                       ±3.0–4.0            Emergency exit
+Time stop              15 days                    10–20               Maximum hold
+Beta-neutral sizing    IWM β × SPY $              Preferred           Adjust for IWM's higher beta
+Dollar-neutral sizing  Equal $ both legs          Alternative         Simpler but carries net short-beta exposure
+IWM beta estimation    60-day rolling             Updated monthly     Use actual rolling beta, not fixed 1.35
+VIX cap                25                         20–28               Skip in high-vol regime
+Credit check           HYG 20d return > -2%       Required            IWM is credit-sensitive
+Fed rate check         No cut expected            Required            Never short IWM in rate-cut environment
+Position size          8% notional                5–12%               Combined both legs
+Options DTE (if used)  21–35                      14–45               Defined-risk spread expression
+Macro override         Immediate exit on Fed cut  Non-negotiable      Protect against rate-driven IWM surge
+```
 
 ---
 
 ## Data Requirements
 
-| Data | Source | Usage |
-|---|---|---|
-| SPY daily OHLCV | Polygon | Spread calculation, long/short leg tracking |
-| IWM daily OHLCV | Polygon | Spread calculation, long/short leg tracking |
-| IWM/SPY beta (60-day rolling) | Calculated | Beta-neutral sizing |
-| HYG daily price | Polygon | 20-day credit condition check |
-| Fed funds futures | CME | Rate cut probability — key avoidance filter |
-| ADF cointegration test | Statistical library | Pair validity check monthly |
-| VIX daily | Polygon / CBOE | Entry filter |
-| Russell 2000 composition | FTSE Russell | IPO additions, constituent changes |
-| Consumer confidence | Conference Board | Macro tailwind for small-caps |
-| Options chains (SPY, IWM) | Polygon | Spread pricing (optional expression) |
-| FOMC calendar | Federal Reserve | Suspension around decisions |
+```
+Data                           Source               Usage
+-----------------------------  -------------------  -------------------------------------------
+SPY daily OHLCV                Polygon              Spread calculation, long/short leg tracking
+IWM daily OHLCV                Polygon              Spread calculation, long/short leg tracking
+IWM/SPY beta (60-day rolling)  Calculated           Beta-neutral sizing
+HYG daily price                Polygon              20-day credit condition check
+Fed funds futures              CME                  Rate cut probability — key avoidance filter
+ADF cointegration test         Statistical library  Pair validity check monthly
+VIX daily                      Polygon / CBOE       Entry filter
+Russell 2000 composition       FTSE Russell         IPO additions, constituent changes
+Consumer confidence            Conference Board     Macro tailwind for small-caps
+Options chains (SPY, IWM)      Polygon              Spread pricing (optional expression)
+FOMC calendar                  Federal Reserve      Suspension around decisions
+```

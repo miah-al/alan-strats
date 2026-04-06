@@ -398,34 +398,38 @@ At VIX > 30, macro fear dominates individual-name skew — the signal becomes un
 
 ## Quick Reference
 
-| Parameter | Default | Range | Description |
-|---|---|---|---|
-| `min_skew_zscore` | 1.5σ | 1.0–2.5 | Min statistical elevation of put skew |
-| `min_skew_5d_change` | 0.03 | 0.02–0.08 | Min skew momentum to confirm direction |
-| `min_model_confidence` | 0.58 | 0.55–0.75 | LightGBM 3-class min probability (`signal_threshold=58`) |
-| `dte_entry` | 21 DTE | 10–30 | Days to expiry at entry (code default `dte_entry=21`) |
-| `spread_width_pct` | 4% of spot | 2–8% | Distance between long and short strikes (`spread_width_pct=4.0`) |
-| `profit_target` | 60% of max spread | 40–80% | Close at 60% of max spread value (`profit_target` in code docstring) |
-| `stop_loss_pct` | 50% of debit | 30–100% | Close when loss hits 50% of debit (`loss stop: lose 50% of debit paid`) |
-| `time_stop_dte` | 7 DTE | 5–14 | Close at ≤ 7 DTE remaining (`_HOLD_STOP_DTE = 7`) |
-| `position_size_pct` | 3% | 1–5% | Max debit as % of capital (code default `position_size_pct=3.0`) |
-| `skew_lookback` | 20 bars | 15–30 | Window for skew z-score computation (`skew_lookback=20`) |
-| `warmup_bars` | 150 | 100–200 | Minimum history for LightGBM (`_WARMUP_BARS = 150`) |
-| `retrain_frequency` | 30 bars | 20–60 | Walk-forward retrain window (`_RETRAIN_EVERY = 30`) |
+```
+Parameter               Default            Range      Description
+----------------------  -----------------  ---------  -----------------------------------------------------------------------
+`min_skew_zscore`       1.5σ               1.0–2.5    Min statistical elevation of put skew
+`min_skew_5d_change`    0.03               0.02–0.08  Min skew momentum to confirm direction
+`min_model_confidence`  0.58               0.55–0.75  LightGBM 3-class min probability (`signal_threshold=58`)
+`dte_entry`             21 DTE             10–30      Days to expiry at entry (code default `dte_entry=21`)
+`spread_width_pct`      4% of spot         2–8%       Distance between long and short strikes (`spread_width_pct=4.0`)
+`profit_target`         60% of max spread  40–80%     Close at 60% of max spread value (`profit_target` in code docstring)
+`stop_loss_pct`         50% of debit       30–100%    Close when loss hits 50% of debit (`loss stop: lose 50% of debit paid`)
+`time_stop_dte`         7 DTE              5–14       Close at ≤ 7 DTE remaining (`_HOLD_STOP_DTE = 7`)
+`position_size_pct`     3%                 1–5%       Max debit as % of capital (code default `position_size_pct=3.0`)
+`skew_lookback`         20 bars            15–30      Window for skew z-score computation (`skew_lookback=20`)
+`warmup_bars`           150                100–200    Minimum history for LightGBM (`_WARMUP_BARS = 150`)
+`retrain_frequency`     30 bars            20–60      Walk-forward retrain window (`_RETRAIN_EVERY = 30`)
+```
 
 ---
 
 ## Data Requirements
 
-| Data Field | Source | Usage |
-|---|---|---|
-| `stock_25d_put_skew` | Polygon options chain | Primary signal — 25Δ skew computation |
-| `stock_10d_put_skew` | Polygon options chain | Secondary signal — tail-risk confirmation |
-| `stock_skew_5d_change` | Derived from above (rolling 5d) | Momentum signal — is skew accelerating? |
-| `stock_skew_zscore` | Derived (20d rolling z-score) | Normalization across time and tickers |
-| `stock_atm_iv` | Polygon options IV | ATM IV for skew normalization and pricing |
-| `stock_ivr` | Derived from 52-week IV history | Overall vol regime context |
-| `vix` | Polygon `VIXIND` | Macro vol filter |
-| `vix_5d_change` | Derived from VIXIND history | Direction of macro vol regime |
-| Per-strike IV by delta | Polygon options chain | 25Δ and 10Δ IV computation |
-| Risk-free rate | Polygon `DGS10` | Black-Scholes strike selection |
+```
+Data Field              Source                           Usage
+----------------------  -------------------------------  -----------------------------------------
+`stock_25d_put_skew`    Polygon options chain            Primary signal — 25Δ skew computation
+`stock_10d_put_skew`    Polygon options chain            Secondary signal — tail-risk confirmation
+`stock_skew_5d_change`  Derived from above (rolling 5d)  Momentum signal — is skew accelerating?
+`stock_skew_zscore`     Derived (20d rolling z-score)    Normalization across time and tickers
+`stock_atm_iv`          Polygon options IV               ATM IV for skew normalization and pricing
+`stock_ivr`             Derived from 52-week IV history  Overall vol regime context
+`vix`                   Polygon `VIXIND`                 Macro vol filter
+`vix_5d_change`         Derived from VIXIND history      Direction of macro vol regime
+Per-strike IV by delta  Polygon options chain            25Δ and 10Δ IV computation
+Risk-free rate          Polygon `DGS10`                  Black-Scholes strike selection
+```

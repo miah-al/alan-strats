@@ -71,12 +71,14 @@ Binary events before Fri:  None               [CLEAR ✓]
 
 **The trade:**
 
-| Leg | Strike | Action | Price | Total |
-|---|---|---|---|---|
-| Long call (lower wing) | $515 | Buy 1× | $5.80 | −$5.80 |
-| Short calls (body) | $520 | Sell 2× | $3.20 each | +$6.40 |
-| Long call (upper wing) | $525 | Buy 1× | $1.20 | −$1.20 |
-| **Net debit** | — | — | — | **$0.60 = $60 per contract** |
+```
+Leg                     Strike  Action   Price       Total
+----------------------  ------  -------  ----------  ------------------------
+Long call (lower wing)  $515    Buy 1×   $5.80       −$5.80
+Short calls (body)      $520    Sell 2×  $3.20 each  +$6.40
+Long call (upper wing)  $525    Buy 1×   $1.20       −$1.20
+Net debit               —       —        —           $0.60 = $60 per contract
+```
 
 **Maximum profit:** $5.00 wing width − $0.60 debit = $4.40 × 100 = **$440 per contract**
 **Reward/risk: 7.3:1**
@@ -97,15 +99,17 @@ Not quite maximum profit ($440), but $398 on a $60 investment is a 663% return i
 
 **Full scenario table:**
 
-| SPY at Apr 11 | P&L | Notes |
-|---|---|---|
-| Below $515 | −$60 | All calls expire worthless. Max loss. |
-| $515.60 | $0 | Lower break-even |
-| $518 | +$180 | Inside profit zone |
-| $520 (perfect pin) | +$440 | Maximum profit |
-| $522 | +$180 | Inside profit zone |
-| $524.40 | $0 | Upper break-even |
-| Above $525 | −$60 | Maximum loss |
+```
+SPY at Apr 11       P&L    Notes
+------------------  -----  -------------------------------------
+Below $515          −$60   All calls expire worthless. Max loss.
+$515.60             $0     Lower break-even
+$518                +$180  Inside profit zone
+$520 (perfect pin)  +$440  Maximum profit
+$522                +$180  Inside profit zone
+$524.40             $0     Upper break-even
+Above $525          −$60   Maximum loss
+```
 
 ---
 
@@ -185,26 +189,30 @@ Default: $5 wings for SPY.
 
 ## Performance Expectations
 
-| Setup Quality | OI at Body | Proximity | Win Rate | Avg P&L |
-|---|---|---|---|---|
-| Excellent | > 80,000 | within 0.2% | 52% | +$195 per contract |
-| Good | 50,000–80,000 | within 0.5% | 44% | +$140 per contract |
-| Marginal | 30,000–50,000 | within 1.0% | 35% | +$60 per contract |
-| Poor | < 30,000 | > 1.0% away | 24% | −$30 per contract |
+```
+Setup Quality  OI at Body     Proximity    Win Rate  Avg P&L
+-------------  -------------  -----------  --------  ------------------
+Excellent      > 80,000       within 0.2%  52%       +$195 per contract
+Good           50,000–80,000  within 0.5%  44%       +$140 per contract
+Marginal       30,000–50,000  within 1.0%  35%       +$60 per contract
+Poor           < 30,000       > 1.0% away  24%       −$30 per contract
+```
 
 ---
 
 ## Quick Reference
 
-| Parameter | Default | Range | Description |
-|---|---|---|---|
-| Wing width | $5 | $3–$10 | Distance from body to each wing |
-| Body strike | Highest OI within 0.5% of spot | ± 0.5% | Target highest OI concentration |
-| DTE at entry | 1–2 | 1–3 | Final pinning window only |
-| Minimum OI at body | 50,000 | 30,000–100,000 | OI concentration required |
-| Max proximity | 0.5% from body | 0–1.0% | SPY must be near target |
-| Profit target | 70% of max | 50–80% | Close before final-minute chaos |
-| Stop loss | SPY moves > 1.5× wing | 1–2× | Close if too far from body |
-| Max concurrent | 2 positions | 1–3 | Precision trade, not scale trade |
-| Position size | 1–5 contracts | 1–10 | Small sizing for supplementary position |
-| Max VIX | 20 | 14–22 | Avoid elevated volatility regimes |
+```
+Parameter           Default                         Range           Description
+------------------  ------------------------------  --------------  ---------------------------------------
+Wing width          $5                              $3–$10          Distance from body to each wing
+Body strike         Highest OI within 0.5% of spot  ± 0.5%          Target highest OI concentration
+DTE at entry        1–2                             1–3             Final pinning window only
+Minimum OI at body  50,000                          30,000–100,000  OI concentration required
+Max proximity       0.5% from body                  0–1.0%          SPY must be near target
+Profit target       70% of max                      50–80%          Close before final-minute chaos
+Stop loss           SPY moves > 1.5× wing           1–2×            Close if too far from body
+Max concurrent      2 positions                     1–3             Precision trade, not scale trade
+Position size       1–5 contracts                   1–10            Small sizing for supplementary position
+Max VIX             20                              14–22           Avoid elevated volatility regimes
+```

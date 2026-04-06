@@ -105,11 +105,13 @@ Signal Snapshot — VIX Term Structure, May 5 2025:
 
 **The trade:**
 
-| Leg | Contract | Action | Entry Price | Dollar Value |
-|---|---|---|---|---|
-| Short | May VIX futures (M1) | Sell 1 | 18.20 | short 1 × $1,000 multiplier |
-| Long | July VIX futures (M3) | Buy 1 | 19.90 | long 1 × $1,000 multiplier |
-| **Net position** | — | — | **Spread: −1.70 pts** | **−$1,700 debit (long spread)** |
+```
+Leg           Contract               Action  Entry Price        Dollar Value
+------------  ---------------------  ------  -----------------  ---------------------------
+Short         May VIX futures (M1)   Sell 1  18.20              short 1 × $1,000 multiplier
+Long          July VIX futures (M3)  Buy 1   19.90              long 1 × $1,000 multiplier
+Net position  —                      —       Spread: −1.70 pts  −$1,700 debit (long spread)
+```
 
 *Note: In a short M1 / long M3 contango trade, you profit if M1 falls faster than M3 (or if M3 stays stable while M1 falls toward spot).*
 
@@ -248,13 +250,15 @@ All 4 conditions: → Full backwardation trade. M1 spike expected to resolve qui
 
 **Exit signals:**
 
-| Condition | Action |
-|---|---|
-| M2−M1 slope normalizes to < 2% (contango flattens) | Close contango trade |
-| M1 falls back below M3 in backwardation | Close backwardation trade |
-| M1 rises 3 vol pts from entry | Stop loss — close M1 leg immediately |
-| VIX spike pushes into backwardation during contango trade | Stop loss — full position exit |
-| 15 calendar days held with no resolution | Time stop — close and reassess |
+```
+Condition                                                  Action
+---------------------------------------------------------  ------------------------------------
+M2−M1 slope normalizes to < 2% (contango flattens)         Close contango trade
+M1 falls back below M3 in backwardation                    Close backwardation trade
+M1 rises 3 vol pts from entry                              Stop loss — close M1 leg immediately
+VIX spike pushes into backwardation during contango trade  Stop loss — full position exit
+15 calendar days held with no resolution                   Time stop — close and reassess
+```
 
 ---
 
@@ -291,23 +295,27 @@ Alternative for small accounts — ETF approximation:
 
 **Contango trade best conditions:**
 
-| Condition | Value | Reason |
-|---|---|---|
-| M2−M1 slope | > 8% | Strong roll-down yield |
-| Spot VIX | 12–20 | Low baseline vol, M1 far above spot |
-| VIX 20d trend | Flat or falling | Reduces spike risk |
-| SPY trend | Positive | Risk-on environment → vol tends to fall |
-| Days since last spike | > 30 | Allows VIX to rebuild contango structure |
+```
+Condition              Value            Reason
+---------------------  ---------------  ----------------------------------------
+M2−M1 slope            > 8%             Strong roll-down yield
+Spot VIX               12–20            Low baseline vol, M1 far above spot
+VIX 20d trend          Flat or falling  Reduces spike risk
+SPY trend              Positive         Risk-on environment → vol tends to fall
+Days since last spike  > 30             Allows VIX to rebuild contango structure
+```
 
 **Backwardation trade best conditions:**
 
-| Condition | Value | Reason |
-|---|---|---|
-| M1 − M3 spread | > 8 vol pts | Deep inversion = overreaction |
-| VIX spike speed | Doubled in < 5 days | Fast spikes resolve fast |
-| Credit markets | HYG down < 2% | Not a systemic event |
-| Macro data | ISM PMI > 48 | No underlying recession |
-| First VIX down day | Present | Momentum of spike has peaked |
+```
+Condition           Value                Reason
+------------------  -------------------  -----------------------------
+M1 − M3 spread      > 8 vol pts          Deep inversion = overreaction
+VIX spike speed     Doubled in < 5 days  Fast spikes resolve fast
+Credit markets      HYG down < 2%        Not a systemic event
+Macro data          ISM PMI > 48         No underlying recession
+First VIX down day  Present              Momentum of spike has peaked
+```
 
 ---
 
@@ -329,26 +337,30 @@ Alternative for small accounts — ETF approximation:
 
 **Historical backtest (VIX term structure contango trade, 2009–2024):**
 
-| Metric | Value |
-|---|---|
-| Win rate (positive P&L trades) | 68% |
-| Average win | +$1,450 per contract |
-| Average loss | −$900 per contract |
-| Profit factor | 1.83 |
-| Annual trades | 18–24 (monthly frequency) |
-| Annual return per contract | +$4,800 |
-| Maximum consecutive losses | 3–4 (during sustained backwardation) |
-| Sharpe ratio (strategy) | 0.92 |
+```
+Metric                          Value
+------------------------------  ------------------------------------
+Win rate (positive P&L trades)  68%
+Average win                     +$1,450 per contract
+Average loss                    −$900 per contract
+Profit factor                   1.83
+Annual trades                   18–24 (monthly frequency)
+Annual return per contract      +$4,800
+Maximum consecutive losses      3–4 (during sustained backwardation)
+Sharpe ratio (strategy)         0.92
+```
 
 **Backwardation trade (fear spike opportunities, 2009–2024):**
 
-| Metric | Value |
-|---|---|
-| Win rate | 71% |
-| Average hold | 6 days |
-| Average win | +$3,200 per contract |
-| Average loss | −$1,800 per contract |
-| Annual opportunities | 4–6 (major VIX spikes) |
+```
+Metric                Value
+--------------------  ----------------------
+Win rate              71%
+Average hold          6 days
+Average win           +$3,200 per contract
+Average loss          −$1,800 per contract
+Annual opportunities  4–6 (major VIX spikes)
+```
 
 ---
 
@@ -370,26 +382,30 @@ Alternative for small accounts — ETF approximation:
 
 ## Quick Reference
 
-| Parameter | Default | Range | Description |
-|---|---|---|---|
-| Contango slope threshold | 5% | 3–10% | (M2−M1)/M1 minimum for entry |
-| Backwardation threshold | 3 vol pts | 2–8 | M1−M3 minimum for backwardation entry |
-| Stop loss (M1 leg) | 3 vol pts | 2–5 | Close M1 leg if it rises this far from entry |
-| Time stop | 15 days | 10–20 | Maximum hold without position resolving |
-| Position size | 2% of account | 1–3% | Risk-based sizing (see formula above) |
-| Contracts | 1 (typical) | 1–3 | VIX futures contracts per trade |
-| M1 entry threshold | M1/spot > 1.05 | 1.03–1.15 | M1 must be above spot for roll-down validity |
-| VIX spike threshold | M1 > 1.3× 20d avg | 1.2–1.5× | Signal for potential backwardation |
+```
+Parameter                 Default            Range      Description
+------------------------  -----------------  ---------  --------------------------------------------
+Contango slope threshold  5%                 3–10%      (M2−M1)/M1 minimum for entry
+Backwardation threshold   3 vol pts          2–8        M1−M3 minimum for backwardation entry
+Stop loss (M1 leg)        3 vol pts          2–5        Close M1 leg if it rises this far from entry
+Time stop                 15 days            10–20      Maximum hold without position resolving
+Position size             2% of account      1–3%       Risk-based sizing (see formula above)
+Contracts                 1 (typical)        1–3        VIX futures contracts per trade
+M1 entry threshold        M1/spot > 1.05     1.03–1.15  M1 must be above spot for roll-down validity
+VIX spike threshold       M1 > 1.3× 20d avg  1.2–1.5×   Signal for potential backwardation
+```
 
 ---
 
 ## Data Requirements
 
-| Data | Source | Usage |
-|---|---|---|
-| VIX M1, M2, M3 futures prices | Polygon (or CBOE) | Term structure slope calculation |
-| Spot VIX daily | Polygon `VIXIND` | Confirm M1 above spot for roll-down |
-| SPY OHLCV | Polygon | Equity trend context |
-| HYG daily close | Polygon | Credit market health (systemic risk filter) |
-| VIX 20-day moving average | Computed from VIXIND | Spike ratio threshold |
-| ISM PMI, jobless claims | Macro data provider | Backwardation entry filter (macro health) |
+```
+Data                           Source                Usage
+-----------------------------  --------------------  -------------------------------------------
+VIX M1, M2, M3 futures prices  Polygon (or CBOE)     Term structure slope calculation
+Spot VIX daily                 Polygon `VIXIND`      Confirm M1 above spot for roll-down
+SPY OHLCV                      Polygon               Equity trend context
+HYG daily close                Polygon               Credit market health (systemic risk filter)
+VIX 20-day moving average      Computed from VIXIND  Spike ratio threshold
+ISM PMI, jobless claims        Macro data provider   Backwardation entry filter (macro health)
+```

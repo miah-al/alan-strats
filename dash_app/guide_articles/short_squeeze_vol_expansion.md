@@ -302,15 +302,17 @@ Example: $100,000 capital, debit = $11.80
 
 **Optimal conditions:**
 
-| Factor | Ideal State | Why |
-|---|---|---|
-| Short interest | 10–30% of float | Provides covering-fuel once squeeze starts |
-| Call Vol/OI ratio | 2.0–6.0 | Fresh gamma fuel actively building |
-| ATM IV | 40–80% | Elevated enough to signal uncertainty; not so high that spreads are prohibitively expensive |
-| Stock 5d return | +3% to +20% | Momentum is already building |
-| VIX | < 25 | Calm macro means the squeeze is stock-specific, not overwhelmed by macro flows |
-| SPY 5d return | > −2% | Market not actively selling — individual squeeze can run independently |
-| Market cap | $2B–$200B | Large enough for options liquidity; small enough for squeeze to be material |
+```
+Factor             Ideal State      Why
+-----------------  ---------------  -------------------------------------------------------------------------------------------
+Short interest     10–30% of float  Provides covering-fuel once squeeze starts
+Call Vol/OI ratio  2.0–6.0          Fresh gamma fuel actively building
+ATM IV             40–80%           Elevated enough to signal uncertainty; not so high that spreads are prohibitively expensive
+Stock 5d return    +3% to +20%      Momentum is already building
+VIX                < 25             Calm macro means the squeeze is stock-specific, not overwhelmed by macro flows
+SPY 5d return      > −2%            Market not actively selling — individual squeeze can run independently
+Market cap         $2B–$200B        Large enough for options liquidity; small enough for squeeze to be material
+```
 
 **Best time:** Earnings week when a beat triggers rapid call-buying; sector breakouts;
 post-short-squeeze initiation report (when a research firm publicly highlights squeeze potential).
@@ -383,38 +385,42 @@ attention), biotech (binary catalysts that trigger call accumulation).
 
 ## Quick Reference
 
-| Parameter | Default | Range | Description |
-|---|---|---|---|
-| `min_call_oi_concentration` | 0.20 | 0.15–0.35 | Min fraction of call OI at single strike |
-| `min_call_vol_oi_ratio` | 2.0 | 1.5–4.0 | Min fresh call buying ratio |
-| `min_otm_call_oi_5d_change` | +50% | +30–+200% | Minimum 5-day OI growth in OTM calls |
-| `min_model_confidence` | 0.55 | 0.50–0.75 | LightGBM P(≥+7% in 5 bars) — default `signal_threshold=55` |
-| `dte_entry` | 21 DTE | 10–30 | Entry DTE (default; code enters at `dte_entry=21`) |
-| `long_strike_delta` | 0.50 (ATM) | 0.40–0.60 | Long call delta at entry |
-| `spread_width_pct` | 6% of spot | 4–10% | Short strike distance from long (code `spread_width=3` increments) |
-| `profit_target` | 80% of max gain | 60–100% | Close when spread reaches 80% of max spread value (`profit_target_pct=0.80`) |
-| `stop_loss_pct` | 50% of debit | 30–70% | Close when loss equals 50% of debit paid (`stop_loss_pct=0.50`) |
-| `dte_time_stop` | 5 DTE | 3–10 | Exit at ≤ this DTE remaining |
-| `stock_move_exit` | +8% | 5–15% | Also exit on directional +8% stock move |
-| `position_size_pct` | 2% | 1–4% | Max debit as % of capital (code default `position_size_pct=0.02`) |
-| `max_vix` | 28 | 20–35 | Maximum VIX to enter |
-| `warmup_bars` | 120 | 80–200 | Minimum history for LightGBM |
-| `retrain_frequency` | 45 bars | 30–60 | Walk-forward retrain window |
+```
+Parameter                    Default          Range      Description
+---------------------------  ---------------  ---------  ----------------------------------------------------------------------------
+`min_call_oi_concentration`  0.20             0.15–0.35  Min fraction of call OI at single strike
+`min_call_vol_oi_ratio`      2.0              1.5–4.0    Min fresh call buying ratio
+`min_otm_call_oi_5d_change`  +50%             +30–+200%  Minimum 5-day OI growth in OTM calls
+`min_model_confidence`       0.55             0.50–0.75  LightGBM P(≥+7% in 5 bars) — default `signal_threshold=55`
+`dte_entry`                  21 DTE           10–30      Entry DTE (default; code enters at `dte_entry=21`)
+`long_strike_delta`          0.50 (ATM)       0.40–0.60  Long call delta at entry
+`spread_width_pct`           6% of spot       4–10%      Short strike distance from long (code `spread_width=3` increments)
+`profit_target`              80% of max gain  60–100%    Close when spread reaches 80% of max spread value (`profit_target_pct=0.80`)
+`stop_loss_pct`              50% of debit     30–70%     Close when loss equals 50% of debit paid (`stop_loss_pct=0.50`)
+`dte_time_stop`              5 DTE            3–10       Exit at ≤ this DTE remaining
+`stock_move_exit`            +8%              5–15%      Also exit on directional +8% stock move
+`position_size_pct`          2%               1–4%       Max debit as % of capital (code default `position_size_pct=0.02`)
+`max_vix`                    28               20–35      Maximum VIX to enter
+`warmup_bars`                120              80–200     Minimum history for LightGBM
+`retrain_frequency`          45 bars          30–60      Walk-forward retrain window
+```
 
 ---
 
 ## Data Requirements
 
-| Data Field | Source | Usage |
-|---|---|---|
-| `stock_call_oi_concentration` | Polygon options chain | Primary squeeze signal |
-| `stock_call_vol_oi_ratio` | Polygon options chain | Freshness of gamma fuel |
-| `stock_otm_call_oi_5d_change` | Polygon options chain (5d delta) | Building momentum in call OI |
-| `stock_5d_return` | Polygon OHLCV | Directional momentum context |
-| `stock_volume_ratio` | Polygon OHLCV vs 20d average | Unusual volume confirmation |
-| `stock_atm_iv` | Polygon options IV | Vol regime and pricing |
-| `stock_iv_call_put_spread` | Derived from options chain | Call skew (positive = call demand) |
-| `vix` | Polygon `VIXIND` | Macro regime filter |
-| `spy_5d_return` | Polygon OHLCV | Market direction context |
-| Short interest | Manual/alternative data | Squeeze fuel quantity |
-| Per-strike OI by expiry | Polygon options chain | OI concentration computation |
+```
+Data Field                     Source                            Usage
+-----------------------------  --------------------------------  ----------------------------------
+`stock_call_oi_concentration`  Polygon options chain             Primary squeeze signal
+`stock_call_vol_oi_ratio`      Polygon options chain             Freshness of gamma fuel
+`stock_otm_call_oi_5d_change`  Polygon options chain (5d delta)  Building momentum in call OI
+`stock_5d_return`              Polygon OHLCV                     Directional momentum context
+`stock_volume_ratio`           Polygon OHLCV vs 20d average      Unusual volume confirmation
+`stock_atm_iv`                 Polygon options IV                Vol regime and pricing
+`stock_iv_call_put_spread`     Derived from options chain        Call skew (positive = call demand)
+`vix`                          Polygon `VIXIND`                  Macro regime filter
+`spy_5d_return`                Polygon OHLCV                     Market direction context
+Short interest                 Manual/alternative data           Squeeze fuel quantity
+Per-strike OI by expiry        Polygon options chain             OI concentration computation
+```

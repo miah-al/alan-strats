@@ -245,10 +245,12 @@ SPY/DIA Pairs Signal — August 2, 2024:
 
 **Impact of catalyst filter:**
 
-| Approach | Win Rate | Avg P&L | Sharpe |
-|---|---|---|---|
-| All Z ≥ ±2.0 signals | 51% | +0.3% | 0.28 |
-| Catalyst-filtered signals | 64% | +1.9% | 0.72 |
+```
+Approach                   Win Rate  Avg P&L  Sharpe
+-------------------------  --------  -------  ------
+All Z ≥ ±2.0 signals       51%       +0.3%    0.28
+Catalyst-filtered signals  64%       +1.9%    0.72
+```
 
 The catalyst filter nearly doubles the win rate. Entering SPY/DIA spreads without a identified single-stock catalyst produces near-random results — the spread reflects genuine economic differences rather than mechanical price-weighting artifacts.
 
@@ -330,15 +332,17 @@ The marginal benefit (9% more reversion) doesn't justify 2× capital lockup.
 
 ## When This Strategy Works Best
 
-| Condition | Optimal Value | Why |
-|---|---|---|
-| News type | Single-event (earnings miss/beat) | One-time events revert quickly; ongoing stories escalate |
-| Component price | Very high (> $400/share) | Higher price = larger DIA impact per percent move |
-| Component S&P weight | Low (< 1%) | Small S&P weight amplifies the mechanical mismatch |
-| Distortion magnitude | > 0.6% DIA vs SPY | Larger distortions revert more reliably |
-| Time of day | Open and first 2 hours | Price-weighting distortions are most acute at open |
-| VIX | 13–20 | Low volatility means reversion is predictable |
-| Macro backdrop | Stable | No independent macro driver confounding the DIA/SPY relationship |
+```
+Condition             Optimal Value                      Why
+--------------------  ---------------------------------  ----------------------------------------------------------------
+News type             Single-event (earnings miss/beat)  One-time events revert quickly; ongoing stories escalate
+Component price       Very high (> $400/share)           Higher price = larger DIA impact per percent move
+Component S&P weight  Low (< 1%)                         Small S&P weight amplifies the mechanical mismatch
+Distortion magnitude  > 0.6% DIA vs SPY                  Larger distortions revert more reliably
+Time of day           Open and first 2 hours             Price-weighting distortions are most acute at open
+VIX                   13–20                              Low volatility means reversion is predictable
+Macro backdrop        Stable                             No independent macro driver confounding the DIA/SPY relationship
+```
 
 ---
 
@@ -362,36 +366,40 @@ The marginal benefit (9% more reversion) doesn't justify 2× capital lockup.
 
 ## Strategy Parameters
 
-| Parameter | Default | Range | Description |
-|---|---|---|---|
-| Spread measure | DIA/SPY log ratio | Log or price ratio | Z-score basis |
-| Z-score lookback | 60 days | 40–90 | Window for mean and std |
-| Entry Z-score | ±2.0 | ±1.8–2.5 | Minimum signal strength |
-| Exit Z-score | ±0.5 | ±0.3–1.0 | Target reversion |
-| Stop Z-score | ±3.5 | ±3.0–4.0 | Emergency exit |
-| Time stop | 7 days | 5–10 | Faster resolution expected vs SPY/QQQ |
-| Catalyst requirement | ≥ 0.5% DIA contribution from single component | Required | No entry without identified driver |
-| News type check | One-time event only | Required | No ongoing stories |
-| Dollar neutrality | Equal $ both legs | ±5% | Both legs equal at entry |
-| Max position size | 5% notional | 3–8% | Lower size than QQQ trade — lower edge |
-| Options DTE (if used) | 7–14 | 5–21 | Short DTE for faster reversal thesis |
-| DIA options liquidity | Bid-ask < $0.20 | Required | Higher execution cost than SPY |
-| VIX cap | 22 | 18–25 | Tighter than SPY/QQQ — DIA is less liquid |
-| Sector macro check | Neutral | Required | Component's sector must not be in macro stress |
+```
+Parameter              Default                                        Range               Description
+---------------------  ---------------------------------------------  ------------------  ----------------------------------------------
+Spread measure         DIA/SPY log ratio                              Log or price ratio  Z-score basis
+Z-score lookback       60 days                                        40–90               Window for mean and std
+Entry Z-score          ±2.0                                           ±1.8–2.5            Minimum signal strength
+Exit Z-score           ±0.5                                           ±0.3–1.0            Target reversion
+Stop Z-score           ±3.5                                           ±3.0–4.0            Emergency exit
+Time stop              7 days                                         5–10                Faster resolution expected vs SPY/QQQ
+Catalyst requirement   ≥ 0.5% DIA contribution from single component  Required            No entry without identified driver
+News type check        One-time event only                            Required            No ongoing stories
+Dollar neutrality      Equal $ both legs                              ±5%                 Both legs equal at entry
+Max position size      5% notional                                    3–8%                Lower size than QQQ trade — lower edge
+Options DTE (if used)  7–14                                           5–21                Short DTE for faster reversal thesis
+DIA options liquidity  Bid-ask < $0.20                                Required            Higher execution cost than SPY
+VIX cap                22                                             18–25               Tighter than SPY/QQQ — DIA is less liquid
+Sector macro check     Neutral                                        Required            Component's sector must not be in macro stress
+```
 
 ---
 
 ## Data Requirements
 
-| Data | Source | Usage |
-|---|---|---|
-| SPY daily OHLCV | Polygon | Spread calculation |
-| DIA daily OHLCV | Polygon | Spread calculation |
-| Dow Jones divisor | S&P Dow Jones Indices | Price-weight distortion calculation |
-| Dow component prices at event | Polygon / real-time | Identify and quantify catalyst |
-| Dow component news | News API / Bloomberg | Catalyst identification and type classification |
-| DIA options chain | Polygon | Liquidity check and spread pricing |
-| VIX daily | Polygon / CBOE | Entry filter |
-| FOMC calendar | Federal Reserve | Timing filter |
-| Sector ETF performance | Polygon | Verify distortion is idiosyncratic vs sector macro |
-| ADF cointegration test (DIA/SPY) | Statistical library | Pair validity (monthly check) |
+```
+Data                              Source                 Usage
+--------------------------------  ---------------------  --------------------------------------------------
+SPY daily OHLCV                   Polygon                Spread calculation
+DIA daily OHLCV                   Polygon                Spread calculation
+Dow Jones divisor                 S&P Dow Jones Indices  Price-weight distortion calculation
+Dow component prices at event     Polygon / real-time    Identify and quantify catalyst
+Dow component news                News API / Bloomberg   Catalyst identification and type classification
+DIA options chain                 Polygon                Liquidity check and spread pricing
+VIX daily                         Polygon / CBOE         Entry filter
+FOMC calendar                     Federal Reserve        Timing filter
+Sector ETF performance            Polygon                Verify distortion is idiosyncratic vs sector macro
+ADF cointegration test (DIA/SPY)  Statistical library    Pair validity (monthly check)
+```

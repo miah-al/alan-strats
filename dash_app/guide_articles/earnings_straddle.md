@@ -99,37 +99,43 @@ Exit: Open of next trading day, within 15 minutes
 
 ### Trade 1 — AAPL Q1 2025: Textbook IV Crush ✅
 
-| Field | Value |
-|---|---|
-| Entry | Jan 29, 2025 · AAPL $185 |
-| Structure | Sell $185 straddle + buy $213/$157 wings |
-| Net credit | $6.70 ($670/contract) |
-| Max loss | $2,130/contract |
-| AAPL at open (Jan 30) | $187.40 (+1.3%) |
-| Condor value at open | $1.20 (IV crushed from 68% → 22%) |
-| **P&L** | **+$550/contract (+82% of credit)** |
+```
+Field                  Value
+---------------------  ----------------------------------------
+Entry                  Jan 29, 2025 · AAPL $185
+Structure              Sell $185 straddle + buy $213/$157 wings
+Net credit             $6.70 ($670/contract)
+Max loss               $2,130/contract
+AAPL at open (Jan 30)  $187.40 (+1.3%)
+Condor value at open   $1.20 (IV crushed from 68% → 22%)
+P&L                    +$550/contract (+82% of credit)
+```
 
 AAPL moved only 1.3% vs 5.0% implied. IV crushed immediately at open. Condor worth $1.20; bought back for a small cost, kept most of the $6.70 credit.
 
 ### Trade 2 — MSFT Q3 2024: Small Move, Near-Full Profit ✅
 
-| Field | Value |
-|---|---|
-| Entry | Jul 29, 2024 · MSFT $420 |
-| Net credit | $8.20 ($820/contract) |
-| MSFT at open | $421.80 (+0.4%) |
-| **P&L** | **+$740/contract (+90% of credit)** |
+```
+Field         Value
+------------  -------------------------------
+Entry         Jul 29, 2024 · MSFT $420
+Net credit    $8.20 ($820/contract)
+MSFT at open  $421.80 (+0.4%)
+P&L           +$740/contract (+90% of credit)
+```
 
 ### Trade 3 — META Q4 2024: Loss Trade (Move Exceeded Break-Even) ❌
 
-| Field | Value |
-|---|---|
-| Entry | Jan 29, 2025 · META $617 |
-| Net credit | $14.50 ($1,450/contract) |
-| Wing width | ±$87 (14% OTM) |
-| META at open | $694 (+12.5%) |
-| Condor value at open | $38.70 |
-| **P&L** | **−$2,420/contract** |
+```
+Field                 Value
+--------------------  ------------------------
+Entry                 Jan 29, 2025 · META $617
+Net credit            $14.50 ($1,450/contract)
+Wing width            ±$87 (14% OTM)
+META at open          $694 (+12.5%)
+Condor value at open  $38.70
+P&L                   −$2,420/contract
+```
 
 META's 12.5% move exceeded the break-even ($617 + $14.50 = $631.50). The call wing at $704 capped the loss — without wings, loss would have been much larger. **This is why wings are non-negotiable.**
 
@@ -171,11 +177,13 @@ META's 12.5% move exceeded the break-even ($617 + $14.50 = $631.50). The call wi
 
 ## Strategy Parameters
 
-| Parameter | Conservative | Standard | Aggressive |
-|---|---|---|---|
-| IVR minimum | ≥ 70% | ≥ 60% | ≥ 50% |
-| Historical actual/implied ratio max | < 0.80 | < 0.90 | < 1.00 |
-| Wing distance (× implied move) | 2.0× | 1.5× | 1.25× |
-| Net credit minimum | 35% of gross | 30% | 25% |
-| Position size (max loss basis) | 2% portfolio | 3% | 4% |
-| Exit timing | 10 min after open | 15 min | 20 min |
+```
+Parameter                            Conservative       Standard  Aggressive
+-----------------------------------  -----------------  --------  ----------
+IVR minimum                          ≥ 70%              ≥ 60%     ≥ 50%
+Historical actual/implied ratio max  < 0.80             < 0.90    < 1.00
+Wing distance (× implied move)       2.0×               1.5×      1.25×
+Net credit minimum                   35% of gross       30%       25%
+Position size (max loss basis)       2% portfolio       3%        4%
+Exit timing                          10 min after open  15 min    20 min
+```

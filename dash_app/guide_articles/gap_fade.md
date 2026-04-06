@@ -144,19 +144,21 @@ The gap filled to $604.80 by midday as predicted — retail sentiment faded and 
 
 ## Strategy Parameters
 
-| Parameter | Default | Range | Description |
-|---|---|---|---|
-| Minimum gap size | 0.4% | 0.3–0.6% | Below this, spread cost eats the edge |
-| Maximum gap size | 1.5% | 1.0–2.0% | Above this, catalyst is likely real |
-| Catalyst class | 1 or 2 only | 1–2 | Skip Class 3+ |
-| ML fill probability threshold | 0.60 | 0.55–0.65 | Minimum confidence to enter |
-| Pre-market volume | Below average | Required | High volume = conviction gap, skip |
-| Entry window | 9:30–9:45am | 9:30–9:50am | Later = gap already partially filling |
-| Spread width | Match gap size | Gap size ± $1 | Don't buy wider than needed |
-| Break-even | Open − debit | Auto | Set at construction |
-| Primary exit target | 80% of gap fill | 60–90% | Close at near-fill, don't wait for perfect fill |
-| Time stop | 2:00pm | 1:30–2:30pm | Exit if not filled by this time |
-| Extension stop | Gap extends 0.3% further | Firm | Thesis invalidated |
-| VIX cap | 22 | 18–25 | Skip in elevated vol |
-| Position size | 2–3% of portfolio | 1–4% | Risk per trade |
-| Skip days | All macro event days | Non-negotiable | Calendar check required |
+```
+Parameter                      Default                   Range           Description
+-----------------------------  ------------------------  --------------  -----------------------------------------------
+Minimum gap size               0.4%                      0.3–0.6%        Below this, spread cost eats the edge
+Maximum gap size               1.5%                      1.0–2.0%        Above this, catalyst is likely real
+Catalyst class                 1 or 2 only               1–2             Skip Class 3+
+ML fill probability threshold  0.60                      0.55–0.65       Minimum confidence to enter
+Pre-market volume              Below average             Required        High volume = conviction gap, skip
+Entry window                   9:30–9:45am               9:30–9:50am     Later = gap already partially filling
+Spread width                   Match gap size            Gap size ± $1   Don't buy wider than needed
+Break-even                     Open − debit              Auto            Set at construction
+Primary exit target            80% of gap fill           60–90%          Close at near-fill, don't wait for perfect fill
+Time stop                      2:00pm                    1:30–2:30pm     Exit if not filled by this time
+Extension stop                 Gap extends 0.3% further  Firm            Thesis invalidated
+VIX cap                        22                        18–25           Skip in elevated vol
+Position size                  2–3% of portfolio         1–4%            Risk per trade
+Skip days                      All macro event days      Non-negotiable  Calendar check required
+```

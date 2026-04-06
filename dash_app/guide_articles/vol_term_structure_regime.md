@@ -398,24 +398,28 @@ VRP z-score for normalization:
 
 **Best COMPRESS setups:**
 
-| Signal | Value | Why |
-|---|---|---|
-| Term slope | > +3 vol points | Deep contango = no near-term event concern |
-| VRP | > +6 vol points | Options significantly overpriced vs realized |
-| IVR | 0.60–0.85 | IV elevated but not crisis-level; good premium |
-| VIX | 14–22 | Moderate macro backdrop |
-| Yield curve | > −0.50 | Not deep inversion (recession risk)  |
-| SPY 20d realized vol | < 12% | Calm underlying = options are even more overpriced |
+```
+Signal                Value            Why
+--------------------  ---------------  --------------------------------------------------
+Term slope            > +3 vol points  Deep contango = no near-term event concern
+VRP                   > +6 vol points  Options significantly overpriced vs realized
+IVR                   0.60–0.85        IV elevated but not crisis-level; good premium
+VIX                   14–22            Moderate macro backdrop
+Yield curve           > −0.50          Not deep inversion (recession risk)
+SPY 20d realized vol  < 12%            Calm underlying = options are even more overpriced
+```
 
 **Best EXPAND setups:**
 
-| Signal | Value | Why |
-|---|---|---|
-| Term slope | < −3 vol points | Strong backwardation = near-term event urgency |
-| Term slope 5d change | < −2 | Backwardation deepening = urgency accelerating |
-| VRP | < 0 (negative) | Realized vol is exceeding implied = vol regime changing |
-| Front IVR | > 0.75 | Front options specifically elevated (event premium) |
-| VIX term slope | < 0 | Macro vol term structure also inverted |
+```
+Signal                Value            Why
+--------------------  ---------------  -------------------------------------------------------
+Term slope            < −3 vol points  Strong backwardation = near-term event urgency
+Term slope 5d change  < −2             Backwardation deepening = urgency accelerating
+VRP                   < 0 (negative)   Realized vol is exceeding implied = vol regime changing
+Front IVR             > 0.75           Front options specifically elevated (event premium)
+VIX term slope        < 0              Macro vol term structure also inverted
+```
 
 ---
 
@@ -477,41 +481,45 @@ VRP z-score for normalization:
 
 ## Quick Reference
 
-| Parameter | Default | Range | Description |
-|---|---|---|---|
-| `signal_threshold` | 0.55 | 0.45–0.75 | LSTM P(COMPRESS) or P(EXPAND) threshold (code `signal_threshold=0.55`) |
-| `seq_len` | 20 bars | 15–30 | LSTM input sequence length (code `SEQ_LEN=20`) |
-| `lstm_layers` | 1 | 1–3 | LSTM depth (code `NUM_LAYERS=1`) |
-| `lstm_hidden` | 32 | 16–128 | Hidden units per LSTM layer (code `HIDDEN_SIZE=32`) |
-| `dte_entry` | 21 DTE | 14–30 | Expiry for all trades (code `dte_entry=21`) |
-| `spread_width_compress` | 5% of spot | 3–7% | Bull put spread width in COMPRESS regime |
-| `profit_target_compress` | 50% credit | 40–70% | Close credit spread early |
-| `stop_loss_compress` | 2× credit | 1.5–3× | Close if spread reaches this cost |
-| `profit_target_expand` | 50% of cost | 40–80% | Close straddle at this gain |
-| `stop_loss_expand` | 50% of cost | 40–60% | Close straddle if it loses this % |
-| `position_size_pct` | 3% | 1–5% | Capital at risk per trade (code `position_size_pct=0.03`) |
-| `regime_reeval_bars` | 10 bars | 5–20 | Re-evaluate regime every N bars (code `regime_reeval_bars=10`) |
-| `warmup_bars` | 200 | 150–300 | Minimum bars before LSTM activation (code `WARMUP_BARS=200`) |
-| `retrain_frequency` | 60 bars | 30–100 | Walk-forward retrain interval (code `RETRAIN_EVERY=60`) |
+```
+Parameter                 Default      Range      Description
+------------------------  -----------  ---------  ----------------------------------------------------------------------
+`signal_threshold`        0.55         0.45–0.75  LSTM P(COMPRESS) or P(EXPAND) threshold (code `signal_threshold=0.55`)
+`seq_len`                 20 bars      15–30      LSTM input sequence length (code `SEQ_LEN=20`)
+`lstm_layers`             1            1–3        LSTM depth (code `NUM_LAYERS=1`)
+`lstm_hidden`             32           16–128     Hidden units per LSTM layer (code `HIDDEN_SIZE=32`)
+`dte_entry`               21 DTE       14–30      Expiry for all trades (code `dte_entry=21`)
+`spread_width_compress`   5% of spot   3–7%       Bull put spread width in COMPRESS regime
+`profit_target_compress`  50% credit   40–70%     Close credit spread early
+`stop_loss_compress`      2× credit    1.5–3×     Close if spread reaches this cost
+`profit_target_expand`    50% of cost  40–80%     Close straddle at this gain
+`stop_loss_expand`        50% of cost  40–60%     Close straddle if it loses this %
+`position_size_pct`       3%           1–5%       Capital at risk per trade (code `position_size_pct=0.03`)
+`regime_reeval_bars`      10 bars      5–20       Re-evaluate regime every N bars (code `regime_reeval_bars=10`)
+`warmup_bars`             200          150–300    Minimum bars before LSTM activation (code `WARMUP_BARS=200`)
+`retrain_frequency`       60 bars      30–100     Walk-forward retrain interval (code `RETRAIN_EVERY=60`)
+```
 
 ---
 
 ## Data Requirements
 
-| Data Field | Source | Usage |
-|---|---|---|
-| `stock_front_iv` | Polygon options chain | ATM IV, nearest expiry ≥ 21 DTE |
-| `stock_back_iv` | Polygon options chain | ATM IV, ~45 DTE expiry |
-| `stock_term_slope` | Derived: back_iv − front_iv | Primary term structure signal |
-| `stock_term_slope_5d_change` | Rolling 5-day delta of above | Momentum of term structure |
-| `stock_vrp` | Derived: front_iv − realized_vol_20d | Variance risk premium |
-| `stock_ivr` | Derived from 52-week IV history | IV rank context |
-| `vix` | Polygon `VIXIND` | Macro vol regime |
-| `vix_term_slope` | Polygon VIX M1 and M2 | Macro term structure alignment |
-| `yield_curve_2y10y` | Polygon (DGS2 and DGS10) | Macro economic regime signal |
-| `spy_20d_realized_vol` | Derived from SPY OHLCV | Baseline market vol context |
-| Per-expiry ATM IV | Polygon options chain | Front and back month IV computation |
-| Risk-free rate | Polygon `DGS10` | Black-Scholes computation |
+```
+Data Field                    Source                                Usage
+----------------------------  ------------------------------------  -----------------------------------
+`stock_front_iv`              Polygon options chain                 ATM IV, nearest expiry ≥ 21 DTE
+`stock_back_iv`               Polygon options chain                 ATM IV, ~45 DTE expiry
+`stock_term_slope`            Derived: back_iv − front_iv           Primary term structure signal
+`stock_term_slope_5d_change`  Rolling 5-day delta of above          Momentum of term structure
+`stock_vrp`                   Derived: front_iv − realized_vol_20d  Variance risk premium
+`stock_ivr`                   Derived from 52-week IV history       IV rank context
+`vix`                         Polygon `VIXIND`                      Macro vol regime
+`vix_term_slope`              Polygon VIX M1 and M2                 Macro term structure alignment
+`yield_curve_2y10y`           Polygon (DGS2 and DGS10)              Macro economic regime signal
+`spy_20d_realized_vol`        Derived from SPY OHLCV                Baseline market vol context
+Per-expiry ATM IV             Polygon options chain                 Front and back month IV computation
+Risk-free rate                Polygon `DGS10`                       Black-Scholes computation
+```
 
 **Note on front/back month selection:** "Front" always means the nearest monthly
 expiry with ≥ 21 DTE (to avoid gamma distortion in the final 3 weeks). "Back" means

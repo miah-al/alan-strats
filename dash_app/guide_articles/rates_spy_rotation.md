@@ -202,13 +202,15 @@ Classification: INFLATION regime → Underweight equities AND bonds, overweight 
 
 **Rebalance March 3 — from neutral to Inflation protocol:**
 
-| Action | Ticker | Shares | Price | Dollar Amount |
-|---|---|---|---|---|
-| Sell 370 SPY | SPY | −370 | $448.20 | +$165,834 |
-| Sell 1,100 TLT | TLT | −1,100 | $140.80 | +$154,880 |
-| Buy XLE (energy) | XLE | +1,900 | $79.40 | −$150,860 |
-| Buy TIP (TIPS) | TIP | +1,140 | $124.30 | −$141,702 |
-| Hold GLD 440 shares | GLD | 0 | $171.20 | 0 (held) |
+```
+Action               Ticker  Shares  Price    Dollar Amount
+-------------------  ------  ------  -------  -------------
+Sell 370 SPY         SPY     −370    $448.20  +$165,834
+Sell 1,100 TLT       TLT     −1,100  $140.80  +$154,880
+Buy XLE (energy)     XLE     +1,900  $79.40   −$150,860
+Buy TIP (TIPS)       TIP     +1,140  $124.30  −$141,702
+Hold GLD 440 shares  GLD     0       $171.20  0 (held)
+```
 
 **Post-rebalance portfolio (March 3):**
 
@@ -271,12 +273,14 @@ Risk-On prematurely when SPY's October bounce was a bear market rally.
 
 **October 17 rebalance (Transition → preliminary disinflation preparation):**
 
-| Action | Ticker | Shares | Price | Amount |
-|---|---|---|---|---|
-| Buy 230 SPY | SPY | +230 | $361.50 | −$83,145 |
-| Sell 950 XLE | XLE | −950 | $92.10 | +$87,495 |
-| Buy 420 TLT | TLT | +420 | $97.80 | −$41,076 |
-| Sell 600 TIP | TIP | −600 | $116.20 | +$69,720 |
+```
+Action        Ticker  Shares  Price    Amount
+------------  ------  ------  -------  --------
+Buy 230 SPY   SPY     +230    $361.50  −$83,145
+Sell 950 XLE  XLE     −950    $92.10   +$87,495
+Buy 420 TLT   TLT     +420    $97.80   −$41,076
+Sell 600 TIP  TIP     −600    $116.20  +$69,720
+```
 
 ### Phase 3 — Risk-On Regime (December 13, 2022 – 2023)
 
@@ -287,12 +291,14 @@ Risk-On prematurely when SPY's October bounce was a bear market rally.
 
 **Rebalance December 14 — maximum equity + bonds (both rise in Risk-On):**
 
-| Action | Ticker | Shares | Price | Amount |
-|---|---|---|---|---|
-| Buy 290 SPY | SPY | +290 | $392.10 | −$113,709 |
-| Buy 480 TLT | TLT | +480 | $100.80 | −$48,384 |
-| Sell all XLE | XLE | −950 | $88.60 | +$84,170 |
-| Sell 200 GLD | GLD | −200 | $177.90 | +$35,580 |
+```
+Action        Ticker  Shares  Price    Amount
+------------  ------  ------  -------  ---------
+Buy 290 SPY   SPY     +290    $392.10  −$113,709
+Buy 480 TLT   TLT     +480    $100.80  −$48,384
+Sell all XLE  XLE     −950    $88.60   +$84,170
+Sell 200 GLD  GLD     −200    $177.90  +$35,580
+```
 
 **Post-rebalance (Risk-On profile):**
 
@@ -524,29 +530,33 @@ Key readings:
 
 ## Quick Reference
 
-| Parameter | Default | Range | Description |
-|---|---|---|---|
-| `yield_threshold` | 20 bps (0.002) | 5–40 bps | 20-day yield change threshold (v2 default; code `yield_threshold=0.002`) |
-| `return_threshold` | 3% (0.03) | 1–5% | 20-day SPY return threshold (v2 default; code `return_threshold=0.03`) |
-| `confirm_days` | 7 | 3–14 | Consecutive days regime must persist before rebalance (v2 code `confirm_days=7`) |
-| `cooldown_days` | 10 | 5–20 | Minimum days between regime changes (code `cooldown_days=10`) |
-| `use_trend_filter` | True | True/False | Require SPY < 50-day SMA for bearish regimes (code `use_trend_filter=True`) |
-| `spy_allocation` | 20–80% | 15–95% | Varies by regime: Growth 80%, Risk-On 90%, Fear 20%, Inflation 40%, Transition 60% |
-| `tlt_allocation` | 5–70% | 0–75% | Varies by regime: Fear 70%, Growth 10%, Inflation 5% |
-| Fear-HighRate alloc | 20% SPY / 10% TLT | — | When 10Y > 3.5%, cash replaces TLT in Fear regime |
+```
+Parameter            Default            Range       Description
+-------------------  -----------------  ----------  ----------------------------------------------------------------------------------
+`yield_threshold`    20 bps (0.002)     5–40 bps    20-day yield change threshold (v2 default; code `yield_threshold=0.002`)
+`return_threshold`   3% (0.03)          1–5%        20-day SPY return threshold (v2 default; code `return_threshold=0.03`)
+`confirm_days`       7                  3–14        Consecutive days regime must persist before rebalance (v2 code `confirm_days=7`)
+`cooldown_days`      10                 5–20        Minimum days between regime changes (code `cooldown_days=10`)
+`use_trend_filter`   True               True/False  Require SPY < 50-day SMA for bearish regimes (code `use_trend_filter=True`)
+`spy_allocation`     20–80%             15–95%      Varies by regime: Growth 80%, Risk-On 90%, Fear 20%, Inflation 40%, Transition 60%
+`tlt_allocation`     5–70%              0–75%       Varies by regime: Fear 70%, Growth 10%, Inflation 5%
+Fear-HighRate alloc  20% SPY / 10% TLT  —           When 10Y > 3.5%, cash replaces TLT in Fear regime
+```
 
 ---
 
 ## Data Requirements
 
-| Data | Source | Usage |
-|---|---|---|
-| SPY OHLCV | Polygon | Regime detection, portfolio value |
-| 10-year Treasury yield | Polygon `DGS10` | Rate change signal |
-| 2-year Treasury yield | Polygon `DGS2` | Yield curve slope (leading indicator) |
-| TLT OHLCV | Polygon | Bond position pricing |
-| XLE OHLCV | Polygon | Energy position pricing |
-| TIP OHLCV | Polygon | TIPS position pricing |
-| GLD OHLCV | Polygon | Gold position pricing |
-| HYG OHLCV | Polygon | Credit spread leading indicator |
-| VIX | Polygon `VIXIND` | Vol regime context |
+```
+Data                    Source            Usage
+----------------------  ----------------  -------------------------------------
+SPY OHLCV               Polygon           Regime detection, portfolio value
+10-year Treasury yield  Polygon `DGS10`   Rate change signal
+2-year Treasury yield   Polygon `DGS2`    Yield curve slope (leading indicator)
+TLT OHLCV               Polygon           Bond position pricing
+XLE OHLCV               Polygon           Energy position pricing
+TIP OHLCV               Polygon           TIPS position pricing
+GLD OHLCV               Polygon           Gold position pricing
+HYG OHLCV               Polygon           Credit spread leading indicator
+VIX                     Polygon `VIXIND`  Vol regime context
+```

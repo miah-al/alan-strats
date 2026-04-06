@@ -3,6 +3,24 @@
 
 ---
 
+## Key Terms
+
+```
+Term                                     Definition
+---------------------------------------- ---------------------------------------------------------------
+IVR   — IV Rank                          0-100% percentile of VIX in its 52-week range. High = rich premium.
+VIX   — CBOE Volatility Index            Market's 30-day implied vol for S&P 500. The "fear gauge."
+ADX   — Avg Directional Index (14d)      Trend strength (not direction). <20 = range-bound, >25 = trending.
+ATR   — Avg True Range (14d)             Daily price range normalised by spot price (ATR%).
+VRP   — Volatility Risk Premium          IV minus realised vol (HV). Positive VRP = options overpriced vs reality.
+DTE   — Days To Expiration               Calendar days remaining until the contract expires.
+Delta — Option Delta                     $1 move sensitivity. 16-delta ≈ 16% chance of expiring ITM.
+Vega  — Option Vega                      IV change sensitivity. Short vega = rising IV hurts P&L.
+OTM   — Out of The Money                 Strike above spot (call) or below spot (put). No intrinsic value.
+```
+
+---
+
 ## The Core Edge
 
 The rules-based Iron Condor earns its edge by selling overpriced implied volatility in calm markets. The AI version does the same thing — but it adds one critical capability: **it knows when the rules are about to fail**.
@@ -27,25 +45,27 @@ The gradient boosting model sees 17 features simultaneously and learns the inter
 
 ## What the Model Sees — The 17 Features
 
-| Feature | Type | What It Measures | Why It Matters for IC |
-|---|---|---|---|
-| `ivr` | IV | IV Rank (0–1, 52-week window) | Higher = more overpriced premium to harvest |
-| `iv_term_slope` | IV | 5-day VIX momentum (slope proxy) | Rising VIX = expanding vol regime, dangerous |
-| `put_call_skew` | IV | 1m vs 3m vol ratio (contango) | Flat skew = symmetric IC; steep skew = asymmetric |
-| `atm_iv` | IV | ATM implied vol (VIX/100) | Raw premium level |
-| `realized_vol_20d` | Vol | 20-day historical realized vol | Actual recent movement amplitude |
-| `vrp` | Vol | Implied − realized vol (premium) | Positive = selling at fair price + premium |
-| `atr_pct` | Price | ATR / spot (daily range %) | High = stock moving fast, wings at risk |
-| `ret_5d` | Price | 5-day return | Recent momentum signal |
-| `ret_20d` | Price | 20-day return | Intermediate trend signal |
-| `dist_from_ma50` | Price | % distance from 50-day MA | Overextended = mean-reversion likely (good IC) |
-| `vix_level` | Macro | Current VIX | Regime classifier |
-| `vix_5d_change` | Macro | VIX % change over 5 days | Spiking = dangerous; collapsing = opportunity |
-| `vix_ma_ratio` | Macro | VIX / 20-day VIX MA | >1.2 = elevated; <0.8 = complacent |
-| `rate_10y` | Macro | 10-year Treasury yield | High rates = equity vol often higher |
-| `yield_curve_2y10y` | Macro | 10y − 2y spread | Inverted curve = recession risk, higher vol |
-| `days_to_month_end` | Calendar | Days until month-end | Options cluster at month-end expiry |
-| `oi_put_call_proxy` | Options | Put/call skew proxy | Put demand = hedging, one-sided market |
+```
+Feature              Type      What It Measures                  Why It Matters for IC
+-------------------  --------  --------------------------------  -------------------------------------------------
+`ivr`                IV        IV Rank (0–1, 52-week window)     Higher = more overpriced premium to harvest
+`iv_term_slope`      IV        5-day VIX momentum (slope proxy)  Rising VIX = expanding vol regime, dangerous
+`put_call_skew`      IV        1m vs 3m vol ratio (contango)     Flat skew = symmetric IC; steep skew = asymmetric
+`atm_iv`             IV        ATM implied vol (VIX/100)         Raw premium level
+`realized_vol_20d`   Vol       20-day historical realized vol    Actual recent movement amplitude
+`vrp`                Vol       Implied − realized vol (premium)  Positive = selling at fair price + premium
+`atr_pct`            Price     ATR / spot (daily range %)        High = stock moving fast, wings at risk
+`ret_5d`             Price     5-day return                      Recent momentum signal
+`ret_20d`            Price     20-day return                     Intermediate trend signal
+`dist_from_ma50`     Price     % distance from 50-day MA         Overextended = mean-reversion likely (good IC)
+`vix_level`          Macro     Current VIX                       Regime classifier
+`vix_5d_change`      Macro     VIX % change over 5 days          Spiking = dangerous; collapsing = opportunity
+`vix_ma_ratio`       Macro     VIX / 20-day VIX MA               >1.2 = elevated; <0.8 = complacent
+`rate_10y`           Macro     10-year Treasury yield            High rates = equity vol often higher
+`yield_curve_2y10y`  Macro     10y − 2y spread                   Inverted curve = recession risk, higher vol
+`days_to_month_end`  Calendar  Days until month-end              Options cluster at month-end expiry
+`oi_put_call_proxy`  Options   Put/call skew proxy               Put demand = hedging, one-sided market
+```
 
 ### What a Training Row Actually Looks Like
 
@@ -134,6 +154,25 @@ It is predicting exactly one thing: *will the price stay inside the tent?*
 
 ## Walk-Forward Architecture
 
+**The problem it solves:** If you train a model on all historical data and test it on the same data, you are cheating — the model already saw the answers. Walk-forward prevents that by ensuring the model at any point in time has only ever seen data from the past, never the future.
+
+**Three phases:**
+
+```
+Phase 1 — Warmup (bars 0–180)
+  Collect data only. No model, no trades.
+  Need ~180 bars before IVR, MA50, and realized vol
+  are stable enough to train on.
+
+Phase 2 — First train (bar 180)
+  Train on bars 0–180. Start generating signals from bar 181.
+
+Phase 3 — Live + retrain (every 30 bars ≈ monthly)
+  Bar 210 → retrain on 0–210, generate new signals.
+  Bar 240 → retrain on 0–240, generate new signals.
+  The model always learns from everything it has seen so far.
+```
+
 ```
 Time →  [BAR 0 ─────────────────── BAR 180] [BAR 181 ──── BAR 210] [BAR 211 ───→]
                                               ↑                     ↑
@@ -146,9 +185,11 @@ Rule: Model retrained every 30 bars (≈ monthly) on ALL history up to current b
       First 180 bars: no trades (warmup — insufficient data for reliable model).
 ```
 
-**Why 180-bar warmup?** The feature matrix needs 252 bars to compute a reliable IV Rank. At bar 180, you have enough history for stable IVR, 50-day MA, and realized vol estimates. The model also needs at least 50 positive label examples (range-bound outcomes) to learn from — that requires roughly 130–180 bars of labeled data given a ~38% positive rate.
+**The result:** the model behaves exactly as it would in real trading — no lookahead, no data leakage, no inflated backtest results.
 
-**Why retrain every 30 bars?** Market regimes shift over 4–12 weeks. A model trained in Jan 2022 (rising-rate bear market) will misfire in Jan 2023 (rebounding from lows). Monthly retraining keeps the model current without excessive refit risk.
+**Why 180-bar warmup?** The feature matrix needs ~252 bars to compute a reliable IV Rank. At bar 180 you have enough history for stable IVR, 50-day MA, and realized vol. The model also needs at least 50 positive label examples to learn from — at a ~38% positive rate that requires roughly 130–180 bars of labeled data.
+
+**Why retrain every 30 bars?** Market regimes shift over 4–12 weeks. A model trained in Jan 2022 (rising-rate bear market) will misfire in Jan 2023 (recovery). Monthly retraining keeps the model current without excessive refit risk.
 
 ---
 
@@ -621,35 +662,41 @@ When can you trust that YOUR live results reflect edge?
 
 ### AI-Predicted Range-Bound Setups
 
-| Date | Ticker | Spot | VIX | IVR | Model P | δ Used | Short Call | Short Put | Credit | Max Loss | Outcome | P&L |
-|------|--------|------|-----|-----|---------|--------|-----------|----------|--------|----------|---------|-----|
-| Feb 8 2023 | SPY | $412 | 18.3 | 0.66 | 0.73 | 0.18 | $427 | $397 | $2.85 | $12.15 | ✅ 50% target hit | +$143 |
-| May 3 2023 | QQQ | $322 | 17.1 | 0.58 | 0.68 | 0.16 | $336 | $308 | $2.40 | $11.60 | ✅ 50% target hit | +$120 |
-| Sep 6 2023 | AAPL | $189 | 14.4 | 0.51 | 0.61 | 0.14 | $199 | $179 | $1.55 | $8.45 | ✅ 50% target hit | +$78 |
-| Oct 11 2023 | SPY | $427 | 19.2 | 0.63 | 0.77 | 0.20 | $444 | $410 | $3.60 | $11.40 | ✅ 50% target hit | +$180 |
-| Jan 15 2024 | MSFT | $389 | 13.8 | 0.46 | 0.62 | 0.14 | $409 | $369 | $2.90 | $17.10 | ✅ 21 DTE exit | +$115 |
-| Mar 20 2024 | SPY | $520 | 13.2 | 0.43 | 0.59 | 0.13 | $543 | $497 | $3.10 | $16.90 | ✅ 50% target hit | +$155 |
-| Jun 5 2024 | NVDA | $120 | 15.6 | 0.54 | 0.71 | 0.17 | $128 | $112 | $1.85 | $8.15 | ✅ 50% target hit | +$93 |
-| Sep 18 2024 | QQQ | $478 | 17.4 | 0.60 | 0.74 | 0.18 | $498 | $458 | $3.95 | $16.05 | ✅ 50% target hit | +$198 |
+```
+Date         Ticker  Spot  VIX   IVR   Model P  δ Used  Short Call  Short Put  Credit  Max Loss  Outcome           P&L
+-----------  ------  ----  ----  ----  -------  ------  ----------  ---------  ------  --------  ----------------  -----
+Feb 8 2023   SPY     $412  18.3  0.66  0.73     0.18    $427        $397       $2.85   $12.15    ✅ 50% target hit  +$143
+May 3 2023   QQQ     $322  17.1  0.58  0.68     0.16    $336        $308       $2.40   $11.60    ✅ 50% target hit  +$120
+Sep 6 2023   AAPL    $189  14.4  0.51  0.61     0.14    $199        $179       $1.55   $8.45     ✅ 50% target hit  +$78
+Oct 11 2023  SPY     $427  19.2  0.63  0.77     0.20    $444        $410       $3.60   $11.40    ✅ 50% target hit  +$180
+Jan 15 2024  MSFT    $389  13.8  0.46  0.62     0.14    $409        $369       $2.90   $17.10    ✅ 21 DTE exit     +$115
+Mar 20 2024  SPY     $520  13.2  0.43  0.59     0.13    $543        $497       $3.10   $16.90    ✅ 50% target hit  +$155
+Jun 5 2024   NVDA    $120  15.6  0.54  0.71     0.17    $128        $112       $1.85   $8.15     ✅ 50% target hit  +$93
+Sep 18 2024  QQQ     $478  17.4  0.60  0.74     0.18    $498        $458       $3.95   $16.05    ✅ 50% target hit  +$198
+```
 
 ### AI False Positives — Model Fooled
 
-| Date | Ticker | Spot | VIX | IVR | Model P | Reason Model Fired | What Happened | P&L | Feature Model Missed |
-|------|--------|------|-----|-----|---------|-------------------|--------------|-----|----------------------|
-| Jul 18 2023 | TSLA | $278 | 15.2 | 0.52 | 0.64 | Low ADX, VIX calm, IVR elevated | Musk sold 7.9M shares — stock dropped 9% in 3 days | −$820 | `oi_put_call_proxy` spiked pre-announcement; insufficient weight |
-| Oct 19 2023 | SPY | $418 | 17.8 | 0.58 | 0.66 | All features positive | Israel-Hamas war expansion news over weekend, SPY gapped −1.8% Mon open | −$180 | Geopolitical event — no model can predict this |
-| Feb 22 2024 | NVDA | $788 | 14.1 | 0.49 | 0.60 | IVR elevated post-earnings | Stock continued to surge on AI mania — call wing breached in 8 days | −$640 | `dist_from_ma50` was +18% (very overextended) — model weight too low |
+```
+Date         Ticker  Spot  VIX   IVR   Model P  Reason Model Fired               What Happened                                                            P&L    Feature Model Missed
+-----------  ------  ----  ----  ----  -------  -------------------------------  -----------------------------------------------------------------------  -----  --------------------------------------------------------------------
+Jul 18 2023  TSLA    $278  15.2  0.52  0.64     Low ADX, VIX calm, IVR elevated  Musk sold 7.9M shares — stock dropped 9% in 3 days                       −$820  `oi_put_call_proxy` spiked pre-announcement; insufficient weight
+Oct 19 2023  SPY     $418  17.8  0.58  0.66     All features positive            Israel-Hamas war expansion news over weekend, SPY gapped −1.8% Mon open  −$180  Geopolitical event — no model can predict this
+Feb 22 2024  NVDA    $788  14.1  0.49  0.60     IVR elevated post-earnings       Stock continued to surge on AI mania — call wing breached in 8 days      −$640  `dist_from_ma50` was +18% (very overextended) — model weight too low
+```
 
 ### Regime Performance Summary
 
-| VIX Regime | Trades | Win Rate | Avg Model P | Avg P&L | Avg Hold | vs Rules Win Rate |
-|---|---|---|---|---|---|---|
-| Low (< 16) | 29 | 69% | 0.64 | +$71 | 24d | +8pp better |
-| Medium (16–22) | 94 | 78% | 0.68 | +$134 | 20d | +4pp better |
-| Elevated (22–30) | 51 | 71% | 0.65 | +$108 | 17d | +3pp better |
-| High (30–35) | 18 | 61% | 0.62 | +$32 | 13d | +9pp better |
-| Extreme (> 35) | 0 | — | — | — | — | Blocked by VIX cap |
-| **Total** | **192** | **74%** | **0.66** | **+$112** | **20d** | **+4pp vs rules** |
+```
+VIX Regime        Trades  Win Rate  Avg Model P  Avg P&L  Avg Hold  vs Rules Win Rate
+----------------  ------  --------  -----------  -------  --------  ------------------
+Low (< 16)        29      69%       0.64         +$71     24d       +8pp better
+Medium (16–22)    94      78%       0.68         +$134    20d       +4pp better
+Elevated (22–30)  51      71%       0.65         +$108    17d       +3pp better
+High (30–35)      18      61%       0.62         +$32     13d       +9pp better
+Extreme (> 35)    0       —         —            —        —         Blocked by VIX cap
+Total             192     74%       0.66         +$112    20d       +4pp vs rules
+```
 
 ---
 
@@ -717,15 +764,17 @@ Signal Snapshot — TSLA, Jan 10 2024:
 
 ## AI vs Rules — When Each Wins
 
-| Scenario | Rules | AI | Why |
-|---|---|---|---|
-| Standard calm market (IVR 0.50, VIX 18, ADX 15) | ✅ Enter | ✅ Enter | Both agree |
-| High IVR but stock is trending (ADX 28) | ✅ Enter (ADX rule blocks) | ✅ Reject | Both block it |
-| Marginal IVR (0.46) but momentum is flat, VRP high | ✅ Enter (barely) | ✅ Enter (P=0.62) | Both enter |
-| High IVR (0.65) but stock 20% above 50MA (momentum) | ✅ Enter | ❌ Reject (P=0.34) | **AI wins** — avoids trending breakout |
-| Low VIX (14) but VRP strongly positive, all quiet | ❌ Skip (VIX too low) | ✅ Enter (P=0.64) | **AI wins** — captures thin but real edge |
-| VIX spiked 40% in 5 days, IVR hits 0.80 | ✅ Enter | ❌ Reject (P=0.29) | **AI wins** — vol spike = dangerous regime |
-| FOMC in 3 days, all rules pass | ✅ Enter | ❌ Reject (P=0.38) | **AI wins** — learned FOMC uncertainty pattern |
+```
+Scenario                                             Rules                      AI                 Why
+---------------------------------------------------  -------------------------  -----------------  ------------------------------------------
+Standard calm market (IVR 0.50, VIX 18, ADX 15)      ✅ Enter                    ✅ Enter            Both agree
+High IVR but stock is trending (ADX 28)              ✅ Enter (ADX rule blocks)  ✅ Reject           Both block it
+Marginal IVR (0.46) but momentum is flat, VRP high   ✅ Enter (barely)           ✅ Enter (P=0.62)   Both enter
+High IVR (0.65) but stock 20% above 50MA (momentum)  ✅ Enter                    ❌ Reject (P=0.34)  AI wins — avoids trending breakout
+Low VIX (14) but VRP strongly positive, all quiet    ❌ Skip (VIX too low)       ✅ Enter (P=0.64)   AI wins — captures thin but real edge
+VIX spiked 40% in 5 days, IVR hits 0.80              ✅ Enter                    ❌ Reject (P=0.29)  AI wins — vol spike = dangerous regime
+FOMC in 3 days, all rules pass                       ✅ Enter                    ❌ Reject (P=0.38)  AI wins — learned FOMC uncertainty pattern
+```
 
 ---
 
@@ -772,30 +821,34 @@ These are not suggestions. They are the operating rules of this strategy. Trader
 
 ## Quick Reference
 
-| Parameter | Default | Range | Description |
-|---|---|---|---|
-| `signal_threshold` | 0.60 | 0.50–0.80 | Minimum P(range-bound) to enter |
-| `ivr_min` | 0.35 | 0.20–0.65 | IVR floor (AI relaxes this vs rules) |
-| `vix_max` | 38.0 | 30–50 | VIX ceiling |
-| `delta_short` | 0.16 | 0.10–0.25 | Default short strike delta |
-| `wing_width_pct` | 0.05 | 0.03–0.10 | Wing width as % of spot |
-| `dte_target` | 45 | 30–60 | Target DTE at entry |
-| `dte_exit` | 21 | 14–28 | Force-close DTE |
-| `profit_target_pct` | 0.50 | 0.30–0.70 | Close at % of max credit |
-| `stop_loss_mult` | 2.0 | 1.5–3.0 | Stop at N× credit |
-| `position_size_pct` | 0.03 | 0.01–0.06 | Capital at risk per trade |
-| `n_estimators` | 100 | 50–300 | Gradient boosting trees |
+```
+Parameter            Default  Range      Description
+-------------------  -------  ---------  ------------------------------------
+`signal_threshold`   0.60     0.50–0.80  Minimum P(range-bound) to enter
+`ivr_min`            0.35     0.20–0.65  IVR floor (AI relaxes this vs rules)
+`vix_max`            38.0     30–50      VIX ceiling
+`delta_short`        0.16     0.10–0.25  Default short strike delta
+`wing_width_pct`     0.05     0.03–0.10  Wing width as % of spot
+`dte_target`         45       30–60      Target DTE at entry
+`dte_exit`           21       14–28      Force-close DTE
+`profit_target_pct`  0.50     0.30–0.70  Close at % of max credit
+`stop_loss_mult`     2.0      1.5–3.0    Stop at N× credit
+`position_size_pct`  0.03     0.01–0.06  Capital at risk per trade
+`n_estimators`       100      50–300     Gradient boosting trees
+```
 
 ---
 
 ## Data Requirements
 
-| Data | Source | Required |
-|---|---|---|
-| Daily OHLCV (open/high/low/close) | `mkt.PriceBar` | ✅ Yes |
-| VIX daily close | `mkt.VixBar` | ✅ Yes |
-| 10-year Treasury rate | `mkt.MacroBar` (rate_10y) | Optional |
-| 2-year Treasury rate | `mkt.MacroBar` (rate_2y) | Optional |
+```
+Data                               Source                     Required
+---------------------------------  -------------------------  --------
+Daily OHLCV (open/high/low/close)  `mkt.PriceBar`             ✅ Yes
+VIX daily close                    `mkt.VixBar`               ✅ Yes
+10-year Treasury rate              `mkt.MacroBar` (rate_10y)  Optional
+2-year Treasury rate               `mkt.MacroBar` (rate_2y)   Optional
+```
 
 No option chain data required. The model uses VIX as IV proxy and reconstructs all vol features from price + VIX history.
 
@@ -809,15 +862,17 @@ No option chain data required. The model uses VIX as IV proxy and reconstructs a
 
 Each column is a filter, not a standalone signal. Read them together.
 
-| Column | What It Measures | Good Range for ICs |
-|--------|-----------------|-------------------|
-| **IVR** | Where today's IV sits in its 52-week range (0 = 52-week low, 1 = 52-week high) | > 0.40 |
-| **VRP** | IV minus realized volatility (vol points). Positive = options are expensive relative to actual movement | > 2.0 vol pts |
-| **ATM IV** | Current annualized implied volatility at the money | Context-dependent (see VIX banner) |
-| **ADX** | Average Directional Index — measures trend strength, not direction | < 25 (range-bound) |
-| **ATR%** | Average True Range as % of price — daily velocity | < 1.5% preferred |
-| **VIX** | CBOE fear gauge — proxy for broad market regime | 20–30 sweet spot |
-| **Credit** | Approximate premium collected per share for a balanced IC | Higher is better, but not at the cost of narrow strikes |
+```
+Column  What It Measures                                                                                         Good Range for ICs
+------  -------------------------------------------------------------------------------------------------------  -------------------------------------------------------
+IVR     Where today's IV sits in its 52-week range (0 = 52-week low, 1 = 52-week high)                           > 0.40
+VRP     IV minus realized volatility (vol points). Positive = options are expensive relative to actual movement  > 2.0 vol pts
+ATM IV  Current annualized implied volatility at the money                                                       Context-dependent (see VIX banner)
+ADX     Average Directional Index — measures trend strength, not direction                                       < 25 (range-bound)
+ATR%    Average True Range as % of price — daily velocity                                                        < 1.5% preferred
+VIX     CBOE fear gauge — proxy for broad market regime                                                          20–30 sweet spot
+Credit  Approximate premium collected per share for a balanced IC                                                Higher is better, but not at the cost of narrow strikes
+```
 
 **IVR > 0.40** means IV is in the top 60% of its annual range — you are selling volatility that is historically elevated, which is the foundation of the trade. IVR 0.60+ is a strong signal. IVR below 0.30 means you are selling cheap premium; the risk/reward deteriorates.
 
@@ -868,12 +923,14 @@ Variance Risk Premium is the spread between what the market *implies* will happe
 
 ## 5. Regime Context — The VIX Banner
 
-| VIX Level | Regime | IC Strategy |
-|-----------|--------|-------------|
-| 14–20 | Low vol | Credits thin; be highly selective; IVR filter becomes critical |
-| 20–30 | Sweet spot | Best risk/reward for balanced condors; standard sizing |
-| 30–45 | Elevated | Widen strikes by 15–20%; reduce size; shorter DTE (21 days) |
-| > 45 | Danger zone | No new ICs; manage or close existing positions |
+```
+VIX Level  Regime       IC Strategy
+---------  -----------  --------------------------------------------------------------
+14–20      Low vol      Credits thin; be highly selective; IVR filter becomes critical
+20–30      Sweet spot   Best risk/reward for balanced condors; standard sizing
+30–45      Elevated     Widen strikes by 15–20%; reduce size; shorter DTE (21 days)
+> 45       Danger zone  No new ICs; manage or close existing positions
+```
 
 In low-vol regimes, prioritize IVR and VRP over credit size. A $0.60 credit on a well-positioned SPY condor beats a $1.20 credit on a name with ADX of 38.
 

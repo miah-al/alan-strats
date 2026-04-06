@@ -89,19 +89,23 @@ Net debit: $1.35 = $135 per spread
 
 **Scenario analysis:**
 
-| VIX Scenario | Short Oct Call P&L | Long Dec Call Value | Net P&L | Notes |
-|---|---|---|---|---|
-| VIX stable at 19.5 | +$1.45 (expires OTM) | Worth ~$2.20 | **+$85** | Theta harvest realized |
-| VIX moderate spike to 27 | −$3.10 (ITM) | Worth ~$5.40 | **+$95** | Back-month outpaces near-month |
-| VIX large spike to 35 | −$12.05 | Worth ~$14.80 | **−$125** | Near-month moves faster; small loss |
-| VIX collapses to 13 | Both expire near zero | Worth ~$0.20 | **−$115** | Worst case; slow drift down |
+```
+VIX Scenario              Short Oct Call P&L     Long Dec Call Value  Net P&L  Notes
+------------------------  ---------------------  -------------------  -------  -----------------------------------
+VIX stable at 19.5        +$1.45 (expires OTM)   Worth ~$2.20         +$85     Theta harvest realized
+VIX moderate spike to 27  −$3.10 (ITM)           Worth ~$5.40         +$95     Back-month outpaces near-month
+VIX large spike to 35     −$12.05                Worth ~$14.80        −$125    Near-month moves faster; small loss
+VIX collapses to 13       Both expire near zero  Worth ~$0.20         −$115    Worst case; slow drift down
+```
 
-| VIX Scenario | P&L | Notes |
-|---|---|---|
-| Stable (18–21) | **+$85** | Theta advantage realized |
-| Moderate spike (25–30) | **+$95–$150** | Back-month appreciation exceeds short loss |
-| Large spike (35+) | **−$50 to +$200** | High variance; back-month eventually wins in large spikes |
-| VIX collapse to 13 | **−$135** | Full debit lost — worst case in very calm markets |
+```
+VIX Scenario            P&L            Notes
+----------------------  -------------  ---------------------------------------------------------
+Stable (18–21)          +$85           Theta advantage realized
+Moderate spike (25–30)  +$95–$150      Back-month appreciation exceeds short loss
+Large spike (35+)       −$50 to +$200  High variance; back-month eventually wins in large spikes
+VIX collapse to 13      −$135          Full debit lost — worst case in very calm markets
+```
 
 **The key asymmetry:** The VIX calendar profits in two of the three most common regimes (stable and moderate spike). It only loses in the scenario where VIX collapses below the strike (both options worthless) or in a sustained slow VIX rise that keeps the near-month in the money longer than expected.
 
@@ -159,14 +163,16 @@ Net debit: $1.35 = $135 per spread
 
 ## Strategy Parameters
 
-| Parameter | Default | Range | Description |
-|---|---|---|---|
-| Short leg expiry | Front month (M1) | 15–35 DTE | Near-term, high-decay option |
-| Long leg expiry | 2–3 months out | 45–90 DTE | Stable, slow-decay protection |
-| Strike | 2–4 vol pts OTM from M1 | 1–5 pts OTM | Should be OTM relative to M1 futures |
-| Net debit | ≤ $1.50 | $0.80–$2.00 | Maximum entry cost |
-| M1–M3 spread | ≥ 1.5 vol pts | 1.0–4.0 | Minimum contango to justify trade |
-| Spot VIX range | 17–27 | 15–30 | Optimal entry volatility level |
-| Profit target | 50–70% of max | 40–80% | Close before final-week VIX dynamics |
-| Stop loss | 50% of debit | 40–60% | Maximum loss tolerance |
-| Max position size | 2% capital | 1–3% | VIX products warrant conservative sizing |
+```
+Parameter          Default                  Range        Description
+-----------------  -----------------------  -----------  ----------------------------------------
+Short leg expiry   Front month (M1)         15–35 DTE    Near-term, high-decay option
+Long leg expiry    2–3 months out           45–90 DTE    Stable, slow-decay protection
+Strike             2–4 vol pts OTM from M1  1–5 pts OTM  Should be OTM relative to M1 futures
+Net debit          ≤ $1.50                  $0.80–$2.00  Maximum entry cost
+M1–M3 spread       ≥ 1.5 vol pts            1.0–4.0      Minimum contango to justify trade
+Spot VIX range     17–27                    15–30        Optimal entry volatility level
+Profit target      50–70% of max            40–80%       Close before final-week VIX dynamics
+Stop loss          50% of debit             40–60%       Maximum loss tolerance
+Max position size  2% capital               1–3%         VIX products warrant conservative sizing
+```

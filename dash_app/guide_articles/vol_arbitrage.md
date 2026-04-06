@@ -173,20 +173,22 @@ Combining: Short put + Long call (same strike K) = Synthetic long position
 
 ### Trade 1 — Textbook Skew Compression ✅ +$904
 
-| Field | Value |
-|---|---|
-| Date | 2025-02-18 |
-| HOOD spot | $60.44 |
-| Strike | $69 (OTM — 14% above spot) |
-| DTE | 10 |
-| Call IV | 54.5% |
-| Put IV | 67.6% |
-| **IV Skew** | **13.1 vol pts — sweet spot** |
-| Put delta | −0.25 (OTM put) |
-| Short stock | 565 shares (delta hedge) |
-| Net credit | $5,286 (puts) − $234 (calls) = $5,052 |
-| Hold | 2 days |
-| **P&L** | **+$904** |
+```
+Field        Value
+-----------  -------------------------------------
+Date         2025-02-18
+HOOD spot    $60.44
+Strike       $69 (OTM — 14% above spot)
+DTE          10
+Call IV      54.5%
+Put IV       67.6%
+IV Skew      13.1 vol pts — sweet spot
+Put delta    −0.25 (OTM put)
+Short stock  565 shares (delta hedge)
+Net credit   $5,286 (puts) − $234 (calls) = $5,052
+Hold         2 days
+P&L          +$904
+```
 
 **What happened:** Retail fear from a short-term dip in fintech stocks faded. Put IV mean-reverted
 from 67.6% toward call IV in 2 days. Classic temporary overreaction followed by rapid normalization.
@@ -195,19 +197,21 @@ from 67.6% toward call IV in 2 days. Classic temporary overreaction followed by 
 
 ### Trade 2 — Best Trade: Stock Move Dominated ✅ +$2,126
 
-| Field | Value |
-|---|---|
-| Date | 2025-02-20 |
-| HOOD spot | $56.06 |
-| Strike | $61 (near-ATM) |
-| DTE | 8 |
-| Call IV | 51.4% |
-| Put IV | 63.7% |
-| **IV Skew** | **12.3 vol pts** |
-| Short stock | 661 shares |
-| Net credit | $3,654 |
-| Hold | 2 days |
-| **P&L** | **+$2,126** |
+```
+Field        Value
+-----------  --------------
+Date         2025-02-20
+HOOD spot    $56.06
+Strike       $61 (near-ATM)
+DTE          8
+Call IV      51.4%
+Put IV       63.7%
+IV Skew      12.3 vol pts
+Short stock  661 shares
+Net credit   $3,654
+Hold         2 days
+P&L          +$2,126
+```
 
 **What happened:** Stock fell sharply (-11%). Short stock hedge gained $4,072. The sold
 put lost value (stock moved toward strike) but hedge more than offset. Delta-hedging worked
@@ -218,19 +222,21 @@ into a win (short stock covers the loss and more).
 
 ### Trade 3 — Loser: Extreme Skew Widened ❌ −$580
 
-| Field | Value |
-|---|---|
-| Date | 2024-12-13 |
-| HOOD spot | $40.20 |
-| Strike | $48 (OTM — 19.4% above spot) |
-| DTE | 7 |
-| Call IV | 67.0% |
-| Put IV | 112.1% |
-| **IV Skew** | **45.1 vol pts ⚠️ DANGER ZONE** |
-| Short stock | None entered (short with no hedge is risky at 45 vp) |
-| Net credit | $8,380 |
-| Hold | 2 days |
-| **P&L** | **−$580** |
+```
+Field        Value
+-----------  ----------------------------------------------------
+Date         2024-12-13
+HOOD spot    $40.20
+Strike       $48 (OTM — 19.4% above spot)
+DTE          7
+Call IV      67.0%
+Put IV       112.1%
+IV Skew      45.1 vol pts ⚠️ DANGER ZONE
+Short stock  None entered (short with no hedge is risky at 45 vp)
+Net credit   $8,380
+Hold         2 days
+P&L          −$580
+```
 
 **What happened:** At 45 vol point skew, the market knew something. The skew was pricing
 real event risk, not random retail panic. The skew widened further rather than compressing.
@@ -244,13 +250,15 @@ or widens further. Lesson: skip entries with skew > 35 vp, or size down dramatic
 
 ### Trade 4 — Worst Trade: Macro Shock ❌ −$2,970
 
-| Field | Value |
-|---|---|
-| Date | 2026-02-24 |
-| HOOD spot | ~$95 |
-| **IV Skew at entry** | **24.2 vol pts** (within normal range) |
-| Hold | 2 days |
-| **P&L** | **−$2,970** |
+```
+Field             Value
+----------------  ----------------------------------
+Date              2026-02-24
+HOOD spot         ~$95
+IV Skew at entry  24.2 vol pts (within normal range)
+Hold              2 days
+P&L               −$2,970
+```
 
 **What happened:** A sudden macro event (not anticipatable from market data) caused put IV
 to spike from the normal 20-25 vp range to 55+ vol points within 24 hours. The put we sold
@@ -475,14 +483,16 @@ Rationale:
 
 ## When This Strategy Works Best
 
-| Condition | Optimal Value | Why |
-|---|---|---|
-| IV Skew | 10–25 vol points | Sweet spot for reversion |
-| DTE | 7–15 | Fast theta; avoids earnings; quick reversion capture |
-| IV Rank | ≥ 40 | Confirms elevated vol for HOOD specifically |
-| No known catalyst | — | No earnings, M&A, or sector news within hold period |
-| Market VIX | < 25 | Low macro noise; stock-specific skew dominates |
-| Put/call OI ratio | 1.5–2.5 | Confirms retail-driven put OI imbalance |
+```
+Condition          Optimal Value     Why
+-----------------  ----------------  ----------------------------------------------------
+IV Skew            10–25 vol points  Sweet spot for reversion
+DTE                7–15              Fast theta; avoids earnings; quick reversion capture
+IV Rank            ≥ 40              Confirms elevated vol for HOOD specifically
+No known catalyst  —                 No earnings, M&A, or sector news within hold period
+Market VIX         < 25              Low macro noise; stock-specific skew dominates
+Put/call OI ratio  1.5–2.5           Confirms retail-driven put OI imbalance
+```
 
 ---
 
@@ -555,30 +565,34 @@ Failure Mode 3: Skew widens (informed selling vs retail fear)
 
 ## Strategy Parameters
 
-| Parameter | SPY Default | HOOD Default | Description |
-|---|---|---|---|
-| `min_iv_skew` | 8 vol pts | 8 vol pts | Minimum skew to enter |
-| `max_iv_skew` | 30 vol pts | 35 vol pts | Skip above this (event risk likely) |
-| `min_iv_rank` | 30 | 40 | Minimum IV Rank (elevated vol required) |
-| `dte_range` | 14–45 DTE | 7–20 DTE | Entry DTE window |
-| `hold_days` | 3 | 2–3 | Maximum hold (exit sooner if target hit) |
-| `max_position_pct` | 8% | 6% | Max capital per trade |
-| `stop_loss_mult` | 2× credit | 2× credit | Close if loss reaches 2× initial credit |
+```
+Parameter           SPY Default  HOOD Default  Description
+------------------  -----------  ------------  ----------------------------------------
+`min_iv_skew`       8 vol pts    8 vol pts     Minimum skew to enter
+`max_iv_skew`       30 vol pts   35 vol pts    Skip above this (event risk likely)
+`min_iv_rank`       30           40            Minimum IV Rank (elevated vol required)
+`dte_range`         14–45 DTE    7–20 DTE      Entry DTE window
+`hold_days`         3            2–3           Maximum hold (exit sooner if target hit)
+`max_position_pct`  8%           6%            Max capital per trade
+`stop_loss_mult`    2× credit    2× credit     Close if loss reaches 2× initial credit
+```
 
 ---
 
 ## Data Requirements
 
-| Data | Source | Usage |
-|---|---|---|
-| Per-contract IV (put and call) | Polygon options chain | Skew calculation (put IV − call IV) |
-| Strike-level OI and volume | Polygon options chain | Entry filter, skew calculation |
-| IV Rank | Derived from 52-week IV history | Entry filter |
-| OHLCV price history | Polygon | Delta hedge size, realized vol |
-| VIX | Polygon `VIXIND` | Macro vol filter |
-| Put/call OI ratio | Polygon options chain | Confirms put-heavy positioning |
-| Earnings calendar | DB | Avoid earnings within hold period |
-| Macro calendar | DB / Fed | Avoid macro events within hold period |
+```
+Data                            Source                           Usage
+------------------------------  -------------------------------  -------------------------------------
+Per-contract IV (put and call)  Polygon options chain            Skew calculation (put IV − call IV)
+Strike-level OI and volume      Polygon options chain            Entry filter, skew calculation
+IV Rank                         Derived from 52-week IV history  Entry filter
+OHLCV price history             Polygon                          Delta hedge size, realized vol
+VIX                             Polygon `VIXIND`                 Macro vol filter
+Put/call OI ratio               Polygon options chain            Confirms put-heavy positioning
+Earnings calendar               DB                               Avoid earnings within hold period
+Macro calendar                  DB / Fed                         Avoid macro events within hold period
+```
 
 **Data quality note:** Per-contract OHLC + Black-Scholes IV inversion is required for
 full skew arb functionality. If only aggregate IV is available (no per-contract quotes),

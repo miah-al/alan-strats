@@ -103,11 +103,13 @@ SPY notional covered: 5 × 100 × $477 = $238,500 (47.7% of portfolio)
 
 **Rolling protocol in 2022:**
 
-| Month | Action | Cost | Running Premium Total |
-|---|---|---|---|
-| January | Buy $405/$477 put (15% OTM, 72 DTE) at $2.10 | $1,050 | $1,050 |
-| March (put expires; SPY ~$449) | Let expire (still OTM); buy April $380 put | $1,750 | $2,800 |
-| June (SPY at $380; put NEAR ATM) | Sell June put: $14.50/contract × 5 = $7,250 | −$7,250 | −$4,450 |
+```
+Month                             Action                                        Cost     Running Premium Total
+--------------------------------  --------------------------------------------  -------  ---------------------
+January                           Buy $405/$477 put (15% OTM, 72 DTE) at $2.10  $1,050   $1,050
+March (put expires; SPY ~$449)    Let expire (still OTM); buy April $380 put    $1,750   $2,800
+June (SPY at $380; put NEAR ATM)  Sell June put: $14.50/contract × 5 = $7,250   −$7,250  −$4,450
+```
 
 **Net hedge P&L for H1 2022:** $7,250 proceeds − $2,800 premium paid = **+$4,450 profit**
 **Portfolio context:** Equity positions fell approximately $60,000 (12%) over the same period.
@@ -136,14 +138,16 @@ Buy May 2023 SPY $335 put (16% OTM, 72 DTE) → pay $1.80 = $180 per contract
 
 **Pre-COVID systematic hedger (monthly rolling 15% OTM, 75-DTE puts at $80/contract average):**
 
-| Period | Action | Cost | Put Value |
-|---|---|---|---|
-| Jan 2020 | Buy Mar $270 put ($337 SPY, 20% OTM) | −$400 | $0.40/contract |
-| Feb 21 | VIX at 28; SPY at $330. Put now $2.80 | — | $2.80 |
-| Feb 28 | SPY at $285. Put ($270 strike) is $2.00 OTM; worth $8.20 | — | $8.20 |
-| Mar 23 (SPY bottom $218) | SPY -35.3% from Jan 17 peak. $270 put = $52 ITM. Close: $5,200/contract | +$26,000 | — |
-| Premium paid Jan-Mar | $400 + $400 + $400 (3 monthly rolls) | −$1,200 | — |
-| Net hedge gain | $26,000 − $1,200 = +$24,800 | | |
+```
+Period                    Action                                                                   Cost      Put Value
+------------------------  -----------------------------------------------------------------------  --------  --------------
+Jan 2020                  Buy Mar $270 put ($337 SPY, 20% OTM)                                     −$400     $0.40/contract
+Feb 21                    VIX at 28; SPY at $330. Put now $2.80                                    —         $2.80
+Feb 28                    SPY at $285. Put ($270 strike) is $2.00 OTM; worth $8.20                 —         $8.20
+Mar 23 (SPY bottom $218)  SPY -35.3% from Jan 17 peak. $270 put = $52 ITM. Close: $5,200/contract  +$26,000  —
+Premium paid Jan-Mar      $400 + $400 + $400 (3 monthly rolls)                                     −$1,200   —
+Net hedge gain            $26,000 − $1,200 = +$24,800
+```
 
 **Portfolio context:** 5-contract hedge on $300,000 equity portfolio. Equity lost approximately $90,000 (−30%). Hedge returned $24,800, reducing effective drawdown from $90,000 to $65,200 — and critically, allowing the investor to hold through the crash and capture the subsequent recovery because the loss, at $65,200 vs $90,000, was within the range of bearable outcomes.
 
@@ -175,15 +179,17 @@ STATUS: In budget. Conditions favorable (low VIX = cheap insurance).
 
 **Systematic 15% OTM put hedging, SPY 2005–2024:**
 
-| Period | Put Cost (Annual) | Protection Activated | Net Benefit |
-|---|---|---|---|
-| 2005–2007 (calm) | 1.1% annually | No | −1.1%/yr (cost of insurance) |
-| 2008 crisis | 1.1% annual cost | Yes — massive | +18.4% net of costs |
-| 2009–2019 (bull) | 1.1% annually | Partially (2010, 2011, 2015, 2018) | −0.3%/yr net (partial protection) |
-| 2020 COVID | 1.1% annual cost | Yes — significant | +8.9% net of costs |
-| 2021 (bull) | 1.1% cost | No | −1.1% (insurance premium) |
-| 2022 bear market | 1.1% cost | Yes — partially | +3.2% net |
-| Total 2005–2024 (20 years) | 1.1%/yr = 22% total | 3 major events | Net portfolio CAGR improvement vs unhedged: +0.8% after cost |
+```
+Period                      Put Cost (Annual)    Protection Activated                Net Benefit
+--------------------------  -------------------  ----------------------------------  ------------------------------------------------------------
+2005–2007 (calm)            1.1% annually        No                                  −1.1%/yr (cost of insurance)
+2008 crisis                 1.1% annual cost     Yes — massive                       +18.4% net of costs
+2009–2019 (bull)            1.1% annually        Partially (2010, 2011, 2015, 2018)  −0.3%/yr net (partial protection)
+2020 COVID                  1.1% annual cost     Yes — significant                   +8.9% net of costs
+2021 (bull)                 1.1% cost            No                                  −1.1% (insurance premium)
+2022 bear market            1.1% cost            Yes — partially                     +3.2% net
+Total 2005–2024 (20 years)  1.1%/yr = 22% total  3 major events                      Net portfolio CAGR improvement vs unhedged: +0.8% after cost
+```
 
 **Key finding:** The hedged portfolio outperforms unhedged over 20-year horizons not from the expected value of the puts (which is negative) but from the avoided behavioral costs of catastrophic drawdowns. The quantifiable return improvement (0.8% CAGR) understates the true benefit, which includes retirement timing preservation, rebalancing opportunities at market bottoms, and the economic value of not panic-selling.
 
@@ -279,31 +285,35 @@ Do not sell a 15% OTM put because SPY has declined 8% and "the correction is ove
 
 ## Strategy Parameters
 
-| Parameter | Conservative | Standard | Budget-Constrained |
-|---|---|---|---|
-| Strike OTM distance | 12–15% | 15–18% | 20–25% |
-| DTE at purchase | 90 | 75 | 60 |
-| Roll at DTE | 35 | 30 | 25 |
-| Portfolio coverage | 75% | 50% | 25% |
-| Annual premium budget | 1.5% of portfolio | 1.0% | 0.5% |
-| VIX preference at purchase | < 17 | < 22 | < 28 |
-| Early sell trigger | 75% gain | 100% gain | 150% gain |
-| Max contracts per purchase | Based on budget | Based on budget | Based on budget |
-| Rolling frequency | Monthly | Quarterly | Semi-annual |
-| Underlying | QQQ for tech | SPY | SPY |
+```
+Parameter                   Conservative       Standard         Budget-Constrained
+--------------------------  -----------------  ---------------  ------------------
+Strike OTM distance         12–15%             15–18%           20–25%
+DTE at purchase             90                 75               60
+Roll at DTE                 35                 30               25
+Portfolio coverage          75%                50%              25%
+Annual premium budget       1.5% of portfolio  1.0%             0.5%
+VIX preference at purchase  < 17               < 22             < 28
+Early sell trigger          75% gain           100% gain        150% gain
+Max contracts per purchase  Based on budget    Based on budget  Based on budget
+Rolling frequency           Monthly            Quarterly        Semi-annual
+Underlying                  QQQ for tech       SPY              SPY
+```
 
 ---
 
 ## Data Requirements
 
-| Data Point | Source | Update Frequency | Purpose |
-|---|---|---|---|
-| SPY price | Broker / Yahoo Finance | Daily | Strike calculation |
-| VIX level | CBOE / broker | Real-time | Cost assessment; timing |
-| OTM put premium (15% OTM, 75 DTE) | Broker options chain | At purchase | Actual cost verification |
-| Portfolio market value | Broker account | Weekly | Contract count calculation |
-| Portfolio composition (SPY vs QQQ exposure) | Portfolio analytics | Quarterly | Underlying selection |
-| Annual hedge cost tracker | Personal spreadsheet | Monthly | Budget compliance |
-| IV of put purchased | Broker options chain | At purchase | Future comparison reference |
-| SPY historical price | Yahoo Finance / Polygon | Weekly | Rolling protocol reference |
-| VIX history | CBOE / FRED | Weekly | Contextualize current VIX |
+```
+Data Point                                   Source                   Update Frequency  Purpose
+-------------------------------------------  -----------------------  ----------------  ---------------------------
+SPY price                                    Broker / Yahoo Finance   Daily             Strike calculation
+VIX level                                    CBOE / broker            Real-time         Cost assessment; timing
+OTM put premium (15% OTM, 75 DTE)            Broker options chain     At purchase       Actual cost verification
+Portfolio market value                       Broker account           Weekly            Contract count calculation
+Portfolio composition (SPY vs QQQ exposure)  Portfolio analytics      Quarterly         Underlying selection
+Annual hedge cost tracker                    Personal spreadsheet     Monthly           Budget compliance
+IV of put purchased                          Broker options chain     At purchase       Future comparison reference
+SPY historical price                         Yahoo Finance / Polygon  Weekly            Rolling protocol reference
+VIX history                                  CBOE / FRED              Weekly            Contextualize current VIX
+```

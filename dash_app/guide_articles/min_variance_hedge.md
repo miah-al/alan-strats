@@ -171,17 +171,19 @@ $4,200 per quarter × 4 = $16,800 per year = **4.2% of portfolio** (expensive �
 
 ## Strategy Parameters
 
-| Parameter | Default | Range | Description |
-|---|---|---|---|
-| Beta estimation window | 60 days | 40–120 | Rolling OLS regression lookback |
-| Hedge instrument | SPY puts | SPY / QQQ / Sector | Choose based on portfolio composition |
-| Hedge ratio method | h* = ρ × (σ_P/σ_H) | h* or β | Both equivalent; regression β is simpler |
-| Stress beta multiplier | 1.3× | 1.2–1.5× | Crisis beta spike adjustment |
-| Sizing approach | Stress-adjusted (conservative) | Normal or stress-adjusted | Conservative covers crisis better |
-| Strike selection | 10–15% OTM | ATM to 20% OTM | Balance cost and coverage depth |
-| DTE | 60–90 days | 45–120 | Roll quarterly |
-| Annual budget cap | 1–2% of portfolio | 0.5–3% | Maximum acceptable hedge cost |
-| Rebalance threshold | 15% drift from target | 10–20% | When to resize the hedge |
-| Rebalance frequency | Monthly | Monthly or event-driven | Or immediately after large portfolio change |
-| Debit spread option | ATM long / OTM short | Optional | Reduces cost, caps maximum payoff |
-| Dividend adjustment | Include in cost calculation | Preferred | Forward price effect on long-horizon hedges |
+```
+Parameter               Default                         Range                      Description
+----------------------  ------------------------------  -------------------------  -------------------------------------------
+Beta estimation window  60 days                         40–120                     Rolling OLS regression lookback
+Hedge instrument        SPY puts                        SPY / QQQ / Sector         Choose based on portfolio composition
+Hedge ratio method      h* = ρ × (σ_P/σ_H)              h* or β                    Both equivalent; regression β is simpler
+Stress beta multiplier  1.3×                            1.2–1.5×                   Crisis beta spike adjustment
+Sizing approach         Stress-adjusted (conservative)  Normal or stress-adjusted  Conservative covers crisis better
+Strike selection        10–15% OTM                      ATM to 20% OTM             Balance cost and coverage depth
+DTE                     60–90 days                      45–120                     Roll quarterly
+Annual budget cap       1–2% of portfolio               0.5–3%                     Maximum acceptable hedge cost
+Rebalance threshold     15% drift from target           10–20%                     When to resize the hedge
+Rebalance frequency     Monthly                         Monthly or event-driven    Or immediately after large portfolio change
+Debit spread option     ATM long / OTM short            Optional                   Reduces cost, caps maximum payoff
+Dividend adjustment     Include in cost calculation     Preferred                  Forward price effect on long-horizon hedges
+```

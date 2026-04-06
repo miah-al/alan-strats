@@ -303,6 +303,22 @@ class IronCondorRulesStrategy(BaseStrategy):
                  "Raised from 3 to 5 to allow staggered entries during extended "
                  "elevated-IV windows (e.g. the multi-week Apr 2025 sell-off)."
              )},
+            {"key": "vix_min",           "label": "Min VIX",           "type": "slider",
+             "min": 10.0, "max": 20.0, "default": 14.0, "step": 0.5,
+             "col": 0, "row": 3,
+             "help": "VIX floor — avoids entering when premium is too cheap (low-vol complacency)"},
+            {"key": "atr_pct_max",       "label": "Max ATR%",          "type": "slider",
+             "min": 0.01, "max": 0.05, "default": 0.03, "step": 0.005,
+             "col": 1, "row": 3,
+             "help": "Max ATR as % of spot — filters out high-velocity days where wings may be insufficient"},
+            {"key": "stop_loss_mult",    "label": "Stop loss (×credit)","type": "slider",
+             "min": 1.0,  "max": 4.0,  "default": 2.0,  "step": 0.5,
+             "col": 2, "row": 3,
+             "help": "Close when current cost-to-close exceeds N× the original credit received"},
+            {"key": "dte_exit",          "label": "DTE exit",          "type": "slider",
+             "min": 7,    "max": 30,   "default": 21,   "step": 1,
+             "col": 0, "row": 4,
+             "help": "Force-close at this many DTE remaining — avoids gamma risk in final weeks"},
         ]
 
     def generate_signal(self, market_snapshot: dict) -> SignalResult:
@@ -362,12 +378,16 @@ class IronCondorRulesStrategy(BaseStrategy):
         auxiliary_data:     dict,
         starting_capital:   float = 100_000,
         ivr_min:            Optional[float] = None,
+        vix_min:            Optional[float] = None,
         vix_max:            Optional[float] = None,
         adx_max:            Optional[float] = None,
+        atr_pct_max:        Optional[float] = None,
         delta_short:        Optional[float] = None,
         wing_width_pct:     Optional[float] = None,
         dte_target:         Optional[int]   = None,
+        dte_exit:           Optional[int]   = None,
         profit_target_pct:  Optional[float] = None,
+        stop_loss_mult:     Optional[float] = None,
         position_size_pct:  Optional[float] = None,
         max_concurrent:     Optional[int]   = None,
         **kwargs,
@@ -376,16 +396,18 @@ class IronCondorRulesStrategy(BaseStrategy):
 
         # ── Resolve params ────────────────────────────────────────────────
         ivr_min_eff  = ivr_min           or self.ivr_min
+        vix_min_eff  = vix_min           or self.vix_min
         vix_max_eff  = vix_max           or self.vix_max
         adx_max_eff  = adx_max           or self.adx_max
+        atr_max_eff  = atr_pct_max       or self.atr_pct_max
         d_short      = delta_short       or self.delta_short
         ww_pct       = wing_width_pct    or self.wing_width_pct
         dte_tgt      = dte_target        or self.dte_target
+        dte_ex       = dte_exit          or self.dte_exit
         pt           = profit_target_pct or self.profit_target_pct
+        sl_mult      = stop_loss_mult    or self.stop_loss_mult
         pos_sz       = position_size_pct or self.position_size_pct
         max_conc     = max_concurrent    or self.max_concurrent
-        dte_ex       = self.dte_exit
-        sl_mult      = self.stop_loss_mult
         comm         = self.commission_per_leg
         r            = _RISK_FREE_RATE
 
@@ -417,8 +439,15 @@ class IronCondorRulesStrategy(BaseStrategy):
         n         = len(all_dates)
 
         # ── Simulation state ──────────────────────────────────────────────
+        # Margin-based model: capital = cash + reserved margin.
+        # Each open trade reserves its max_loss as margin (= Robinhood buying power).
+        # New trades only open when free_capital >= margin_required.
+        # 1 contract per trade — clean sizing at small capital scales.
         capital         = float(starting_capital)
+        reserved_margin = 0.0          # total margin locked in open trades
         equity_curve    = []
+        cash_curve      = []           # free capital (equity - margin)
+        margin_curve    = []           # reserved margin across open trades
         open_trades:  list[dict] = []
         closed_trades: list[dict] = []
         signal_ledger:  list[dict] = []
@@ -434,25 +463,21 @@ class IronCondorRulesStrategy(BaseStrategy):
             atr_pct = atr_val / spot if spot > 0 else 0.0
 
             # ── 1. Check exits on open trades ─────────────────────────────
-            still_open: list[dict] = []
+            still_open:    list[dict] = []
+            unrealized_pnl = 0.0
             for trade in open_trades:
                 dte_rem = trade["expiry_idx"] - i
                 T_now   = max(dte_rem / 252.0, 1e-6)
 
-                # Current cost-to-close: value of short strangle − value of long wings
                 call_short_val = bs_price(spot, trade["call_short_K"], T_now, r, iv_val, "call")
                 call_long_val  = bs_price(spot, trade["call_long_K"],  T_now, r, iv_val, "call")
                 put_short_val  = bs_price(spot, trade["put_short_K"],  T_now, r, iv_val, "put")
                 put_long_val   = bs_price(spot, trade["put_long_K"],   T_now, r, iv_val, "put")
 
-                # Net current liability (what we'd pay to close)
-                cur_cost = (call_short_val - call_long_val) + (put_short_val - put_long_val)
-                cur_cost = max(cur_cost, 0.0)
-
+                cur_cost = max((call_short_val - call_long_val) + (put_short_val - put_long_val), 0.0)
                 pnl_per  = trade["credit"] - cur_cost
                 pnl_tot  = pnl_per * trade["contracts"] * 100
-
-                close_comm = 4 * comm * trade["contracts"]  # 4 legs to close
+                close_comm = 4 * comm * trade["contracts"]
 
                 exit_reason = None
                 if pnl_per >= pt * trade["credit"]:
@@ -466,26 +491,38 @@ class IronCondorRulesStrategy(BaseStrategy):
 
                 if exit_reason:
                     net_pnl = round(pnl_tot - close_comm, 2)
-                    capital += net_pnl
+                    # Release margin and apply P&L to capital
+                    reserved_margin -= trade["margin_reserved"]
+                    capital         += net_pnl
                     closed_trades.append({
-                        "entry_date":   trade["entry_date"].date(),
-                        "exit_date":    dt.date(),
-                        "call_short_K": round(trade["call_short_K"], 2),
-                        "call_long_K":  round(trade["call_long_K"],  2),
-                        "put_short_K":  round(trade["put_short_K"],  2),
-                        "put_long_K":   round(trade["put_long_K"],   2),
-                        "credit":       round(trade["credit"],        4),
-                        "contracts":    trade["contracts"],
-                        "pnl":          net_pnl,
-                        "exit_reason":  exit_reason,
-                        "dte_held":     trade["dte_entry"] - dte_rem,
-                        "winner":       net_pnl > 0,
+                        "entry_date":      trade["entry_date"].date(),
+                        "exit_date":       dt.date(),
+                        "call_short_K":    round(trade["call_short_K"], 2),
+                        "call_long_K":     round(trade["call_long_K"],  2),
+                        "put_short_K":     round(trade["put_short_K"],  2),
+                        "put_long_K":      round(trade["put_long_K"],   2),
+                        "credit":          round(trade["credit"],        4),
+                        "contracts":       trade["contracts"],
+                        "margin_reserved": round(trade["margin_reserved"], 2),
+                        "pnl":             net_pnl,
+                        "exit_reason":     exit_reason,
+                        "dte_held":        trade["dte_entry"] - dte_rem,
+                        "winner":          net_pnl > 0,
                     })
                 else:
                     still_open.append(trade)
+                    # Accumulate unrealized P&L for open trades
+                    unrealized_pnl += pnl_per * trade["contracts"] * 100
 
-            open_trades = still_open
-            equity_curve.append(capital)
+            open_trades  = still_open
+            free_capital = capital - reserved_margin
+            # MTM equity = realized capital + unrealized P&L on open positions
+            # position_value = what open trades are worth right now (can be negative)
+            position_value = unrealized_pnl   # net unrealized P&L across all open trades
+            mtm_equity     = capital + position_value
+            equity_curve.append(mtm_equity)
+            cash_curve.append(free_capital)
+            margin_curve.append(position_value)
 
             # ── 2. Entry check ────────────────────────────────────────────
             enough_history = i >= max(_MIN_IVR_BARS, _MIN_TREND_BARS, 50)
@@ -495,38 +532,33 @@ class IronCondorRulesStrategy(BaseStrategy):
                 enough_history
                 and enough_data
                 and ivr_val >= ivr_min_eff
-                and self.vix_min <= vix_val <= vix_max_eff
+                and vix_min_eff <= vix_val <= vix_max_eff
                 and adx_val <= adx_max_eff
-                and atr_pct <= self.atr_pct_max
-                and len(open_trades) < max_conc
+                and atr_pct <= atr_max_eff
                 and spot > 0
             )
 
             regime_series.append({
-                "date":    dt.date(),
-                "ivr":     round(ivr_val, 3),
-                "vix":     round(vix_val, 2),
-                "adx":     round(adx_val, 1),
-                "atr_pct": round(atr_pct, 4),
-                "regime":  "ENTER" if rules_ok else "SKIP",
-                "n_open":  len(open_trades),
+                "date":         dt.date(),
+                "ivr":          round(ivr_val, 3),
+                "vix":          round(vix_val, 2),
+                "adx":          round(adx_val, 1),
+                "atr_pct":      round(atr_pct, 4),
+                "free_capital": round(free_capital, 2),
+                "n_open":       len(open_trades),
+                "regime":       "ENTER" if rules_ok else "SKIP",
             })
 
             if rules_ok:
                 T_entry = dte_tgt / 252.0
 
-                # Short strikes at target delta
-                call_short_K = _find_strike_for_delta(spot, T_entry, r, iv_val,
-                                                       d_short, "call")
-                put_short_K  = _find_strike_for_delta(spot, T_entry, r, iv_val,
-                                                       d_short, "put")
+                call_short_K = _find_strike_for_delta(spot, T_entry, r, iv_val, d_short, "call")
+                put_short_K  = _find_strike_for_delta(spot, T_entry, r, iv_val, d_short, "put")
 
-                # Long wings: fixed % of spot beyond short strikes
-                wing_width   = spot * ww_pct
-                call_long_K  = call_short_K + wing_width
-                put_long_K   = put_short_K  - wing_width
+                wing_width  = spot * ww_pct
+                call_long_K = call_short_K + wing_width
+                put_long_K  = put_short_K  - wing_width
 
-                # Net credit: short strangle − long wing cost
                 credit = (
                     bs_price(spot, call_short_K, T_entry, r, iv_val, "call")
                     - bs_price(spot, call_long_K,  T_entry, r, iv_val, "call")
@@ -534,53 +566,63 @@ class IronCondorRulesStrategy(BaseStrategy):
                     - bs_price(spot, put_long_K,   T_entry, r, iv_val, "put")
                 )
 
-                if credit <= 0.10:  # minimum viable credit (avoid near-zero premium)
+                if credit <= 0.10:
                     continue
 
-                # Max loss per spread = wing_width − credit (per share)
-                max_loss_per_spread = wing_width - credit
-                if max_loss_per_spread <= 0:
+                max_loss_per_contract = (wing_width - credit) * 100   # per contract
+                if max_loss_per_contract <= 0:
                     continue
 
-                contracts = max(1, int(capital * pos_sz / (max_loss_per_spread * 100)))
-                contracts = min(contracts, 20)  # hard cap
+                # Margin model: 1 contract per trade, gated by free capital
+                contracts      = 1
+                margin_needed  = max_loss_per_contract   # = max loss for 1 contract
+                open_comm      = 4 * comm * contracts
 
-                open_comm = 4 * comm * contracts  # 4 legs to open
+                if free_capital < margin_needed + open_comm:
+                    continue   # not enough buying power — skip
+
+                # Reserve margin (buying power decreases)
+                reserved_margin += margin_needed
+                free_capital    -= margin_needed
+                capital         -= open_comm
 
                 expiry_idx = min(i + dte_tgt, n - 1)
                 open_trades.append({
-                    "entry_date":   dt,
-                    "expiry_idx":   expiry_idx,
-                    "dte_entry":    dte_tgt,
-                    "call_short_K": call_short_K,
-                    "call_long_K":  call_long_K,
-                    "put_short_K":  put_short_K,
-                    "put_long_K":   put_long_K,
-                    "credit":       credit,
-                    "wing_width":   wing_width,
-                    "contracts":    contracts,
-                    "entry_capital": capital,
-                    "ivr_at_entry": ivr_val,
-                    "vix_at_entry": vix_val,
-                    "adx_at_entry": adx_val,
+                    "entry_date":      dt,
+                    "expiry_idx":      expiry_idx,
+                    "dte_entry":       dte_tgt,
+                    "call_short_K":    call_short_K,
+                    "call_long_K":     call_long_K,
+                    "put_short_K":     put_short_K,
+                    "put_long_K":      put_long_K,
+                    "credit":          credit,
+                    "wing_width":      wing_width,
+                    "contracts":       contracts,
+                    "margin_reserved": margin_needed,
+                    "ivr_at_entry":    ivr_val,
+                    "vix_at_entry":    vix_val,
+                    "adx_at_entry":    adx_val,
                 })
-                capital -= open_comm  # deduct opening commission
                 signal_ledger.append({
-                    "date":         dt.date(),
-                    "spot":         round(spot, 2),
-                    "call_short_K": round(call_short_K, 2),
-                    "call_long_K":  round(call_long_K, 2),
-                    "put_short_K":  round(put_short_K, 2),
-                    "put_long_K":   round(put_long_K, 2),
-                    "credit":       round(credit, 4),
-                    "contracts":    contracts,
-                    "ivr":          round(ivr_val, 3),
-                    "vix":          round(vix_val, 2),
-                    "adx":          round(adx_val, 1),
+                    "date":            dt.date(),
+                    "spot":            round(spot, 2),
+                    "call_short_K":    round(call_short_K, 2),
+                    "call_long_K":     round(call_long_K, 2),
+                    "put_short_K":     round(put_short_K, 2),
+                    "put_long_K":      round(put_long_K, 2),
+                    "credit":          round(credit, 4),
+                    "margin_reserved": round(margin_needed, 2),
+                    "contracts":       contracts,
+                    "free_capital":    round(free_capital, 2),
+                    "ivr":             round(ivr_val, 3),
+                    "vix":             round(vix_val, 2),
+                    "adx":             round(adx_val, 1),
                 })
 
         # ── Build output ──────────────────────────────────────────────────
-        eq = pd.Series(equity_curve, index=all_dates, dtype=float)
+        eq          = pd.Series(equity_curve, index=all_dates, dtype=float)
+        cash_s      = pd.Series(cash_curve,   index=all_dates, dtype=float)
+        margin_s    = pd.Series(margin_curve,  index=all_dates, dtype=float)
         daily_returns = eq.pct_change().dropna()
 
         trades_df = pd.DataFrame(closed_trades) if closed_trades else pd.DataFrame()
@@ -612,5 +654,7 @@ class IronCondorRulesStrategy(BaseStrategy):
                 "signal_ledger": signal_df,
                 "regime_series": regime_df,
                 "n_open_at_end": len(open_trades),
+                "cash_curve":    cash_s,
+                "margin_curve":  margin_s,
             },
         )

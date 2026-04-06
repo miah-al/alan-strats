@@ -472,17 +472,19 @@ the 2008 financial crisis (continued down 40%), and similar sustained bear start
 
 ## Quick Reference
 
-| Parameter | Default | Range | Description |
-|---|---|---|---|
-| `spike_threshold` | 25 | 20–45 | Minimum absolute VIX level to activate entry (code `spike_threshold=25.0`) |
-| `spike_ratio` | 1.3× | 1.1–2.0 | VIX must be ≥ `spike_ratio` × 20-day average (code `spike_ratio=1.3`) |
-| `revert_threshold` | 22 | 15–30 | Exit when VIX drops back below this (code `revert_threshold=22.0`) |
-| `spread_width` | $5 | $2–$20 | Dollar width between long and short call strikes (code `spread_width=5.0`) |
-| `dte_entry` | 21 DTE | 14–45 | Days to expiry at entry (code `dte_entry=21`) |
-| `profit_target_pct` | 50% of debit | 30–80% | Close at 50% gain on debit (code `profit_target_pct=0.50`) |
-| `max_hold_days` | 15 days | 5–30 | Maximum hold in calendar days (code `max_hold_days=15`) |
-| `position_size_pct` | 2% | 1–5% | Capital at risk as % of portfolio (code `position_size_pct=0.02`) |
-| `min_days_between_trades` | 10 days | 5–20 | Cooldown after each exit |
+```
+Parameter                  Default       Range    Description
+-------------------------  ------------  -------  --------------------------------------------------------------------------
+`spike_threshold`          25            20–45    Minimum absolute VIX level to activate entry (code `spike_threshold=25.0`)
+`spike_ratio`              1.3×          1.1–2.0  VIX must be ≥ `spike_ratio` × 20-day average (code `spike_ratio=1.3`)
+`revert_threshold`         22            15–30    Exit when VIX drops back below this (code `revert_threshold=22.0`)
+`spread_width`             $5            $2–$20   Dollar width between long and short call strikes (code `spread_width=5.0`)
+`dte_entry`                21 DTE        14–45    Days to expiry at entry (code `dte_entry=21`)
+`profit_target_pct`        50% of debit  30–80%   Close at 50% gain on debit (code `profit_target_pct=0.50`)
+`max_hold_days`            15 days       5–30     Maximum hold in calendar days (code `max_hold_days=15`)
+`position_size_pct`        2%            1–5%     Capital at risk as % of portfolio (code `position_size_pct=0.02`)
+`min_days_between_trades`  10 days       5–20     Cooldown after each exit
+```
 
 > **Note — Rule-Based, Not ML:** This strategy is `RULE_BASED` in the code (not AI-driven). The "five capitulation fingerprints" described above are educational context for the conditions under which VIX spikes tend to mean-revert; the actual entry rule is simply VIX > `spike_threshold` AND VIX > `spike_ratio` × 20d average AND price within 5% of 200-day MA. The ML scoring described in the trade walkthroughs above (P(capitulation)) illustrates *why* those real-world setups worked, not a live model output.
 
@@ -490,13 +492,15 @@ the 2008 financial crisis (continued down 40%), and similar sustained bear start
 
 ## Data Requirements
 
-| Data | Source | Usage |
-|---|---|---|
-| VIX daily OHLC | Polygon `VIXIND` | Spike detection, speed measurement |
-| SPY OHLCV | Polygon | Entry price, spread pricing |
-| HYG daily close | Polygon `HYG` | Credit market health check |
-| Put/call ratio | CBOE data / Polygon | Fear gauge confirmation |
-| ISM PMI | Macro data provider | Economic backdrop filter |
-| Jobless claims | BLS / Macro | Labor market health filter |
-| 10-year Treasury | Polygon `DGS10` | Risk-free rate for Black-Scholes |
-| S&P 500 RSI breadth | Computed from index constituents | Breadth exhaustion check |
+```
+Data                 Source                            Usage
+-------------------  --------------------------------  ----------------------------------
+VIX daily OHLC       Polygon `VIXIND`                  Spike detection, speed measurement
+SPY OHLCV            Polygon                           Entry price, spread pricing
+HYG daily close      Polygon `HYG`                     Credit market health check
+Put/call ratio       CBOE data / Polygon               Fear gauge confirmation
+ISM PMI              Macro data provider               Economic backdrop filter
+Jobless claims       BLS / Macro                       Labor market health filter
+10-year Treasury     Polygon `DGS10`                   Risk-free rate for Black-Scholes
+S&P 500 RSI breadth  Computed from index constituents  Breadth exhaustion check
+```

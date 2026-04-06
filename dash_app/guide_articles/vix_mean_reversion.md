@@ -130,27 +130,29 @@ Expected P&L from vega component (credit put spread):
 
 ### Trade 1 — August 2024 VIX Spike: Textbook Episodic Reversion ✅
 
-| Field | Value |
-|---|---|
-| Date | August 5, 2024 |
-| Event | Japan carry trade unwind + BOJ rate shock |
-| SPX at entry | 5,119 (SPY: $511.90) |
-| VIX at entry | 38.6 (intraday high: 65.73) |
-| VIX 20-day MA at entry | 15.8 (spike: 2.44× the moving average) |
-| Credit spreads (HYG) | Near 52-week highs — credit intact ✓ |
-| SPX vs 200-day MA | Above by 9.4% — bull market intact ✓ |
-| Position | Sell SPY 490/480 put spread, Sep expiry (35 DTE) |
-| Short strike | SPY $490 (4.3% OTM) |
-| Long strike | SPY $480 (wing — caps max loss) |
-| Entry credit | $3.85 per spread |
-| Contracts | 5 |
-| Net credit | $1,925 |
-| Max loss (if SPY < $480) | $6,575 — never came close |
-| Exit date | August 16, 2024 (11 days later) |
-| Exit cost | $0.92 per spread |
-| VIX at exit | 15.4 |
-| SPY at exit | $551 |
-| **P&L** | **+$1,465 (+76% of max potential gain)** |
+```
+Field                     Value
+------------------------  ------------------------------------------------
+Date                      August 5, 2024
+Event                     Japan carry trade unwind + BOJ rate shock
+SPX at entry              5,119 (SPY: $511.90)
+VIX at entry              38.6 (intraday high: 65.73)
+VIX 20-day MA at entry    15.8 (spike: 2.44× the moving average)
+Credit spreads (HYG)      Near 52-week highs — credit intact ✓
+SPX vs 200-day MA         Above by 9.4% — bull market intact ✓
+Position                  Sell SPY 490/480 put spread, Sep expiry (35 DTE)
+Short strike              SPY $490 (4.3% OTM)
+Long strike               SPY $480 (wing — caps max loss)
+Entry credit              $3.85 per spread
+Contracts                 5
+Net credit                $1,925
+Max loss (if SPY < $480)  $6,575 — never came close
+Exit date                 August 16, 2024 (11 days later)
+Exit cost                 $0.92 per spread
+VIX at exit               15.4
+SPY at exit               $551
+P&L                       +$1,465 (+76% of max potential gain)
+```
 
 **Entry rationale:** The VIX spike to 38.6 was driven by a specific technical catalyst (yen carry unwind) rather than fundamental economic deterioration. US economic data remained solid. HYG barely moved. The VIX futures term structure inverted aggressively but began normalizing within hours — a hallmark of episodic rather than structural panic.
 
@@ -160,21 +162,23 @@ Expected P&L from vega component (credit put spread):
 
 ### Trade 2 — October 2022 VIX at 34: Structural Bear Market ❌ (Caution Example)
 
-| Field | Value |
-|---|---|
-| Date | October 3, 2022 |
-| Context | Fed tightening cycle; SPX −25% YTD |
-| SPX at entry | 3,584 (SPY: $358.40) |
-| VIX at entry | 34.0 |
-| SPX vs 200-day MA | BELOW by 18% — bear market ⚠️ |
-| Credit spreads (HYG) | Elevated — credit stress visible ⚠️ |
-| Position | Sell SPY 330/320 put spread, Nov expiry (42 DTE) |
-| Entry credit | $3.40 per spread |
-| Contracts | 5 |
-| Net credit | $1,700 |
-| Outcome | SPX rallied sharply from the October low |
-| Exit | October 28 (25 days later) at $0.40 |
-| **P&L** | **+$1,500** (trade worked but for wrong reason) |
+```
+Field                 Value
+--------------------  ------------------------------------------------
+Date                  October 3, 2022
+Context               Fed tightening cycle; SPX −25% YTD
+SPX at entry          3,584 (SPY: $358.40)
+VIX at entry          34.0
+SPX vs 200-day MA     BELOW by 18% — bear market ⚠️
+Credit spreads (HYG)  Elevated — credit stress visible ⚠️
+Position              Sell SPY 330/320 put spread, Nov expiry (42 DTE)
+Entry credit          $3.40 per spread
+Contracts             5
+Net credit            $1,700
+Outcome               SPX rallied sharply from the October low
+Exit                  October 28 (25 days later) at $0.40
+P&L                   +$1,500 (trade worked but for wrong reason)
+```
 
 **Warning — this is a regime identification lesson:** October 2022 turned out to be the bear market low, but entering a VIX mean reversion trade during an active tightening cycle with SPX in a structural downtrend is significantly higher risk than an episodic spike. The SPX 200-day MA filter would have flagged this as a SKIP — the stock was well below its 200-day, signaling structural breakdown, not episodic panic.
 
@@ -186,22 +190,24 @@ The trade worked because SPX rallied 20%+ from that low (a coincidence of timing
 
 ### Trade 3 — February 2018 Volmageddon: Extreme Spike, Defined Risk Saves You ✅
 
-| Field | Value |
-|---|---|
-| Date | February 6, 2018 |
-| Event | Short-volatility ETF collapse (XIV) |
-| SPX at entry | 2,648 |
-| VIX at entry | 29.1 (had spiked to 50.3 intraday prior day) |
-| SPX vs 200-day MA | Above by 3.2% — bull market intact ✓ |
-| HYG credit spreads | Stable — no credit stress ✓ |
-| Position | Sell SPY 255/250 put spread, Mar expiry (38 DTE) |
-| Entry credit | $2.80 per spread |
-| Contracts | 8 |
-| Net credit | $2,240 |
-| Max adverse move | SPX fell to 2,532 on Feb 8 (−4.4% — spread not threatened) |
-| Mark-to-market low | Spread widened to $3.07 — brief paper loss |
-| Exit date | February 23 (17 days later) at $0.35 |
-| **P&L** | **+$1,960 (after riding through the drawdown)** |
+```
+Field               Value
+------------------  ----------------------------------------------------------
+Date                February 6, 2018
+Event               Short-volatility ETF collapse (XIV)
+SPX at entry        2,648
+VIX at entry        29.1 (had spiked to 50.3 intraday prior day)
+SPX vs 200-day MA   Above by 3.2% — bull market intact ✓
+HYG credit spreads  Stable — no credit stress ✓
+Position            Sell SPY 255/250 put spread, Mar expiry (38 DTE)
+Entry credit        $2.80 per spread
+Contracts           8
+Net credit          $2,240
+Max adverse move    SPX fell to 2,532 on Feb 8 (−4.4% — spread not threatened)
+Mark-to-market low  Spread widened to $3.07 — brief paper loss
+Exit date           February 23 (17 days later) at $0.35
+P&L                 +$1,960 (after riding through the drawdown)
+```
 
 **Lesson — hold through episodic drawdowns if thesis intact:** Volmageddon was episodic, not structural. The economy was strong. SPX recovered within weeks. Traders who panicked on February 8 at the $3.07 mark locked in a paper loss instead of the realized gain. The key to surviving the drawdown was the defined-risk structure — the maximum loss was capped at $1,760 per spread regardless of how far SPX fell. Never cut a defined-risk position at the worst moment unless the fundamental thesis has changed.
 
@@ -453,16 +459,18 @@ VIX spikes but then hovers at an elevated level (22–25) rather than returning 
 
 ## When This Strategy Works Best
 
-| Condition | Optimal Value | Why It Matters |
-|---|---|---|
-| VIX level at entry | 28-45 | Maximum premium without structural crisis probability |
-| Term structure | Inverted (backwardation) | Confirms episodic, not structural spike |
-| SPX trend | Above 200-day MA | Bull market intact = spike more likely to resolve |
-| Credit spreads (HYG) | Near 52-week highs | Confirms credit system is not impaired |
-| Economic data | Mixed or positive | No structural deterioration in backdrop |
-| Catalyst type | Technical/sentiment | Carry unwinds, flash crashes revert fastest |
-| VIX/Realized vol ratio | ≥ 1.5 | Confirms significant overpricing of implied vol |
-| DTE at entry | 21-35 days | Balanced theta/vega exposure |
+```
+Condition               Optimal Value             Why It Matters
+----------------------  ------------------------  -----------------------------------------------------
+VIX level at entry      28-45                     Maximum premium without structural crisis probability
+Term structure          Inverted (backwardation)  Confirms episodic, not structural spike
+SPX trend               Above 200-day MA          Bull market intact = spike more likely to resolve
+Credit spreads (HYG)    Near 52-week highs        Confirms credit system is not impaired
+Economic data           Mixed or positive         No structural deterioration in backdrop
+Catalyst type           Technical/sentiment       Carry unwinds, flash crashes revert fastest
+VIX/Realized vol ratio  ≥ 1.5                     Confirms significant overpricing of implied vol
+DTE at entry            21-35 days                Balanced theta/vega exposure
+```
 
 ---
 
@@ -486,34 +494,38 @@ VIX spikes but then hovers at an elevated level (22–25) rather than returning 
 
 ## Strategy Parameters
 
-| Parameter | Conservative | Standard | Aggressive | Description |
-|---|---|---|---|---|
-| `min_vix_entry` | 33 | 28 | 25 | Minimum VIX to enter |
-| `vix_ma_ratio` | ≥ 2.0× | ≥ 1.5× | ≥ 1.3× | VIX relative to 20-day MA |
-| `term_structure_filter` | Inverted required | Inverted required | Flat OK | VX1 < VIX required |
-| `spx_trend_filter` | Above 200-day MA | Above 200-day MA | Above 50-day MA | Bull market confirmation |
-| `credit_filter` | HYG near highs | HYG within 3% of highs | Not required | Credit system check |
-| `dte_range` | 28-35 | 21-35 | 18-42 | Entry DTE window |
-| `otm_pct_short` | 7-10% | 5-8% | 4-6% | How far OTM the short put is |
-| `spread_width_spx` | 50 pts | 25-50 pts | 15-25 pts | Spread width (SPX) |
-| `credit_pct_width` | ≥ 35% | ≥ 30% | ≥ 25% | Minimum credit as % of spread width |
-| `profit_target` | 50% of max gain | 60-70% of max gain | 80% or hold to expiry | Exit rule |
-| `stop_loss` | 50% of max loss | 75% of max loss | Full max loss | Loss trigger |
-| `max_position_pct` | 7% | 10% | 13% | Maximum portfolio allocation per trade |
+```
+Parameter                Conservative       Standard                Aggressive             Description
+-----------------------  -----------------  ----------------------  ---------------------  --------------------------------------
+`min_vix_entry`          33                 28                      25                     Minimum VIX to enter
+`vix_ma_ratio`           ≥ 2.0×             ≥ 1.5×                  ≥ 1.3×                 VIX relative to 20-day MA
+`term_structure_filter`  Inverted required  Inverted required       Flat OK                VX1 < VIX required
+`spx_trend_filter`       Above 200-day MA   Above 200-day MA        Above 50-day MA        Bull market confirmation
+`credit_filter`          HYG near highs     HYG within 3% of highs  Not required           Credit system check
+`dte_range`              28-35              21-35                   18-42                  Entry DTE window
+`otm_pct_short`          7-10%              5-8%                    4-6%                   How far OTM the short put is
+`spread_width_spx`       50 pts             25-50 pts               15-25 pts              Spread width (SPX)
+`credit_pct_width`       ≥ 35%              ≥ 30%                   ≥ 25%                  Minimum credit as % of spread width
+`profit_target`          50% of max gain    60-70% of max gain      80% or hold to expiry  Exit rule
+`stop_loss`              50% of max loss    75% of max loss         Full max loss          Loss trigger
+`max_position_pct`       7%                 10%                     13%                    Maximum portfolio allocation per trade
+```
 
 ---
 
 ## Data Requirements
 
-| Data | Source | Usage |
-|---|---|---|
-| VIX spot level (real-time) | Polygon `VIXIND` | Primary entry trigger |
-| VIX 20-day moving average | Derived from VIX history | VIX/MA ratio filter |
-| VIX 52-week high/low | Derived from history | Percentile calculation |
-| VIX futures (VX1, VX2) | CBOE / Polygon | Term structure calculation |
-| SPX OHLCV daily | Polygon | 200-day MA calculation, trend filter |
-| SPX realized volatility (30-day) | Derived from daily returns | VIX/RVol ratio |
-| HYG daily price | Polygon | Credit spread proxy filter |
-| Options chain (SPX/SPY) | Polygon | Put spread pricing, IV confirmation |
-| FOMC calendar | Federal Reserve website / DB | Avoid entries near FOMC |
-| Unemployment claims (weekly) | BLS / FRED | Economic backdrop check |
+```
+Data                              Source                        Usage
+--------------------------------  ----------------------------  ------------------------------------
+VIX spot level (real-time)        Polygon `VIXIND`              Primary entry trigger
+VIX 20-day moving average         Derived from VIX history      VIX/MA ratio filter
+VIX 52-week high/low              Derived from history          Percentile calculation
+VIX futures (VX1, VX2)            CBOE / Polygon                Term structure calculation
+SPX OHLCV daily                   Polygon                       200-day MA calculation, trend filter
+SPX realized volatility (30-day)  Derived from daily returns    VIX/RVol ratio
+HYG daily price                   Polygon                       Credit spread proxy filter
+Options chain (SPX/SPY)           Polygon                       Put spread pricing, IV confirmation
+FOMC calendar                     Federal Reserve website / DB  Avoid entries near FOMC
+Unemployment claims (weekly)      BLS / FRED                    Economic backdrop check
+```

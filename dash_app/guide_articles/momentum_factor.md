@@ -125,15 +125,17 @@ The 20-day MA had been below the 50-day MA for the prior 18 trading days followi
 
 **Trade entered January 16 at open:**
 
-| Parameter | Value |
-|---|---|
-| Long strike | Feb 21 $580 call |
-| Short strike | Feb 21 $595 call |
-| Net debit | $4.40 ($440 per contract) |
-| Max profit | $10.60 ($1,060 per contract) |
-| Break-even | $584.40 |
-| DTE at entry | 36 |
-| Stop: MA cross reversal | If 20d MA crosses back below 50d MA on closing basis |
+```
+Parameter                Value
+-----------------------  ----------------------------------------------------
+Long strike              Feb 21 $580 call
+Short strike             Feb 21 $595 call
+Net debit                $4.40 ($440 per contract)
+Max profit               $10.60 ($1,060 per contract)
+Break-even               $584.40
+DTE at entry             36
+Stop: MA cross reversal  If 20d MA crosses back below 50d MA on closing basis
+```
 
 **What happened:** SPY trended steadily to $592 by February 10. The bull call spread was worth $9.80 — 92% of maximum profit. The 20-day MA never crossed below the 50-day MA during the hold. Closed early for $9.80, avoiding the last-week theta and gamma risk.
 
@@ -234,21 +236,25 @@ Signal Dashboard — SPY Moving Average Crossover — Jan 15, 2025:
 
 **Performance by regime:**
 
-| Regime (HMM) | Win Rate | Avg P&L | Notes |
-|---|---|---|---|
-| Bull | 74% | +$780 | Best conditions — trend sustains |
-| Neutral | 55% | +$180 | Marginal — acceptable with ADX filter |
-| Bear | 33% | -$200 | Losses dominate — regime filter critical |
+```
+Regime (HMM)  Win Rate  Avg P&L  Notes
+------------  --------  -------  ----------------------------------------
+Bull          74%       +$780    Best conditions — trend sustains
+Neutral       55%       +$180    Marginal — acceptable with ADX filter
+Bear          33%       -$200    Losses dominate — regime filter critical
+```
 
 **By calendar period:**
 
-| Period | Win Rate | Sharpe | Character |
-|---|---|---|---|
-| 2013–2015 | 76% | 1.8 | QE bull — trend signals highly reliable |
-| 2017–2019 | 71% | 1.6 | Low vol trend — steady accumulation |
-| 2020 | 61% | 1.1 | COVID volatility created whipsaws |
-| 2022 | 35% | -0.6 | Rate shock, no sustained trends |
-| 2023–2024 | 69% | 1.4 | AI bull — tech trend sustained |
+```
+Period     Win Rate  Sharpe  Character
+---------  --------  ------  ---------------------------------------
+2013–2015  76%       1.8     QE bull — trend signals highly reliable
+2017–2019  71%       1.6     Low vol trend — steady accumulation
+2020       61%       1.1     COVID volatility created whipsaws
+2022       35%       -0.6    Rate shock, no sustained trends
+2023–2024  69%       1.4     AI bull — tech trend sustained
+```
 
 The 2022 data point is critical: the strategy lost money, and should have been suppressed by the HMM regime filter (which correctly identified the bear regime from January 2022 onward). Running the strategy without the regime filter in 2022 produced a -14% loss. With the regime filter: -2.1% (only early signals before the bear was confirmed).
 
@@ -368,16 +374,18 @@ consecutive losses represent only a 30% drawdown — recoverable.
 
 ## When This Strategy Works Best
 
-| Condition | Optimal Value | Why |
-|---|---|---|
-| VIX | 14–22 | Low enough for trend to persist; high enough for meaningful spread premiums |
-| ADX | 20–35 | Strong trend confirmation without extreme readings that signal overextension |
-| HMM Regime | BULL | Bull regimes sustain trends; crossovers last 3–8 weeks rather than days |
-| Market Character | Steady directional drift | Crossovers work in "one step up, pause, one step up" markets |
-| Macro backdrop | Stable Fed policy | Rate stability allows sector trends to persist for weeks |
-| Seasonality | October–April | Historically strongest seasonal period for trend strategies |
-| SPY distance above 200-day MA | 2–8% | Far enough above to confirm trend, not so far as to invite reversal |
-| Average volume trend | Rising 30-day trend | Expanding volume confirms growing institutional commitment |
+```
+Condition                      Optimal Value             Why
+-----------------------------  ------------------------  ----------------------------------------------------------------------------
+VIX                            14–22                     Low enough for trend to persist; high enough for meaningful spread premiums
+ADX                            20–35                     Strong trend confirmation without extreme readings that signal overextension
+HMM Regime                     BULL                      Bull regimes sustain trends; crossovers last 3–8 weeks rather than days
+Market Character               Steady directional drift  Crossovers work in "one step up, pause, one step up" markets
+Macro backdrop                 Stable Fed policy         Rate stability allows sector trends to persist for weeks
+Seasonality                    October–April             Historically strongest seasonal period for trend strategies
+SPY distance above 200-day MA  2–8%                      Far enough above to confirm trend, not so far as to invite reversal
+Average volume trend           Rising 30-day trend       Expanding volume confirms growing institutional commitment
+```
 
 ---
 
@@ -401,37 +409,41 @@ consecutive losses represent only a 30% drawdown — recoverable.
 
 ## Strategy Parameters
 
-| Parameter | Default | Range | Description |
-|---|---|---|---|
-| Short MA period | 20 days | 10–30 | Faster MA — recent trend |
-| Long MA period | 50 days | 30–100 | Slower MA — baseline trend |
-| MA type | SMA | SMA / EMA | Simple or exponential; EMA signals earlier |
-| Volume confirmation | 1.5× 30d avg | 1.2–2.0× | Minimum volume on crossover day |
-| ADX filter | ≥ 18 | 15–25 | Trend strength — skip if below |
-| RSI at entry | 45–70 | 40–75 | Not overbought at entry |
-| VIX cap | 25 | 20–30 | Skip in high-vol regime |
-| Spread DTE | 30–45 | 21–60 | Options expiration window |
-| Spread width | $12–$20 | $8–$25 | Width of bull/bear call/put spread |
-| Profit target | 75% of max | 60–90% | Close early to avoid last-week theta risk |
-| Stop loss | MA cross reversal | — | Exit when crossover signal reverses |
-| Secondary stop | Below break-even ×2 days | — | Exit if SPY closes below break-even for 2 days |
-| Position size | 3–5% of portfolio | 2–6% | Risk per trade as % of capital |
-| Regime filter | HMM ≠ BEAR | Required | Do not take Golden Cross in bear regime |
-| Min SMA separation | 0.05% | 0.02–0.15% | Avoid hair's-breadth crossovers |
-| Cooling-off after whipsaw | 10 days | 5–15 | Pause after a whipsaw loss |
+```
+Parameter                  Default                   Range       Description
+-------------------------  ------------------------  ----------  ----------------------------------------------
+Short MA period            20 days                   10–30       Faster MA — recent trend
+Long MA period             50 days                   30–100      Slower MA — baseline trend
+MA type                    SMA                       SMA / EMA   Simple or exponential; EMA signals earlier
+Volume confirmation        1.5× 30d avg              1.2–2.0×    Minimum volume on crossover day
+ADX filter                 ≥ 18                      15–25       Trend strength — skip if below
+RSI at entry               45–70                     40–75       Not overbought at entry
+VIX cap                    25                        20–30       Skip in high-vol regime
+Spread DTE                 30–45                     21–60       Options expiration window
+Spread width               $12–$20                   $8–$25      Width of bull/bear call/put spread
+Profit target              75% of max                60–90%      Close early to avoid last-week theta risk
+Stop loss                  MA cross reversal         —           Exit when crossover signal reverses
+Secondary stop             Below break-even ×2 days  —           Exit if SPY closes below break-even for 2 days
+Position size              3–5% of portfolio         2–6%        Risk per trade as % of capital
+Regime filter              HMM ≠ BEAR                Required    Do not take Golden Cross in bear regime
+Min SMA separation         0.05%                     0.02–0.15%  Avoid hair's-breadth crossovers
+Cooling-off after whipsaw  10 days                   5–15        Pause after a whipsaw loss
+```
 
 ---
 
 ## Data Requirements
 
-| Data | Source | Usage |
-|---|---|---|
-| Daily OHLCV for SPY/QQQ/sectors | Polygon | SMA(20), SMA(50), SMA(200) calculation |
-| Daily volume | Polygon | Volume confirmation filter (1.5× threshold) |
-| VIX daily level | Polygon / CBOE | Macro filter for entries |
-| ADX(14) | Calculated from OHLCV | Trend strength filter |
-| RSI(14) | Calculated from close prices | Overbought/oversold filter at entry |
-| HMM regime | Platform regime model | Master regime filter — suppress signals in BEAR |
-| Options chain (SPY) | Polygon | Pricing the debit spread at entry |
-| Macro calendar (FOMC, CPI, NFP) | Fed / BLS / DB | Avoid signals near binary events |
-| S&P 500 breadth | Polygon / calculated | Breadth confirmation (% of sectors trending) |
+```
+Data                             Source                        Usage
+-------------------------------  ----------------------------  -----------------------------------------------
+Daily OHLCV for SPY/QQQ/sectors  Polygon                       SMA(20), SMA(50), SMA(200) calculation
+Daily volume                     Polygon                       Volume confirmation filter (1.5× threshold)
+VIX daily level                  Polygon / CBOE                Macro filter for entries
+ADX(14)                          Calculated from OHLCV         Trend strength filter
+RSI(14)                          Calculated from close prices  Overbought/oversold filter at entry
+HMM regime                       Platform regime model         Master regime filter — suppress signals in BEAR
+Options chain (SPY)              Polygon                       Pricing the debit spread at entry
+Macro calendar (FOMC, CPI, NFP)  Fed / BLS / DB                Avoid signals near binary events
+S&P 500 breadth                  Polygon / calculated          Breadth confirmation (% of sectors trending)
+```

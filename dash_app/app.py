@@ -17,10 +17,13 @@ import sys
 # This file: alan_trader/dash_app/app.py
 # We need the alan_trader/ directory on sys.path so that
 # engine/, db/, dash_app/ etc. are all importable as top-level packages.
-_HERE = os.path.dirname(os.path.abspath(__file__))
-_ROOT = os.path.dirname(_HERE)   # alan_trader/
+_HERE   = os.path.dirname(os.path.abspath(__file__))
+_ROOT   = os.path.dirname(_HERE)          # alan_trader/
+_PARENT = os.path.dirname(_ROOT)          # ClaudeCodeTest/ (needed for alan_trader.* imports)
 if _ROOT not in sys.path:
     sys.path.insert(0, _ROOT)
+if _PARENT not in sys.path:
+    sys.path.insert(0, _PARENT)
 
 import dash
 import dash_bootstrap_components as dbc

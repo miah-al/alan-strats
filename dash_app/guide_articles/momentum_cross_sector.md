@@ -264,12 +264,14 @@ Cross-Sector Momentum Dashboard — December 31, 2024:
 
 **R3-R9 dispersion vs performance:**
 
-| Dispersion (rank 3 vs rank 9) | Win Rate | Avg Monthly Return |
-|---|---|---|
-| > 30% | 74% | +3.1% |
-| 20–30% | 68% | +2.4% |
-| 10–20% | 58% | +1.4% |
-| < 10% | 43% | -0.3% |
+```
+Dispersion (rank 3 vs rank 9)  Win Rate  Avg Monthly Return
+-----------------------------  --------  ------------------
+> 30%                          74%       +3.1%
+20–30%                         68%       +2.4%
+10–20%                         58%       +1.4%
+< 10%                          43%       -0.3%
+```
 
 The dispersion filter (skip if spread between rank 3 and rank 9 is < 10%) is the second most important enhancement after the regime filter.
 
@@ -353,15 +355,17 @@ Example (January 2025):
 
 ## When This Strategy Works Best
 
-| Condition | Optimal Value | Why |
-|---|---|---|
-| Business cycle phase | Mid-cycle expansion | Sectors rotating in predictable order driven by economic momentum |
-| Cross-sector dispersion | > 20% (R3 vs R9) | Wide dispersion means strong persistent sector trends |
-| HMM Regime | BULL | Sector rotation is visible and persistent in bull markets |
-| VIX | 14–22 | Low enough for trends to persist; not so low that all sectors move together |
-| Macro driver | Sector-specific (rate cycle, energy, AI) | Macro drivers that favor specific sectors create sustained flows |
-| Institutional flows | Active rotation visible | When 13F data shows sector rotation, momentum is real |
-| Rebalance frequency | Monthly | Institutional rotation cycles are measured in months, not days |
+```
+Condition                Optimal Value                             Why
+-----------------------  ----------------------------------------  ---------------------------------------------------------------------------
+Business cycle phase     Mid-cycle expansion                       Sectors rotating in predictable order driven by economic momentum
+Cross-sector dispersion  > 20% (R3 vs R9)                          Wide dispersion means strong persistent sector trends
+HMM Regime               BULL                                      Sector rotation is visible and persistent in bull markets
+VIX                      14–22                                     Low enough for trends to persist; not so low that all sectors move together
+Macro driver             Sector-specific (rate cycle, energy, AI)  Macro drivers that favor specific sectors create sustained flows
+Institutional flows      Active rotation visible                   When 13F data shows sector rotation, momentum is real
+Rebalance frequency      Monthly                                   Institutional rotation cycles are measured in months, not days
+```
 
 ---
 
@@ -385,36 +389,40 @@ Example (January 2025):
 
 ## Strategy Parameters
 
-| Parameter | Default | Range | Description |
-|---|---|---|---|
-| Lookback window | 12-1 months | 9-1 to 12-1 | Return period for ranking (exclude last month) |
-| Long sectors | Top 3 | Top 2–4 | Number of sectors to buy |
-| Short sectors | Bottom 3 | Bottom 2–4 | Number of sectors to sell/hedge |
-| Rebalance frequency | Monthly | Monthly only | More frequent increases costs |
-| Sector universe | 11 GICS sectors | All 11 | XLK, XLF, XLE, XLV, XLY, XLP, XLI, XLB, XLU, XLRE, XLC |
-| Return type | Total return (dividends) | Required | Price return alone understates sector performance |
-| Options DTE | 28–35 | 21–45 | Monthly cycle options |
-| Spread width | 4–6% of ETF price | 3–8% | Width of each debit spread per sector |
-| Portfolio stop | -1.5× premium paid | -1.2–2.0× | Whole-book stop |
-| Min dispersion | 10% spread R3 vs R9 | 5–15% | Skip if sectors not dispersed |
-| Regime filter | HMM ≠ BEAR | Required | Skip in bear regime |
-| Position size (per leg) | 50% of portfolio | 30–60% | Total capital per long or short leg |
-| Beta-neutral adjustment | Optional | Beta × notional | Adjust for sector beta differences |
-| Dividend check | Required | Required | Account for short leg dividend payments |
+```
+Parameter                Default                   Range            Description
+-----------------------  ------------------------  ---------------  ------------------------------------------------------
+Lookback window          12-1 months               9-1 to 12-1      Return period for ranking (exclude last month)
+Long sectors             Top 3                     Top 2–4          Number of sectors to buy
+Short sectors            Bottom 3                  Bottom 2–4       Number of sectors to sell/hedge
+Rebalance frequency      Monthly                   Monthly only     More frequent increases costs
+Sector universe          11 GICS sectors           All 11           XLK, XLF, XLE, XLV, XLY, XLP, XLI, XLB, XLU, XLRE, XLC
+Return type              Total return (dividends)  Required         Price return alone understates sector performance
+Options DTE              28–35                     21–45            Monthly cycle options
+Spread width             4–6% of ETF price         3–8%             Width of each debit spread per sector
+Portfolio stop           -1.5× premium paid        -1.2–2.0×        Whole-book stop
+Min dispersion           10% spread R3 vs R9       5–15%            Skip if sectors not dispersed
+Regime filter            HMM ≠ BEAR                Required         Skip in bear regime
+Position size (per leg)  50% of portfolio          30–60%           Total capital per long or short leg
+Beta-neutral adjustment  Optional                  Beta × notional  Adjust for sector beta differences
+Dividend check           Required                  Required         Account for short leg dividend payments
+```
 
 ---
 
 ## Data Requirements
 
-| Data | Source | Usage |
-|---|---|---|
-| Sector ETF daily prices (OHLCV) | Polygon | 12-1 return calculation |
-| Sector ETF dividends | Polygon / ETF issuer | Total return (not price return) calculation |
-| Sector ETF options chains | Polygon | Pricing bull call / bear put spreads |
-| HMM regime | Platform regime model | Master filter |
-| VIX daily | Polygon / CBOE | Secondary filter |
-| Sector beta to SPY | Calculated (rolling 60d) | Beta-neutral sizing |
-| Short interest by ETF | FINRA / Iborrowdesk | Crowding risk on short leg |
-| Put/call OI ratio by ETF | Polygon | Short squeeze early warning |
-| FOMC calendar | Federal Reserve | Entry timing filter |
-| Earnings calendar (S&P 500) | DB / Earnings Whispers | Avoid peak earnings entry |
+```
+Data                             Source                    Usage
+-------------------------------  ------------------------  -------------------------------------------
+Sector ETF daily prices (OHLCV)  Polygon                   12-1 return calculation
+Sector ETF dividends             Polygon / ETF issuer      Total return (not price return) calculation
+Sector ETF options chains        Polygon                   Pricing bull call / bear put spreads
+HMM regime                       Platform regime model     Master filter
+VIX daily                        Polygon / CBOE            Secondary filter
+Sector beta to SPY               Calculated (rolling 60d)  Beta-neutral sizing
+Short interest by ETF            FINRA / Iborrowdesk       Crowding risk on short leg
+Put/call OI ratio by ETF         Polygon                   Short squeeze early warning
+FOMC calendar                    Federal Reserve           Entry timing filter
+Earnings calendar (S&P 500)      DB / Earnings Whispers    Avoid peak earnings entry
+```

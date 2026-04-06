@@ -72,12 +72,14 @@ Profit zone: $561.35 – $573.65 (±1.1% band)
 
 **Greek profile (0DTE is extreme compared to monthly structures):**
 
-| Greek | Sign | 0DTE-specific dynamics |
-|---|---|---|
-| Delta | Near zero | Dramatically more sensitive to moves than 30-DTE |
-| Theta | Extreme positive | Decaying at maximum daily rate — your primary income source |
-| Vega | Negative | IV spikes extremely painful; VIX >25 disqualifies entry |
-| Gamma | Extremely negative | By 2pm, a $1 move creates 5× more P&L impact than at 9:45am |
+```
+Greek  Sign                0DTE-specific dynamics
+-----  ------------------  -----------------------------------------------------------
+Delta  Near zero           Dramatically more sensitive to moves than 30-DTE
+Theta  Extreme positive    Decaying at maximum daily rate — your primary income source
+Vega   Negative            IV spikes extremely painful; VIX >25 disqualifies entry
+Gamma  Extremely negative  By 2pm, a $1 move creates 5× more P&L impact than at 9:45am
+```
 
 ---
 
@@ -89,13 +91,15 @@ Profit zone: $561.35 – $573.65 (±1.1% band)
 
 Pre-trade checks passed at 9:35am: VIX 16.8 (below 25), no events, pre-market futures within ±0.1%, ADX 14. All conditions green.
 
-| Leg | Strike | Action | Premium |
-|---|---|---|---|
-| Short call | $572 (16-delta) | Sell 5× | $1.15 |
-| Long call | $577 | Buy 5× | $0.30 |
-| Short put | $563 (16-delta) | Sell 5× | $1.05 |
-| Long put | $558 | Buy 5× | $0.25 |
-| **Net credit** | | | **$1.65/share = $825 (5 contracts)** |
+```
+Leg         Strike           Action   Premium
+----------  ---------------  -------  --------------------------------
+Short call  $572 (16-delta)  Sell 5×  $1.15
+Long call   $577             Buy 5×   $0.30
+Short put   $563 (16-delta)  Sell 5×  $1.05
+Long put    $558             Buy 5×   $0.25
+Net credit                            $1.65/share = $825 (5 contracts)
+```
 
 **At 12:30pm:** SPY at $568.90 (up 0.2% — safely inside the profit zone). Condor worth $0.72.
 - Captured: ($1.65 − $0.72) / $1.65 = 56.4% of max profit ✓
@@ -295,33 +299,37 @@ The 50% close is dramatically superior in expected value terms because:
 
 ## Strategy Parameters
 
-| Parameter | Conservative | Standard | Aggressive | Description |
-|---|---|---|---|---|
-| Short delta | 12-delta | 16-delta | 20-delta | 16-delta is the standard for ±1σ intraday range |
-| Wing width | $5 | $5 | $3 | $5 is standard; $3 provides more credit but less buffer |
-| Entry window | 9:45–10:00am | 9:45–10:30am | Up to 11am | Earlier is better; gamma risks rise through the day |
-| Target credit | $1.40–$1.80 | $1.00–$1.60 | $0.80–$1.20 | Varies with VIX; minimum $0.80 |
-| Profit target | 50% of credit | 50% of credit | 75% of credit | 50% is mathematically optimal |
-| Stop-loss | 150% of credit | 200% of credit | 250% of credit | Close before full max loss |
-| Max position size | 1–3 contracts | 3–5 contracts | 5–10 contracts | Scale with account size and experience |
-| Close by | 3:00pm | 3:30pm | 3:45pm | Never hold to final bell |
-| VIX maximum | 22 | 25 | 28 | Above 25 is high-risk; above 28 is inadvisable |
-| Skip weeks | All event days | Event + gap days | Event days only | Never skip FOMC/CPI regardless of tier |
+```
+Parameter          Conservative    Standard          Aggressive       Description
+-----------------  --------------  ----------------  ---------------  -------------------------------------------------------
+Short delta        12-delta        16-delta          20-delta         16-delta is the standard for ±1σ intraday range
+Wing width         $5              $5                $3               $5 is standard; $3 provides more credit but less buffer
+Entry window       9:45–10:00am    9:45–10:30am      Up to 11am       Earlier is better; gamma risks rise through the day
+Target credit      $1.40–$1.80     $1.00–$1.60       $0.80–$1.20      Varies with VIX; minimum $0.80
+Profit target      50% of credit   50% of credit     75% of credit    50% is mathematically optimal
+Stop-loss          150% of credit  200% of credit    250% of credit   Close before full max loss
+Max position size  1–3 contracts   3–5 contracts     5–10 contracts   Scale with account size and experience
+Close by           3:00pm          3:30pm            3:45pm           Never hold to final bell
+VIX maximum        22              25                28               Above 25 is high-risk; above 28 is inadvisable
+Skip weeks         All event days  Event + gap days  Event days only  Never skip FOMC/CPI regardless of tier
+```
 
 ---
 
 ## Data Requirements
 
-| Data | Source | Usage |
-|---|---|---|
-| SPY OHLCV intraday (1-min/5-min) | Polygon | Real-time price monitoring, intraday delta tracking |
-| VIX real-time (9:30am) | Polygon `VIXIND` | Morning entry filter |
-| SPY options chain (0DTE strikes) | Broker real-time | Strike selection, delta verification, credit calculation |
-| Pre-market SPY futures | Broker | Gap check (±0.4% filter) |
-| Economic release calendar | Fed/BLS | Daily event check (critical — check morning of, not week-of) |
-| Earnings calendar (daily) | Company IR / Polygon | SPY component earnings screen |
-| Monthly expiration calendar | Exchange | Triple witching Friday identification |
-| Intraday delta tracker | Broker/computed | Real-time short-strike delta monitoring |
+```
+Data                              Source                Usage
+--------------------------------  --------------------  ------------------------------------------------------------
+SPY OHLCV intraday (1-min/5-min)  Polygon               Real-time price monitoring, intraday delta tracking
+VIX real-time (9:30am)            Polygon `VIXIND`      Morning entry filter
+SPY options chain (0DTE strikes)  Broker real-time      Strike selection, delta verification, credit calculation
+Pre-market SPY futures            Broker                Gap check (±0.4% filter)
+Economic release calendar         Fed/BLS               Daily event check (critical — check morning of, not week-of)
+Earnings calendar (daily)         Company IR / Polygon  SPY component earnings screen
+Monthly expiration calendar       Exchange              Triple witching Friday identification
+Intraday delta tracker            Broker/computed       Real-time short-strike delta monitoring
+```
 
 ---
 
@@ -390,12 +398,14 @@ SPY must stay within $561.35–$573.65 — a ±1.1% band — for full profit.
 
 **Greek profile (0-DTE is extreme):**
 
-| Greek | Sign | 0-DTE dynamic |
-|---|---|---|
-| Delta | Near zero | Very sensitive to small moves near the short strikes |
-| Theta | Extremely positive | Maximum possible theta decay — hours, not days |
-| Vega | Negative | IV spikes are the primary blow-up risk |
-| Gamma | Strongly negative | SPY within $2 of a short strike → losses accelerate violently |
+```
+Greek  Sign                0-DTE dynamic
+-----  ------------------  -------------------------------------------------------------
+Delta  Near zero           Very sensitive to small moves near the short strikes
+Theta  Extremely positive  Maximum possible theta decay — hours, not days
+Vega   Negative            IV spikes are the primary blow-up risk
+Gamma  Strongly negative   SPY within $2 of a short strike → losses accelerate violently
+```
 
 ---
 
@@ -425,15 +435,17 @@ Condor worth $0.72 (56% of credit captured in 2 hours 45 minutes).
 
 **Full-day scenario table:**
 
-| SPY at 3:45pm | P&L | Notes |
-|---|---|---|
-| $567 (flat) | **+$165** | Full profit; both spreads expire worthless |
-| $570 (up 0.4%) | **+$165** | Still inside the tent |
-| $573.65 | **$0** | Upper break-even |
-| $577 | **−$170** | Call spread partially breached |
-| $577+ | **−$335** | Max loss — call wing tested |
-| $561.35 | **$0** | Lower break-even |
-| $556 | **−$335** | Max loss — put wing tested |
+```
+SPY at 3:45pm   P&L    Notes
+--------------  -----  ------------------------------------------
+$567 (flat)     +$165  Full profit; both spreads expire worthless
+$570 (up 0.4%)  +$165  Still inside the tent
+$573.65         $0     Upper break-even
+$577            −$170  Call spread partially breached
+$577+           −$335  Max loss — call wing tested
+$561.35         $0     Lower break-even
+$556            −$335  Max loss — put wing tested
+```
 
 ---
 
@@ -482,10 +494,12 @@ Condor worth $0.72 (56% of credit captured in 2 hours 45 minutes).
 
 ## Why Close at 50% (Not Full Credit)
 
-| Hold strategy | Expected P&L | Risk |
-|---|---|---|
-| Hold to 4pm expiry | +$165 × 70% win − $335 × 30% loss = **+$15.50** | Pin risk, closing bell vol spikes |
-| Close at 50% profit | +$82.50 × 82% capture rate ≈ **+$67 average** | Much lower; out before afternoon chaos |
+```
+Hold strategy        Expected P&L                                 Risk
+-------------------  -------------------------------------------  --------------------------------------
+Hold to 4pm expiry   +$165 × 70% win − $335 × 30% loss = +$15.50  Pin risk, closing bell vol spikes
+Close at 50% profit  +$82.50 × 82% capture rate ≈ +$67 average    Much lower; out before afternoon chaos
+```
 
 By closing at 50% profit:
 - You capture the bulk of premium in 2–4 hours (not 7 hours)
@@ -546,14 +560,16 @@ The honest assessment: 0-DTE condors are positive expected value only in stable,
 
 ## Strategy Parameters
 
-| Parameter | Default | Range | Description |
-|---|---|---|---|
-| Short strike delta | 16-delta | 12–20 | Each side; 1σ OTM for a single day |
-| Wing width | $5 | $4–$7 | Defines max loss |
-| Entry time | 9:45am | 9:40–10:00am | After opening volatility subsides |
-| Target credit | $1.00–$1.60 | $0.80–$2.00 | Minimum $1.00 for acceptable risk/reward |
-| Profit target | 50% of credit | 40–60% | Close at $0.50–$0.80 buyback |
-| Stop-loss trigger | Short strike > 28-delta | 25–32 delta | Close tested side |
-| Final close deadline | 3:30pm | 3:15–3:45pm | Never hold to the closing bell |
-| Max VIX | 25 | 20–28 | Above 25, daily ranges exceed condor zone routinely |
-| Position size | 3–5% capital max loss | 2–7% | Scale slowly; commissions add up |
+```
+Parameter             Default                  Range         Description
+--------------------  -----------------------  ------------  ---------------------------------------------------
+Short strike delta    16-delta                 12–20         Each side; 1σ OTM for a single day
+Wing width            $5                       $4–$7         Defines max loss
+Entry time            9:45am                   9:40–10:00am  After opening volatility subsides
+Target credit         $1.00–$1.60              $0.80–$2.00   Minimum $1.00 for acceptable risk/reward
+Profit target         50% of credit            40–60%        Close at $0.50–$0.80 buyback
+Stop-loss trigger     Short strike > 28-delta  25–32 delta   Close tested side
+Final close deadline  3:30pm                   3:15–3:45pm   Never hold to the closing bell
+Max VIX               25                       20–28         Above 25, daily ranges exceed condor zone routinely
+Position size         3–5% capital max loss    2–7%          Scale slowly; commissions add up
+```

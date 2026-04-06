@@ -1367,6 +1367,7 @@ def _render_guide(slug):
 
     md = dcc.Markdown(
         content,
+        className="guide-md",
         style={"color": T.TEXT_PRIMARY, "fontSize": "14px", "lineHeight": "1.75"},
     )
 
@@ -2597,7 +2598,7 @@ def _broker_tab() -> html.Div:
             dbc.Card(dbc.CardBody([
                 _card_header("Broker Integration Guide"),
                 html.Hr(style={"borderColor": T.BORDER, "margin": "8px 0 16px"}),
-                dcc.Markdown(content, style={"color": T.TEXT_PRIMARY,
+                dcc.Markdown(content, className="guide-md", style={"color": T.TEXT_PRIMARY,
                                              "fontSize": "13px", "lineHeight": "1.7"}),
             ]), style=T.STYLE_CARD),
         ], style={"padding": "16px 0"})

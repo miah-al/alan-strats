@@ -1573,14 +1573,15 @@ def build_modal_body(tgid):
 # ── Modal dismiss button ──────────────────────────────────────────────────────
 
 @callback(
-    Output("pt-modal", "is_open", allow_duplicate=True),
+    Output("pt-modal",      "is_open",      allow_duplicate=True),
+    Output("pt-open-grid",  "selectedRows", allow_duplicate=True),
     Input("pt-modal-dismiss", "n_clicks"),
     prevent_initial_call=True,
 )
 def dismiss_modal(n_clicks):
     if n_clicks:
-        return False
-    return no_update
+        return False, []
+    return no_update, no_update
 
 
 # (Close Position is now handled by open_close_confirm + execute_close below)

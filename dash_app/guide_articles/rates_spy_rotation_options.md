@@ -53,13 +53,15 @@ Options approach:
 
 ## Regime → Instrument Map
 
-| Regime | Directional View | Primary Instruments | Rationale |
-|---|---|---|---|
-| **Growth** (rates ↑ + stocks ↑) | Equities up, bonds flat | Buy SPY call, 1-3% OTM, 60 DTE | Leverage the equity rally |
-| **Risk-On** (rates ↓ + stocks ↑) | Equities up + bonds up | Buy SPY call + Buy TLT call | Both assets rise; split budget |
-| **Fear** (rates ↓ + stocks ↓) | Bonds up, equities down | Buy TLT call + Buy SPY put | Rates falling → TLT rises; equity sells → put profits |
-| **Inflation** (rates ↑ + stocks ↓) | Both equities AND bonds fall | Buy SPY put + Buy TLT put | Classic 2022 scenario — both legs profit |
-| **Transition** | Ambiguous | Hold existing; no new entries | Wait for clarity; don't close early |
+```
+Regime                          Directional View              Primary Instruments             Rationale
+------------------------------  ----------------------------  ------------------------------  -----------------------------------------------------
+Growth (rates ↑ + stocks ↑)     Equities up, bonds flat       Buy SPY call, 1-3% OTM, 60 DTE  Leverage the equity rally
+Risk-On (rates ↓ + stocks ↑)    Equities up + bonds up        Buy SPY call + Buy TLT call     Both assets rise; split budget
+Fear (rates ↓ + stocks ↓)       Bonds up, equities down       Buy TLT call + Buy SPY put      Rates falling → TLT rises; equity sells → put profits
+Inflation (rates ↑ + stocks ↓)  Both equities AND bonds fall  Buy SPY put + Buy TLT put       Classic 2022 scenario — both legs profit
+Transition                      Ambiguous                     Hold existing; no new entries   Wait for clarity; don't close early
+```
 
 ---
 
@@ -551,28 +553,32 @@ Before entering any regime options trade:
 
 ## Quick Reference
 
-| Parameter | Default | Range | Description |
-|---|---|---|---|
-| `budget_pct` | 2% | 1–3% | Max premium per regime trade (code `budget_pct=0.02`) |
-| `option_dte` | 60 DTE | 45–90 | Days to expiry at entry (code `option_dte=60`) |
-| `roll_dte` | 21 DTE | 14–30 | Roll forward when reaching this DTE (code `roll_dte=21`) |
-| `otm_pct` | 1% OTM | 0–5% | How far OTM to buy options (code `otm_pct=0.01`) |
-| `take_profit` | 1.5× premium | 1.0–3.0× | Close when option value = this multiple (code `take_profit=1.5`) |
-| `stop_loss` | 40% of premium | 20–60% | Close when option loses this fraction of value (code `stop_loss=0.40`) |
-| `yield_threshold` | 10 bps (0.001) | 5–20 bps | 20-day yield change to detect regime (code `yield_threshold=0.001`) |
-| `return_threshold` | 2% (0.02) | 1–5% | 20-day SPY return threshold (code `return_threshold=0.02`) |
-| `confirm_days` | 3 | 2–7 | Days required for regime confirmation (code `confirm_days=3`) |
+```
+Parameter           Default         Range     Description
+------------------  --------------  --------  ----------------------------------------------------------------------
+`budget_pct`        2%              1–3%      Max premium per regime trade (code `budget_pct=0.02`)
+`option_dte`        60 DTE          45–90     Days to expiry at entry (code `option_dte=60`)
+`roll_dte`          21 DTE          14–30     Roll forward when reaching this DTE (code `roll_dte=21`)
+`otm_pct`           1% OTM          0–5%      How far OTM to buy options (code `otm_pct=0.01`)
+`take_profit`       1.5× premium    1.0–3.0×  Close when option value = this multiple (code `take_profit=1.5`)
+`stop_loss`         40% of premium  20–60%    Close when option loses this fraction of value (code `stop_loss=0.40`)
+`yield_threshold`   10 bps (0.001)  5–20 bps  20-day yield change to detect regime (code `yield_threshold=0.001`)
+`return_threshold`  2% (0.02)       1–5%      20-day SPY return threshold (code `return_threshold=0.02`)
+`confirm_days`      3               2–7       Days required for regime confirmation (code `confirm_days=3`)
+```
 
 ---
 
 ## Data Requirements
 
-| Data | Source | Usage |
-|---|---|---|
-| SPY OHLCV | Polygon | Regime detection, option pricing reference |
-| TLT OHLCV | Polygon | Regime detection for bond direction |
-| 10-year Treasury yield | Polygon `DGS10` | Rate change signal |
-| VIX daily | Polygon `VIXIND` | Option cost calibration |
-| Options pricing (SPY, TLT) | Polygon options chain | Premium calculation |
-| Earnings calendar | DB | Avoid entering before binary events |
-| FOMC calendar | Fed website / DB | FOMC confirmation timing |
+```
+Data                        Source                 Usage
+--------------------------  ---------------------  ------------------------------------------
+SPY OHLCV                   Polygon                Regime detection, option pricing reference
+TLT OHLCV                   Polygon                Regime detection for bond direction
+10-year Treasury yield      Polygon `DGS10`        Rate change signal
+VIX daily                   Polygon `VIXIND`       Option cost calibration
+Options pricing (SPY, TLT)  Polygon options chain  Premium calculation
+Earnings calendar           DB                     Avoid entering before binary events
+FOMC calendar               Fed website / DB       FOMC confirmation timing
+```

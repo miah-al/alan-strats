@@ -21,6 +21,7 @@ from scipy.stats import norm as _scipy_norm
 import dash_ag_grid as dag
 import dash_bootstrap_components as dbc
 import plotly.graph_objects as go
+from plotly.subplots import make_subplots
 from dash import html, dcc, callback, Input, Output, State, no_update, ALL
 
 from dash_app import theme as T, get_polygon_api_key
@@ -168,12 +169,12 @@ _GEX_COLS = [
     _col("Price",        width=110, numeric=True),
     _col("VIX",          width=100, numeric=True),
     _col("Regime",       width=130),
-    _col("SPY Weight",   width=110, numeric=True),
+    _col("SPY Weight",   width=130, numeric=True),
     _col("Signal",       width=100),
     _col("ATR%",         width=100, numeric=True),
-    _col("5d Return",    width=110, numeric=True),
+    _col("5d Return",    width=115, numeric=True),
     _col("Regime Label", width=220),
-    _col("Score",        width=100, numeric=True, sort="desc"),
+    _col("Score",        width=110, numeric=True, sort="desc"),
     _col("Status",       width=120),
     _VIEW_BTN,
 ]
@@ -572,9 +573,10 @@ def _guide_layout(slug: str) -> html.Div:
         html.Div([
             dcc.Markdown(
                 content,
+                className="guide-md",
                 dangerously_allow_html=False,
                 style={"color": T.TEXT_PRIMARY, "fontSize": "14px", "lineHeight": "1.7",
-                       "maxWidth": "860px"},
+                       "maxWidth": "1200px"},
             ),
         ], style={"padding": "4px 0"}),
     ], style={
@@ -615,71 +617,35 @@ def _backtest_tab(slug: str) -> html.Div:
     today_str = date.today().isoformat()
 
     # ── Controls row ──────────────────────────────────────────────────────────
+    def _lbl(text):
+        return html.Label(text, style={"color": T.TEXT_MUTED, "fontSize": "11px",
+                                       "fontWeight": "600", "textTransform": "uppercase",
+                                       "marginBottom": "4px", "display": "block"})
+    _inp = {"backgroundColor": T.BG_ELEVATED, "border": f"1px solid {T.BORDER}",
+            "color": T.TEXT_PRIMARY, "fontSize": "13px", "height": "34px"}
+
     controls = dbc.Card(dbc.CardBody([
-        dbc.Row([
-            dbc.Col([
-                html.Label("Ticker", style={"color": T.TEXT_MUTED, "fontSize": "11px",
-                                             "fontWeight": "600", "textTransform": "uppercase",
-                                             "marginBottom": "4px"}),
-                dbc.Input(
-                    id=f"str-{slug}-bt-ticker",
-                    value="SPY",
-                    placeholder="e.g. SPY",
-                    style={"backgroundColor": T.BG_ELEVATED, "border": f"1px solid {T.BORDER}",
-                           "color": T.TEXT_PRIMARY, "fontSize": "13px"},
-                ),
-            ], width=2),
-            dbc.Col([
-                html.Label("From", style={"color": T.TEXT_MUTED, "fontSize": "11px",
-                                           "fontWeight": "600", "textTransform": "uppercase",
-                                           "marginBottom": "4px"}),
-                dbc.Input(
-                    id=f"str-{slug}-bt-from",
-                    type="date",
-                    value="2022-01-01",
-                    style={"backgroundColor": T.BG_ELEVATED, "border": f"1px solid {T.BORDER}",
-                           "color": T.TEXT_PRIMARY, "fontSize": "13px"},
-                ),
-            ], width=2),
-            dbc.Col([
-                html.Label("To", style={"color": T.TEXT_MUTED, "fontSize": "11px",
-                                         "fontWeight": "600", "textTransform": "uppercase",
-                                         "marginBottom": "4px"}),
-                dbc.Input(
-                    id=f"str-{slug}-bt-to",
-                    type="date",
-                    value=today_str,
-                    style={"backgroundColor": T.BG_ELEVATED, "border": f"1px solid {T.BORDER}",
-                           "color": T.TEXT_PRIMARY, "fontSize": "13px"},
-                ),
-            ], width=2),
-            dbc.Col([
-                html.Label("Starting Capital ($)", style={"color": T.TEXT_MUTED, "fontSize": "11px",
-                                                           "fontWeight": "600",
-                                                           "textTransform": "uppercase",
-                                                           "marginBottom": "4px"}),
-                dbc.Input(
-                    id=f"str-{slug}-bt-capital",
-                    type="number",
-                    value=100000,
-                    min=1000,
-                    step=1000,
-                    style={"backgroundColor": T.BG_ELEVATED, "border": f"1px solid {T.BORDER}",
-                           "color": T.TEXT_PRIMARY, "fontSize": "13px"},
-                ),
-            ], width=3),
-            dbc.Col([
-                html.Label("\u00a0", style={"fontSize": "11px", "marginBottom": "4px",
-                                             "display": "block"}),
-                dbc.Button(
-                    "Run Backtest",
-                    id=f"str-{slug}-bt-run",
-                    color="primary",
-                    style={"fontWeight": "600", "fontSize": "13px", "width": "100%"},
-                ),
-            ], width=3, style={"display": "flex", "flexDirection": "column",
-                               "justifyContent": "flex-end"}),
-        ], className="g-2", align="end"),
+        html.Div([
+            html.Div([_lbl("Ticker"),
+                dbc.Input(id=f"str-{slug}-bt-ticker", value="SPY", placeholder="e.g. SPY",
+                          style={**_inp, "width": "100px"})]),
+            html.Div([_lbl("From"),
+                dbc.Input(id=f"str-{slug}-bt-from", type="date", value="2022-01-01",
+                          style={**_inp, "width": "160px"})]),
+            html.Div([_lbl("To"),
+                dbc.Input(id=f"str-{slug}-bt-to", type="date", value=today_str,
+                          style={**_inp, "width": "160px"})]),
+            html.Div([_lbl("Starting Capital ($)"),
+                dbc.Input(id=f"str-{slug}-bt-capital", type="number", value=10000,
+                          min=1000, step=1000,
+                          style={**_inp, "width": "160px"})]),
+            html.Div([_lbl("\u00a0"),
+                dbc.Button("Run Backtest", id=f"str-{slug}-bt-run", color="primary",
+                           style={"fontWeight": "600", "fontSize": "13px",
+                                  "height": "34px", "padding": "0 20px",
+                                  "whiteSpace": "nowrap"})]),
+        ], style={"display": "flex", "gap": "10px", "alignItems": "flex-end",
+                  "padding": "2px 0"}),
     ]), style={**T.STYLE_CARD, "marginBottom": "12px"})
 
     # ── Parameter sliders (grouped by row field) ──────────────────────────────
@@ -2435,41 +2401,45 @@ def _render_backtest_results(result, slug: str) -> html.Div:
         _card("Total Trades",  str(n_trades)),
     ], style={"display": "flex", "gap": "10px", "flexWrap": "wrap", "marginBottom": "16px"})
 
-    # ── Equity curve ──────────────────────────────────────────────────────────
-    eq = result.equity_curve
+    # ── Equity curve + Capital Deployment ─────────────────────────────────────
+    eq        = result.equity_curve
+    cash_s    = result.extra.get("cash_curve",   _pd.Series(dtype=float))
     start_cap = float(eq.iloc[0]) if not eq.empty else 100_000
 
-    # Drawdown shading
+    has_breakdown = not cash_s.empty and not eq.empty
+
+    if has_breakdown:
+        # % of capital deployed = (equity - cash) / equity × 100
+        deploy_pct = ((eq - cash_s) / eq * 100).clip(lower=0)
+        fig_eq = make_subplots(
+            rows=2, cols=1,
+            row_heights=[0.72, 0.28],
+            shared_xaxes=True,
+            vertical_spacing=0.04,
+            subplot_titles=("Equity (MTM)", "% Capital Deployed"),
+        )
+    else:
+        fig_eq = make_subplots(rows=1, cols=1)
+
+    # ── Row 1: equity + drawdown shading ──────────────────────────────────────
     roll_max = eq.cummax()
-
-    fig_eq = go.Figure()
-
-    # Shade drawdown regions (red fill between equity and its running max)
-    if not eq.empty:
-        fig_eq.add_trace(go.Scatter(
-            x=list(eq.index), y=list(roll_max),
-            line=dict(width=0), showlegend=False, hoverinfo="skip",
-            name="peak",
-        ))
-        fig_eq.add_trace(go.Scatter(
-            x=list(eq.index), y=list(eq),
-            fill="tonexty",
-            fillcolor="rgba(239,68,68,0.12)",
-            line=dict(width=0), showlegend=False, hoverinfo="skip",
-            name="drawdown_fill",
-        ))
-
-    # Equity line
+    fig_eq.add_trace(go.Scatter(
+        x=list(eq.index), y=list(roll_max),
+        line=dict(width=0), showlegend=False, hoverinfo="skip", name="peak",
+    ), row=1, col=1)
+    fig_eq.add_trace(go.Scatter(
+        x=list(eq.index), y=list(eq),
+        fill="tonexty", fillcolor="rgba(239,68,68,0.12)",
+        line=dict(width=0), showlegend=False, hoverinfo="skip", name="dd_fill",
+    ), row=1, col=1)
     fig_eq.add_trace(go.Scatter(
         x=list(eq.index), y=list(eq),
         line=dict(color=T.ACCENT, width=2),
         name="Equity",
-        hovertemplate="%{x|%Y-%m-%d}  $%{y:,.0f}<extra>Equity</extra>",
-    ))
-
-    # Starting capital reference
+        hovertemplate="%{x|%Y-%m-%d}  $%{y:,.0f}<extra>Equity (MTM)</extra>",
+    ), row=1, col=1)
     fig_eq.add_hline(
-        y=start_cap,
+        y=start_cap, row=1,
         line=dict(color=T.BORDER_BRT, width=1, dash="dot"),
         annotation_text=f"Start ${start_cap:,.0f}",
         annotation_position="bottom right",
@@ -2477,17 +2447,37 @@ def _render_backtest_results(result, slug: str) -> html.Div:
         annotation_font_size=10,
     )
 
+    # ── Row 2: % capital deployed (filled area) ────────────────────────────────
+    if has_breakdown:
+        fig_eq.add_trace(go.Scatter(
+            x=list(deploy_pct.index), y=list(deploy_pct),
+            fill="tozeroy",
+            fillcolor="rgba(245,158,11,0.25)",
+            line=dict(color="#f59e0b", width=1.5),
+            name="Deployed %",
+            hovertemplate="%{x|%Y-%m-%d}  %{y:.1f}%<extra>Deployed</extra>",
+        ), row=2, col=1)
+        fig_eq.add_hline(y=50, row=2,
+            line=dict(color=T.BORDER_BRT, width=1, dash="dot"),
+            annotation_text="50%", annotation_position="bottom right",
+            annotation_font_color=T.TEXT_MUTED, annotation_font_size=10,
+        )
+
     fig_eq.update_layout(
         paper_bgcolor=T.BG_CARD, plot_bgcolor=T.BG_CARD,
         font=dict(color=T.TEXT_PRIMARY, family="Inter, sans-serif", size=12),
-        height=350, margin=dict(l=10, r=10, t=30, b=10),
-        title=dict(text="Equity Curve", font=dict(size=12, color=T.TEXT_MUTED)),
-        xaxis=dict(gridcolor=T.BORDER, showgrid=True),
-        yaxis=dict(gridcolor=T.BORDER, showgrid=True, tickformat="$,.0f"),
-        legend=dict(bgcolor="rgba(0,0,0,0)"),
+        height=430, margin=dict(l=10, r=10, t=30, b=10),
         showlegend=False,
         template="plotly_dark",
     )
+    fig_eq.update_xaxes(gridcolor=T.BORDER, showgrid=True)
+    fig_eq.update_yaxes(gridcolor=T.BORDER, showgrid=True)
+    fig_eq.update_yaxes(tickformat="$,.0f", row=1, col=1)
+    fig_eq.update_yaxes(tickformat=".0f", ticksuffix="%", range=[0, 105], row=2, col=1)
+    # Style subplot titles
+    for ann in fig_eq.layout.annotations:
+        ann.font.color = T.TEXT_MUTED
+        ann.font.size  = 11
 
     equity_chart = dbc.Card(dbc.CardBody([
         dcc.Graph(figure=fig_eq, config={"displayModeBar": False}),
@@ -2547,39 +2537,57 @@ def _render_backtest_results(result, slug: str) -> html.Div:
     trades_card = html.Div()
     trades_df = result.trades
     if trades_df is not None and not trades_df.empty:
-        # Select displayable key columns; keep only those that exist
-        preferred = ["entry_date", "exit_date", "ticker", "pnl", "pnl_pct",
-                     "hold_days", "dte_held", "exit_reason", "contracts",
-                     "credit", "status", "winner"]
-        display_cols = [c for c in preferred if c in trades_df.columns]
-        # Add remaining columns not in the preferred list
-        extra_cols = [c for c in trades_df.columns if c not in display_cols]
-        display_cols = display_cols + extra_cols
+        # Column config: field → (headerName, width, cellStyle)
+        _COL_CONFIG = {
+            "entry_date":      ("Entry",          105, None),
+            "exit_date":       ("Exit",           105, None),
+            "pnl":             ("P&L",            100, {"function": "params.value >= 0 ? {'color':'#10b981','fontWeight':'600'} : {'color':'#ef4444','fontWeight':'600'}"}),
+            "pnl_pct":         ("P&L %",           90, {"function": "params.value >= 0 ? {'color':'#10b981'} : {'color':'#ef4444'}"}),
+            "dte_held":        ("DTE Held",         90, None),
+            "hold_days":       ("Days Held",        95, None),
+            "exit_reason":     ("Exit Reason",     130, None),
+            "contracts":       ("Contracts",       100, None),
+            "credit":          ("Credit",           90, None),
+            "call_short_k":    ("Call Short",      110, None),
+            "call_long_k":     ("Call Long",       110, None),
+            "put_short_k":     ("Put Short",       110, None),
+            "put_long_k":      ("Put Long",        110, None),
+            "margin_reserved": ("Margin Rsv",      115, None),
+            "ticker":          ("Ticker",          100, None),
+            "status":          ("Status",          100, None),
+        }
+        # Columns to skip (redundant or internal)
+        _SKIP = {"winner", "free_capital"}
+
+        # Build ordered display list: known preferred first, then any extras
+        _preferred_order = ["entry_date", "exit_date", "pnl", "pnl_pct", "dte_held",
+                            "hold_days", "exit_reason", "contracts", "credit",
+                            "call_short_k", "call_long_k", "put_short_k", "put_long_k",
+                            "margin_reserved", "ticker", "status"]
+        cols_lower = {c.lower(): c for c in trades_df.columns}
+        display_cols = []
+        for key in _preferred_order:
+            orig = cols_lower.get(key)
+            if orig and orig not in _SKIP:
+                display_cols.append(orig)
+        for orig in trades_df.columns:
+            if orig not in display_cols and orig not in _SKIP:
+                display_cols.append(orig)
 
         col_defs = []
-        for c in display_cols:
-            cd = {"field": c, "resizable": True, "sortable": True, "filter": True,
-                  "minWidth": 70}
-            if c == "pnl":
-                cd["cellStyle"] = {
-                    "function": "params.value >= 0 ? {'color': '#10b981', 'fontWeight': '600'} : {'color': '#ef4444', 'fontWeight': '600'}"
-                }
-                cd["width"] = 100
-            elif c in ("entry_date", "exit_date"):
-                cd["width"] = 105
-            elif c == "exit_reason":
-                cd["flex"] = 1
-                cd["minWidth"] = 120
-            elif c in ("pnl_pct",):
-                cd["cellStyle"] = {
-                    "function": "params.value >= 0 ? {'color': '#10b981'} : {'color': '#ef4444'}"
-                }
-                cd["width"] = 90
-            elif c == "winner":
-                cd["cellStyle"] = {
-                    "function": "params.value ? {'color': '#10b981'} : {'color': '#ef4444'}"
-                }
-                cd["width"] = 75
+        for orig in display_cols:
+            key = orig.lower()
+            header, width, style = _COL_CONFIG.get(key, (orig.replace("_", " ").title(), 100, None))
+            cd = {
+                "field":       orig,
+                "headerName":  header,
+                "width":       width,
+                "resizable":   True,
+                "sortable":    True,
+                "filter":      True,
+            }
+            if style:
+                cd["cellStyle"] = style
             col_defs.append(cd)
 
         tbl_height = min(400, 50 + len(trades_df) * 40)
@@ -2590,7 +2598,6 @@ def _render_backtest_results(result, slug: str) -> html.Div:
                            "cellStyle": {"fontSize": "12px"}},
             dashGridOptions={"domLayout": "autoHeight" if tbl_height < 400 else "normal",
                              "animateRows": True},
-            columnSize="sizeToFit",
             className=T.AGGRID_THEME,
             style={"width": "100%", "height": f"{tbl_height}px"},
         )
@@ -2660,7 +2667,7 @@ def _make_backtest_callback(slug: str):
         ticker     = (ticker or "SPY").upper().strip()
         from_date  = from_date  or "2022-01-01"
         to_date    = to_date    or date.today().isoformat()
-        capital    = float(capital or 100_000)
+        capital    = float(capital or 10_000)
 
         # ── Load price data ───────────────────────────────────────────────────
         try:
@@ -2707,7 +2714,7 @@ def _make_backtest_callback(slug: str):
         if not rate_df.empty:
             rate_df.index = _pd.to_datetime(rate_df.index)
 
-        auxiliary_data = {"vix": vix_df, "rate10y": rate_df}
+        auxiliary_data = {"vix": vix_df, "rate10y": rate_df, "ticker": ticker}
 
         # ── Instantiate strategy + run backtest ───────────────────────────────
         try:

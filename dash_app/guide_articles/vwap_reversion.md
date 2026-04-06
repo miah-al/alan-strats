@@ -86,13 +86,15 @@ All 5 conditions met. **Signal: Enter bear put spread.**
 The 0.45% above-VWAP deviation resolved to a 0.02% below-VWAP overshoot in under 2 hours — textbook VWAP mean reversion. The declining volume and RSI > 70 confirmed exhaustion at the top; the VWAP gravity pulled price back.
 
 **Range of outcomes:**
-| SPY at close | P&L | Notes |
-|---|---|---|
-| $525 or below | **+$315** | Full VWAP overshoot |
-| $527.40 (VWAP) | **+$80** | Target hit — good result |
-| $528 (half reversion) | **+$10** | Partial move |
-| $529.80 (no move) | **−$85** | No reversion today |
-| $530.05 (stop triggered) | **−$85** | Extension — stop hit |
+```
+SPY at close              P&L    Notes
+------------------------  -----  ------------------------
+$525 or below             +$315  Full VWAP overshoot
+$527.40 (VWAP)            +$80   Target hit — good result
+$528 (half reversion)     +$10   Partial move
+$529.80 (no move)         −$85   No reversion today
+$530.05 (stop triggered)  −$85   Extension — stop hit
+```
 
 ---
 
@@ -142,19 +144,21 @@ The 0.45% above-VWAP deviation resolved to a 0.02% below-VWAP overshoot in under
 
 ## Strategy Parameters
 
-| Parameter | Default | Range | Description |
-|---|---|---|---|
-| VWAP anchor | 9:30am session open | Session open only | Never use prior-day VWAP for intraday |
-| Minimum deviation | 0.40% | 0.30–0.55% | Below this, spread cost erodes edge |
-| Volume exhaustion | Declining last 3 bars | Required | Rising volume = trend, not exhaustion |
-| RSI(5-min) | > 70 short / < 30 long | 65–80 / 20–35 | Intraday RSI confirmation |
-| VIX cap | 22 | 18–26 | Skip if elevated |
-| Entry window | 10:15am–2:30pm | 10:00am–3:00pm | Mid-session only |
-| First-bar exclusion | 45 minutes | 30–60 min | VWAP not stable before this |
-| Stop loss | 0.25% extension beyond entry | 0.20–0.35% | Thesis invalidated if extended |
-| Time stop | 2:30pm | 2:00–3:00pm | Exit before afternoon dynamics change |
-| Primary target | Within 0.10% of VWAP | 0.05–0.20% | Don't hold for full overshoot |
-| DTE | 0 (0DTE) | 0–2 | Intraday trade — match expiry |
-| Spread width | $4–$5 (SPY) | $3–$8 | Match to expected reversion distance |
-| Position size | 1–2% of portfolio | 0.5–3% | Small — multiple setups per week |
-| Skip days | FOMC, CPI, NFP | Non-negotiable | Macro events invalidate VWAP dynamics |
+```
+Parameter            Default                       Range              Description
+-------------------  ----------------------------  -----------------  -------------------------------------
+VWAP anchor          9:30am session open           Session open only  Never use prior-day VWAP for intraday
+Minimum deviation    0.40%                         0.30–0.55%         Below this, spread cost erodes edge
+Volume exhaustion    Declining last 3 bars         Required           Rising volume = trend, not exhaustion
+RSI(5-min)           > 70 short / < 30 long        65–80 / 20–35      Intraday RSI confirmation
+VIX cap              22                            18–26              Skip if elevated
+Entry window         10:15am–2:30pm                10:00am–3:00pm     Mid-session only
+First-bar exclusion  45 minutes                    30–60 min          VWAP not stable before this
+Stop loss            0.25% extension beyond entry  0.20–0.35%         Thesis invalidated if extended
+Time stop            2:30pm                        2:00–3:00pm        Exit before afternoon dynamics change
+Primary target       Within 0.10% of VWAP          0.05–0.20%         Don't hold for full overshoot
+DTE                  0 (0DTE)                      0–2                Intraday trade — match expiry
+Spread width         $4–$5 (SPY)                   $3–$8              Match to expected reversion distance
+Position size        1–2% of portfolio             0.5–3%             Small — multiple setups per week
+Skip days            FOMC, CPI, NFP                Non-negotiable     Macro events invalidate VWAP dynamics
+```

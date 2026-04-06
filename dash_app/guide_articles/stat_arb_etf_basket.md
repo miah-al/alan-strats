@@ -252,13 +252,15 @@ ETF Basket Arb Signal — XLK — March 14, 2024 10:22 AM:
 
 **ETF comparison:**
 
-| ETF | Win Rate | Avg Profit | Threshold | Avg Hold |
-|---|---|---|---|---|
-| GLD | 87% | +$88 | 0.15% | 9.2 min |
-| XLK | 82% | +$72 | 0.15% | 12.8 min |
-| XLF | 81% | +$65 | 0.15% | 14.1 min |
-| XLU | 74% | +$48 | 0.20% | 18.3 min |
-| EEM (US hours only) | 71% | +$55 | 0.25% | 16.7 min |
+```
+ETF                  Win Rate  Avg Profit  Threshold  Avg Hold
+-------------------  --------  ----------  ---------  --------
+GLD                  87%       +$88        0.15%      9.2 min
+XLK                  82%       +$72        0.15%      12.8 min
+XLF                  81%       +$65        0.15%      14.1 min
+XLU                  74%       +$48        0.20%      18.3 min
+EEM (US hours only)  71%       +$55        0.25%      16.7 min
+```
 
 GLD has the highest win rate because: (a) gold market is highly liquid globally, (b) gold price is continuously updating from multiple exchanges, (c) GLD iNAV accuracy is very high during US hours.
 
@@ -343,14 +345,16 @@ the full capital allocated to this strategy.
 
 ## When This Strategy Works Best
 
-| Condition | Optimal Value | Why |
-|---|---|---|
-| Time of day | 10:00 AM – 2:30 PM | iNAV most accurate, premium signals most reliable |
-| Market character | Active retail participation | Retail FOMO creates the ETF premiums |
-| VIX | 14–22 | Moderate vol → predictable ETF/component relationships |
-| ETF theme | Active (AI, gold, rates) | Thematic ETFs attract more retail buying = more premiums |
-| Macro calendar | No major events | Macro events create unpredictable spread behavior |
-| Market liquidity | Normal | Extended premium during illiquid conditions may reflect fair value |
+```
+Condition         Optimal Value                Why
+----------------  ---------------------------  ------------------------------------------------------------------
+Time of day       10:00 AM – 2:30 PM           iNAV most accurate, premium signals most reliable
+Market character  Active retail participation  Retail FOMO creates the ETF premiums
+VIX               14–22                        Moderate vol → predictable ETF/component relationships
+ETF theme         Active (AI, gold, rates)     Thematic ETFs attract more retail buying = more premiums
+Macro calendar    No major events              Macro events create unpredictable spread behavior
+Market liquidity  Normal                       Extended premium during illiquid conditions may reflect fair value
+```
 
 ---
 
@@ -374,35 +378,39 @@ the full capital allocated to this strategy.
 
 ## Strategy Parameters
 
-| Parameter | Default | Range | Description |
-|---|---|---|---|
-| iNAV source | ETF issuer real-time feed (15-sec updates) | Required | No estimation substitutes |
-| Minimum premium/discount (Tier 1) | 0.15% | 0.10-0.25% | Net of estimated round-trip bid-ask |
-| Minimum premium/discount (Tier 2) | 0.20% | 0.15-0.30% | Net of estimated round-trip bid-ask |
-| Premium persistence minimum | 3 minutes | 1-5 minutes | Filter momentary pricing noise |
-| ETF minimum daily volume | 5 million shares | 2-20M | Liquidity filter |
-| Trading window | 9:45 AM - 3:50 PM | 9:45-3:55 | Avoid open/close iNAV uncertainty |
-| Hold target | 50-75% of premium closure | 40-80% | Exit before full convergence |
-| Maximum hold time | 30 minutes | 15-60 minutes | Time stop — convergence should be fast |
-| Hedge type | Top 3-5 components (proxy) | Full basket optional | Proxy reduces execution cost; adds basis risk |
-| Position size | 5% of portfolio notional | 2-8% | Small edge — moderate size |
-| Macro event stop | Immediate exit on news | Non-negotiable | News events invalidate convergence thesis |
-| Daily loss limit | 2× average daily expected profit | Firm | Stop trading day if hit |
-| iNAV age limit | 60 seconds maximum | 30-90 sec | Do not trade on stale iNAV |
+```
+Parameter                          Default                                     Range                 Description
+---------------------------------  ------------------------------------------  --------------------  ---------------------------------------------
+iNAV source                        ETF issuer real-time feed (15-sec updates)  Required              No estimation substitutes
+Minimum premium/discount (Tier 1)  0.15%                                       0.10-0.25%            Net of estimated round-trip bid-ask
+Minimum premium/discount (Tier 2)  0.20%                                       0.15-0.30%            Net of estimated round-trip bid-ask
+Premium persistence minimum        3 minutes                                   1-5 minutes           Filter momentary pricing noise
+ETF minimum daily volume           5 million shares                            2-20M                 Liquidity filter
+Trading window                     9:45 AM - 3:50 PM                           9:45-3:55             Avoid open/close iNAV uncertainty
+Hold target                        50-75% of premium closure                   40-80%                Exit before full convergence
+Maximum hold time                  30 minutes                                  15-60 minutes         Time stop — convergence should be fast
+Hedge type                         Top 3-5 components (proxy)                  Full basket optional  Proxy reduces execution cost; adds basis risk
+Position size                      5% of portfolio notional                    2-8%                  Small edge — moderate size
+Macro event stop                   Immediate exit on news                      Non-negotiable        News events invalidate convergence thesis
+Daily loss limit                   2× average daily expected profit            Firm                  Stop trading day if hit
+iNAV age limit                     60 seconds maximum                          30-90 sec             Do not trade on stale iNAV
+```
 
 ---
 
 ## Data Requirements
 
-| Data | Source | Usage |
-|---|---|---|
-| ETF real-time market price | Exchange / broker | Current ETF price |
-| iNAV real-time (15-sec) | ETF issuer website / Bloomberg | Fair value calculation |
-| Component real-time prices | Exchange / Polygon | Direct basket calculation (alternative to iNAV) |
-| ETF daily volume | Polygon | Liquidity check |
-| Component bid-ask spreads | Polygon / broker | Transaction cost estimation |
-| ETF options chain | Polygon | Optional defined-risk expression |
-| Macro event calendar | Fed / BLS / economic calendar | Event avoidance |
-| ETF dividend calendar | ETF issuer | Ex-dividend date avoidance |
-| Futures expiration calendar | CME | Commodity ETF roll period avoidance |
-| iNAV timestamp | ETF issuer | Data freshness check |
+```
+Data                         Source                          Usage
+---------------------------  ------------------------------  -----------------------------------------------
+ETF real-time market price   Exchange / broker               Current ETF price
+iNAV real-time (15-sec)      ETF issuer website / Bloomberg  Fair value calculation
+Component real-time prices   Exchange / Polygon              Direct basket calculation (alternative to iNAV)
+ETF daily volume             Polygon                         Liquidity check
+Component bid-ask spreads    Polygon / broker                Transaction cost estimation
+ETF options chain            Polygon                         Optional defined-risk expression
+Macro event calendar         Fed / BLS / economic calendar   Event avoidance
+ETF dividend calendar        ETF issuer                      Ex-dividend date avoidance
+Futures expiration calendar  CME                             Commodity ETF roll period avoidance
+iNAV timestamp               ETF issuer                      Data freshness check
+```

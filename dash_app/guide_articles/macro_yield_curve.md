@@ -159,12 +159,14 @@ AFTER INVERSION ADJUSTMENT (over 4 weeks):
 
 ### Trade 1 — October 2022: Deep Inversion Defensive Rotation ✅
 
-| Date | October 15, 2022 |
-|---|---|
-| 2-year yield | 4.47% |
-| 10-year yield | 3.99% |
-| 2s10s spread | −48 bps (inverted for 3+ months) |
-| 3m/10Y spread | −94 bps (also inverted — double confirmation) |
+```
+Date           October 15, 2022
+-------------  ---------------------------------------------
+2-year yield   4.47%
+10-year yield  3.99%
+2s10s spread   −48 bps (inverted for 3+ months)
+3m/10Y spread  −94 bps (also inverted — double confirmation)
+```
 
 **Portfolio adjustment on $500,000 account (executed over 3 weeks):**
 
@@ -187,13 +189,15 @@ AFTER INVERSION ADJUSTMENT (over 4 weeks):
 
 ### Trade 2 — 2006-2008: The Steepening Disaster ❌ (Cautionary Example)
 
-| Date | September 2007 |
-|---|---|
-| 2s10s at 2006 inversion | −19 bps (July 2006 peak inversion) |
-| Initial response | Mild defensiveness — many investors dismissed brief inversion |
-| September 2007 | Curve begins rapid steepening from −19 toward flat |
-| Fed begins cutting | September 2007 (25 bps first cut) |
-| Investor interpretation | "The Fed is cutting — equities should rally" |
+```
+Date                     September 2007
+-----------------------  -------------------------------------------------------------
+2s10s at 2006 inversion  −19 bps (July 2006 peak inversion)
+Initial response         Mild defensiveness — many investors dismissed brief inversion
+September 2007           Curve begins rapid steepening from −19 toward flat
+Fed begins cutting       September 2007 (25 bps first cut)
+Investor interpretation  "The Fed is cutting — equities should rally"
+```
 
 **What actually happened:** Investors who interpreted the steepening as bullish (Fed cutting = dovish = good for stocks) were catastrophically wrong. The steepening was signaling the recession's ARRIVAL, not its prevention. From September 2007 to March 2009, SPY fell 53%.
 
@@ -208,12 +212,14 @@ The traders who correctly interpreted the 2006 inversion as a warning and mainta
 
 ### Trade 3 — 2019: False Positive and Soft Landing ⚠️
 
-| Period | March 2019 – October 2019 |
-|---|---|
-| 2s10s | −10 bps (briefly inverted August 2019) |
-| 3m/10Y | −50 bps (more deeply inverted — warning signal) |
-| Fed action | 3 insurance cuts (July, September, October 2019) |
-| Outcome | SPY +31% in 2019; no recession until COVID in 2020 |
+```
+Period      March 2019 – October 2019
+----------  --------------------------------------------------
+2s10s       −10 bps (briefly inverted August 2019)
+3m/10Y      −50 bps (more deeply inverted — warning signal)
+Fed action  3 insurance cuts (July, September, October 2019)
+Outcome     SPY +31% in 2019; no recession until COVID in 2020
+```
 
 **The near-false positive and the important lesson:** The 2019 inversion was brief (maximum −25 bps on 2s10s) and rapidly corrected by the Fed's 3 insurance cuts. SPY continued to rally strongly. Investors who implemented full defensive rotation in August 2019 underperformed by 15-20% by year-end.
 
@@ -469,15 +475,17 @@ During an inversion caused by aggressive Fed hiking, extending bond duration to 
 
 ## When This Strategy Works Best
 
-| Condition | Optimal Value | Why It Matters |
-|---|---|---|
-| Inversion depth | < −50 bps | Strongest historical predictive power |
-| Inversion duration | > 3 months | Sustained = true signal; brief = possible noise |
-| 3m/10Y also inverted | Yes | Double confirmation reduces false positive rate |
-| Credit spreads | Elevated (> 150 bps IG OAS) | Confirms credit system is contracting |
-| Leading indicators | Declining 3+ months | Economic momentum confirming the signal |
-| Fed policy | Late hiking cycle | Inversion from hikes = most dangerous variant |
-| Steepening rate | N/A (not in steepening phase) | Enter defensive in inversion, not in steepening |
+```
+Condition             Optimal Value                  Why It Matters
+--------------------  -----------------------------  -----------------------------------------------
+Inversion depth       < −50 bps                      Strongest historical predictive power
+Inversion duration    > 3 months                     Sustained = true signal; brief = possible noise
+3m/10Y also inverted  Yes                            Double confirmation reduces false positive rate
+Credit spreads        Elevated (> 150 bps IG OAS)    Confirms credit system is contracting
+Leading indicators    Declining 3+ months            Economic momentum confirming the signal
+Fed policy            Late hiking cycle              Inversion from hikes = most dangerous variant
+Steepening rate       N/A (not in steepening phase)  Enter defensive in inversion, not in steepening
+```
 
 ---
 
@@ -501,32 +509,36 @@ During an inversion caused by aggressive Fed hiking, extending bond duration to 
 
 ## Strategy Parameters
 
-| Parameter | Conservative | Standard | Aggressive | Description |
-|---|---|---|---|---|
-| `inversion_trigger` | 2s10s < −25 bps for 3 months | 2s10s < −25 bps for 2 months | 2s10s < 0 bps for 1 month | Action trigger |
-| `dual_confirmation` | Both 2s10s AND 3m/10Y required | Preferred | Either one | Confirmation requirement |
-| `equity_reduction` | Reduce to 50% | Reduce to 60-65% | Reduce to 70-75% | Equity allocation |
-| `defensive_tilt` | XLU 12%, XLP 8%, XLV 8% | XLU 8%, XLP 5%, XLV 5% | XLU 5%, XLP 3% | Defensive sector allocation |
-| `fixed_income` | SHY/SGOV 20% | SHY/SGOV 12% | SHY/SGOV 8% | Short-duration allocation |
-| `gold_allocation` | GLD 8% | GLD 5% | GLD 3% | Real asset hedge |
-| `put_hedge_budget` | 2.5% per 6 months | 1.5% per 6 months | 0.5% per 6 months | Insurance budget |
-| `steepening_exit` | 2s10s > +50 bps for 2 months | 2s10s > +25 bps | 2s10s > 0 bps | Restore equity trigger |
-| `rebalance_frequency` | Monthly | Monthly | Quarterly | Review schedule |
+```
+Parameter              Conservative                    Standard                      Aggressive                 Description
+---------------------  ------------------------------  ----------------------------  -------------------------  ---------------------------
+`inversion_trigger`    2s10s < −25 bps for 3 months    2s10s < −25 bps for 2 months  2s10s < 0 bps for 1 month  Action trigger
+`dual_confirmation`    Both 2s10s AND 3m/10Y required  Preferred                     Either one                 Confirmation requirement
+`equity_reduction`     Reduce to 50%                   Reduce to 60-65%              Reduce to 70-75%           Equity allocation
+`defensive_tilt`       XLU 12%, XLP 8%, XLV 8%         XLU 8%, XLP 5%, XLV 5%        XLU 5%, XLP 3%             Defensive sector allocation
+`fixed_income`         SHY/SGOV 20%                    SHY/SGOV 12%                  SHY/SGOV 8%                Short-duration allocation
+`gold_allocation`      GLD 8%                          GLD 5%                        GLD 3%                     Real asset hedge
+`put_hedge_budget`     2.5% per 6 months               1.5% per 6 months             0.5% per 6 months          Insurance budget
+`steepening_exit`      2s10s > +50 bps for 2 months    2s10s > +25 bps               2s10s > 0 bps              Restore equity trigger
+`rebalance_frequency`  Monthly                         Monthly                       Quarterly                  Review schedule
+```
 
 ---
 
 ## Data Requirements
 
-| Data | Source | Usage |
-|---|---|---|
-| 2-year Treasury yield (daily) | FRED `DGS2` / Polygon | 2s10s calculation |
-| 10-year Treasury yield (daily) | FRED `DGS10` / Polygon | 2s10s calculation |
-| 3-month Treasury yield (daily) | FRED `DGS3MO` | 3m/10Y spread (secondary confirmation) |
-| 2s10s spread history | FRED `T10Y2Y` | Regime duration tracking |
-| 3m/10Y spread history | FRED `T10Y3M` | Double confirmation check |
-| HYG daily price | Polygon | Credit market health proxy |
-| Investment-grade OAS (IG spread) | FRED / Bloomberg | Credit system condition |
-| Unemployment rate (monthly) | BLS / FRED | Labor market health — false positive filter |
-| Leading Economic Indicators | Conference Board / FRED | Economic momentum confirmation |
-| Federal Reserve FOMC statements | Fed.gov | Policy context (hiking vs cutting) |
-| SPY, XLU, XLP, XLV, GLD OHLCV | Polygon | Execution prices for rotation |
+```
+Data                              Source                   Usage
+--------------------------------  -----------------------  -------------------------------------------
+2-year Treasury yield (daily)     FRED `DGS2` / Polygon    2s10s calculation
+10-year Treasury yield (daily)    FRED `DGS10` / Polygon   2s10s calculation
+3-month Treasury yield (daily)    FRED `DGS3MO`            3m/10Y spread (secondary confirmation)
+2s10s spread history              FRED `T10Y2Y`            Regime duration tracking
+3m/10Y spread history             FRED `T10Y3M`            Double confirmation check
+HYG daily price                   Polygon                  Credit market health proxy
+Investment-grade OAS (IG spread)  FRED / Bloomberg         Credit system condition
+Unemployment rate (monthly)       BLS / FRED               Labor market health — false positive filter
+Leading Economic Indicators       Conference Board / FRED  Economic momentum confirmation
+Federal Reserve FOMC statements   Fed.gov                  Policy context (hiking vs cutting)
+SPY, XLU, XLP, XLV, GLD OHLCV     Polygon                  Execution prices for rotation
+```

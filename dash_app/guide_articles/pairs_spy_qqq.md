@@ -234,11 +234,13 @@ SPY/QQQ Pairs Signal — December 3, 2024:
 
 **Z-score entry level vs outcome:**
 
-| Entry Z-score | Win Rate | Avg Holding Period | Avg P&L |
-|---|---|---|---|
-| ±2.0 – ±2.5 | 62% | 10.2 days | +1.8% |
-| ±2.5 – ±3.0 | 71% | 7.8 days | +2.6% |
-| > ±3.0 | 74% | 5.4 days | +3.2% |
+```
+Entry Z-score  Win Rate  Avg Holding Period  Avg P&L
+-------------  --------  ------------------  -------
+±2.0 – ±2.5    62%       10.2 days           +1.8%
+±2.5 – ±3.0    71%       7.8 days            +2.6%
+> ±3.0         74%       5.4 days            +3.2%
+```
 
 Counterintuitively, higher Z-scores (more extreme) produce higher win rates. This reflects the rubber-band principle: the further the stretch, the stronger the reversion force. However, extreme Z-scores also correlate with structural regime breaks, so the time stop remains critical.
 
@@ -338,15 +340,17 @@ For a QQQ-expensive trade (Z = +2.0):
 
 ## When This Strategy Works Best
 
-| Condition | Optimal Value | Why |
-|---|---|---|
-| Macro regime | Stable (no active Fed hiking/cutting) | Regime changes reprice the QQQ/SPY ratio permanently |
-| AI/tech cycle | Mature or declining | New AI cycles cause sustained QQQ outperformance |
-| VIX | 14–22 | Low enough for mean-reversion to occur within 15 days |
-| Cointegration p-value | < 0.03 | Strong cointegration → faster, more reliable reversion |
-| Sector rotation driver | Financial/macro, not tech | Tech-driven spreads persist longer |
-| Z-score entry | ±2.5 or higher | Higher Z = stronger reversion force |
-| Time of year | Non-earnings season | Earnings create fundamental repricing that overwhelms stats |
+```
+Condition               Optimal Value                          Why
+----------------------  -------------------------------------  -----------------------------------------------------------
+Macro regime            Stable (no active Fed hiking/cutting)  Regime changes reprice the QQQ/SPY ratio permanently
+AI/tech cycle           Mature or declining                    New AI cycles cause sustained QQQ outperformance
+VIX                     14–22                                  Low enough for mean-reversion to occur within 15 days
+Cointegration p-value   < 0.03                                 Strong cointegration → faster, more reliable reversion
+Sector rotation driver  Financial/macro, not tech              Tech-driven spreads persist longer
+Z-score entry           ±2.5 or higher                         Higher Z = stronger reversion force
+Time of year            Non-earnings season                    Earnings create fundamental repricing that overwhelms stats
+```
 
 ---
 
@@ -366,34 +370,38 @@ For a QQQ-expensive trade (Z = +2.0):
 
 ## Strategy Parameters
 
-| Parameter | Default | Range | Description |
-|---|---|---|---|
-| Hedge ratio β | Rolling 252-day OLS | Updated monthly | QQQ/SPY log return regression coefficient |
-| Z-score lookback | 60 days | 40–90 | Window for spread mean and std |
-| Entry Z-score | ±2.0 | ±1.8–2.5 | Minimum signal strength |
-| Exit Z-score | ±0.5 | ±0.3–1.0 | Target mean-reversion level |
-| Stop Z-score | ±3.5 | ±3.0–4.0 | Emergency stop — spread widened significantly |
-| Time stop | 15 days | 10–20 | Maximum hold regardless of P&L |
-| Dollar neutrality | Equal $ both legs | ±5% | Both legs equal in dollar size at entry |
-| Cointegration test | Engle-Granger p < 0.05 | Required | Skip if pair not cointegrated |
-| β stability check | ±0.10 from prior quarter | Required | Skip if hedge ratio shifted significantly |
-| Max position size | 10% of portfolio | 5–15% | Combined notional of both legs |
-| Options DTE (if used) | 21–35 | 14–45 | For defined-risk spread expression |
-| VIX cap | 25 | 20–30 | Skip in high-vol regime |
-| No adding to losers | Hard rule | Non-negotiable | Never increase size on adverse move |
+```
+Parameter              Default                   Range            Description
+---------------------  ------------------------  ---------------  ---------------------------------------------
+Hedge ratio β          Rolling 252-day OLS       Updated monthly  QQQ/SPY log return regression coefficient
+Z-score lookback       60 days                   40–90            Window for spread mean and std
+Entry Z-score          ±2.0                      ±1.8–2.5         Minimum signal strength
+Exit Z-score           ±0.5                      ±0.3–1.0         Target mean-reversion level
+Stop Z-score           ±3.5                      ±3.0–4.0         Emergency stop — spread widened significantly
+Time stop              15 days                   10–20            Maximum hold regardless of P&L
+Dollar neutrality      Equal $ both legs         ±5%              Both legs equal in dollar size at entry
+Cointegration test     Engle-Granger p < 0.05    Required         Skip if pair not cointegrated
+β stability check      ±0.10 from prior quarter  Required         Skip if hedge ratio shifted significantly
+Max position size      10% of portfolio          5–15%            Combined notional of both legs
+Options DTE (if used)  21–35                     14–45            For defined-risk spread expression
+VIX cap                25                        20–30            Skip in high-vol regime
+No adding to losers    Hard rule                 Non-negotiable   Never increase size on adverse move
+```
 
 ---
 
 ## Data Requirements
 
-| Data | Source | Usage |
-|---|---|---|
-| SPY daily OHLCV | Polygon | Spread calculation, long leg tracking |
-| QQQ daily OHLCV | Polygon | Spread calculation, short leg tracking |
-| SPY / QQQ options chains | Polygon | Pricing debit spreads (optional expression) |
-| Rolling OLS regression | Calculated | Hedge ratio β (rolling 252-day) |
-| ADF cointegration test | Statistical library | Pair validity check |
-| VIX daily | Polygon / CBOE | Entry filter |
-| FOMC calendar | Federal Reserve | Entry timing exclusion |
-| QQQ constituent changes | Nasdaq | Detect rebalances that may break cointegration |
-| Nasdaq-100 earnings calendar | Earnings Whispers | Avoid mega-cap tech earnings windows |
+```
+Data                          Source               Usage
+----------------------------  -------------------  ----------------------------------------------
+SPY daily OHLCV               Polygon              Spread calculation, long leg tracking
+QQQ daily OHLCV               Polygon              Spread calculation, short leg tracking
+SPY / QQQ options chains      Polygon              Pricing debit spreads (optional expression)
+Rolling OLS regression        Calculated           Hedge ratio β (rolling 252-day)
+ADF cointegration test        Statistical library  Pair validity check
+VIX daily                     Polygon / CBOE       Entry filter
+FOMC calendar                 Federal Reserve      Entry timing exclusion
+QQQ constituent changes       Nasdaq               Detect rebalances that may break cointegration
+Nasdaq-100 earnings calendar  Earnings Whispers    Avoid mega-cap tech earnings windows
+```

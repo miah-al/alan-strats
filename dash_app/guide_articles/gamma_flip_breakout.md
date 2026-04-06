@@ -382,23 +382,27 @@ Example ($75,000 portfolio, strangle at $10.30):
 
 ### Optimal Conditions for Long Strangle (Below Flip)
 
-| Condition | Ideal Range | Why |
-|---|---|---|
-| Net GEX | < −$2B (SPY) | Strong negative GEX means strong vol amplification |
-| Dist to flip | −2% to −5% | Confirms below flip without being in crash territory |
-| VIX | 18–28 | Options priced reasonably; vol can still expand from here |
-| Days since crossing flip | 1–3 | Recent cross = fresh regime change |
-| Volume at cross | ≥ 1.5× average | Confirms the cross has institutional backing |
+```
+Condition                 Ideal Range     Why
+------------------------  --------------  ---------------------------------------------------------
+Net GEX                   < −$2B (SPY)    Strong negative GEX means strong vol amplification
+Dist to flip              −2% to −5%      Confirms below flip without being in crash territory
+VIX                       18–28           Options priced reasonably; vol can still expand from here
+Days since crossing flip  1–3             Recent cross = fresh regime change
+Volume at cross           ≥ 1.5× average  Confirms the cross has institutional backing
+```
 
 ### Optimal Conditions for Iron Condor (Above Flip)
 
-| Condition | Ideal Range | Why |
-|---|---|---|
-| Net GEX | > +$2B (SPY) | Strong positive GEX = mechanical range-bounding |
-| Dist to flip | > +3% | Comfortable buffer — flip unlikely to be tested |
-| VIX | < 20 | Low vol = lower risk of condor-busting spikes |
-| IVR | > 0.50 | Selling premium when it's historically elevated |
-| OPEX proximity | 2–3 weeks out | Pin risk works in favor of range-bound outcome |
+```
+Condition       Ideal Range    Why
+--------------  -------------  -----------------------------------------------
+Net GEX         > +$2B (SPY)   Strong positive GEX = mechanical range-bounding
+Dist to flip    > +3%          Comfortable buffer — flip unlikely to be tested
+VIX             < 20           Low vol = lower risk of condor-busting spikes
+IVR             > 0.50         Selling premium when it's historically elevated
+OPEX proximity  2–3 weeks out  Pin risk works in favor of range-bound outcome
+```
 
 ---
 
@@ -502,39 +506,43 @@ in 2023 would have been expensive and wrong.
 
 ## Quick Reference
 
-| Parameter | Default | Range | Description |
-|---|---|---|---|
-| `min_gex_for_condor` | +$2B (SPY) | +$1B–+$5B | Minimum positive GEX to sell iron condor |
-| `max_gex_for_strangle` | −$1B (SPY) | −$0.5B–−$3B | Maximum GEX to buy strangle |
-| `min_dist_to_flip_condor` | +3% | +2–+5% | Minimum above-flip buffer for condor |
-| `min_dist_to_flip_strangle` | −2% | −1–−4% | Minimum below-flip distance for strangle (`flip_sensitivity=0.5%` default) |
-| `min_model_confidence` | 0.55 | 0.45–0.70 | XGBoost P(breakout/breakdown) — code default `signal_threshold=55` |
-| `dte_entry` | 21 DTE | 14–30 | Days to expiry for all trades (code `dte_entry=21`) |
-| `condor_wing_width` | 2% of spot | 1.5–3% | Each side of iron condor |
-| `strangle_profit_target` | 100% of cost (either leg doubles) | — | Close strangle when either leg doubles in value |
-| `condor_profit_target` | 50% of credit | 40–70% | Close condor at 50% of credit |
-| `condor_stop_loss` | 2× credit | 1.5–3× | Close condor if spread costs 2× credit to close |
-| `time_stop_dte` | 7 DTE | 5–10 | Close all positions at ≤ 7 DTE (`_HOLD_STOP_DTE = 7`) |
-| `position_size_pct` | 2% | 1–5% | Capital at risk (`position_size_pct=2.0`) |
-| `warmup_bars` | 150 | 100–200 | Minimum history for XGBoost (`_WARMUP_BARS = 150`) |
-| `retrain_frequency` | 45 bars | 30–60 | Walk-forward retrain window (`_RETRAIN_EVERY = 45`) |
+```
+Parameter                    Default                            Range        Description
+---------------------------  ---------------------------------  -----------  --------------------------------------------------------------------------
+`min_gex_for_condor`         +$2B (SPY)                         +$1B–+$5B    Minimum positive GEX to sell iron condor
+`max_gex_for_strangle`       −$1B (SPY)                         −$0.5B–−$3B  Maximum GEX to buy strangle
+`min_dist_to_flip_condor`    +3%                                +2–+5%       Minimum above-flip buffer for condor
+`min_dist_to_flip_strangle`  −2%                                −1–−4%       Minimum below-flip distance for strangle (`flip_sensitivity=0.5%` default)
+`min_model_confidence`       0.55                               0.45–0.70    XGBoost P(breakout/breakdown) — code default `signal_threshold=55`
+`dte_entry`                  21 DTE                             14–30        Days to expiry for all trades (code `dte_entry=21`)
+`condor_wing_width`          2% of spot                         1.5–3%       Each side of iron condor
+`strangle_profit_target`     100% of cost (either leg doubles)  —            Close strangle when either leg doubles in value
+`condor_profit_target`       50% of credit                      40–70%       Close condor at 50% of credit
+`condor_stop_loss`           2× credit                          1.5–3×       Close condor if spread costs 2× credit to close
+`time_stop_dte`              7 DTE                              5–10         Close all positions at ≤ 7 DTE (`_HOLD_STOP_DTE = 7`)
+`position_size_pct`          2%                                 1–5%         Capital at risk (`position_size_pct=2.0`)
+`warmup_bars`                150                                100–200      Minimum history for XGBoost (`_WARMUP_BARS = 150`)
+`retrain_frequency`          45 bars                            30–60        Walk-forward retrain window (`_RETRAIN_EVERY = 45`)
+```
 
 ---
 
 ## Data Requirements
 
-| Data Field | Source | Usage |
-|---|---|---|
-| `stock_net_gex` | Polygon options chain (computed) | Primary regime signal |
-| `stock_dist_to_flip_pct` | Derived from net_gex vs strike GEX | Distance from flip level |
-| `stock_call_gex` | Polygon options chain | Call-side gamma contribution |
-| `stock_put_gex` | Polygon options chain | Put-side gamma contribution |
-| `stock_gex_ratio` | Derived: call_gex/(call_gex+|put_gex|) | Regime conviction measure |
-| `vix` | Polygon `VIXIND` | Macro vol context |
-| `spy_5d_return` | Polygon OHLCV | Market direction context |
-| `stock_5d_return` | Polygon OHLCV | Individual name momentum |
-| Per-strike OI + gamma | Polygon options chain | GEX computation (requires live data) |
-| Risk-free rate | Polygon `DGS10` | Black-Scholes gamma computation |
+```
+Data Field                Source                              Usage
+------------------------  ----------------------------------  ------------------------------------
+`stock_net_gex`           Polygon options chain (computed)    Primary regime signal
+`stock_dist_to_flip_pct`  Derived from net_gex vs strike GEX  Distance from flip level
+`stock_call_gex`          Polygon options chain               Call-side gamma contribution
+`stock_put_gex`           Polygon options chain               Put-side gamma contribution
+`stock_gex_ratio`         Derived: call_gex/(call_gex+        put_gex
+`vix`                     Polygon `VIXIND`                    Macro vol context
+`spy_5d_return`           Polygon OHLCV                       Market direction context
+`stock_5d_return`         Polygon OHLCV                       Individual name momentum
+Per-strike OI + gamma     Polygon options chain               GEX computation (requires live data)
+Risk-free rate            Polygon `DGS10`                     Black-Scholes gamma computation
+```
 
 **Critical note:** Historical GEX requires reconstructing the full options chain OI
 plus computing Black-Scholes gamma for each strike at each historical date. This

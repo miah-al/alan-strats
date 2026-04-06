@@ -156,20 +156,22 @@ Vehicle 3: Bull put spread on SPY
 
 ### Trade 1 — March 2025: Textbook Roll Yield in Calm Market ✅
 
-| Field | Value |
-|---|---|
-| Date | March 3, 2025 |
-| Spot VIX | 16.50 |
-| M1 (April futures) | 18.40 |
-| Contango premium | +1.90 pts (10.3% premium) |
-| M1-M2 slope | 7.6%/month (STEEP — excellent) |
-| Hedge | Buy 2 SPY $500 puts, 60 DTE → cost $1.80/ea = $360 total |
-| Position | Short 1 April VIX futures at 18.40 |
-| Net premium expected | $1,900 roll − $360 hedge = $1,540 |
-| April 16 (VIX expiry) | VIX settled at 15.80 |
-| Short futures P&L | (18.40 − 15.80) × $1,000 = +$2,600 |
-| SPY puts (expired worthless) | −$360 |
-| **Net P&L** | **+$2,240 in 44 days** |
+```
+Field                         Value
+----------------------------  --------------------------------------------------------
+Date                          March 3, 2025
+Spot VIX                      16.50
+M1 (April futures)            18.40
+Contango premium              +1.90 pts (10.3% premium)
+M1-M2 slope                   7.6%/month (STEEP — excellent)
+Hedge                         Buy 2 SPY $500 puts, 60 DTE → cost $1.80/ea = $360 total
+Position                      Short 1 April VIX futures at 18.40
+Net premium expected          $1,900 roll − $360 hedge = $1,540
+April 16 (VIX expiry)         VIX settled at 15.80
+Short futures P&L             (18.40 − 15.80) × $1,000 = +$2,600
+SPY puts (expired worthless)  −$360
+Net P&L                       +$2,240 in 44 days
+```
 
 **What happened:** Classic low-vol, steep-contango environment. VIX drifted from 16.50 at entry to 15.80 at settlement — a directional tailwind on top of the roll yield. SPY remained calm, puts expired worthless as expected in the base case. The net $2,240 represents an annualized return of approximately $2,240 × (365/44) = $18,590 per contract, before accounting for margin requirements.
 
@@ -177,16 +179,18 @@ Vehicle 3: Bull put spread on SPY
 
 ### Trade 2 — February 2018: Volmageddon — Without Proper Sizing ❌
 
-| Field | Value |
-|---|---|
-| Date | January 3, 2018 |
-| Entry condition | VIX at 11.24, M1 at 13.80, STEEP contango |
-| Position | Short 3 February VIX futures at 13.80 (over-sized — 3× recommended) |
-| Hedge | SPY $265 puts × 2 — UNDERFUNDED at $220 (< 15% of roll yield) |
-| Feb 5 close | VIX closed at 37.32; futures spiked to 38+ |
-| Feb 5 P&L | Short futures loss: (38 − 13.80) × $1,000 × 3 = −$72,600 |
-| Put hedge gain | +$4,400 (partial offset, underfunded) |
-| **Net loss** | **−$68,200 on $100,000 portfolio — catastrophic** |
+```
+Field            Value
+---------------  -------------------------------------------------------------------
+Date             January 3, 2018
+Entry condition  VIX at 11.24, M1 at 13.80, STEEP contango
+Position         Short 3 February VIX futures at 13.80 (over-sized — 3× recommended)
+Hedge            SPY $265 puts × 2 — UNDERFUNDED at $220 (< 15% of roll yield)
+Feb 5 close      VIX closed at 37.32; futures spiked to 38+
+Feb 5 P&L        Short futures loss: (38 − 13.80) × $1,000 × 3 = −$72,600
+Put hedge gain   +$4,400 (partial offset, underfunded)
+Net loss         −$68,200 on $100,000 portfolio — catastrophic
+```
 
 **The XIV-equivalent disaster:** This is what happened to unhedged or under-hedged short-vol players in February 2018. The lesson is stark: at 3 contracts on a $100,000 portfolio with an underfunded hedge, a single day's VIX move can destroy most of the portfolio. The loss was survivable at 1 contract with proper hedge ($1,000 in SPY put protection covering a $20,700 loss versus $68,200).
 
@@ -201,17 +205,19 @@ Vehicle 3: Bull put spread on SPY
 
 ### Trade 3 — 2021 Full-Year Roll: Steady Compounding ✅
 
-| Field | Value |
-|---|---|
-| Period | January–December 2021 |
-| Strategy | Short front-month VIX futures, monthly roll, 1 contract |
-| Hedge | Monthly SPY puts, 5% OTM, 60 DTE, $300-400/month |
-| VIX range | 15.0 (Nov 2021) to 37.2 (Jan 2021) |
-| Monthly roll yield average | $1,820/month |
-| Monthly hedge cost average | $340/month |
-| Net monthly P&L average | $1,480/month |
-| 2021 losses from spikes | 2 months of hedge use: −$400 total |
-| **Full year 2021 net** | **+$17,360 on 1 contract (before margin)** |
+```
+Field                       Value
+--------------------------  -------------------------------------------------------
+Period                      January–December 2021
+Strategy                    Short front-month VIX futures, monthly roll, 1 contract
+Hedge                       Monthly SPY puts, 5% OTM, 60 DTE, $300-400/month
+VIX range                   15.0 (Nov 2021) to 37.2 (Jan 2021)
+Monthly roll yield average  $1,820/month
+Monthly hedge cost average  $340/month
+Net monthly P&L average     $1,480/month
+2021 losses from spikes     2 months of hedge use: −$400 total
+Full year 2021 net          +$17,360 on 1 contract (before margin)
+```
 
 **The compounding effect of consistent vol carry:** 2021 was a near-ideal vol carry year — VIX trended lower from 20s to teens with no sustained spikes. Even the November 2021 Omicron spike (VIX briefly to 28) was managed by the hedges. The strategy generated more than the cost of the hedge in every month, even during the brief spike months.
 
@@ -459,15 +465,17 @@ Between selling the old hedge and buying the new one, there is a brief window of
 
 ## When This Strategy Works Best
 
-| Condition | Optimal Value | Why It Matters |
-|---|---|---|
-| VIX level | 13-18 | Maximum contango, lowest spike risk |
-| Contango slope | > 2%/month | Generous roll yield covers hedge costs with room |
-| VIX trend | Flat or declining | Directional tailwind on top of roll |
-| SPX trend | Uptrend, above 200-day MA | Low-vol equity bull market = ideal vol carry regime |
-| Economic data | Strong or mixed positive | No macro deterioration risk |
-| FOMC posture | Neutral or dovish | Hawkish surprises can spike VIX independently |
-| Realized vol (30-day) | Below 15% | Confirms regime — elevated realized vol = exit signal |
+```
+Condition              Optimal Value              Why It Matters
+---------------------  -------------------------  -----------------------------------------------------
+VIX level              13-18                      Maximum contango, lowest spike risk
+Contango slope         > 2%/month                 Generous roll yield covers hedge costs with room
+VIX trend              Flat or declining          Directional tailwind on top of roll
+SPX trend              Uptrend, above 200-day MA  Low-vol equity bull market = ideal vol carry regime
+Economic data          Strong or mixed positive   No macro deterioration risk
+FOMC posture           Neutral or dovish          Hawkish surprises can spike VIX independently
+Realized vol (30-day)  Below 15%                  Confirms regime — elevated realized vol = exit signal
+```
 
 ---
 
@@ -491,30 +499,34 @@ Between selling the old hedge and buying the new one, there is a brief window of
 
 ## Strategy Parameters
 
-| Parameter | Conservative | Standard | Aggressive | Description |
-|---|---|---|---|---|
-| `min_contango_spread` | M1 − Spot > 1.5 | M1 − Spot > 0.5 | M1 − Spot > 0.25 | Minimum roll premium |
-| `min_slope` | > 2%/month | > 1%/month | > 0.5%/month | M1-M2 contango slope |
-| `max_entry_vix` | < 18 | < 22 | < 25 | Maximum VIX to enter |
-| `hedge_type` | SPY puts 5% OTM, 60 DTE | SPY puts 7% OTM, 60 DTE | VIX calls, 30-strike, 90 DTE |  |
-| `hedge_budget` | 20% of roll yield | 15% of roll yield | 10% of roll yield |  |
-| `max_position` | 1 contract / $75K | 1 contract / $50K | 1 contract / $30K | Capital per contract |
-| `stop_loss_vix` | VIX > 25 | VIX > 30 | VIX > 35 | Close if VIX exceeds this |
-| `backwardation_exit` | Immediate | Same day | Within 24 hours | Exit when M1 < Spot VIX |
-| `profit_target` | None — roll to expiry | None — roll to expiry | 50% of roll premium | Early exit if applicable |
+```
+Parameter              Conservative             Standard                 Aggressive                    Description
+---------------------  -----------------------  -----------------------  ----------------------------  -------------------------
+`min_contango_spread`  M1 − Spot > 1.5          M1 − Spot > 0.5          M1 − Spot > 0.25              Minimum roll premium
+`min_slope`            > 2%/month               > 1%/month               > 0.5%/month                  M1-M2 contango slope
+`max_entry_vix`        < 18                     < 22                     < 25                          Maximum VIX to enter
+`hedge_type`           SPY puts 5% OTM, 60 DTE  SPY puts 7% OTM, 60 DTE  VIX calls, 30-strike, 90 DTE
+`hedge_budget`         20% of roll yield        15% of roll yield        10% of roll yield
+`max_position`         1 contract / $75K        1 contract / $50K        1 contract / $30K             Capital per contract
+`stop_loss_vix`        VIX > 25                 VIX > 30                 VIX > 35                      Close if VIX exceeds this
+`backwardation_exit`   Immediate                Same day                 Within 24 hours               Exit when M1 < Spot VIX
+`profit_target`        None — roll to expiry    None — roll to expiry    50% of roll premium           Early exit if applicable
+```
 
 ---
 
 ## Data Requirements
 
-| Data | Source | Usage |
-|---|---|---|
-| VIX spot (real-time) | Polygon `VIXIND` | Entry filter, backwardation check |
-| VIX futures M1, M2, M3 | CBOE futures data | Term structure, slope calculation |
-| VIX futures term structure history | CBOE historical | Contango vs backwardation regime |
-| SPX/SPY daily OHLCV | Polygon | 200-day MA, trend filter, hedge strike selection |
-| VIX 20-day MA | Derived from VIX history | Calm vs elevated filter |
-| Options chain (SPY, VIX) | Polygon | Hedge pricing (SPY puts, VIX calls) |
-| FOMC calendar | Federal Reserve | Avoid entries near FOMC |
-| CPI/NFP release calendar | BLS / economic calendar | Macro event filter |
-| Realized SPX vol (30-day) | Derived from daily returns | Regime confirmation |
+```
+Data                                Source                      Usage
+----------------------------------  --------------------------  ------------------------------------------------
+VIX spot (real-time)                Polygon `VIXIND`            Entry filter, backwardation check
+VIX futures M1, M2, M3              CBOE futures data           Term structure, slope calculation
+VIX futures term structure history  CBOE historical             Contango vs backwardation regime
+SPX/SPY daily OHLCV                 Polygon                     200-day MA, trend filter, hedge strike selection
+VIX 20-day MA                       Derived from VIX history    Calm vs elevated filter
+Options chain (SPY, VIX)            Polygon                     Hedge pricing (SPY puts, VIX calls)
+FOMC calendar                       Federal Reserve             Avoid entries near FOMC
+CPI/NFP release calendar            BLS / economic calendar     Macro event filter
+Realized SPX vol (30-day)           Derived from daily returns  Regime confirmation
+```

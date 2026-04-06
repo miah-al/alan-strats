@@ -154,13 +154,15 @@ The lesson: supply shock and demand collapse are inverse regimes. Applying the s
 
 ## Strategy Parameters
 
-| Parameter | Conservative | Standard | Aggressive |
-|---|---|---|---|
-| Supply shock confirmation | Both speed AND fundamental cause | Speed OR cause + PMI | Speed alone |
-| SPY reduction on supply shock | −15% | −20% | −30% |
-| XLE overweight | 8% | 12% | 20% |
-| UCO tactical (supply shock) | 3% (short-term only) | 5% | 8% |
-| Max UCO hold period | 1 week | 3 weeks | 5 weeks |
-| XLE stop-loss | −8% from entry | −10% | −15% |
-| Exit trigger (regime reversal) | Oil reverses 10% from peak | Oil reverses 15% | Oil reverses 20% |
-| CPI put spread trigger | Oil +20% in 3 months | Oil +25% | Oil +30% |
+```
+Parameter                       Conservative                      Standard              Aggressive
+------------------------------  --------------------------------  --------------------  ----------------
+Supply shock confirmation       Both speed AND fundamental cause  Speed OR cause + PMI  Speed alone
+SPY reduction on supply shock   −15%                              −20%                  −30%
+XLE overweight                  8%                                12%                   20%
+UCO tactical (supply shock)     3% (short-term only)              5%                    8%
+Max UCO hold period             1 week                            3 weeks               5 weeks
+XLE stop-loss                   −8% from entry                    −10%                  −15%
+Exit trigger (regime reversal)  Oil reverses 10% from peak        Oil reverses 15%      Oil reverses 20%
+CPI put spread trigger          Oil +20% in 3 months              Oil +25%              Oil +30%
+```

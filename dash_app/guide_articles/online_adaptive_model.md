@@ -134,18 +134,20 @@ Online model: 10-day adaptation period, then correct alignment with new regime. 
 
 ## Strategy Parameters
 
-| Parameter | Default | Range | Description |
-|---|---|---|---|
-| Base training window | 10 years | 8–15 years | Historical training before online phase begins |
-| Learning rate | 0.002 | 0.001–0.005 | Daily parameter update step size |
-| λ1 (L1 regularization) | 0.0001 | 0.00005–0.001 | Sparsity regularization |
-| λ2 (L2 regularization) | 0.001 | 0.0005–0.005 | Shrinkage regularization |
-| Memory replay ratio | 20:1 | 10:1–50:1 | Historical samples per new observation in each update |
-| Memory buffer size | 500 samples | 200–2000 | Rolling historical sample pool |
-| Outlier detection | 5 × 60d std | 3–7 std | Returns beyond this skip the update |
-| Emergency freeze | 48% accuracy, 10 days | Firm | Halt online updates, switch to batch |
-| Position size by accuracy | 50/75/100% | Scales | At 50-54% / 54-58% / >58% rolling accuracy |
-| Weight logging | Daily | Required | Audit trail for drift detection |
-| Manual review frequency | Every 30 days | 14–60 days | Human validation cadence |
-| Algorithm | FTRL | FTRL / online GD | FTRL preferred for financial features |
-| Feature count | Same as base model | Match base | Online updates all features from base model |
+```
+Parameter                  Default                Range             Description
+-------------------------  ---------------------  ----------------  -----------------------------------------------------
+Base training window       10 years               8–15 years        Historical training before online phase begins
+Learning rate              0.002                  0.001–0.005       Daily parameter update step size
+λ1 (L1 regularization)     0.0001                 0.00005–0.001     Sparsity regularization
+λ2 (L2 regularization)     0.001                  0.0005–0.005      Shrinkage regularization
+Memory replay ratio        20:1                   10:1–50:1         Historical samples per new observation in each update
+Memory buffer size         500 samples            200–2000          Rolling historical sample pool
+Outlier detection          5 × 60d std            3–7 std           Returns beyond this skip the update
+Emergency freeze           48% accuracy, 10 days  Firm              Halt online updates, switch to batch
+Position size by accuracy  50/75/100%             Scales            At 50-54% / 54-58% / >58% rolling accuracy
+Weight logging             Daily                  Required          Audit trail for drift detection
+Manual review frequency    Every 30 days          14–60 days        Human validation cadence
+Algorithm                  FTRL                   FTRL / online GD  FTRL preferred for financial features
+Feature count              Same as base model     Match base        Online updates all features from base model
+```

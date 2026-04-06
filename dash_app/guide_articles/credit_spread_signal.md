@@ -141,19 +141,21 @@ HYG 20-day smoothed return: +2.1%. 5-day return also positive. Spreads tightenin
 
 ## Strategy Parameters
 
-| Parameter | Default | Range | Description |
-|---|---|---|---|
-| Primary signal | HYG 20-day price return | HYG or FRED ICE spread | HYG is easier; FRED is more precise |
-| Smoothing window | 5-day rolling average | 3–7 days | Applied before threshold comparison |
-| Caution threshold | HYG 20d < −1% | −0.5% to −2% | Initial reduction trigger |
-| Warning threshold | HYG 20d < −3% | −2% to −5% | Significant de-risk trigger |
-| Danger threshold | HYG 20d < −6% | −5% to −8% | Maximum defensive trigger |
-| Recovery threshold | HYG 20d > +1% | +0.5% to +2% | Begin restoring equity |
-| Equity reduction at caution | 10–15% | 5–20% | Graduated response |
-| Equity reduction at warning | 25–30% | 20–35% | More aggressive de-risk |
-| Equity reduction at danger | 40–50% | 35–60% | Near-maximum defensive |
-| Put spread hedge cost | 0.5–1.5% of portfolio | 0.3–2% | Per warning event |
-| Re-entry pace | Thirds over 3 weeks | Thirds preferred | Gradual recovery restoration |
-| IG spread confirmation | Required for Warning+ | Preferred | Filters isolated HY signals |
-| Put hedge DTE | 45–90 days | 30–120 | Allow time for correction to develop |
-| Annual hedge budget | 1–2% of portfolio | 0.5–3% | Total put spread cost cap per year |
+```
+Parameter                    Default                  Range                   Description
+---------------------------  -----------------------  ----------------------  ------------------------------------
+Primary signal               HYG 20-day price return  HYG or FRED ICE spread  HYG is easier; FRED is more precise
+Smoothing window             5-day rolling average    3–7 days                Applied before threshold comparison
+Caution threshold            HYG 20d < −1%            −0.5% to −2%            Initial reduction trigger
+Warning threshold            HYG 20d < −3%            −2% to −5%              Significant de-risk trigger
+Danger threshold             HYG 20d < −6%            −5% to −8%              Maximum defensive trigger
+Recovery threshold           HYG 20d > +1%            +0.5% to +2%            Begin restoring equity
+Equity reduction at caution  10–15%                   5–20%                   Graduated response
+Equity reduction at warning  25–30%                   20–35%                  More aggressive de-risk
+Equity reduction at danger   40–50%                   35–60%                  Near-maximum defensive
+Put spread hedge cost        0.5–1.5% of portfolio    0.3–2%                  Per warning event
+Re-entry pace                Thirds over 3 weeks      Thirds preferred        Gradual recovery restoration
+IG spread confirmation       Required for Warning+    Preferred               Filters isolated HY signals
+Put hedge DTE                45–90 days               30–120                  Allow time for correction to develop
+Annual hedge budget          1–2% of portfolio        0.5–3%                  Total put spread cost cap per year
+```

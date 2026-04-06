@@ -120,22 +120,24 @@ SHAP explanation at exit confirmed that RSI normalized (from 38 to 62) and VIX c
 
 ## Strategy Parameters
 
-| Parameter | Default | Range | Description |
-|---|---|---|---|
-| Feature count | 60 | 30–80 | After feature selection and pruning |
-| max_depth | 5 | 4–6 | Tree depth — deeper = more interactions, more overfit risk |
-| learning_rate | 0.02 | 0.01–0.05 | Slower = better generalization |
-| n_estimators | 500 | 300–800 | Number of boosting rounds |
-| subsample | 0.8 | 0.7–0.9 | Row sampling per tree (regularization) |
-| colsample_bytree | 0.8 | 0.7–0.9 | Feature sampling per tree (regularization) |
-| Train window | Rolling 3 years | 2–5 years | Walk-forward training period |
-| Test window | 1 quarter | 1–2 quarters | Out-of-sample test per fold |
-| Bull entry threshold | P > 0.60 | 0.55–0.65 | Minimum confidence to enter long |
-| Bear entry threshold | P < 0.40 | 0.35–0.45 | Minimum confidence to enter short |
-| Retrain frequency | Quarterly | Monthly–semi-annual | Walk-forward update |
-| Options DTE | 21–30 | 15–45 | 5-day model → need enough DTE buffer |
-| Position size | 3–5% of portfolio | 2–6% | Scales with model confidence |
-| SHAP agreement | Top 3 features same direction | Preferred | High SHAP consensus → full size |
+```
+Parameter             Default                        Range                Description
+--------------------  -----------------------------  -------------------  ----------------------------------------------------------
+Feature count         60                             30–80                After feature selection and pruning
+max_depth             5                              4–6                  Tree depth — deeper = more interactions, more overfit risk
+learning_rate         0.02                           0.01–0.05            Slower = better generalization
+n_estimators          500                            300–800              Number of boosting rounds
+subsample             0.8                            0.7–0.9              Row sampling per tree (regularization)
+colsample_bytree      0.8                            0.7–0.9              Feature sampling per tree (regularization)
+Train window          Rolling 3 years                2–5 years            Walk-forward training period
+Test window           1 quarter                      1–2 quarters         Out-of-sample test per fold
+Bull entry threshold  P > 0.60                       0.55–0.65            Minimum confidence to enter long
+Bear entry threshold  P < 0.40                       0.35–0.45            Minimum confidence to enter short
+Retrain frequency     Quarterly                      Monthly–semi-annual  Walk-forward update
+Options DTE           21–30                          15–45                5-day model → need enough DTE buffer
+Position size         3–5% of portfolio              2–6%                 Scales with model confidence
+SHAP agreement        Top 3 features same direction  Preferred            High SHAP consensus → full size
+```
 
 ---
 
@@ -204,28 +206,32 @@ XGBoost Signal Dashboard — September 4, 2025:
 
 **By signal confidence:**
 
-| P(BULL) range | Win Rate | Avg P&L | Action |
-|---|---|---|---|
-| P > 0.80 | 74% | +$720 | Full position |
-| P 0.70-0.80 | 68% | +$580 | Full position |
-| P 0.60-0.70 | 61% | +$380 | Half position |
-| P 0.40-0.60 | No trade | — | Uncertainty zone |
-| P 0.30-0.40 | 58% (bear) | +$290 | Half position (bear) |
-| P < 0.30 | 65% (bear) | +$480 | Full position (bear) |
+```
+P(BULL) range  Win Rate    Avg P&L  Action
+-------------  ----------  -------  --------------------
+P > 0.80       74%         +$720    Full position
+P 0.70-0.80    68%         +$580    Full position
+P 0.60-0.70    61%         +$380    Half position
+P 0.40-0.60    No trade    —        Uncertainty zone
+P 0.30-0.40    58% (bear)  +$290    Half position (bear)
+P < 0.30       65% (bear)  +$480    Full position (bear)
+```
 
 ---
 
 ## Data Requirements
 
-| Data | Source | Usage |
-|---|---|---|
-| SPY daily OHLCV (10+ years) | Polygon | Price momentum features + target variable |
-| VIX daily (10+ years) | Polygon / CBOE | Macro vol features |
-| Treasury yields (2Y, 10Y) | FRED / Polygon | Rate curve features |
-| HYG daily price | Polygon | Credit condition feature |
-| DXY, GLD daily | Polygon | Cross-asset features |
-| Sector ETF returns (XLK, XLF, XLE, XLV) | Polygon | Sector relative strength |
-| Put/call ratio (total and equity) | CBOE | Sentiment features |
-| HMM regime state | Platform regime model | Regime feature |
-| IV rank (30-day) | Calculated from options | Options market feature |
-| FOMC calendar | Federal Reserve | Days-to-FOMC feature |
+```
+Data                                     Source                   Usage
+---------------------------------------  -----------------------  -----------------------------------------
+SPY daily OHLCV (10+ years)              Polygon                  Price momentum features + target variable
+VIX daily (10+ years)                    Polygon / CBOE           Macro vol features
+Treasury yields (2Y, 10Y)                FRED / Polygon           Rate curve features
+HYG daily price                          Polygon                  Credit condition feature
+DXY, GLD daily                           Polygon                  Cross-asset features
+Sector ETF returns (XLK, XLF, XLE, XLV)  Polygon                  Sector relative strength
+Put/call ratio (total and equity)        CBOE                     Sentiment features
+HMM regime state                         Platform regime model    Regime feature
+IV rank (30-day)                         Calculated from options  Options market feature
+FOMC calendar                            Federal Reserve          Days-to-FOMC feature
+```

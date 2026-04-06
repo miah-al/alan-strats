@@ -47,14 +47,16 @@ The agent learned that in stress regimes with large unrealized losses, the optim
 
 Fixed-threshold exits are a human convenience. The RL agent's learned exit policy is a continuous function of state:
 
-| Market State | Agent Learned Exit Rule | Human Heuristic |
-|---|---|---|
-| P&L = 50%, VIX falling, 15 DTE | Hold — let it run | Close at 50% |
-| P&L = 50%, VIX rising, 15 DTE | Exit immediately | Close at 50% |
-| P&L = 50%, 5 DTE | Exit — gamma risk near expiry | Hold to expiry |
-| P&L = 80%, 20 DTE | Exit — most gain captured | Hold to 21 DTE |
-| P&L = −30%, VIX stable | Hold — not a stop loss level | Stop at −100% |
-| P&L = −30%, VIX rising | Exit — regime deteriorating | Stop at −100% |
+```
+Market State                    Agent Learned Exit Rule        Human Heuristic
+------------------------------  -----------------------------  ---------------
+P&L = 50%, VIX falling, 15 DTE  Hold — let it run              Close at 50%
+P&L = 50%, VIX rising, 15 DTE   Exit immediately               Close at 50%
+P&L = 50%, 5 DTE                Exit — gamma risk near expiry  Hold to expiry
+P&L = 80%, 20 DTE               Exit — most gain captured      Hold to 21 DTE
+P&L = −30%, VIX stable          Hold — not a stop loss level   Stop at −100%
+P&L = −30%, VIX rising          Exit — regime deteriorating    Stop at −100%
+```
 
 The agent's context-sensitive exits outperformed fixed-threshold exits by approximately 0.3 Sharpe units in backtesting.
 
@@ -165,14 +167,16 @@ The training environment must be realistic or the agent learns a policy optimize
 
 **Critical realism requirements:**
 
-| Component | Simulated Version | What Happens Without It |
-|---|---|---|
-| Options bid-ask spread | 0.10-0.15% per leg round trip | Agent overtrades; real P&L devastated by costs |
-| Slippage on entry/exit | 0.05-0.10% per trade | Agent learns to trade too frequently |
-| IV expansion on VIX spikes | IV increases 15-25% on days VIX +3+ | Agent holds losing spreads that become more expensive to close |
-| Earnings-driven gaps | ±5-15% overnight gaps in individual stocks | Agent learns to hold through events that are unforeseeable |
-| Market impact on size | Position > $50k impacts spread by 0.05% | Agent learns position sizes that are impractical at scale |
-| Weekend theta decay | 2× single-day theta on Friday close | Agent learns to sell options before weekends (correct behavior) |
+```
+Component                   Simulated Version                           What Happens Without It
+--------------------------  ------------------------------------------  ---------------------------------------------------------------
+Options bid-ask spread      0.10-0.15% per leg round trip               Agent overtrades; real P&L devastated by costs
+Slippage on entry/exit      0.05-0.10% per trade                        Agent learns to trade too frequently
+IV expansion on VIX spikes  IV increases 15-25% on days VIX +3+         Agent holds losing spreads that become more expensive to close
+Earnings-driven gaps        ±5-15% overnight gaps in individual stocks  Agent learns to hold through events that are unforeseeable
+Market impact on size       Position > $50k impacts spread by 0.05%     Agent learns position sizes that are impractical at scale
+Weekend theta decay         2× single-day theta on Friday close         Agent learns to sell options before weekends (correct behavior)
+```
 
 **Training data:** SPY daily OHLCV + VIX + HMM regime states from 2005-2022 (17 years). The test period (2023-2024) was never used during training or hyperparameter selection.
 
@@ -318,11 +322,13 @@ The RL agent underperformed buy-and-hold in *raw return* (+18.2% vs +24.1%) but 
 
 **By market regime (2023-2024):**
 
-| HMM Regime | Agent Win Rate | Avg Trade P&L | Cash Periods |
-|---|---|---|---|
-| Bull | 71% | +$380/contract | 5% of time |
-| Neutral | 62% | +$240/contract | 22% of time |
-| Bear | 51% | +$110/contract | 44% of time |
+```
+HMM Regime  Agent Win Rate  Avg Trade P&L   Cash Periods
+----------  --------------  --------------  ------------
+Bull        71%             +$380/contract  5% of time
+Neutral     62%             +$240/contract  22% of time
+Bear        51%             +$110/contract  44% of time
+```
 
 In bear regimes, the agent held cash 44% of the time — the most important learned behavior for capital preservation.
 
@@ -434,12 +440,14 @@ With GPU (2,500 fps effective):
 
 **Reward function hacking prevention:** The three most common hacking patterns, and the reward function penalties designed to prevent them:
 
-| Hacking Pattern | Why Agent Would Do It | Reward Penalty |
-|---|---|---|
-| Never close losing positions | Avoid realized loss penalty | Time penalty after 40 days |
-| Trade every day to maximize step rewards | Step reward for P&L changes | Overtrading penalty per action |
-| Hold cash indefinitely | No downside from inaction | Opportunity cost in reward baseline |
-| Enter largest possible position | Maximize per-trade P&L | Max position hard-coded in action space |
+```
+Hacking Pattern                           Why Agent Would Do It        Reward Penalty
+----------------------------------------  ---------------------------  ---------------------------------------
+Never close losing positions              Avoid realized loss penalty  Time penalty after 40 days
+Trade every day to maximize step rewards  Step reward for P&L changes  Overtrading penalty per action
+Hold cash indefinitely                    No downside from inaction    Opportunity cost in reward baseline
+Enter largest possible position           Maximize per-trade P&L       Max position hard-coded in action space
+```
 
 ---
 
@@ -469,14 +477,16 @@ Any day in the test period that was also in the training period invalidates the 
 
 ## When This Strategy Works Best
 
-| Condition | Why It Helps | Example |
-|---|---|---|
-| Moderate VIX (15-25), declining trend | Agent's learned condor setup optimal | Oct-Nov 2023 |
-| HMM = Bull with high IV rank | Agent enters condors at premium prices | Multiple 2023 setups |
-| Post-crisis recovery (VIX retreating from spike) | Agent learned this as optimal long-spread entry | Q4 2022 |
-| Earnings season IV elevated | Agent collects premium via condors | Jan/Apr 2024 quarterly |
-| Extended rangebound market | Condors expire profitable repeatedly | Feb-Apr 2024 |
-| Market near recognized cyclical low | Agent maps to trained bull spread entries | Oct 2022 analog |
+```
+Condition                                         Why It Helps                                     Example
+------------------------------------------------  -----------------------------------------------  ----------------------
+Moderate VIX (15-25), declining trend             Agent's learned condor setup optimal             Oct-Nov 2023
+HMM = Bull with high IV rank                      Agent enters condors at premium prices           Multiple 2023 setups
+Post-crisis recovery (VIX retreating from spike)  Agent learned this as optimal long-spread entry  Q4 2022
+Earnings season IV elevated                       Agent collects premium via condors               Jan/Apr 2024 quarterly
+Extended rangebound market                        Condors expire profitable repeatedly             Feb-Apr 2024
+Market near recognized cyclical low               Agent maps to trained bull spread entries        Oct 2022 analog
+```
 
 ---
 
@@ -498,42 +508,46 @@ Any day in the test period that was also in the training period invalidates the 
 
 ## Strategy Parameters
 
-| Parameter | Default | Range | Description |
-|---|---|---|---|
-| State features | 17 (12 market + 5 portfolio) | 12–25 | Observation space for agent |
-| Action space | 5 discrete | 4–8 | Hold, spreads, condor, close |
-| Options spread width | $10 | $5–$15 | Width for bull/bear spread legs |
-| Condor wing delta | 0.15Δ | 0.10–0.20Δ | Short strike distance from ATM |
-| DTE at entry | 30 | 21–45 | Days to expiration for new positions |
-| Reward clipping | ±2.0 | ±1.0–5.0 | Cap extreme rewards to prevent instability |
-| Discount factor γ | 0.99 | 0.95–0.999 | Future reward weight |
-| GAE lambda λ | 0.95 | 0.90–0.99 | Advantage estimation smoothing |
-| PPO clip ε | 0.20 | 0.10–0.30 | Policy update constraint |
-| Learning rate | 3e-4 | 1e-4–1e-3 | Adam optimizer learning rate |
-| Training steps | 10 million | 5M–50M | Total environment steps |
-| Parallel environments | 16 | 8–32 | Parallel simulations during training |
-| Max position size | 5% of portfolio | 3–8% | Hard constraint in action space |
-| Overtrading penalty | 0.002 per action | 0.001–0.005 | Calibrated to ~50 trades/year |
-| Drawdown penalty coefficient | 0.10 | 0.05–0.20 | Scales drawdown cost in reward |
-| Drawdown kill switch | −15% from peak | −10 to −20% | Human-level circuit breaker |
-| OOD VIX threshold | 2× training mean | 1.5–2.5× | Position size reduction trigger |
-| Paper trading period | 3 months | 2–6 months | Required before live capital |
-| Retrain trigger | Policy win rate drops 10% | 5–15% | When to initiate retraining |
-| Policy review frequency | Monthly | Bi-weekly–quarterly | Human audit of agent behavior |
+```
+Parameter                     Default                       Range                Description
+----------------------------  ----------------------------  -------------------  ------------------------------------------
+State features                17 (12 market + 5 portfolio)  12–25                Observation space for agent
+Action space                  5 discrete                    4–8                  Hold, spreads, condor, close
+Options spread width          $10                           $5–$15               Width for bull/bear spread legs
+Condor wing delta             0.15Δ                         0.10–0.20Δ           Short strike distance from ATM
+DTE at entry                  30                            21–45                Days to expiration for new positions
+Reward clipping               ±2.0                          ±1.0–5.0             Cap extreme rewards to prevent instability
+Discount factor γ             0.99                          0.95–0.999           Future reward weight
+GAE lambda λ                  0.95                          0.90–0.99            Advantage estimation smoothing
+PPO clip ε                    0.20                          0.10–0.30            Policy update constraint
+Learning rate                 3e-4                          1e-4–1e-3            Adam optimizer learning rate
+Training steps                10 million                    5M–50M               Total environment steps
+Parallel environments         16                            8–32                 Parallel simulations during training
+Max position size             5% of portfolio               3–8%                 Hard constraint in action space
+Overtrading penalty           0.002 per action              0.001–0.005          Calibrated to ~50 trades/year
+Drawdown penalty coefficient  0.10                          0.05–0.20            Scales drawdown cost in reward
+Drawdown kill switch          −15% from peak                −10 to −20%          Human-level circuit breaker
+OOD VIX threshold             2× training mean              1.5–2.5×             Position size reduction trigger
+Paper trading period          3 months                      2–6 months           Required before live capital
+Retrain trigger               Policy win rate drops 10%     5–15%                When to initiate retraining
+Policy review frequency       Monthly                       Bi-weekly–quarterly  Human audit of agent behavior
+```
 
 ---
 
 ## Data Requirements
 
-| Data | Source | Usage |
-|---|---|---|
-| SPY daily OHLCV (2005+) | Polygon | State features + environment simulation |
-| VIX daily (2005+) | Polygon / CBOE | State feature + IV expansion simulation |
-| HMM regime state (daily) | Platform regime model (regime_hmm) | State feature |
-| Treasury yields (2Y, 10Y) | FRED / Polygon | Additional state features (optional) |
-| Options mid prices (historical) | Polygon options history | Simulated P&L for condors and spreads |
-| IV rank (historical 30d) | Calculated from options history | State feature + premium level simulation |
-| GPU compute (training) | Local or cloud | 4-8 hours per training run |
-| CPU compute (inference) | Standard | <5ms per action selection |
-| Backtesting framework | Custom Python + gym | Market simulator environment |
-| Policy analysis tools | Stable-Baselines3 / custom | Emergent rule extraction |
+```
+Data                             Source                              Usage
+-------------------------------  ----------------------------------  ----------------------------------------
+SPY daily OHLCV (2005+)          Polygon                             State features + environment simulation
+VIX daily (2005+)                Polygon / CBOE                      State feature + IV expansion simulation
+HMM regime state (daily)         Platform regime model (regime_hmm)  State feature
+Treasury yields (2Y, 10Y)        FRED / Polygon                      Additional state features (optional)
+Options mid prices (historical)  Polygon options history             Simulated P&L for condors and spreads
+IV rank (historical 30d)         Calculated from options history     State feature + premium level simulation
+GPU compute (training)           Local or cloud                      4-8 hours per training run
+CPU compute (inference)          Standard                            <5ms per action selection
+Backtesting framework            Custom Python + gym                 Market simulator environment
+Policy analysis tools            Stable-Baselines3 / custom          Emergent rule extraction
+```

@@ -136,23 +136,25 @@ not between the current stock price and the pin strike.
 
 ### Trade 1 — AAPL November 2023: Near-Perfect Pin ✅
 
-| Field | Value |
-|---|---|
-| AAPL at entry | $177.00 |
-| Earnings | Thursday, November 2, 2023 (after close) |
-| Weekly expiry | Friday, November 3, 2023 |
-| Pin strike identified | $180 — 103,000 total OI (5.5× adjacent strikes) |
-| Max pain | $179.50 (aligned with $180 strike ✓) |
-| Distance to pin | $180 − $177 = 1.7% (within 2% threshold ✓) |
-| Implied earnings move | 3.5% (moderate — pin force meaningful for 1-2% gaps) |
-| Trade | Sell $180/$182 bear call spread |
-| Credit | $0.55 per spread |
-| Contracts | 5 |
-| Total credit | $275 |
-| AAPL earnings | Beat EPS, slight revenue miss; initial AH: $179.40 (+1.4%) |
-| Friday close | $179.97 — pinned within $0.03 of $180 strike |
-| $180 call at expiry | $0.00 (stock closed below $180) |
-| **P&L** | **+$275 (full credit, 5 spreads)** |
+```
+Field                  Value
+---------------------  ----------------------------------------------------------
+AAPL at entry          $177.00
+Earnings               Thursday, November 2, 2023 (after close)
+Weekly expiry          Friday, November 3, 2023
+Pin strike identified  $180 — 103,000 total OI (5.5× adjacent strikes)
+Max pain               $179.50 (aligned with $180 strike ✓)
+Distance to pin        $180 − $177 = 1.7% (within 2% threshold ✓)
+Implied earnings move  3.5% (moderate — pin force meaningful for 1-2% gaps)
+Trade                  Sell $180/$182 bear call spread
+Credit                 $0.55 per spread
+Contracts              5
+Total credit           $275
+AAPL earnings          Beat EPS, slight revenue miss; initial AH: $179.40 (+1.4%)
+Friday close           $179.97 — pinned within $0.03 of $180 strike
+$180 call at expiry    $0.00 (stock closed below $180)
+P&L                    +$275 (full credit, 5 spreads)
+```
 
 **What happened:** AAPL's modest earnings beat pushed the stock from $177 to approximately $179.40 in after-hours — consistent with the 1.4% initial gap. On Friday, the stock opened at $179.50 and drifted between $179 and $180.10 for most of the day, eventually closing at $179.97. The pin was not exact, but the stock spent the entire session within $1 of the $180 strike. The $180 call expired worthless; full credit kept.
 
@@ -160,21 +162,23 @@ not between the current stock price and the pin strike.
 
 ### Trade 2 — NVDA August 2024: 9% Gap Overwhelms Pin ❌
 
-| Field | Value |
-|---|---|
-| NVDA at entry | $116.00 |
-| Pin strike | $120 — elevated OI, 3.4% away |
-| Implied earnings move | 7.8% |
-| Distance to pin | $120 − $116 = 3.4% (slightly beyond 2% threshold warning) |
-| Trade | Sell $120/$122 bear call spread |
-| Credit | $0.85 per spread |
-| Contracts | 4 |
-| Total credit | $340 |
-| NVDA earnings result | Beat by 14%; massive AI demand beat |
-| NVDA at open | $126.50 (+9.2%) — through both strikes |
-| Both call strikes ITM | Maximum loss on all spreads |
-| Exit at open | $1.85 per spread (max loss − credit) |
-| **P&L** | **−$400 (max loss on 4 spreads)** |
+```
+Field                  Value
+---------------------  ---------------------------------------------------------
+NVDA at entry          $116.00
+Pin strike             $120 — elevated OI, 3.4% away
+Implied earnings move  7.8%
+Distance to pin        $120 − $116 = 3.4% (slightly beyond 2% threshold warning)
+Trade                  Sell $120/$122 bear call spread
+Credit                 $0.85 per spread
+Contracts              4
+Total credit           $340
+NVDA earnings result   Beat by 14%; massive AI demand beat
+NVDA at open           $126.50 (+9.2%) — through both strikes
+Both call strikes ITM  Maximum loss on all spreads
+Exit at open           $1.85 per spread (max loss − credit)
+P&L                    −$400 (max loss on 4 spreads)
+```
 
 **The lesson:** A 9.2% earnings gap overwhelms any pin force. No gravitational pull can keep a stock at $120 when earnings deliver a 9% gap. The entry should have been skipped because:
 1. The implied earnings move (7.8%) was already well above the 5% threshold for pin trades
@@ -187,20 +191,22 @@ not between the current stock price and the pin strike.
 
 ### Trade 3 — SPY March 15, 2024 (Monthly Expiry): Max Pain Pin Trade ✅
 
-| Field | Value |
-|---|---|
-| SPY at 10:00 AM | $514.80 |
-| Monthly expiry | Third Friday, March 15, 2024 |
-| Calculated max pain | $513.00 |
-| Gap from max pain | $514.80 − $513 = $1.80 (above max pain → expect drift down) |
-| High-OI strike | $513 — largest OI concentration in ±5 strike range |
-| Trade | Sell SPY $515/$517 bear call spread |
-| Credit | $0.82 per spread |
-| Contracts | 5 |
-| Total credit | $410 |
-| SPY at 3:55 PM | $513.40 — drifted to near max pain as expected |
-| Spread value at close | $0.05 |
-| **P&L** | **+$385 (+93.9% of max gain)** |
+```
+Field                  Value
+---------------------  -----------------------------------------------------------
+SPY at 10:00 AM        $514.80
+Monthly expiry         Third Friday, March 15, 2024
+Calculated max pain    $513.00
+Gap from max pain      $514.80 − $513 = $1.80 (above max pain → expect drift down)
+High-OI strike         $513 — largest OI concentration in ±5 strike range
+Trade                  Sell SPY $515/$517 bear call spread
+Credit                 $0.82 per spread
+Contracts              5
+Total credit           $410
+SPY at 3:55 PM         $513.40 — drifted to near max pain as expected
+Spread value at close  $0.05
+P&L                    +$385 (+93.9% of max gain)
+```
 
 **The max pain dynamic without earnings:** This SPY example shows the pin effect on monthly expiry without an earnings catalyst. With $25 billion of SPY options open interest concentrated around $513, dealer hedging flows created enough buying below $513 and selling above it to pull the market down from $514.80 to $513.40 over the session. This is the non-earnings application of the pin/max pain strategy — trading the gravitational force on major expiration days.
 
@@ -432,15 +438,17 @@ Selling a bear call spread above the pin when the stock is already above the pin
 
 ## When This Strategy Works Best
 
-| Condition | Optimal Value | Why |
-|---|---|---|
-| OI at pin strike vs adjacent | ≥ 5× adjacent strikes | Strong pin force — maximum probability of pinning |
-| Distance to pin | < 1.0% of stock price | Closest pin = strongest attraction |
-| Implied earnings move | < 3% | Small moves more susceptible to pin gravity |
-| Expiry type | Monthly (3rd Friday) | Highest OI accumulation, strongest pin |
-| Stock type | Stable large-cap (AAPL, MSFT) | Predictable earnings, low vol, pin more reliable |
-| Macro environment | Quiet on expiry day | No macro override of pin mechanics |
-| Credit/wing ratio | ≥ 30% | Adequate compensation for the risk |
+```
+Condition                     Optimal Value                  Why
+----------------------------  -----------------------------  -------------------------------------------------
+OI at pin strike vs adjacent  ≥ 5× adjacent strikes          Strong pin force — maximum probability of pinning
+Distance to pin               < 1.0% of stock price          Closest pin = strongest attraction
+Implied earnings move         < 3%                           Small moves more susceptible to pin gravity
+Expiry type                   Monthly (3rd Friday)           Highest OI accumulation, strongest pin
+Stock type                    Stable large-cap (AAPL, MSFT)  Predictable earnings, low vol, pin more reliable
+Macro environment             Quiet on expiry day            No macro override of pin mechanics
+Credit/wing ratio             ≥ 30%                          Adequate compensation for the risk
+```
 
 ---
 
@@ -462,29 +470,33 @@ Selling a bear call spread above the pin when the stock is already above the pin
 
 ## Strategy Parameters
 
-| Parameter | Conservative | Standard | Aggressive |
-|---|---|---|---|
-| `min_oi_at_pin` | ≥ 80,000 contracts | ≥ 50,000 | ≥ 20,000 |
-| `min_oi_vs_adjacent` | ≥ 6× | ≥ 5× | ≥ 3× |
-| `max_earnings_implied_move` | < 3% | < 5% | < 7% |
-| `max_distance_to_pin` | < 1.0% of stock | < 1.5% | < 2.0% |
-| `spread_width` | $2 wide | $2-$3 wide | $3-$5 wide |
-| `min_credit_to_width` | ≥ 30% | ≥ 25% | ≥ 20% |
-| `contracts` | 3 spreads | 5 spreads | 8 spreads |
-| `exit_trigger` | Close at open if wing hit | Close at open | Hold until 2:00 PM |
-| `macro_calendar_filter` | Mandatory check | Mandatory check | Preferred check |
+```
+Parameter                    Conservative               Standard         Aggressive
+---------------------------  -------------------------  ---------------  ------------------
+`min_oi_at_pin`              ≥ 80,000 contracts         ≥ 50,000         ≥ 20,000
+`min_oi_vs_adjacent`         ≥ 6×                       ≥ 5×             ≥ 3×
+`max_earnings_implied_move`  < 3%                       < 5%             < 7%
+`max_distance_to_pin`        < 1.0% of stock            < 1.5%           < 2.0%
+`spread_width`               $2 wide                    $2-$3 wide       $3-$5 wide
+`min_credit_to_width`        ≥ 30%                      ≥ 25%            ≥ 20%
+`contracts`                  3 spreads                  5 spreads        8 spreads
+`exit_trigger`               Close at open if wing hit  Close at open    Hold until 2:00 PM
+`macro_calendar_filter`      Mandatory check            Mandatory check  Preferred check
+```
 
 ---
 
 ## Data Requirements
 
-| Data | Source | Usage |
-|---|---|---|
-| Full options chain by strike | Polygon real-time | OI concentration calculation |
-| Open interest per strike (both calls and puts) | Polygon | Max pain calculation, pin identification |
-| Implied earnings move (ATM straddle) | Polygon | Entry filter — must be < 5% |
-| Historical post-earnings moves for the stock | Computed from OHLCV | Confirm stock is a slow-mover |
-| FOMC / CPI / macro calendar | Economic calendar | Macro override check for expiry day |
-| SPY intraday trend | Polygon | Macro context on expiry day |
-| Stock OHLCV (pre-earnings price) | Polygon | Distance to pin calculation |
-| Options expiry calendar | CBOE | Confirm earnings aligns with weekly/monthly expiry |
+```
+Data                                            Source               Usage
+----------------------------------------------  -------------------  --------------------------------------------------
+Full options chain by strike                    Polygon real-time    OI concentration calculation
+Open interest per strike (both calls and puts)  Polygon              Max pain calculation, pin identification
+Implied earnings move (ATM straddle)            Polygon              Entry filter — must be < 5%
+Historical post-earnings moves for the stock    Computed from OHLCV  Confirm stock is a slow-mover
+FOMC / CPI / macro calendar                     Economic calendar    Macro override check for expiry day
+SPY intraday trend                              Polygon              Macro context on expiry day
+Stock OHLCV (pre-earnings price)                Polygon              Distance to pin calculation
+Options expiry calendar                         CBOE                 Confirm earnings aligns with weekly/monthly expiry
+```

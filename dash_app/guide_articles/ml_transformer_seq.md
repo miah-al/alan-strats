@@ -54,14 +54,16 @@ The value of multi-head attention is that these four sources of context are comb
 
 After training with temperature scaling calibration, the transformer produces probabilities that correspond to actual win rates. In 2-year out-of-sample testing:
 
-| P(Up) range | Actual Up % | Avg 1d return | Action |
-|---|---|---|---|
-| 0.75 + | 73% | +0.41% | Full position |
-| 0.65–0.75 | 66% | +0.29% | Full position |
-| 0.55–0.65 | 58% | +0.18% | Half position |
-| 0.45–0.55 | No trade | — | Uncertainty zone |
-| 0.35–0.45 | 57% (bear) | +0.15% | Half position (bear) |
-| < 0.35 | 65% (bear) | +0.26% | Full position (bear) |
+```
+P(Up) range  Actual Up %  Avg 1d return  Action
+-----------  -----------  -------------  --------------------
+0.75 +       73%          +0.41%         Full position
+0.65–0.75    66%          +0.29%         Full position
+0.55–0.65    58%          +0.18%         Half position
+0.45–0.55    No trade     —              Uncertainty zone
+0.35–0.45    57% (bear)   +0.15%         Half position (bear)
+< 0.35       65% (bear)   +0.26%         Full position (bear)
+```
 
 ---
 
@@ -109,28 +111,30 @@ The key architectural decisions:
 
 ## Feature Set (20 Daily Features)
 
-| Feature | Calculation | Rationale |
-|---|---|---|
-| 1d SPY return | Close-to-close % | Immediate momentum |
-| 5d SPY return | 5-day rolling | Short-term trend |
-| 20d SPY return | 20-day rolling | Medium-term trend |
-| Volume ratio | Today / 20d avg volume | Institutional participation signal |
-| VIX level | Raw CBOE VIX | Implied volatility regime |
-| VIX 5d change | VIX − VIX[−5] | Fear direction |
-| 10Y yield | Daily 10Y Treasury | Rate regime |
-| Yield 5d change | 10Y[0] − 10Y[−5] | Rate direction |
-| 2s10s spread | 10Y − 2Y yield | Curve shape / recession signal |
-| RSI(14) | Wilder RSI | Momentum oscillator |
-| MACD histogram | MACD − Signal | Momentum confirmation |
-| XLK rel perf | XLK / SPY 5d return | Tech leadership |
-| XLF rel perf | XLF / SPY 5d return | Financials (rate sensitivity) |
-| XLE rel perf | XLE / SPY 5d return | Energy (inflation / commodity) |
-| XLV rel perf | XLV / SPY 5d return | Defensive positioning |
-| Put/call ratio | Total equity P/C | Sentiment extremes |
-| IV/RV ratio | ATM IV / 20d realized vol | Options risk premium |
-| Day Monday | Binary 0/1 | Calendar effect |
-| Day Friday | Binary 0/1 | Weekend positioning |
-| Month-end flag | Last 3 trading days | Rebalancing flows |
+```
+Feature          Calculation                Rationale
+---------------  -------------------------  ----------------------------------
+1d SPY return    Close-to-close %           Immediate momentum
+5d SPY return    5-day rolling              Short-term trend
+20d SPY return   20-day rolling             Medium-term trend
+Volume ratio     Today / 20d avg volume     Institutional participation signal
+VIX level        Raw CBOE VIX               Implied volatility regime
+VIX 5d change    VIX − VIX[−5]              Fear direction
+10Y yield        Daily 10Y Treasury         Rate regime
+Yield 5d change  10Y[0] − 10Y[−5]           Rate direction
+2s10s spread     10Y − 2Y yield             Curve shape / recession signal
+RSI(14)          Wilder RSI                 Momentum oscillator
+MACD histogram   MACD − Signal              Momentum confirmation
+XLK rel perf     XLK / SPY 5d return        Tech leadership
+XLF rel perf     XLF / SPY 5d return        Financials (rate sensitivity)
+XLE rel perf     XLE / SPY 5d return        Energy (inflation / commodity)
+XLV rel perf     XLV / SPY 5d return        Defensive positioning
+Put/call ratio   Total equity P/C           Sentiment extremes
+IV/RV ratio      ATM IV / 20d realized vol  Options risk premium
+Day Monday       Binary 0/1                 Calendar effect
+Day Friday       Binary 0/1                 Weekend positioning
+Month-end flag   Last 3 trading days        Rebalancing flows
+```
 
 All features are normalized to zero mean and unit variance using statistics from the training window only (never including test data in the normalization).
 
@@ -308,25 +312,29 @@ Transformer Signal Dashboard — October 13, 2022:
 
 **By model confidence:**
 
-| P(Up) range | Win Rate | Avg P&L | Trades | Action |
-|---|---|---|---|---|
-| P > 0.75 | 73% | +$720 | 31 | Full position (8%) |
-| P 0.65–0.75 | 66% | +$480 | 68 | Full position (8%) |
-| P 0.55–0.65 | 58% | +$310 | 84 | Half position (4%) |
-| P 0.45–0.55 | No trade | — | 444 | Avoid |
-| P 0.35–0.45 | 57% (bear) | +$290 | 59 | Half position (4%) |
-| P < 0.35 | 65% (bear) | +$480 | 70 | Full position (8%) |
+```
+P(Up) range  Win Rate    Avg P&L  Trades  Action
+-----------  ----------  -------  ------  ------------------
+P > 0.75     73%         +$720    31      Full position (8%)
+P 0.65–0.75  66%         +$480    68      Full position (8%)
+P 0.55–0.65  58%         +$310    84      Half position (4%)
+P 0.45–0.55  No trade    —        444     Avoid
+P 0.35–0.45  57% (bear)  +$290    59      Half position (4%)
+P < 0.35     65% (bear)  +$480    70      Full position (8%)
+```
 
 **Walk-forward window performance (6 quarterly test windows, 2022–2024):**
 
-| Test Window | OOS Sharpe | Win Rate | Status |
-|---|---|---|---|
-| Q1 2022 | 0.82 | 53% | Pass |
-| Q2 2022 | 1.22 | 58% | Pass |
-| Q3 2022 | 1.61 | 62% | Pass (banking stress beneficial) |
-| Q4 2022 | 0.94 | 54% | Pass |
-| 2023 | 1.48 | 57% | Pass |
-| 2024 | 1.38 | 56% | Pass |
+```
+Test Window  OOS Sharpe  Win Rate  Status
+-----------  ----------  --------  --------------------------------
+Q1 2022      0.82        53%       Pass
+Q2 2022      1.22        58%       Pass
+Q3 2022      1.61        62%       Pass (banking stress beneficial)
+Q4 2022      0.94        54%       Pass
+2023         1.48        57%       Pass
+2024         1.38        56%       Pass
+```
 
 6 of 6 positive test windows — the minimum bar (4 of 6) was comfortably cleared.
 
@@ -451,12 +459,14 @@ The calibrated probability is the one used for position sizing decisions.
 
 **Failure modes by historical pattern:**
 
-| Failure Mode | Historical Example | Loss Magnitude | Recovery |
-|---|---|---|---|
-| Regime change | Jan–Feb 2022 inflation pivot | -3.1% monthly | Retrain on new data |
-| Banking contagion | Mar 2023 SVB (brief) | -1.8% over 3 days | Model recovered quickly |
-| Fed pivot surprise | Nov 2022 CPI report | -2.6% (1 signal) | Time stop triggered |
-| Geopolitical shock | None modeled in training | Unknown | Halt until VIX normalizes |
+```
+Failure Mode        Historical Example            Loss Magnitude     Recovery
+------------------  ----------------------------  -----------------  -------------------------
+Regime change       Jan–Feb 2022 inflation pivot  -3.1% monthly      Retrain on new data
+Banking contagion   Mar 2023 SVB (brief)          -1.8% over 3 days  Model recovered quickly
+Fed pivot surprise  Nov 2022 CPI report           -2.6% (1 signal)   Time stop triggered
+Geopolitical shock  None modeled in training      Unknown            Halt until VIX normalizes
+```
 
 **When it goes wrong:** The transformer's most dangerous failure mode is subtle regime shift — not the dramatic crash (where elevated VIX triggers caution), but the slow drift where relationships between features and returns gradually degrade. The 2016-2019 period, for a model trained 2004-2015, showed this: the post-crisis low-volatility regime made VIX-based signals much weaker predictors. The rolling accuracy monitor (20-day window, 51% threshold) is the primary early warning system for this slow decay.
 
@@ -488,15 +498,17 @@ The only number that matters is out-of-sample Sharpe across multiple independent
 
 ## When This Strategy Works Best
 
-| Condition | Why It Helps | Historical Example |
-|---|---|---|
-| Trending markets with quarterly cycles | Transformer attends to earnings cycle patterns | 2023 AI rally (+28% SPY) |
-| Post-crisis recovery pattern similar to history | Attention maps to prior recovery episodes | Oct–Dec 2022 rally |
-| Low VIX (14-20) with recognizable technical setups | Model's training distribution well-represented | 2019, 2024 |
-| Both transformer and XGBoost confirm same direction | High-confidence ensemble regime | Q4 2023: 72% win rate |
-| Monthly rebalancing flow periods | Calendar attention head activates | End of each month |
-| Pre-earnings implied volatility expansion | IV/RV feature signals premium opportunity | Individual stock setups |
-| Seasonal October recovery pattern | Day-of-year encoding captures seasonality | Oct 2022, Oct 2023 |
+```
+Condition                                            Why It Helps                                    Historical Example
+---------------------------------------------------  ----------------------------------------------  ------------------------
+Trending markets with quarterly cycles               Transformer attends to earnings cycle patterns  2023 AI rally (+28% SPY)
+Post-crisis recovery pattern similar to history      Attention maps to prior recovery episodes       Oct–Dec 2022 rally
+Low VIX (14-20) with recognizable technical setups   Model's training distribution well-represented  2019, 2024
+Both transformer and XGBoost confirm same direction  High-confidence ensemble regime                 Q4 2023: 72% win rate
+Monthly rebalancing flow periods                     Calendar attention head activates               End of each month
+Pre-earnings implied volatility expansion            IV/RV feature signals premium opportunity       Individual stock setups
+Seasonal October recovery pattern                    Day-of-year encoding captures seasonality       Oct 2022, Oct 2023
+```
 
 ---
 
@@ -520,43 +532,47 @@ The only number that matters is out-of-sample Sharpe across multiple independent
 
 ## Strategy Parameters
 
-| Parameter | Default | Range | Description |
-|---|---|---|---|
-| Input sequence length | 60 days | 40–120 | Historical context window fed to attention |
-| Feature count | 20 per day | 15–30 | Balance complexity vs overfitting |
-| d_model | 64 | 32–128 | Embedding dimension for each timestep |
-| Attention heads | 4 | 2–8 | Multi-head diversity; each learns different patterns |
-| Transformer blocks | 4 | 2–6 | Depth; more blocks increase overfit risk |
-| Feed-forward units | 128 | 64–256 | Size of FFN inside each block |
-| Dropout | 0.30 | 0.20–0.40 | Applied after attention and feed-forward layers |
-| L2 weight decay | 1e-4 | 1e-5–1e-3 | Weight regularization in Adam optimizer |
-| Learning rate | 1e-4 | 5e-5–5e-4 | Adam initial learning rate |
-| Batch size | 64 | 32–128 | Mini-batch for stochastic gradient descent |
-| Early stopping patience | 20 | 10–30 | Epochs without validation improvement before halt |
-| Temperature (calibration) | 1.5 | 1.0–2.0 | Post-training softmax temperature for calibration |
-| Train window | Rolling, expand quarterly | 8 years min | Walk-forward training period (never shrink) |
-| Retrain frequency | Quarterly | Monthly–semi-annual | Required to prevent model decay |
-| Bull/Bear threshold | P > 0.55 | 0.50–0.65 | Minimum confidence to enter position |
-| DTE | 15–25 | 10–30 | Spread expiry; longer than 1-day horizon for buffer |
-| Position size | 4–8% of portfolio | 3–10% | Scales with probability confidence |
-| Accuracy halt threshold | 51% over 20 signals | 50–53% | Halt trading if rolling accuracy falls below |
-| VIX out-of-distribution | 2× training mean | 1.5–2.5× | Flag regime as potentially out-of-distribution |
+```
+Parameter                  Default                    Range                Description
+-------------------------  -------------------------  -------------------  ----------------------------------------------------
+Input sequence length      60 days                    40–120               Historical context window fed to attention
+Feature count              20 per day                 15–30                Balance complexity vs overfitting
+d_model                    64                         32–128               Embedding dimension for each timestep
+Attention heads            4                          2–8                  Multi-head diversity; each learns different patterns
+Transformer blocks         4                          2–6                  Depth; more blocks increase overfit risk
+Feed-forward units         128                        64–256               Size of FFN inside each block
+Dropout                    0.30                       0.20–0.40            Applied after attention and feed-forward layers
+L2 weight decay            1e-4                       1e-5–1e-3            Weight regularization in Adam optimizer
+Learning rate              1e-4                       5e-5–5e-4            Adam initial learning rate
+Batch size                 64                         32–128               Mini-batch for stochastic gradient descent
+Early stopping patience    20                         10–30                Epochs without validation improvement before halt
+Temperature (calibration)  1.5                        1.0–2.0              Post-training softmax temperature for calibration
+Train window               Rolling, expand quarterly  8 years min          Walk-forward training period (never shrink)
+Retrain frequency          Quarterly                  Monthly–semi-annual  Required to prevent model decay
+Bull/Bear threshold        P > 0.55                   0.50–0.65            Minimum confidence to enter position
+DTE                        15–25                      10–30                Spread expiry; longer than 1-day horizon for buffer
+Position size              4–8% of portfolio          3–10%                Scales with probability confidence
+Accuracy halt threshold    51% over 20 signals        50–53%               Halt trading if rolling accuracy falls below
+VIX out-of-distribution    2× training mean           1.5–2.5×             Flag regime as potentially out-of-distribution
+```
 
 ---
 
 ## Data Requirements
 
-| Data | Source | Usage |
-|---|---|---|
-| SPY daily OHLCV (15+ years) | Polygon | Price return features + target variable |
-| VIX daily (15+ years) | Polygon / CBOE | Implied volatility features |
-| 10Y and 2Y Treasury yields daily | FRED / Polygon | Rate regime features |
-| Sector ETF daily returns (XLK, XLF, XLE, XLV) | Polygon | Cross-sector relative performance |
-| CBOE put/call ratio daily | CBOE | Sentiment feature |
-| ATM implied volatility (30-day) | Calculated from options chain | IV/RV ratio feature |
-| 20-day realized volatility | Calculated from SPY returns | RV denominator |
-| FOMC meeting calendar | Federal Reserve website | Days-to-FOMC feature |
-| Trading calendar (holidays, options expiry) | Exchange calendars | Calendar encoding features |
-| XGBoost model output | Companion model (ml_gradient_boost) | Ensemble confirmation |
-| GPU compute (training) | Local or cloud | Training ~20 min on modern GPU |
-| Daily inference compute | CPU sufficient | ~50ms per prediction |
+```
+Data                                           Source                               Usage
+---------------------------------------------  -----------------------------------  ---------------------------------------
+SPY daily OHLCV (15+ years)                    Polygon                              Price return features + target variable
+VIX daily (15+ years)                          Polygon / CBOE                       Implied volatility features
+10Y and 2Y Treasury yields daily               FRED / Polygon                       Rate regime features
+Sector ETF daily returns (XLK, XLF, XLE, XLV)  Polygon                              Cross-sector relative performance
+CBOE put/call ratio daily                      CBOE                                 Sentiment feature
+ATM implied volatility (30-day)                Calculated from options chain        IV/RV ratio feature
+20-day realized volatility                     Calculated from SPY returns          RV denominator
+FOMC meeting calendar                          Federal Reserve website              Days-to-FOMC feature
+Trading calendar (holidays, options expiry)    Exchange calendars                   Calendar encoding features
+XGBoost model output                           Companion model (ml_gradient_boost)  Ensemble confirmation
+GPU compute (training)                         Local or cloud                       Training ~20 min on modern GPU
+Daily inference compute                        CPU sufficient                       ~50ms per prediction
+```

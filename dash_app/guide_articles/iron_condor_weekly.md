@@ -62,12 +62,14 @@ Target: net credit ≥ $1.00 on $5-wide wings (minimum 1/5 of width = 20%)
 
 **Greek profile (weeklies are more extreme than monthlies):**
 
-| Greek | Sign | Weekly dynamic |
-|---|---|---|
-| Delta | Near zero | Direction-neutral; more sensitive to direction than monthly due to high gamma |
-| Theta | High positive | Maximum theta burn in the final 5 days — your core edge |
-| Vega | Negative | IV spikes are extremely painful; full close immediately on VIX spike |
-| Gamma | Strongly negative | By Wednesday, gamma dominates — small moves create large P&L swings |
+```
+Greek  Sign               Weekly dynamic
+-----  -----------------  -----------------------------------------------------------------------------
+Delta  Near zero          Direction-neutral; more sensitive to direction than monthly due to high gamma
+Theta  High positive      Maximum theta burn in the final 5 days — your core edge
+Vega   Negative           IV spikes are extremely painful; full close immediately on VIX spike
+Gamma  Strongly negative  By Wednesday, gamma dominates — small moves create large P&L swings
+```
 
 **Example — Monday March 10, 2025, SPY $569.20, VIX 17.4:**
 ```
@@ -107,13 +109,15 @@ VIX > 26:   Skip week      — move dynamics too large for manageable condor str
 
 SPY was consolidating near 52-week highs. No events Monday through Thursday. FOMC minutes release scheduled for Wednesday was an anticipated non-market-moving summary document (not a live press conference). ADX at 14 confirmed range-bound conditions.
 
-| Leg | Strike | Action | Premium | Total |
-|---|---|---|---|---|
-| Short call | $574 (16-delta) | Sell 2× | $0.87 | +$174 |
-| Long call | $579 | Buy 2× | $0.22 | −$44 |
-| Short put | $563 (16-delta) | Sell 2× | $0.78 | +$156 |
-| Long put | $558 | Buy 2× | $0.19 | −$38 |
-| **Net credit** | | | | **+$248 (2 contracts)** |
+```
+Leg         Strike           Action   Premium  Total
+----------  ---------------  -------  -------  -------------------
+Short call  $574 (16-delta)  Sell 2×  $0.87    +$174
+Long call   $579             Buy 2×   $0.22    −$44
+Short put   $563 (16-delta)  Sell 2×  $0.78    +$156
+Long put    $558             Buy 2×   $0.19    −$38
+Net credit                                     +$248 (2 contracts)
+```
 
 Entry rationale: VIX 17.4 in the optimal 15–26 band. No events Monday through Thursday. ADX 14 confirmed range. Flat pre-market open (futures −0.08%). Credit of $1.24 on $5-wide wings satisfies the 1/5 minimum at 24.8%.
 
@@ -134,13 +138,15 @@ Entry rationale: VIX 17.4 in the optimal 15–26 band. No events Monday through 
 
 The mistake was compounded: VIX below 16 meant very thin premium, AND the Federal Reserve meeting was scheduled for Wednesday — a hard-skip event week that was ignored.
 
-| Leg | Strike | Action | Premium | Total |
-|---|---|---|---|---|
-| Short call | $603 (16-delta) | Sell 2× | $0.52 | +$104 |
-| Long call | $608 | Buy 2× | $0.13 | −$26 |
-| Short put | $591 (16-delta) | Sell 2× | $0.47 | +$94 |
-| Long put | $586 | Buy 2× | $0.11 | −$22 |
-| **Net credit** | | | | **+$150 (2 contracts, $0.75 each)** |
+```
+Leg         Strike           Action   Premium  Total
+----------  ---------------  -------  -------  -------------------------------
+Short call  $603 (16-delta)  Sell 2×  $0.52    +$104
+Long call   $608             Buy 2×   $0.13    −$26
+Short put   $591 (16-delta)  Sell 2×  $0.47    +$94
+Long put    $586             Buy 2×   $0.11    −$22
+Net credit                                     +$150 (2 contracts, $0.75 each)
+```
 
 Both errors compounded: credit of $0.75 on a $5-wide spread is only 15% of width — below the 1/5 minimum — AND the FOMC meeting was Wednesday. Every checklist item was red; the trade was placed anyway.
 
@@ -156,19 +162,21 @@ The lesson is not about this specific trade — it is about what happens when yo
 
 Running the weekly condor mechanically across 11 qualifying weeks out of 13 calendar weeks (skipped January 29 FOMC week and March 19 CPI week):
 
-| Week | VIX | Credit | Result | P&L |
-|---|---|---|---|---|
-| Jan 6–10 | 16.8 | $1.10 | Win (closed Tue) | +$58 |
-| Jan 13–17 | 17.2 | $1.15 | Win (closed Wed) | +$61 |
-| Jan 20–24 | 18.4 | $1.28 | Win (closed Tue) | +$67 |
-| Jan 27–31 | 19.1 | $1.35 | Loss (gap Mon) | −$212 |
-| Feb 3–7 | 18.6 | $1.30 | Win (closed Wed) | +$68 |
-| Feb 10–14 | 17.8 | $1.20 | Win (closed Tue) | +$63 |
-| Feb 18–22 | 20.4 | $1.42 | Win (closed Wed) | +$74 |
-| Feb 24–28 | 22.1 | $1.58 | Win (closed Tue) | +$82 |
-| Mar 3–7 | 19.3 | $1.33 | Win (closed Thu) | +$70 |
-| Mar 10–14 | 17.4 | $1.24 | Win (closed Tue) | +$63 |
-| Mar 17–21 | 16.1 | $1.08 | Loss (expiry vol) | −$186 |
+```
+Week       VIX   Credit  Result             P&L
+---------  ----  ------  -----------------  -----
+Jan 6–10   16.8  $1.10   Win (closed Tue)   +$58
+Jan 13–17  17.2  $1.15   Win (closed Wed)   +$61
+Jan 20–24  18.4  $1.28   Win (closed Tue)   +$67
+Jan 27–31  19.1  $1.35   Loss (gap Mon)     −$212
+Feb 3–7    18.6  $1.30   Win (closed Wed)   +$68
+Feb 10–14  17.8  $1.20   Win (closed Tue)   +$63
+Feb 18–22  20.4  $1.42   Win (closed Wed)   +$74
+Feb 24–28  22.1  $1.58   Win (closed Tue)   +$82
+Mar 3–7    19.3  $1.33   Win (closed Thu)   +$70
+Mar 10–14  17.4  $1.24   Win (closed Tue)   +$63
+Mar 17–21  16.1  $1.08   Loss (expiry vol)  −$186
+```
 
 Quarter totals: 9 wins / 2 losses. $706 profit / $398 loss = net **+$308 per 1-contract position per quarter.** Annualized: approximately +$1,232 per year per 1-contract position. On $376 max loss capital per contract, that is 327% annual return on risk capital — which sounds exceptional until you account for opportunity cost and the capital efficiency adjustment.
 
@@ -352,14 +360,16 @@ multiple weeks of accumulated profit in a single session.
 
 ## Management Rules (Non-Negotiable)
 
-| Day / Condition | Action |
-|---|---|
-| Any day — 50% of credit captured | Close immediately; take the profit; no exceptions |
-| Any day — loss reaches 200% of credit | Close the tested side; keep untested if still < 5-delta |
-| Tuesday EOD — SPY within $1 of short strike | Close the full condor; do not carry overnight into Wednesday |
-| Wednesday — untested side < 5-delta | Can roll the untested side to a new short strike for additional credit |
-| Thursday EOD — either side > 8-delta | Close; do not carry to Friday regardless of premium remaining |
-| Friday — any remaining open position | Close by 3:30pm; pin risk and gamma explosion in final 30 minutes |
+```
+Day / Condition                              Action
+-------------------------------------------  ----------------------------------------------------------------------
+Any day — 50% of credit captured             Close immediately; take the profit; no exceptions
+Any day — loss reaches 200% of credit        Close the tested side; keep untested if still < 5-delta
+Tuesday EOD — SPY within $1 of short strike  Close the full condor; do not carry overnight into Wednesday
+Wednesday — untested side < 5-delta          Can roll the untested side to a new short strike for additional credit
+Thursday EOD — either side > 8-delta         Close; do not carry to Friday regardless of premium remaining
+Friday — any remaining open position         Close by 3:30pm; pin risk and gamma explosion in final 30 minutes
+```
 
 The 50% close rule is the mathematical core of the strategy's positive expected value. Holding for the final 50% of credit exposes the position to the highest-gamma period of the weekly cycle (Thursday and Friday afternoon options settlement). The risk-adjusted return of closing at 50% is demonstrably superior to holding because losing positions that are closed at 200% stop are frequently much cheaper than max loss, while winners captured at 50% miss only the most gamma-dangerous final days.
 
@@ -444,36 +454,40 @@ Failure Mode 3: Weekend news gap (uncommon, ~4% of weeks)
 
 ## Strategy Parameters
 
-| Parameter | Default | Notes |
-|---|---|---|
-| Short strike delta | 16-delta | 1 standard deviation OTM over 5-day horizon |
-| Wing width | $5 | Matches typical 5-day 1σ SPY move at VIX 17–22 |
-| DTE at entry | 5 (Monday for Friday expiry) | Minimum viable DTE for weekly structure |
-| Target credit | $1.00–$1.40 | $1.00 is the floor; below this, skip the week |
-| Profit target | 50% of credit | Close immediately when reached; do not get greedy |
-| Stop-loss | 200% of credit | Close tested side; evaluate keeping untested side |
-| Max concurrent | 1 (per underlying) | One weekly condor per underlying at a time |
-| Position size | 2–3% of capital max loss | Weekly condors: small size, consistent execution |
-| VIX range | 15–26 | Optimal premium collection window |
-| Weeks per year | 38–42 | 10–14 skip weeks expected annually |
-| Close by | Thursday EOD | Never carry 16-delta positions into Friday |
-| Execution cost | Use zero-commission broker | $0.65/leg kills the edge at 1-2 contract scale |
-| ADX maximum | 22 | Range-bound condition required for entry |
-| Pre-market gap limit | ±0.3% | Larger gaps signal directional conviction — skip |
+```
+Parameter             Default                       Notes
+--------------------  ----------------------------  -------------------------------------------------
+Short strike delta    16-delta                      1 standard deviation OTM over 5-day horizon
+Wing width            $5                            Matches typical 5-day 1σ SPY move at VIX 17–22
+DTE at entry          5 (Monday for Friday expiry)  Minimum viable DTE for weekly structure
+Target credit         $1.00–$1.40                   $1.00 is the floor; below this, skip the week
+Profit target         50% of credit                 Close immediately when reached; do not get greedy
+Stop-loss             200% of credit                Close tested side; evaluate keeping untested side
+Max concurrent        1 (per underlying)            One weekly condor per underlying at a time
+Position size         2–3% of capital max loss      Weekly condors: small size, consistent execution
+VIX range             15–26                         Optimal premium collection window
+Weeks per year        38–42                         10–14 skip weeks expected annually
+Close by              Thursday EOD                  Never carry 16-delta positions into Friday
+Execution cost        Use zero-commission broker    $0.65/leg kills the edge at 1-2 contract scale
+ADX maximum           22                            Range-bound condition required for entry
+Pre-market gap limit  ±0.3%                         Larger gaps signal directional conviction — skip
+```
 
 ---
 
 ## Data Requirements
 
-| Data | Source | Usage |
-|---|---|---|
-| SPY OHLCV daily | Polygon | Spot price, ADX, ATR for skip/enter decision |
-| VIX daily/intraday | Polygon `VIXIND` | Vol regime filter; Monday 9:30am check |
-| ATM options chain (Friday expiry) | Polygon | Credit calculation, delta verification |
-| Pre-market SPY futures | Broker/Polygon | Gap check (±0.3% filter) |
-| Economic calendar | Fed/BLS/Earnings | Weekly event screen — most critical data source |
-| Options IV by strike (Friday exp) | Polygon | Short strike delta verification at 16-delta |
-| ADX (14-period) | Computed from OHLCV | Range-bound condition filter |
-| Monthly expiration calendar | Exchange | Third-Friday skip identification |
-| Large-cap earnings calendar | Earnings databases | Screen AAPL, NVDA, MSFT, AMZN, GOOGL for the week |
-| SPY implied weekly move | Computed from ATM straddle | Calibrate wing width to current regime |
+```
+Data                               Source                      Usage
+---------------------------------  --------------------------  -------------------------------------------------
+SPY OHLCV daily                    Polygon                     Spot price, ADX, ATR for skip/enter decision
+VIX daily/intraday                 Polygon `VIXIND`            Vol regime filter; Monday 9:30am check
+ATM options chain (Friday expiry)  Polygon                     Credit calculation, delta verification
+Pre-market SPY futures             Broker/Polygon              Gap check (±0.3% filter)
+Economic calendar                  Fed/BLS/Earnings            Weekly event screen — most critical data source
+Options IV by strike (Friday exp)  Polygon                     Short strike delta verification at 16-delta
+ADX (14-period)                    Computed from OHLCV         Range-bound condition filter
+Monthly expiration calendar        Exchange                    Third-Friday skip identification
+Large-cap earnings calendar        Earnings databases          Screen AAPL, NVDA, MSFT, AMZN, GOOGL for the week
+SPY implied weekly move            Computed from ATM straddle  Calibrate wing width to current regime
+```

@@ -66,13 +66,15 @@ Phase 2 — Directional Confirmation: Wait for price to close OUTSIDE the Bollin
 
 **Results:**
 
-| SPY at Aug 1 | Spread Value | P&L | Notes |
-|---|---|---|---|
-| $582+ | $12 | **+$880** | Max profit — squeeze delivered |
-| $578 | $8 | **+$480** | Strong breakout captured |
-| $573.20 | $3.20 | **$0** | Break-even |
-| $570 | $1.20 | **−$200** | ATM at expiry, theta hurt |
-| Below $570 | $0 | **−$320** | Max loss — false breakout |
+```
+SPY at Aug 1  Spread Value  P&L    Notes
+------------  ------------  -----  ------------------------------
+$582+         $12           +$880  Max profit — squeeze delivered
+$578          $8            +$480  Strong breakout captured
+$573.20       $3.20         $0     Break-even
+$570          $1.20         −$200  ATM at expiry, theta hurt
+Below $570    $0            −$320  Max loss — false breakout
+```
 
 **Signal Snapshot — SPY, Jul 8–15 2025:**
 
@@ -197,15 +199,17 @@ Historical breakout magnitude after squeeze (bandwidth < 2.5%):
 
 ## Strategy Parameters
 
-| Parameter | Default | Range | Description |
-|---|---|---|---|
-| Bandwidth lookback | 126 days (6 months) | 63–252 | Window for identifying bandwidth low |
-| Squeeze threshold | 25th percentile | 10–35th | Bandwidth must be at or below this percentile |
-| Minimum squeeze duration | 7 days | 5–15 | Minimum days bandwidth must remain compressed |
-| Volume confirmation | 1.3× 30-day avg | 1.1–1.5× | Required volume on breakout close |
-| Momentum confirmation | Required | Required | Momentum oscillator must align with breakout direction |
-| Spread width | $10–$15 | $5–$25 | Width of debit call or put spread |
-| DTE | 14–21 | 10–30 | Options expiration — short enough for fast thesis, long enough for timing error |
-| Profit target | 75% of max | 50–80% | Close debit spread at 75% of maximum profit |
-| Stop loss | Return inside bands | — | Close if price closes back inside BBs within first 5 days |
-| Position size | 2–3% of portfolio | 1–5% | Risk per trade as % of total capital |
+```
+Parameter                 Default              Range     Description
+------------------------  -------------------  --------  -------------------------------------------------------------------------------
+Bandwidth lookback        126 days (6 months)  63–252    Window for identifying bandwidth low
+Squeeze threshold         25th percentile      10–35th   Bandwidth must be at or below this percentile
+Minimum squeeze duration  7 days               5–15      Minimum days bandwidth must remain compressed
+Volume confirmation       1.3× 30-day avg      1.1–1.5×  Required volume on breakout close
+Momentum confirmation     Required             Required  Momentum oscillator must align with breakout direction
+Spread width              $10–$15              $5–$25    Width of debit call or put spread
+DTE                       14–21                10–30     Options expiration — short enough for fast thesis, long enough for timing error
+Profit target             75% of max           50–80%    Close debit spread at 75% of maximum profit
+Stop loss                 Return inside bands  —         Close if price closes back inside BBs within first 5 days
+Position size             2–3% of portfolio    1–5%      Risk per trade as % of total capital
+```

@@ -468,8 +468,10 @@ $170 --+---------------------------------------+
        |  slope: $100 per $1 move
        |
 -$2530-+  max loss = ($27−$1.70) × 100
-       |  occurs if stock at or below $478 at expiry
-       |
+```
+occurs if stock at or below $478 at expiry
+------------------------------------------
+```
        └────┬─────┬─────┬──────┬──────┬───── Stock price
           $470  $480  $490  $500  $510  $520
 ```
@@ -568,14 +570,16 @@ Key implementation notes:
 
 **Optimal conditions:**
 
-| Factor | Preferred Value | Why |
-|---|---|---|
-| IVR | 0.60–0.90 | High enough for strong edge; below crisis levels |
-| VIX level | 20–30 | Good premium; not so high that vol keeps expanding |
-| SPY trend | Clear (above or below 50-day MA) | Directional filter works cleanly |
-| Vol regime | Peaked and beginning to compress | Best entry: IVR ≥ 0.70 AND VIX declining for 2-3 days |
-| Days to FOMC | > 10 days | Avoid entering just before binary macro events |
-| Time of year | Post-earnings season (May, August, November) | Vol spikes from earnings settle = good compression entries |
+```
+Factor        Preferred Value                               Why
+------------  --------------------------------------------  ----------------------------------------------------------
+IVR           0.60–0.90                                     High enough for strong edge; below crisis levels
+VIX level     20–30                                         Good premium; not so high that vol keeps expanding
+SPY trend     Clear (above or below 50-day MA)              Directional filter works cleanly
+Vol regime    Peaked and beginning to compress              Best entry: IVR ≥ 0.70 AND VIX declining for 2-3 days
+Days to FOMC  > 10 days                                     Avoid entering just before binary macro events
+Time of year  Post-earnings season (May, August, November)  Vol spikes from earnings settle = good compression entries
+```
 
 **Worst conditions:** VIX below 15 (credits too thin) or VIX above 40 (vol may keep expanding,
 2× stop triggered frequently, theta barely compensates for gamma risk).
@@ -618,29 +622,33 @@ Key implementation notes:
 
 ## Quick Reference
 
-| Parameter | Default | Description |
-|---|---|---|
-| `ivr_min` | 0.50 (50%) | Minimum IV Rank required to enter |
-| `dte_target` | 45 days | Target DTE at entry |
-| `dte_exit` | 21 days | Close regardless at this DTE |
-| `delta_short` | 0.16 | Short strike delta (≈84% probability OTM at expiry) |
-| `spread_width_pct` | 5% of spot | Distance between short and long strikes |
-| `profit_target_pct` | 50% | Close when P&L = 50% of max credit |
-| `stop_loss_mult` | 2.0× | Close when spread value = 2× credit received |
-| `position_size_pct` | 3% | Capital at risk per trade (based on max loss) |
-| Trend filter | 50-day MA | Bull put above MA, bear call below MA |
-| Max loss | (spread_width − credit) × 100 | Per contract, fully defined at entry |
-| Target Sharpe | 1.2 | Strategy performance target |
+```
+Parameter            Default                        Description
+-------------------  -----------------------------  ---------------------------------------------------
+`ivr_min`            0.50 (50%)                     Minimum IV Rank required to enter
+`dte_target`         45 days                        Target DTE at entry
+`dte_exit`           21 days                        Close regardless at this DTE
+`delta_short`        0.16                           Short strike delta (≈84% probability OTM at expiry)
+`spread_width_pct`   5% of spot                     Distance between short and long strikes
+`profit_target_pct`  50%                            Close when P&L = 50% of max credit
+`stop_loss_mult`     2.0×                           Close when spread value = 2× credit received
+`position_size_pct`  3%                             Capital at risk per trade (based on max loss)
+Trend filter         50-day MA                      Bull put above MA, bear call below MA
+Max loss             (spread_width − credit) × 100  Per contract, fully defined at entry
+Target Sharpe        1.2                            Strategy performance target
+```
 
 ---
 
 ## Data Requirements
 
-| Data | Source | Usage |
-|---|---|---|
-| SPY/QQQ OHLCV | Polygon | Spot price, 50-day MA computation |
-| VIX daily close | Polygon `VIXIND` | IV proxy, IVR calculation |
-| 10-year Treasury rate | Polygon `DGS10` | Risk-free rate for Black-Scholes |
+```
+Data                   Source            Usage
+---------------------  ----------------  ---------------------------------
+SPY/QQQ OHLCV          Polygon           Spot price, 50-day MA computation
+VIX daily close        Polygon `VIXIND`  IV proxy, IVR calculation
+10-year Treasury rate  Polygon `DGS10`   Risk-free rate for Black-Scholes
+```
 
 All data must be synced from the Data Manager before running the backtest. The IVR
 calculation requires 252 bars of VIX history minimum — ensure your data sync covers

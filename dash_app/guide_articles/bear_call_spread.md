@@ -73,12 +73,14 @@ Break-even: $576.10 (same buffer; better relative credit)
 
 **Greek profile:**
 
-| Greek | Sign | Practical meaning |
-|---|---|---|
-| Delta | Negative (small, −0.10 to −0.20) | Moderately bearish; profits from flat or declining market |
-| Theta | Positive | Time decay works in your favor every passing day below the short strike |
-| Vega | Negative | Rising IV hurts — your sold call gets more expensive to buy back |
-| Gamma | Negative | Near expiry, upside moves cause accelerating losses |
+```
+Greek  Sign                              Practical meaning
+-----  --------------------------------  -----------------------------------------------------------------------
+Delta  Negative (small, −0.10 to −0.20)  Moderately bearish; profits from flat or declining market
+Theta  Positive                          Time decay works in your favor every passing day below the short strike
+Vega   Negative                          Rising IV hurts — your sold call gets more expensive to buy back
+Gamma  Negative                          Near expiry, upside moves cause accelerating losses
+```
 
 The negative delta is an important characteristic that distinguishes this from the iron condor. Where the condor is delta-neutral, the bear call spread carries a small short delta — meaning it benefits modestly from market declines and is hurt modestly by rallies even before striking a short strike. This directionality is intentional and reflects the bearish technical bias that should accompany every entry.
 
@@ -92,11 +94,13 @@ The negative delta is an important characteristic that distinguishes this from t
 
 SPY had rallied 6.4% off June lows in 14 trading days. RSI(14) had reached 71 — technically overbought. The index was trading 4.1% above the 50-day MA. Call IV was elevated from retail call-buying chasing the rally narrative. No major Fed events for 3 weeks. ADX was 19, confirming the rally was losing directional momentum rather than establishing a new sustained trend.
 
-| Leg | Strike | Action | Premium | Contracts |
-|---|---|---|---|---|
-| Short call | Aug $575 (18-delta) | Sell 3× | $2.10 | +$630 |
-| Long call | Aug $585 (wing) | Buy 3× | $0.90 | −$270 |
-| **Net credit** | | | | **+$360 (3 contracts)** |
+```
+Leg         Strike               Action   Premium  Contracts
+----------  -------------------  -------  -------  -------------------
+Short call  Aug $575 (18-delta)  Sell 3×  $2.10    +$630
+Long call   Aug $585 (wing)      Buy 3×   $0.90    −$270
+Net credit                                         +$360 (3 contracts)
+```
 
 Entry rationale: IVR 58% confirms elevated call premium from the rally. RSI at 71 with price extended 4.1% above 50-day MA — technically overbought with no fundamental catalyst for continuation. ADX at 19 signals the rally is losing momentum rather than trending with conviction.
 
@@ -110,11 +114,13 @@ Day 14: SPY at $568 (modest +0.8% from entry — stayed below the short strike).
 
 Post-election euphoria drove a sharp 3% weekly rally. The spread was placed after this gain, reasoning that the move was "overdone" and a reversion was likely. But IVR at 38% was already a warning sign — premium wasn't at structural overpricing levels. More critically, the election result had created a genuine fundamental reason for the rally to continue — policy expectations had shifted, not just sentiment.
 
-| Leg | Strike | Action | Premium | Contracts |
-|---|---|---|---|---|
-| Short call | Nov $592 (18-delta) | Sell 2× | $1.80 | +$360 |
-| Long call | Nov $602 (wing) | Buy 2× | $0.75 | −$150 |
-| **Net credit** | | | | **+$210 (2 contracts)** |
+```
+Leg         Strike               Action   Premium  Contracts
+----------  -------------------  -------  -------  -------------------
+Short call  Nov $592 (18-delta)  Sell 2×  $1.80    +$360
+Long call   Nov $602 (wing)      Buy 2×   $0.75    −$150
+Net credit                                         +$210 (2 contracts)
+```
 
 SPY continued rallying to $598 as institutional money poured into equities following a decisive election outcome. RSI at 70 was not a reliable overbought signal in that momentum regime — it was simply the trailing indicator of a continued trend. The $592 short call reached 45-delta.
 
@@ -128,11 +134,13 @@ The compound error: (1) IVR below the 40% minimum means selling structurally che
 
 SPY rallied 8.2% off the April lows in 3.5 weeks. No macro events for 16 days. ADX at 18 — the rally was losing directional momentum. The combination of IVR 62%, RSI 73, no fundamental catalyst, and declining ADX created a high-quality multi-signal confirmation.
 
-| Leg | Strike | Action | Premium | Contracts |
-|---|---|---|---|---|
-| Short call | May $562 (18-delta) | Sell 2× | $2.45 | +$490 |
-| Long call | May $572 (wing) | Buy 2× | $1.00 | −$200 |
-| **Net credit** | | | | **+$290 (2 contracts)** |
+```
+Leg         Strike               Action   Premium  Contracts
+----------  -------------------  -------  -------  -------------------
+Short call  May $562 (18-delta)  Sell 2×  $2.45    +$490
+Long call   May $572 (wing)      Buy 2×   $1.00    −$200
+Net credit                                         +$290 (2 contracts)
+```
 
 Day 11: SPY at $551, edging lower. Spread worth $0.50.
 
@@ -331,10 +339,12 @@ Rule of thumb: IVR > 50% → bear call spread (sell overpriced premium)
 
 ## Bear Call vs Bear Put: Choosing the Right Structure
 
-| Strategy | Use When | Economic Structure | Win Rate | Risk Profile |
-|---|---|---|---|---|
-| Bear Call Spread | IVR > 50%, technically overbought, expect sideways/mild decline | Credit — profit from no upward move | 65–75% | Max loss = wing width − credit |
-| Bear Put Spread | Strong bearish conviction, technical breakdown confirmed, IVR moderate | Debit — profit requires move to materialize | 50–60% | Max loss = debit paid |
+```
+Strategy          Use When                                                                Economic Structure                           Win Rate  Risk Profile
+----------------  ----------------------------------------------------------------------  -------------------------------------------  --------  ------------------------------
+Bear Call Spread  IVR > 50%, technically overbought, expect sideways/mild decline         Credit — profit from no upward move          65–75%    Max loss = wing width − credit
+Bear Put Spread   Strong bearish conviction, technical breakdown confirmed, IVR moderate  Debit — profit requires move to materialize  50–60%    Max loss = debit paid
+```
 
 The IV-based rule: if IVR > 50%, use the bear call spread (sell overpriced premium). If IVR < 30% and you have high directional conviction from a confirmed technical breakdown, use the bear put spread (cheap debit options make directional structures better value than credit at low IV).
 
@@ -342,29 +352,33 @@ The IV-based rule: if IVR > 50%, use the bear call spread (sell overpriced premi
 
 ## Strategy Parameters
 
-| Parameter | Conservative | Standard | Aggressive | Description |
-|---|---|---|---|---|
-| Short call delta | 10-delta | 18-delta | 25-delta | Lower delta = higher win rate, lower premium |
-| Wing width | $15 | $10 | $5 | Wider = lower max loss percentage |
-| DTE at entry | 45 | 28 | 21 | 28 DTE balances theta and event risk exposure |
-| Profit target | 25% of credit | 50% of credit | 75% of credit | 50% is the statistically superior exit point |
-| IVR minimum | 50% | 40% | 30% | Higher IVR = better credit; don't compromise below 40% for this strategy |
-| Max position size | 2% capital | 4% capital | 6% capital | Limit damage from momentum breakouts |
-| Stop-loss | 1.5× credit | 2× credit | 2.5× credit | Honor the stop — don't fight momentum |
-| RSI minimum | 68 | 65 | 60 | Higher RSI = cleaner overbought signal |
-| ADX maximum | 20 | 25 | 30 | Lower ADX = range-bound = better for this trade |
+```
+Parameter          Conservative   Standard       Aggressive     Description
+-----------------  -------------  -------------  -------------  ------------------------------------------------------------------------
+Short call delta   10-delta       18-delta       25-delta       Lower delta = higher win rate, lower premium
+Wing width         $15            $10            $5             Wider = lower max loss percentage
+DTE at entry       45             28             21             28 DTE balances theta and event risk exposure
+Profit target      25% of credit  50% of credit  75% of credit  50% is the statistically superior exit point
+IVR minimum        50%            40%            30%            Higher IVR = better credit; don't compromise below 40% for this strategy
+Max position size  2% capital     4% capital     6% capital     Limit damage from momentum breakouts
+Stop-loss          1.5× credit    2× credit      2.5× credit    Honor the stop — don't fight momentum
+RSI minimum        68             65             60             Higher RSI = cleaner overbought signal
+ADX maximum        20             25             30             Lower ADX = range-bound = better for this trade
+```
 
 ---
 
 ## Data Requirements
 
-| Data | Source | Usage |
-|---|---|---|
-| SPY OHLCV daily | Polygon | Spot price, RSI, price vs 50-day MA, ADX |
-| VIX daily close | Polygon `VIXIND` | Vol regime filter (< 30), VRP calculation |
-| Options chain by strike/expiry | Polygon | Credit calculation, delta verification |
-| IVR (52-week rolling) | Computed from VIX | Entry filter (≥ 40%) |
-| RSI (14-period) | Computed from OHLCV | Overbought signal (> 65 threshold) |
-| ADX (14-period) | Computed from OHLCV | Trend strength filter (< 25 for entry) |
-| Economic calendar | Fed/BLS/Earnings | Binary event exclusion; catalyst screening |
-| News/event calendar | Multiple sources | Bullish catalyst screen — qualitative check |
+```
+Data                            Source               Usage
+------------------------------  -------------------  -------------------------------------------
+SPY OHLCV daily                 Polygon              Spot price, RSI, price vs 50-day MA, ADX
+VIX daily close                 Polygon `VIXIND`     Vol regime filter (< 30), VRP calculation
+Options chain by strike/expiry  Polygon              Credit calculation, delta verification
+IVR (52-week rolling)           Computed from VIX    Entry filter (≥ 40%)
+RSI (14-period)                 Computed from OHLCV  Overbought signal (> 65 threshold)
+ADX (14-period)                 Computed from OHLCV  Trend strength filter (< 25 for entry)
+Economic calendar               Fed/BLS/Earnings     Binary event exclusion; catalyst screening
+News/event calendar             Multiple sources     Bullish catalyst screen — qualitative check
+```

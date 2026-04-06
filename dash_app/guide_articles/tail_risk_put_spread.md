@@ -151,12 +151,14 @@ Net cost: $0.80 = $80 per contract
 **COVID crash (February 20 – March 23):**
 - VIX erupts from 12 to 85 intraday; SPY falls from $337 to $218 at the trough (−35.3%)
 
-| Date | SPY | $275 Put Value | $250 Put Value | Spread Value | P&L |
-|---|---|---|---|---|---|
-| Jan 15 (entry) | $332 | $1.40 | $0.60 | $0.80 | $0 |
-| Feb 28 (−10%) | $298 | $4.80 | $1.20 | $3.60 | +$2,800 |
-| Mar 16 (−22%) | $259 | $14.10 | $8.10 | $6.00 | +$5,200 |
-| Mar 23 (−35%, trough) | $218 | $57.20 | $32.80 | $24.40 → $25 MAX | +$24,200 |
+```
+Date                   SPY   $275 Put Value  $250 Put Value  Spread Value      P&L
+---------------------  ----  --------------  --------------  ----------------  --------
+Jan 15 (entry)         $332  $1.40           $0.60           $0.80             $0
+Feb 28 (−10%)          $298  $4.80           $1.20           $3.60             +$2,800
+Mar 16 (−22%)          $259  $14.10          $8.10           $6.00             +$5,200
+Mar 23 (−35%, trough)  $218  $57.20          $32.80          $24.40 → $25 MAX  +$24,200
+```
 
 **Maximum spread value at expiry (SPY below $250):** $25.00 × 10 contracts × 100 = $25,000
 **Initial cost:** $800
@@ -213,15 +215,17 @@ STATUS: Adjust size to fit 1.5% annual budget. Enter 8 contracts ($1,520).
 
 **Put spread hedge ($405/$370, 15%/22% OTM, monthly rolling) on $500K SPY portfolio 2005–2024:**
 
-| Period | Annual Premium | Payout Received | Net Period P&L |
-|---|---|---|---|
-| 2005–2007 (calm) | $6,000/yr × 3 = $18,000 | $0 | −$18,000 |
-| 2008 crisis | $6,000 | $38,500 (hit max payout) | +$32,500 |
-| 2009–2019 (bull) | $6,000/yr × 11 = $66,000 | $12,800 (2010, 2011, 2015 partial) | −$53,200 |
-| 2020 COVID | $6,000 | $25,000 | +$19,000 |
-| 2021 bull | $6,000 | $0 | −$6,000 |
-| 2022 bear market | $6,000 | $18,500 | +$12,500 |
-| Total 20-year program | $120,000 | $94,800 | −$25,200 net |
+```
+Period                 Annual Premium            Payout Received                     Net Period P&L
+---------------------  ------------------------  ----------------------------------  --------------
+2005–2007 (calm)       $6,000/yr × 3 = $18,000   $0                                  −$18,000
+2008 crisis            $6,000                    $38,500 (hit max payout)            +$32,500
+2009–2019 (bull)       $6,000/yr × 11 = $66,000  $12,800 (2010, 2011, 2015 partial)  −$53,200
+2020 COVID             $6,000                    $25,000                             +$19,000
+2021 bull              $6,000                    $0                                  −$6,000
+2022 bear market       $6,000                    $18,500                             +$12,500
+Total 20-year program  $120,000                  $94,800                             −$25,200 net
+```
 
 **Net loss over 20 years: −$25,200 on $120,000 spent = −21% cumulative return on the hedge program**
 
@@ -342,31 +346,35 @@ At 5 contracts: $7,200/year = 1.44% — within budget.
 
 ## Strategy Parameters
 
-| Parameter | Aggressive Coverage | Standard | Budget-Optimized |
-|---|---|---|---|
-| Long put OTM % | 12–14% | 15–17% | 18–22% |
-| Short put OTM % | 20–22% | 22–25% | 27–30% |
-| Spread width | $30–$35 | $25–$35 | $20–$30 |
-| DTE at purchase | 90 | 75 | 60 |
-| Roll at DTE | 30 | 30 | 25 |
-| Portfolio coverage | 60–80% | 40–60% | 20–40% |
-| Annual budget | 1.5–2.0% | 1.0–1.5% | 0.5–1.0% |
-| VIX scaling threshold | VIX > 22: scale to 50% | VIX > 25: scale to 50% | VIX > 28: scale to 50% |
-| Profit lock-in trigger | 80% of max | 80% of max | 90% of max |
-| Roll-down threshold | 10% SPY decline | 12% SPY decline | 15% SPY decline |
+```
+Parameter               Aggressive Coverage     Standard                Budget-Optimized
+----------------------  ----------------------  ----------------------  ----------------------
+Long put OTM %          12–14%                  15–17%                  18–22%
+Short put OTM %         20–22%                  22–25%                  27–30%
+Spread width            $30–$35                 $25–$35                 $20–$30
+DTE at purchase         90                      75                      60
+Roll at DTE             30                      30                      25
+Portfolio coverage      60–80%                  40–60%                  20–40%
+Annual budget           1.5–2.0%                1.0–1.5%                0.5–1.0%
+VIX scaling threshold   VIX > 22: scale to 50%  VIX > 25: scale to 50%  VIX > 28: scale to 50%
+Profit lock-in trigger  80% of max              80% of max              90% of max
+Roll-down threshold     10% SPY decline         12% SPY decline         15% SPY decline
+```
 
 ---
 
 ## Data Requirements
 
-| Data Point | Source | Update Frequency | Purpose |
-|---|---|---|---|
-| SPY price | Broker / Yahoo Finance | Daily | Strike calculation |
-| VIX level | CBOE / broker | Real-time | Cost assessment; scaling decision |
-| Put premiums (15% OTM, 22% OTM, 75 DTE) | Broker options chain | At purchase | Net debit calculation |
-| Portfolio market value | Broker account | Weekly | Notional coverage calculation |
-| Portfolio composition | Portfolio analytics | Quarterly | SPY vs QQQ hedge selection |
-| Annual hedge cost tracker | Personal spreadsheet | Monthly | Budget compliance |
-| SPY historical drawdown data | Yahoo Finance / Bloomberg | Annually | Strike optimization research |
-| Put spread bid-ask spreads | Broker real-time | At purchase | Actual fill quality estimate |
-| Previous spread cost basis | Trade records | Per position | Roll decision calculation |
+```
+Data Point                               Source                     Update Frequency  Purpose
+---------------------------------------  -------------------------  ----------------  ---------------------------------
+SPY price                                Broker / Yahoo Finance     Daily             Strike calculation
+VIX level                                CBOE / broker              Real-time         Cost assessment; scaling decision
+Put premiums (15% OTM, 22% OTM, 75 DTE)  Broker options chain       At purchase       Net debit calculation
+Portfolio market value                   Broker account             Weekly            Notional coverage calculation
+Portfolio composition                    Portfolio analytics        Quarterly         SPY vs QQQ hedge selection
+Annual hedge cost tracker                Personal spreadsheet       Monthly           Budget compliance
+SPY historical drawdown data             Yahoo Finance / Bloomberg  Annually          Strike optimization research
+Put spread bid-ask spreads               Broker real-time           At purchase       Actual fill quality estimate
+Previous spread cost basis               Trade records              Per position      Roll decision calculation
+```

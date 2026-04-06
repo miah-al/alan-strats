@@ -138,18 +138,20 @@ The opening range breakout delivered exactly its projection: a move equal to the
 
 ## Strategy Parameters
 
-| Parameter | Default | Range | Description |
-|---|---|---|---|
-| Opening range window | 9:30–10:00am | 9:30–9:45 to 9:30–10:15 | 30 minutes is standard |
-| Breakout confirmation | 5-minute bar close | 3-min or 5-min close | Bar close, not intraday tick |
-| Minimum breakout magnitude | $0.10 above ORH | $0.05–$0.30 | Filter tick-level noise |
-| Volume multiplier required | 1.5× time-of-day average | 1.2–2.0× | Institutional participation filter |
-| ML filter threshold | P > 0.60 | 0.55–0.65 | Skip below this probability |
-| Price target | ORH + range width | Configurable | Project range width from breakout |
-| Stop loss trigger | Close back inside range | 5-min bar close | Firm — false breakout invalidates thesis |
-| Exit time stop | 3:30pm | 3:00–3:45pm | Exit before thin end-of-day liquidity |
-| DTE | 0 (0DTE) | 0–5 | Match to intraday thesis |
-| Spread width | $5 | $3–$8 | Match to projected target |
-| Position size | 2–3% of portfolio | 1–4% | Risk per trade |
-| Skip days | FOMC, CPI, NFP, Friday exp. | Non-negotiable | Calendar check required each morning |
-| VIX cap | 25 | 20–28 | Skip in elevated vol |
+```
+Parameter                   Default                      Range                    Description
+--------------------------  ---------------------------  -----------------------  ----------------------------------------
+Opening range window        9:30–10:00am                 9:30–9:45 to 9:30–10:15  30 minutes is standard
+Breakout confirmation       5-minute bar close           3-min or 5-min close     Bar close, not intraday tick
+Minimum breakout magnitude  $0.10 above ORH              $0.05–$0.30              Filter tick-level noise
+Volume multiplier required  1.5× time-of-day average     1.2–2.0×                 Institutional participation filter
+ML filter threshold         P > 0.60                     0.55–0.65                Skip below this probability
+Price target                ORH + range width            Configurable             Project range width from breakout
+Stop loss trigger           Close back inside range      5-min bar close          Firm — false breakout invalidates thesis
+Exit time stop              3:30pm                       3:00–3:45pm              Exit before thin end-of-day liquidity
+DTE                         0 (0DTE)                     0–5                      Match to intraday thesis
+Spread width                $5                           $3–$8                    Match to projected target
+Position size               2–3% of portfolio            1–4%                     Risk per trade
+Skip days                   FOMC, CPI, NFP, Friday exp.  Non-negotiable           Calendar check required each morning
+VIX cap                     25                           20–28                    Skip in elevated vol
+```

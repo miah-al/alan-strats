@@ -78,13 +78,15 @@ Sizing:
 
 ### Reliable Sector Pairs (Cointegration-Tested 1994-2024)
 
-| Long leg | Short leg | Typical entry Z | Mean-reversion rate | ADF p-value |
-|---|---|---|---|---|
-| XLV (Healthcare) | XLK (Technology) | 2.0σ | 67% within 3M | 0.04 |
-| XLU (Utilities) | XLE (Energy) | 1.8σ | 71% within 3M | 0.03 |
-| XLP (Staples) | XLY (Consumer Disc.) | 1.8σ | 74% within 3M | 0.02 |
-| XLF (Financial) | XLK (Technology) | 2.2σ | 58% within 3M | 0.06 |
-| XLI (Industrial) | XLB (Materials) | 1.9σ | 69% within 3M | 0.04 |
+```
+Long leg          Short leg             Typical entry Z  Mean-reversion rate  ADF p-value
+----------------  --------------------  ---------------  -------------------  -----------
+XLV (Healthcare)  XLK (Technology)      2.0σ             67% within 3M        0.04
+XLU (Utilities)   XLE (Energy)          1.8σ             71% within 3M        0.03
+XLP (Staples)     XLY (Consumer Disc.)  1.8σ             74% within 3M        0.02
+XLF (Financial)   XLK (Technology)      2.2σ             58% within 3M        0.06
+XLI (Industrial)  XLB (Materials)       1.9σ             69% within 3M        0.04
+```
 
 "Mean-reversion rate" = fraction of entries where Z-score returned to 0 within 3 months.
 
@@ -241,11 +243,13 @@ Sector Rotation Arb Signal — XLK vs XLV — July 1, 2023:
 
 **By Z-score entry level:**
 
-| Entry Z-score | Win Rate | Avg Return | Time to Reversion |
-|---|---|---|---|
-| ±2.0 – ±2.5 | 60% | +2.8% | 8.4 weeks |
-| ±2.5 – ±3.0 | 71% | +4.2% | 6.1 weeks |
-| > ±3.0 | 68% | +3.8% | 5.8 weeks |
+```
+Entry Z-score  Win Rate  Avg Return  Time to Reversion
+-------------  --------  ----------  -----------------
+±2.0 – ±2.5    60%       +2.8%       8.4 weeks
+±2.5 – ±3.0    71%       +4.2%       6.1 weeks
+> ±3.0         68%       +3.8%       5.8 weeks
+```
 
 Higher Z-scores revert faster and with slightly higher win rates — the rubber band is stretched further, creating stronger reversion force. However, above ±3.0, regime-break risk increases, so the Z-stop at ±3.0 is equally important.
 
@@ -351,15 +355,17 @@ Break-even alpha required:
 
 ## When This Strategy Works Best
 
-| Condition | Optimal Value | Why |
-|---|---|---|
-| Cointegration ADF p-value | < 0.05 | Strong cointegration → reliable mean-reversion |
-| Z-score at entry | ±2.5 – ±3.0 | Stronger reversion force; higher win rate |
-| Market regime | BULL or NEUTRAL | Sector rotation visible and persistent |
-| Business cycle phase | Mid-to-late cycle | Classic sector rotation in predictable order |
-| Earnings revision | Divergent (one sector upgrading, one downgrading) | Fundamental backing for spread compression |
-| VIX | 14–24 | Moderate vol allows sector trends to persist |
-| Interest rate trend | Defined direction | Rate moves create reliable sector rotation patterns |
+```
+Condition                  Optimal Value                                      Why
+-------------------------  -------------------------------------------------  ---------------------------------------------------
+Cointegration ADF p-value  < 0.05                                             Strong cointegration → reliable mean-reversion
+Z-score at entry           ±2.5 – ±3.0                                        Stronger reversion force; higher win rate
+Market regime              BULL or NEUTRAL                                    Sector rotation visible and persistent
+Business cycle phase       Mid-to-late cycle                                  Classic sector rotation in predictable order
+Earnings revision          Divergent (one sector upgrading, one downgrading)  Fundamental backing for spread compression
+VIX                        14–24                                              Moderate vol allows sector trends to persist
+Interest rate trend        Defined direction                                  Rate moves create reliable sector rotation patterns
+```
 
 ---
 
@@ -379,35 +385,39 @@ Break-even alpha required:
 
 ## Strategy Parameters
 
-| Parameter | Default | Range | Description |
-|---|---|---|---|
-| Return window | 3-month total return | 1-6 months | Quarter is the natural institutional rebalancing cycle |
-| Z-score history | 20 quarters (5 years) | 16-30 quarters | Reference period for mean and std |
-| Entry Z-score | ±2.0 | ±1.8-2.5 | Minimum statistical extreme |
-| Exit Z-score | ±0.5 | ±0.3-1.0 | Target reversion level |
-| Stop Z-score | ±3.0 | ±2.5-3.5 | Emergency exit — spread widened further |
-| Time stop | 3 months | 2-4 months | Maximum hold |
-| Sizing | Dollar-neutral (preferred) | Dollar or beta-neutral | Beta-neutral for higher accuracy |
-| Dividend adjustment | Total return (required) | Price return = error | Must include dividends |
-| Cointegration test | ADF p < 0.10 | Required | Skip if pair not cointegrated |
-| Regime filter | HMM ≠ BEAR | Required | No sector pairs in bear regime |
-| Options DTE (if used) | 60-90 | 45-120 | Longer expiry for 1-3 month hold |
-| Position size | 5-8% per leg | 3-10% | 10-16% total notional per trade |
-| Max concurrent pairs | 3 | 2-4 | Avoid over-concentration in correlated pairs |
+```
+Parameter              Default                     Range                   Description
+---------------------  --------------------------  ----------------------  ------------------------------------------------------
+Return window          3-month total return        1-6 months              Quarter is the natural institutional rebalancing cycle
+Z-score history        20 quarters (5 years)       16-30 quarters          Reference period for mean and std
+Entry Z-score          ±2.0                        ±1.8-2.5                Minimum statistical extreme
+Exit Z-score           ±0.5                        ±0.3-1.0                Target reversion level
+Stop Z-score           ±3.0                        ±2.5-3.5                Emergency exit — spread widened further
+Time stop              3 months                    2-4 months              Maximum hold
+Sizing                 Dollar-neutral (preferred)  Dollar or beta-neutral  Beta-neutral for higher accuracy
+Dividend adjustment    Total return (required)     Price return = error    Must include dividends
+Cointegration test     ADF p < 0.10                Required                Skip if pair not cointegrated
+Regime filter          HMM ≠ BEAR                  Required                No sector pairs in bear regime
+Options DTE (if used)  60-90                       45-120                  Longer expiry for 1-3 month hold
+Position size          5-8% per leg                3-10%                   10-16% total notional per trade
+Max concurrent pairs   3                           2-4                     Avoid over-concentration in correlated pairs
+```
 
 ---
 
 ## Data Requirements
 
-| Data | Source | Usage |
-|---|---|---|
-| Sector ETF daily OHLCV | Polygon | 3-month return calculation |
-| Sector ETF dividend data | Polygon / ETF issuer | Total return (not price return) |
-| Sector ETF options chains | Polygon | Spread pricing (optional expression) |
-| ADF cointegration test library | Statistical library (scipy/statsmodels) | Pair stationarity testing |
-| HMM regime | Platform regime model | Master filter |
-| Sector forward P/E | FactSet / Bloomberg | Valuation confirmation of spread extremity |
-| Earnings revision direction | FactSet / IBES | Forward earnings trend check |
-| VIX daily | Polygon / CBOE | Macro environment filter |
-| Sector beta to SPY | Calculated (rolling 60d) | Beta-neutral sizing |
-| FOMC calendar | Federal Reserve | Entry timing — avoid rate decisions |
+```
+Data                            Source                                   Usage
+------------------------------  ---------------------------------------  ------------------------------------------
+Sector ETF daily OHLCV          Polygon                                  3-month return calculation
+Sector ETF dividend data        Polygon / ETF issuer                     Total return (not price return)
+Sector ETF options chains       Polygon                                  Spread pricing (optional expression)
+ADF cointegration test library  Statistical library (scipy/statsmodels)  Pair stationarity testing
+HMM regime                      Platform regime model                    Master filter
+Sector forward P/E              FactSet / Bloomberg                      Valuation confirmation of spread extremity
+Earnings revision direction     FactSet / IBES                           Forward earnings trend check
+VIX daily                       Polygon / CBOE                           Macro environment filter
+Sector beta to SPY              Calculated (rolling 60d)                 Beta-neutral sizing
+FOMC calendar                   Federal Reserve                          Entry timing — avoid rate decisions
+```

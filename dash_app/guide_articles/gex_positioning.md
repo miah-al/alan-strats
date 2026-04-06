@@ -110,13 +110,15 @@ Gamma flip concept:
 
 ## The Five Regimes
 
-| Regime | Net GEX | VIX Proxy | SPY Allocation | Cash | Interpretation |
-|---|---|---|---|---|---|
-| High Positive | > +$3B | < 15 | **90%** | 10% | Vol-crushed; sell premium freely; full equity |
-| Mild Positive | +$1.5B to +$3B | 15–18 | **80%** | 20% | Calm; modest suppression; equity-heavy |
-| Neutral/Flip | −$1.5B to +$1.5B | 18–22 | **60%** | 40% | Near flip; ambiguous regime; reduce risk |
-| Negative | −$3B to −$1.5B | 22–30 | **35%** | 65% | Volatile; amplification active; cut exposure |
-| Deep Negative | < −$3B | > 30 | **15%** | 85% | Crash dynamics; capital preservation mode |
+```
+Regime         Net GEX           VIX Proxy  SPY Allocation  Cash  Interpretation
+-------------  ----------------  ---------  --------------  ----  ---------------------------------------------
+High Positive  > +$3B            < 15       90%             10%   Vol-crushed; sell premium freely; full equity
+Mild Positive  +$1.5B to +$3B    15–18      80%             20%   Calm; modest suppression; equity-heavy
+Neutral/Flip   −$1.5B to +$1.5B  18–22      60%             40%   Near flip; ambiguous regime; reduce risk
+Negative       −$3B to −$1.5B    22–30      35%             65%   Volatile; amplification active; cut exposure
+Deep Negative  < −$3B            > 30       15%             85%   Crash dynamics; capital preservation mode
+```
 
 ---
 
@@ -520,36 +522,40 @@ GEX    +$2B ─┤
 
 ## Quick Reference
 
-| Parameter | Default | Range | Description |
-|---|---|---|---|
-| `gex_high_pos` | +$3B | +$2B–+$5B | Threshold for HighPositive regime |
-| `gex_mild_pos` | +$1.5B | +$0.5B–+$2B | Threshold for MildPositive regime |
-| `gex_neutral_lo` | −$1.5B | −$0.5B–−$2B | Lower bound of Neutral zone |
-| `gex_negative` | −$3B | −$2B–−$5B | Threshold for deep Negative regime |
-| `vix_high_pos` | 15 | 12–17 | VIX proxy for HighPositive |
-| `vix_mild_pos` | 18 | 16–20 | VIX proxy for MildPositive |
-| `vix_neutral_hi` | 22 | 19–25 | Upper bound of Neutral zone |
-| `vix_negative` | 30 | 25–35 | VIX proxy for deep Negative |
-| `alloc_high_pos` | 90% | 80–100% | SPY allocation in HighPositive |
-| `alloc_mild_pos` | 80% | 70–90% | SPY allocation in MildPositive |
-| `alloc_neutral` | 60% | 50–70% | SPY allocation in Neutral |
-| `alloc_negative` | 35% | 20–50% | SPY allocation in Negative |
-| `alloc_deep_neg` | 15% | 5–25% | SPY allocation in DeepNegative |
-| `confirm_days` | 3 | 2–5 | Days required to confirm new regime |
-| `cooldown_days` | 5 | 3–10 | Days between rebalances (except emergency) |
+```
+Parameter         Default  Range        Description
+----------------  -------  -----------  ------------------------------------------
+`gex_high_pos`    +$3B     +$2B–+$5B    Threshold for HighPositive regime
+`gex_mild_pos`    +$1.5B   +$0.5B–+$2B  Threshold for MildPositive regime
+`gex_neutral_lo`  −$1.5B   −$0.5B–−$2B  Lower bound of Neutral zone
+`gex_negative`    −$3B     −$2B–−$5B    Threshold for deep Negative regime
+`vix_high_pos`    15       12–17        VIX proxy for HighPositive
+`vix_mild_pos`    18       16–20        VIX proxy for MildPositive
+`vix_neutral_hi`  22       19–25        Upper bound of Neutral zone
+`vix_negative`    30       25–35        VIX proxy for deep Negative
+`alloc_high_pos`  90%      80–100%      SPY allocation in HighPositive
+`alloc_mild_pos`  80%      70–90%       SPY allocation in MildPositive
+`alloc_neutral`   60%      50–70%       SPY allocation in Neutral
+`alloc_negative`  35%      20–50%       SPY allocation in Negative
+`alloc_deep_neg`  15%      5–25%        SPY allocation in DeepNegative
+`confirm_days`    3        2–5          Days required to confirm new regime
+`cooldown_days`   5        3–10         Days between rebalances (except emergency)
+```
 
 ---
 
 ## Data Requirements
 
-| Data | Source | Usage |
-|---|---|---|
-| Live net GEX | Polygon options chain (computed) | Primary live signal (fetch via Market tab) |
-| VIX daily close | Polygon `VIXIND` | Backtest proxy for GEX |
-| SPY OHLCV | Polygon | Price data for allocation value |
-| Per-strike OI | Polygon options chain | GEX computation by strike |
-| Black-Scholes gamma | Computed from per-strike IV | GEX calculation |
-| GEX flip level | Derived from per-strike GEX | Key support/resistance identification |
+```
+Data                 Source                            Usage
+-------------------  --------------------------------  ------------------------------------------
+Live net GEX         Polygon options chain (computed)  Primary live signal (fetch via Market tab)
+VIX daily close      Polygon `VIXIND`                  Backtest proxy for GEX
+SPY OHLCV            Polygon                           Price data for allocation value
+Per-strike OI        Polygon options chain             GEX computation by strike
+Black-Scholes gamma  Computed from per-strike IV       GEX calculation
+GEX flip level       Derived from per-strike GEX       Key support/resistance identification
+```
 
 ---
 
@@ -805,15 +811,17 @@ current paper trade exposure to the new suggested weight and adjust accordingly.
 The GEX regime is the same whether you are a day trader or a multi-week swing trader —
 but *how* you act on it is completely different. The table below shows the split.
 
-| Dimension | Intraday (0–1 day) | End-of-Day / Swing (1–20 days) |
-|---|---|---|
-| **GEX signal used** | Live net GEX from options chain (requires real-time OI feed) | VIX proxy — daily close is sufficient |
-| **Primary tool** | SPY 1-min / 5-min chart, VWAP, gamma flip level | Daily close, VIX settlement, regime band |
-| **Entry trigger** | Price crossing the gamma flip level intraday | VIX band breach confirmed over 3 days |
-| **Position size** | Scale down — intraday mean-reversion can be violent | Full regime allocation (15%–90% SPY) |
-| **Exit discipline** | Hard stop at gamma flip ±0.5%; target 0.3–0.5× ATR | Regime change + cooldown (5-day default) |
-| **Best regime** | HighPositive (dealers dampen intraday swings — iron condor day) | Any regime — strategy was designed for this horizon |
-| **Worst regime** | DeepNegative (gaps, spikes, slippage destroys edge) | N/A — allocation is already cut to 15% |
+```
+Dimension        Intraday (0–1 day)                                               End-of-Day / Swing (1–20 days)
+---------------  ---------------------------------------------------------------  ---------------------------------------------------
+GEX signal used  Live net GEX from options chain (requires real-time OI feed)     VIX proxy — daily close is sufficient
+Primary tool     SPY 1-min / 5-min chart, VWAP, gamma flip level                  Daily close, VIX settlement, regime band
+Entry trigger    Price crossing the gamma flip level intraday                     VIX band breach confirmed over 3 days
+Position size    Scale down — intraday mean-reversion can be violent              Full regime allocation (15%–90% SPY)
+Exit discipline  Hard stop at gamma flip ±0.5%; target 0.3–0.5× ATR               Regime change + cooldown (5-day default)
+Best regime      HighPositive (dealers dampen intraday swings — iron condor day)  Any regime — strategy was designed for this horizon
+Worst regime     DeepNegative (gaps, spikes, slippage destroys edge)              N/A — allocation is already cut to 15%
+```
 
 ---
 
@@ -887,17 +895,19 @@ on the VIX close.
 
 **Worked example — Oct–Nov 2022 bear market recovery:**
 
-| Date | VIX Close | Regime | Suggested SPY Wt | Action |
-|---|---|---|---|---|
-| Oct 3, 2022 | 33.6 | DeepNegative | 15% | Hold minimum allocation |
-| Oct 14, 2022 | 31.2 | DeepNegative | 15% | No change (below 30 threshold) |
-| Oct 21, 2022 | 29.8 | Negative | 35% | Day 1 of possible regime shift |
-| Oct 24, 2022 | 28.4 | Negative | 35% | Day 2 |
-| Oct 25, 2022 | 27.9 | Negative | 35% | Day 3 — confirmation met → buy SPY to 35% |
-| Nov 10, 2022 | 23.5 | Negative | 35% | Holding (no 3-day confirmation of next level) |
-| Nov 14, 2022 | 22.8 | Neutral | 60% | Day 1 |
-| Nov 15, 2022 | 22.4 | Neutral | 60% | Day 2 |
-| Nov 16, 2022 | 21.9 | Neutral | 60% | Day 3 — confirmation → buy SPY to 60% |
+```
+Date          VIX Close  Regime        Suggested SPY Wt  Action
+------------  ---------  ------------  ----------------  ---------------------------------------------
+Oct 3, 2022   33.6       DeepNegative  15%               Hold minimum allocation
+Oct 14, 2022  31.2       DeepNegative  15%               No change (below 30 threshold)
+Oct 21, 2022  29.8       Negative      35%               Day 1 of possible regime shift
+Oct 24, 2022  28.4       Negative      35%               Day 2
+Oct 25, 2022  27.9       Negative      35%               Day 3 — confirmation met → buy SPY to 35%
+Nov 10, 2022  23.5       Negative      35%               Holding (no 3-day confirmation of next level)
+Nov 14, 2022  22.8       Neutral       60%               Day 1
+Nov 15, 2022  22.4       Neutral       60%               Day 2
+Nov 16, 2022  21.9       Neutral       60%               Day 3 — confirmation → buy SPY to 60%
+```
 
 Result: Two allocation increases during the bear market recovery, each triggered only
 after 3 confirmed closes in the new regime. No whipsawing on single-day VIX spikes.
@@ -955,13 +965,15 @@ is always known at entry.
 
 ### Regime → Long-Only Strategy Map
 
-| Regime | VIX | Play | Max Loss |
-|---|---|---|---|
-| High Positive | < 15 | **Buy stock** or **Buy call (ATM, 30–45 DTE)** | Unlimited downside (stock) / Premium paid (call) |
-| Mild Positive | 15–18 | **Buy stock** or **Buy call (ATM, 30–45 DTE)** | Unlimited downside (stock) / Premium paid (call) |
-| Neutral | 18–22 | **Hold cash — no new position** | No risk |
-| Negative | 22–30 | **Buy put (ATM or 5% OTM, 30–45 DTE)** | Premium paid |
-| Deep Negative | > 30 | **Buy put (ATM ~0.50Δ, 30–45 DTE)** or hold cash | Premium paid |
+```
+Regime         VIX    Play                                          Max Loss
+-------------  -----  --------------------------------------------  ------------------------------------------------
+High Positive  < 15   Buy stock or Buy call (ATM, 30–45 DTE)        Unlimited downside (stock) / Premium paid (call)
+Mild Positive  15–18  Buy stock or Buy call (ATM, 30–45 DTE)        Unlimited downside (stock) / Premium paid (call)
+Neutral        18–22  Hold cash — no new position                   No risk
+Negative       22–30  Buy put (ATM or 5% OTM, 30–45 DTE)            Premium paid
+Deep Negative  > 30   Buy put (ATM ~0.50Δ, 30–45 DTE) or hold cash  Premium paid
+```
 
 ### Why Each Play Fits Its Regime
 
@@ -1054,11 +1066,13 @@ expiry. The extra time also provides flexibility to exit if the regime recovers 
 
 ### Risk/Reward Summary
 
-| Strategy | Max Profit | Max Loss | Breakeven | Notes |
-|---|---|---|---|---|
-| Long Stock | Unlimited | Full price paid | Entry price | No decay; requires full capital |
-| Long Call | Unlimited | Premium paid | Strike + premium | Best in low-IV (HighPositive) |
-| Long Put | Strike value (to zero) | Premium paid | Strike − premium | Best when regime confirms negative |
+```
+Strategy    Max Profit              Max Loss         Breakeven         Notes
+----------  ----------------------  ---------------  ----------------  ----------------------------------
+Long Stock  Unlimited               Full price paid  Entry price       No decay; requires full capital
+Long Call   Unlimited               Premium paid     Strike + premium  Best in low-IV (HighPositive)
+Long Put    Strike value (to zero)  Premium paid     Strike − premium  Best when regime confirms negative
+```
 
 ### Managing Winners and Losers
 
@@ -1139,13 +1153,15 @@ The dashboard alerts you automatically when any of these conditions are triggere
 
 These strategies collect premium upfront. Time decay works *for* you, so the primary goal is to let theta erode the spread value without getting caught by a large directional move.
 
-| Alert | Condition | Action |
-|---|---|---|
-| ✅ Take profit | P&L ≥ **50% of credit collected** | Close the position. The last 50% of profit takes 3× as long and requires holding through more risk. This is the golden rule for all credit spreads. |
-| 🟡 Monitor | P&L ≤ **−50% of credit collected** | Watch closely. The spread is being tested. Look at the regime — has VIX moved? |
-| 🔴 Stop loss | P&L ≤ **−75% of credit collected** | Close. You are approaching max loss. The premium you collected is gone and you are now paying out. |
-| 🟡 DTE warning | **21 DTE** remaining | Consider closing. Gamma risk increases, and a single gap move can wipe the remaining credit in hours. |
-| 🔴 DTE critical | **7 DTE** remaining | Close immediately. Assignment risk for short legs becomes real, and bid-ask spreads widen sharply. |
+```
+Alert           Condition                       Action
+--------------  ------------------------------  ---------------------------------------------------------------------------------------------------------------------------------------------------
+✅ Take profit   P&L ≥ 50% of credit collected   Close the position. The last 50% of profit takes 3× as long and requires holding through more risk. This is the golden rule for all credit spreads.
+🟡 Monitor       P&L ≤ −50% of credit collected  Watch closely. The spread is being tested. Look at the regime — has VIX moved?
+🔴 Stop loss     P&L ≤ −75% of credit collected  Close. You are approaching max loss. The premium you collected is gone and you are now paying out.
+🟡 DTE warning   21 DTE remaining                Consider closing. Gamma risk increases, and a single gap move can wipe the remaining credit in hours.
+🔴 DTE critical  7 DTE remaining                 Close immediately. Assignment risk for short legs becomes real, and bid-ask spreads widen sharply.
+```
 
 **Why 50%?** On a $1.00 credit spread, your max profit is $100/contract and max loss is (spread width − $1.00) × 100. The risk/reward after 50% profit has been captured is no longer in your favour — you're risking the same max loss for only $50 more. Close it.
 
@@ -1155,13 +1171,15 @@ These strategies collect premium upfront. Time decay works *for* you, so the pri
 
 These strategies pay premium upfront. You need the stock to move in your direction within the DTE window.
 
-| Alert | Condition | Action |
-|---|---|---|
-| ✅ Take profit (partial) | P&L ≥ **50% of premium paid** | Consider closing half or all. Locking in 50% is a solid outcome on a directional spread. |
-| ✅ Take profit (full) | P&L ≥ **100% of premium paid** | Strong move — close and bank the gain. Don't hold for max profit unless the regime is firmly intact. |
-| 🔴 Stop loss | P&L ≤ **−50% of premium paid** | Close. If you paid $1.00 and it's worth $0.50, the directional thesis has likely stalled or reversed. The remaining $50 recovery requires a much larger move. |
-| 🟡 DTE warning | **21 DTE** remaining | Theta decay accelerates sharply here. If the position is not yet profitable, evaluate whether the move is still likely. |
-| 🔴 DTE critical | **7 DTE** remaining | Close. Debit spreads near expiry decay very quickly and a failed directional move becomes worthless fast. |
+```
+Alert                    Condition                   Action
+-----------------------  --------------------------  -------------------------------------------------------------------------------------------------------------------------------------------------------------
+✅ Take profit (partial)  P&L ≥ 50% of premium paid   Consider closing half or all. Locking in 50% is a solid outcome on a directional spread.
+✅ Take profit (full)     P&L ≥ 100% of premium paid  Strong move — close and bank the gain. Don't hold for max profit unless the regime is firmly intact.
+🔴 Stop loss              P&L ≤ −50% of premium paid  Close. If you paid $1.00 and it's worth $0.50, the directional thesis has likely stalled or reversed. The remaining $50 recovery requires a much larger move.
+🟡 DTE warning            21 DTE remaining            Theta decay accelerates sharply here. If the position is not yet profitable, evaluate whether the move is still likely.
+🔴 DTE critical           7 DTE remaining             Close. Debit spreads near expiry decay very quickly and a failed directional move becomes worthless fast.
+```
 
 ---
 
@@ -1169,14 +1187,16 @@ These strategies pay premium upfront. You need the stock to move in your directi
 
 A naked long put has unlimited directional upside but loses value every day. Discipline matters more here than on spreads.
 
-| Alert | Condition | Action |
-|---|---|---|
-| ✅ Take profit (partial) | P&L ≥ **50% of premium paid** | Consider closing half. Let the rest run with a mental trailing stop. |
-| ✅ Take profit (full) | P&L ≥ **100% of premium paid** | The put has doubled — close it unless you are in a confirmed crash with regime holding at DeepNegative. |
-| 🔴 Stop loss | P&L ≤ **−50% of premium paid** | Hard stop. If you paid $3.00 and it's now $1.50, the thesis is broken or the bounce has started. Close. |
-| 🔴 Regime flip | VIX drops below 30 | The DeepNegative regime that justified this trade is gone. Close regardless of P&L. The edge came from the regime — if the regime changes, so does your reason for holding. |
-| 🟡 DTE warning | **21 DTE** remaining | Theta decay accelerates. If the put is not profitable and the regime has not confirmed further downside, close. |
-| 🔴 DTE critical | **7 DTE** remaining | Close immediately unless deep ITM. |
+```
+Alert                    Condition                   Action
+-----------------------  --------------------------  ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+✅ Take profit (partial)  P&L ≥ 50% of premium paid   Consider closing half. Let the rest run with a mental trailing stop.
+✅ Take profit (full)     P&L ≥ 100% of premium paid  The put has doubled — close it unless you are in a confirmed crash with regime holding at DeepNegative.
+🔴 Stop loss              P&L ≤ −50% of premium paid  Hard stop. If you paid $3.00 and it's now $1.50, the thesis is broken or the bounce has started. Close.
+🔴 Regime flip            VIX drops below 30          The DeepNegative regime that justified this trade is gone. Close regardless of P&L. The edge came from the regime — if the regime changes, so does your reason for holding.
+🟡 DTE warning            21 DTE remaining            Theta decay accelerates. If the put is not profitable and the regime has not confirmed further downside, close.
+🔴 DTE critical           7 DTE remaining             Close immediately unless deep ITM.
+```
 
 ---
 
@@ -1184,10 +1204,12 @@ A naked long put has unlimited directional upside but loses value every day. Dis
 
 Long equity from GEX signals is a trend-following position. The stop is ATR-based; the target is the next regime boundary.
 
-| Alert | Condition | Action |
-|---|---|---|
-| ✅ Consider trimming | P&L ≥ **+20% of cost basis** | Take partial profits. Trim to half position and raise stop to breakeven. |
-| 🔴 Stop loss | P&L ≤ **−8% of cost basis** | Close. An 8% loss on an equity position is one ATR move — if GEX was correctly read, you should not see an 8% loss unless the regime has changed. |
-| 🔴 Regime flip | VIX crosses into the next regime band | Exit. The GEX signal that drove the entry no longer applies. |
+```
+Alert                Condition                              Action
+-------------------  -------------------------------------  -------------------------------------------------------------------------------------------------------------------------------------------------
+✅ Consider trimming  P&L ≥ +20% of cost basis               Take partial profits. Trim to half position and raise stop to breakeven.
+🔴 Stop loss          P&L ≤ −8% of cost basis                Close. An 8% loss on an equity position is one ATR move — if GEX was correctly read, you should not see an 8% loss unless the regime has changed.
+🔴 Regime flip        VIX crosses into the next regime band  Exit. The GEX signal that drove the entry no longer applies.
+```
 
 **Note:** These are the exact thresholds used by the dashboard's automatic alert system. When you open the Open Positions tab, each position expander will show 🔴/🟡/✅ in the title based on the current state of these rules.

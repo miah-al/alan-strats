@@ -79,6 +79,23 @@ P&L at expiration (1 contract, net credit = $4.85):
 
 ---
 
+## Key Terms
+
+```
+Term                                     Definition
+---------------------------------------- ---------------------------------------------------------------
+IVR   — IV Rank                          0-100% percentile of VIX in its 52-week range. High = rich premium.
+VIX   — CBOE Volatility Index            Market's 30-day implied vol for S&P 500. The "fear gauge."
+ADX   — Avg Directional Index (14d)      Trend strength (not direction). <20 = range-bound, >25 = trending.
+ATR   — Avg True Range (14d)             Daily price range normalised by spot price (ATR%).
+DTE   — Days To Expiration               Calendar days remaining until the contract expires.
+Delta — Option Delta                     $1 move sensitivity. 16-delta ≈ 16% chance of expiring ITM.
+Vega  — Option Vega                      IV change sensitivity. Short vega = rising IV hurts P&L.
+OTM   — Out of The Money                 Strike above spot (call) or below spot (put). No intrinsic value.
+```
+
+---
+
 ## The Five Entry Rules — With Rationale
 
 Each rule is a filter that eliminates bad setups. Every rule has a reason grounded in 30 years of trading this structure.
@@ -141,35 +158,41 @@ ATR (14-day Average True Range) / current spot price ≤ 0.025 (2.5%)
 
 ### Example Set 1 — Winning Trades
 
-| Date | Ticker | Spot | VIX | IVR | Short Call | Short Put | Wing | DTE | Credit | Max Loss | Outcome | P&L | Hold (days) |
-|------|--------|------|-----|-----|-----------|----------|------|-----|--------|----------|---------|-----|-------------|
-| Jan 18 2023 | SPY | $393 | 19.4 | 0.64 | $408 | $378 | $10 | 45 | $1.72 | $8.28 | ✅ 50% target | +$86 | 18 |
-| Mar 8 2023 | QQQ | $296 | 21.2 | 0.58 | $310 | $282 | $14 | 42 | $2.45 | $11.55 | ✅ 50% target | +$123 | 21 |
-| Jul 19 2023 | AAPL | $191 | 13.8 | 0.52 | $202 | $180 | $10 | 45 | $1.38 | $8.62 | ✅ 50% target | +$69 | 24 |
-| Oct 4 2023 | SPY | $419 | 18.7 | 0.61 | $436 | $402 | $15 | 45 | $2.90 | $12.10 | ✅ 50% target | +$145 | 17 |
-| Jan 22 2024 | MSFT | $404 | 14.9 | 0.47 | $425 | $383 | $20 | 43 | $3.20 | $16.80 | ✅ 50% target | +$160 | 22 |
-| Apr 10 2024 | SPY | $514 | 15.6 | 0.55 | $535 | $493 | $18 | 45 | $3.15 | $14.85 | ✅ 50% target | +$158 | 19 |
-| Aug 7 2024 | QQQ | $449 | 21.8 | 0.70 | $468 | $430 | $18 | 44 | $3.80 | $14.20 | ✅ 50% target | +$190 | 14 |
-| Nov 13 2024 | NVDA | $145 | 16.2 | 0.53 | $155 | $135 | $10 | 45 | $1.75 | $8.25 | ✅ 50% target | +$88 | 20 |
+```
+Date         Ticker  Spot  VIX   IVR   Short Call  Short Put  Wing  DTE  Credit  Max Loss  Outcome       P&L    Hold (days)
+-----------  ------  ----  ----  ----  ----------  ---------  ----  ---  ------  --------  ------------  -----  -----------
+Jan 18 2023  SPY     $393  19.4  0.64  $408        $378       $10   45   $1.72   $8.28     ✅ 50% target  +$86   18
+Mar 8 2023   QQQ     $296  21.2  0.58  $310        $282       $14   42   $2.45   $11.55    ✅ 50% target  +$123  21
+Jul 19 2023  AAPL    $191  13.8  0.52  $202        $180       $10   45   $1.38   $8.62     ✅ 50% target  +$69   24
+Oct 4 2023   SPY     $419  18.7  0.61  $436        $402       $15   45   $2.90   $12.10    ✅ 50% target  +$145  17
+Jan 22 2024  MSFT    $404  14.9  0.47  $425        $383       $20   43   $3.20   $16.80    ✅ 50% target  +$160  22
+Apr 10 2024  SPY     $514  15.6  0.55  $535        $493       $18   45   $3.15   $14.85    ✅ 50% target  +$158  19
+Aug 7 2024   QQQ     $449  21.8  0.70  $468        $430       $18   44   $3.80   $14.20    ✅ 50% target  +$190  14
+Nov 13 2024  NVDA    $145  16.2  0.53  $155        $135       $10   45   $1.75   $8.25     ✅ 50% target  +$88   20
+```
 
 ### Example Set 2 — Losing Trades (Learning from Losses)
 
-| Date | Ticker | Spot | VIX | IVR | Short Call | Short Put | Wing | DTE | Credit | What Went Wrong | P&L | Lesson |
-|------|--------|------|-----|-----|-----------|----------|------|-----|--------|-----------------|-----|--------|
-| Feb 2 2023 | META | $187 | 20.1 | 0.62 | $198 | $176 | $10 | 44 | $1.95 | Q4 2022 earnings gap +23% → breached call | -$810 | Earnings calendar check missed |
-| Jul 26 2023 | SPY | $452 | 13.9 | 0.50 | $468 | $436 | $15 | 46 | $2.20 | Fed surprise hawkish → 3% drop | -$295 | FOMC day — should skip 2d before FOMC |
-| Oct 26 2023 | AAPL | $171 | 21.4 | 0.60 | $181 | $161 | $9 | 45 | $1.65 | Weak iPhone guidance, stock fell 6% | -$735 | Single-stock earnings risk |
-| Jan 31 2024 | TSLA | $188 | 14.8 | 0.49 | $200 | $176 | $12 | 44 | $2.80 | Musk tweet storm, stock gapped 12% | -$920 | TSLA = high idiosyncratic risk, skip |
+```
+Date         Ticker  Spot  VIX   IVR   Short Call  Short Put  Wing  DTE  Credit  What Went Wrong                            P&L    Lesson
+-----------  ------  ----  ----  ----  ----------  ---------  ----  ---  ------  -----------------------------------------  -----  -------------------------------------
+Feb 2 2023   META    $187  20.1  0.62  $198        $176       $10   44   $1.95   Q4 2022 earnings gap +23% → breached call  -$810  Earnings calendar check missed
+Jul 26 2023  SPY     $452  13.9  0.50  $468        $436       $15   46   $2.20   Fed surprise hawkish → 3% drop             -$295  FOMC day — should skip 2d before FOMC
+Oct 26 2023  AAPL    $171  21.4  0.60  $181        $161       $9    45   $1.65   Weak iPhone guidance, stock fell 6%        -$735  Single-stock earnings risk
+Jan 31 2024  TSLA    $188  14.8  0.49  $200        $176       $12   44   $2.80   Musk tweet storm, stock gapped 12%         -$920  TSLA = high idiosyncratic risk, skip
+```
 
 ### Regime Performance Summary
 
-| VIX Regime | Trades (2020–2024) | Win Rate | Avg P&L | Avg Hold | Notes |
-|---|---|---|---|---|---|
-| Low (< 16) | 38 | 61% | +$42 | 26d | Thin credits, tight wins. Marginal after commissions |
-| Medium (16–22) | 112 | 74% | +$118 | 21d | **Sweet spot.** Best risk-adjusted returns |
-| Elevated (22–30) | 67 | 68% | +$95 | 18d | Good credits, faster profit targets hit |
-| High (30–35) | 24 | 52% | -$28 | 14d | More losses, faster exits needed |
-| Extreme (> 35) | — | — | — | — | **Do not trade.** Rule 2 blocks all entries |
+```
+VIX Regime        Trades (2020–2024)  Win Rate  Avg P&L  Avg Hold  Notes
+----------------  ------------------  --------  -------  --------  ----------------------------------------------------
+Low (< 16)        38                  61%       +$42     26d       Thin credits, tight wins. Marginal after commissions
+Medium (16–22)    112                 74%       +$118    21d       Sweet spot. Best risk-adjusted returns
+Elevated (22–30)  67                  68%       +$95     18d       Good credits, faster profit targets hit
+High (30–35)      24                  52%       -$28     14d       More losses, faster exits needed
+Extreme (> 35)    —                   —         —        —         Do not trade. Rule 2 blocks all entries
+```
 
 **Summary row:** 241 total trades, 71% win rate, +$89 avg P&L, 21d avg hold.
 
@@ -266,29 +289,33 @@ contracts = floor(capital × position_size_pct / max_loss_per_contract)
 
 ## Quick Reference
 
-| Parameter | Default | Range | Description |
-|---|---|---|---|
-| `ivr_min` | 0.45 | 0.30–0.75 | Min IV Rank to enter |
-| `vix_min` | 16.0 | 12–20 | VIX floor (avoid cheap premium) |
-| `vix_max` | 35.0 | 28–45 | VIX ceiling (avoid fear regime) |
-| `adx_max` | 22.0 | 15–30 | Max ADX (range-bound filter) |
-| `atr_pct_max` | 0.025 | 0.01–0.04 | Max ATR/spot ratio |
-| `delta_short` | 0.16 | 0.10–0.25 | Short strike delta (~84% prob OTM) |
-| `wing_width_pct` | 0.05 | 0.03–0.10 | Wing width as % of spot |
-| `dte_target` | 45 | 30–60 | Days to expiry at entry |
-| `dte_exit` | 21 | 14–28 | Force-close at this DTE |
-| `profit_target_pct` | 0.50 | 0.30–0.70 | Close at 50% of max credit |
-| `stop_loss_mult` | 2.0 | 1.5–3.0 | Stop at N× credit received |
-| `position_size_pct` | 0.03 | 0.01–0.06 | Capital at risk per trade |
-| `max_concurrent` | 3 | 1–6 | Max simultaneous positions |
+```
+Parameter            Default  Range      Description
+-------------------  -------  ---------  ----------------------------------
+`ivr_min`            0.45     0.30–0.75  Min IV Rank to enter
+`vix_min`            16.0     12–20      VIX floor (avoid cheap premium)
+`vix_max`            35.0     28–45      VIX ceiling (avoid fear regime)
+`adx_max`            22.0     15–30      Max ADX (range-bound filter)
+`atr_pct_max`        0.025    0.01–0.04  Max ATR/spot ratio
+`delta_short`        0.16     0.10–0.25  Short strike delta (~84% prob OTM)
+`wing_width_pct`     0.05     0.03–0.10  Wing width as % of spot
+`dte_target`         45       30–60      Days to expiry at entry
+`dte_exit`           21       14–28      Force-close at this DTE
+`profit_target_pct`  0.50     0.30–0.70  Close at 50% of max credit
+`stop_loss_mult`     2.0      1.5–3.0    Stop at N× credit received
+`position_size_pct`  0.03     0.01–0.06  Capital at risk per trade
+`max_concurrent`     3        1–6        Max simultaneous positions
+```
 
 ## Data Requirements
 
-| Data | Source | Usage |
-|---|---|---|
-| Daily OHLCV | `mkt.PriceBar` | Close for strikes, high/low for ATR, ADX |
-| VIX daily close | `mkt.VixBar` | IVR calculation, VIX filter |
-| (Optional) macro rates | `mkt.MacroBar` | Yield curve context |
+```
+Data                    Source          Usage
+----------------------  --------------  ----------------------------------------
+Daily OHLCV             `mkt.PriceBar`  Close for strikes, high/low for ATR, ADX
+VIX daily close         `mkt.VixBar`    IVR calculation, VIX filter
+(Optional) macro rates  `mkt.MacroBar`  Yield curve context
+```
 
 No options chain data required — strikes are estimated from Black-Scholes using VIX as IV proxy.
 
@@ -303,15 +330,17 @@ No options chain data required — strikes are estimated from Black-Scholes usin
 
 Each column is a filter, not a standalone signal. Read them together.
 
-| Column | What It Measures | Good Range for ICs |
-|--------|-----------------|-------------------|
-| **IVR** | Where today's IV sits in its 52-week range (0 = 52-week low, 1 = 52-week high) | > 0.40 |
-| **VRP** | IV minus realized volatility (vol points). Positive = options are expensive relative to actual movement | > 2.0 vol pts |
-| **ATM IV** | Current annualized implied volatility at the money | Context-dependent (see VIX banner) |
-| **ADX** | Average Directional Index — measures trend strength, not direction | < 25 (range-bound) |
-| **ATR%** | Average True Range as % of price — daily velocity | < 1.5% preferred |
-| **VIX** | CBOE fear gauge — proxy for broad market regime | 20–30 sweet spot |
-| **Credit** | Approximate premium collected per share for a balanced IC | Higher is better, but not at the cost of narrow strikes |
+```
+Column  What It Measures                                                                                         Good Range for ICs
+------  -------------------------------------------------------------------------------------------------------  -------------------------------------------------------
+IVR     Where today's IV sits in its 52-week range (0 = 52-week low, 1 = 52-week high)                           > 0.40
+VRP     IV minus realized volatility (vol points). Positive = options are expensive relative to actual movement  > 2.0 vol pts
+ATM IV  Current annualized implied volatility at the money                                                       Context-dependent (see VIX banner)
+ADX     Average Directional Index — measures trend strength, not direction                                       < 25 (range-bound)
+ATR%    Average True Range as % of price — daily velocity                                                        < 1.5% preferred
+VIX     CBOE fear gauge — proxy for broad market regime                                                          20–30 sweet spot
+Credit  Approximate premium collected per share for a balanced IC                                                Higher is better, but not at the cost of narrow strikes
+```
 
 **IVR > 0.40** means IV is in the top 60% of its annual range — you are selling volatility that is historically elevated, which is the foundation of the trade. IVR 0.60+ is a strong signal. IVR below 0.30 means you are selling cheap premium; the risk/reward deteriorates.
 
@@ -362,12 +391,14 @@ Variance Risk Premium is the spread between what the market *implies* will happe
 
 ## 5. Regime Context — The VIX Banner
 
-| VIX Level | Regime | IC Strategy |
-|-----------|--------|-------------|
-| 14–20 | Low vol | Credits thin; be highly selective; IVR filter becomes critical |
-| 20–30 | Sweet spot | Best risk/reward for balanced condors; standard sizing |
-| 30–45 | Elevated | Widen strikes by 15–20%; reduce size; shorter DTE (21 days) |
-| > 45 | Danger zone | No new ICs; manage or close existing positions |
+```
+VIX Level  Regime       IC Strategy
+---------  -----------  --------------------------------------------------------------
+14–20      Low vol      Credits thin; be highly selective; IVR filter becomes critical
+20–30      Sweet spot   Best risk/reward for balanced condors; standard sizing
+30–45      Elevated     Widen strikes by 15–20%; reduce size; shorter DTE (21 days)
+> 45       Danger zone  No new ICs; manage or close existing positions
+```
 
 In low-vol regimes, prioritize IVR and VRP over credit size. A $0.60 credit on a well-positioned SPY condor beats a $1.20 credit on a name with ADX of 38.
 
@@ -385,7 +416,34 @@ In low-vol regimes, prioritize IVR and VRP over credit size. A $0.60 credit on a
 
 ---
 
-## 7. Common Mistakes
+## 7. What the Backtest Doesn't Capture
+
+Backtests are optimistic by construction. These three risks are real and material — plan for them before going live.
+
+**1. FOMC / CPI Gap Opens**
+
+SPY can move 2–4% in minutes on a surprise Fed decision or inflation print. Your backtest uses daily closing prices — it cannot model an IC that was safely inside its range at yesterday's close getting blown through at 10:00 AM. The 21-DTE exit rule reduces exposure, but it does not protect you if you are in the last two weeks of a position when a major catalyst hits. Check the economic calendar before every new entry. Never hold an open IC through an FOMC meeting if you are inside 14 DTE.
+
+**2. Bid/Ask Blowout and Fill Quality**
+
+Backtests price at the mid. On a 4-leg SPY IC in normal conditions, mid is achievable. During vol spikes (VIX > 25), spreads on each leg can be $0.15–0.30 wide. On 4 legs that is $0.60–1.20 of slippage versus mid. If your average credit is $2.00, you have lost 30–60% of your theoretical edge before the trade even starts. Robinhood routes order flow for payment — fills are not institutional-grade. Track your actual fill versus mid on every single trade. If you are consistently receiving less than 85% of mid across 10+ trades, your live edge is materially smaller than the backtest implies.
+
+**3. Regime Shift**
+
+The strategy was calibrated on 2022–2026, a period that included a bear market, a rate shock, and a vol spike. If the next two years look different — a sustained low-vol grind, a prolonged trending market, or a structural VIX regime change — the entry filters may stop working without obvious warning. Monitor your rolling win rate. If it drops below 65% over any 20-trade window, treat it as a regime signal: cut position size in half and reassess whether the current market environment still fits the Iron Condor thesis.
+
+```
+Signal                       Action
+---------------------------  ------------------------------------------------
+Rolling 20-trade WR < 65%    Cut size 50%, reassess regime
+3 consecutive stop-loss hits  Pause new entries for 2 weeks
+Account down 15% from peak   Pause new entries for 30 days
+Account down 25% from peak   Stop trading, full strategy review
+```
+
+---
+
+## 8. Common Mistakes
 
 1. **Chasing high credit without checking ADX.** A name paying $2.50/share looks attractive until you notice ADX is 48 and the stock has been in a clean uptrend for six weeks. The credit reflects the trend risk.
 

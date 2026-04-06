@@ -289,21 +289,23 @@ RECOMMENDATION: Favorable. Phase 1 conditions met. Protected spread — loss cap
 
 **Wheel strategy on quality universe (AAPL, MSFT, AMZN, GOOGL, SPY), 2018–2024:**
 
-| Metric | Value |
-|---|---|
-| Total completed cycles | 284 full cycles |
-| Cycles completed without assignment | 189 (66.5%) — put expired OTM |
-| Cycles with assignment and called away | 95 (33.5%) |
-| Average premium per put cycle (no assignment) | +$312 per contract |
-| Average total return per full assignment cycle | +$890 per contract |
-| Average cycle duration (no assignment) | 32 days |
-| Average cycle duration (with assignment) | 58 days |
-| Win rate (positive net P&L per cycle) | 92.3% |
-| Worst year (2022 bear market) | −8.4% portfolio decline vs −26% SPY |
-| Best year (2020 COVID recovery) | +31.2% on allocated capital |
-| Annual return on allocated capital (avg) | +18.7% |
-| Sharpe ratio vs buy-and-hold SPY | 0.84 vs 0.71 |
-| Maximum individual cycle loss | −$4,820 (COVID-March-2020 forced exit) |
+```
+Metric                                          Value
+----------------------------------------------  --------------------------------------
+Total completed cycles                          284 full cycles
+Cycles completed without assignment             189 (66.5%) — put expired OTM
+Cycles with assignment and called away          95 (33.5%)
+Average premium per put cycle (no assignment)   +$312 per contract
+Average total return per full assignment cycle  +$890 per contract
+Average cycle duration (no assignment)          32 days
+Average cycle duration (with assignment)        58 days
+Win rate (positive net P&L per cycle)           92.3%
+Worst year (2022 bear market)                   −8.4% portfolio decline vs −26% SPY
+Best year (2020 COVID recovery)                 +31.2% on allocated capital
+Annual return on allocated capital (avg)        +18.7%
+Sharpe ratio vs buy-and-hold SPY                0.84 vs 0.71
+Maximum individual cycle loss                   −$4,820 (COVID-March-2020 forced exit)
+```
 
 **Key insight from 2022 bear market:** The Wheel underperformed buy-and-hold on quality names in 2020–2021 (capped at ~18% annualized while SPY returned 28%+). However, in 2022, the Wheel generated −8.4% vs SPY's −26% — the premium collection cushioned the drawdown substantially. Over full cycles including the 2022 bear market, the Wheel's risk-adjusted returns (Sharpe 0.84) exceeded passive SPY (Sharpe 0.71).
 
@@ -400,14 +402,16 @@ Total EV = (0.78 × $176) + (0.22 × 0.85 × $836) + (0.22 × 0.15 × −$924)
 
 ## When This Strategy Works Best
 
-| Market Regime | Phase 1 (Put) | Phase 2 (Call) | Overall Wheel |
-|---|---|---|---|
-| Range-bound, IVR 40–70% | Excellent — rich premium, low assignment | Excellent — stable stock, premium accrues | Best overall regime |
-| Mild uptrend, VIX 15–22 | Good — premium with recovery | Good — called away at profit | Strong performance |
-| Post-correction bounce (VIX declining from 30+) | Excellent — IV still elevated | Very good — IV still elevated for calls | Peak performance |
-| Strong bull market (SPY up 25%+) | Poor — gets called away before capturing upside | Missing upside | Underperforms vs buy-and-hold |
-| Bear market (SPY −15%+) | Dangerous — assignment in declining market | Challenging — selling calls on falling stocks | Performance deteriorates |
-| VIX > 40 (crisis regime) | Extremely dangerous — assignment into free-fall | Capital destruction scenario | Halt all new wheels; manage existing |
+```
+Market Regime                                    Phase 1 (Put)                                    Phase 2 (Call)                                 Overall Wheel
+-----------------------------------------------  -----------------------------------------------  ---------------------------------------------  ------------------------------------
+Range-bound, IVR 40–70%                          Excellent — rich premium, low assignment         Excellent — stable stock, premium accrues      Best overall regime
+Mild uptrend, VIX 15–22                          Good — premium with recovery                     Good — called away at profit                   Strong performance
+Post-correction bounce (VIX declining from 30+)  Excellent — IV still elevated                    Very good — IV still elevated for calls        Peak performance
+Strong bull market (SPY up 25%+)                 Poor — gets called away before capturing upside  Missing upside                                 Underperforms vs buy-and-hold
+Bear market (SPY −15%+)                          Dangerous — assignment in declining market       Challenging — selling calls on falling stocks  Performance deteriorates
+VIX > 40 (crisis regime)                         Extremely dangerous — assignment into free-fall  Capital destruction scenario                   Halt all new wheels; manage existing
+```
 
 ---
 
@@ -429,36 +433,40 @@ Total EV = (0.78 × $176) + (0.22 × 0.85 × $836) + (0.22 × 0.15 × −$924)
 
 ## Strategy Parameters
 
-| Parameter | Conservative | Standard | Income-Focused |
-|---|---|---|---|
-| Short put delta | 0.15 | 0.25 | 0.35 |
-| Long put wing | 7% below short | 5% below short | 3% below short |
-| Wing cost (% of short premium) | ~15% | ~25% | ~35% |
-| Min net annualized yield | 6% | 8% | 10% |
-| Put DTE | 45 | 30–35 | 21 |
-| Covered call DTE | 30 | 21–28 | 14 |
-| Call strike vs cost basis | 7%+ above | 3–5% above | 1–2% above |
-| Early close trigger (put spread) | 25% profit | 50% profit | 75% profit |
-| Stock cut loss (below basis) | 15% decline | 20% decline | 25% decline |
-| Max position size per wheel | 4% capital | 6% capital | 8% capital |
-| Max concurrent wheels | 6–8 | 4–6 | 3–4 |
-| Eligible stock quality | S&P 500 index members only | Large-cap profitable | Mid-cap profitable |
-| IVR requirement | ≥ 45% | ≥ 40% | ≥ 35% |
-| Bear market override | Stop all new puts at SPY −10% | Stop at SPY −15% | Stop at SPY −20% |
-| Max loss per contract | ≤ 0.5% portfolio | ≤ 1.0% portfolio | ≤ 1.5% portfolio |
+```
+Parameter                         Conservative                   Standard              Income-Focused
+--------------------------------  -----------------------------  --------------------  ------------------
+Short put delta                   0.15                           0.25                  0.35
+Long put wing                     7% below short                 5% below short        3% below short
+Wing cost (% of short premium)    ~15%                           ~25%                  ~35%
+Min net annualized yield          6%                             8%                    10%
+Put DTE                           45                             30–35                 21
+Covered call DTE                  30                             21–28                 14
+Call strike vs cost basis         7%+ above                      3–5% above            1–2% above
+Early close trigger (put spread)  25% profit                     50% profit            75% profit
+Stock cut loss (below basis)      15% decline                    20% decline           25% decline
+Max position size per wheel       4% capital                     6% capital            8% capital
+Max concurrent wheels             6–8                            4–6                   3–4
+Eligible stock quality            S&P 500 index members only     Large-cap profitable  Mid-cap profitable
+IVR requirement                   ≥ 45%                          ≥ 40%                 ≥ 35%
+Bear market override              Stop all new puts at SPY −10%  Stop at SPY −15%      Stop at SPY −20%
+Max loss per contract             ≤ 0.5% portfolio               ≤ 1.0% portfolio      ≤ 1.5% portfolio
+```
 
 ---
 
 ## Data Requirements
 
-| Data Point | Source | Update Frequency | Purpose |
-|---|---|---|---|
-| IV Rank (IVR) | Broker / TastyTrade | Daily | Phase 1 entry condition |
-| Put premium (bid-ask) | Broker options chain | Real-time | Annualized yield calculation |
-| Earnings date | Earnings Whispers | Weekly | Avoid earnings window |
-| Stock's 52-week range | Broker / Yahoo Finance | Daily | Context for strike selection |
-| Balance sheet metrics | Company 10-K, Macrotrends | Quarterly | Stock quality assessment |
-| Stock above 200-day MA | Broker / charting tool | Daily | Bear market override condition |
-| Cost basis tracking | Personal records / broker | Per trade | Covered call strike minimum |
-| Historical IV data | Broker / CBOE | Weekly | IVR calculation |
-| Option bid-ask spread | Broker real-time | Real-time | Slippage cost assessment |
+```
+Data Point              Source                     Update Frequency  Purpose
+----------------------  -------------------------  ----------------  ------------------------------
+IV Rank (IVR)           Broker / TastyTrade        Daily             Phase 1 entry condition
+Put premium (bid-ask)   Broker options chain       Real-time         Annualized yield calculation
+Earnings date           Earnings Whispers          Weekly            Avoid earnings window
+Stock's 52-week range   Broker / Yahoo Finance     Daily             Context for strike selection
+Balance sheet metrics   Company 10-K, Macrotrends  Quarterly         Stock quality assessment
+Stock above 200-day MA  Broker / charting tool     Daily             Bear market override condition
+Cost basis tracking     Personal records / broker  Per trade         Covered call strike minimum
+Historical IV data      Broker / CBOE              Weekly            IVR calculation
+Option bid-ask spread   Broker real-time           Real-time         Slippage cost assessment
+```

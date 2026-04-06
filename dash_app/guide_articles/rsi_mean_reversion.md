@@ -131,18 +131,20 @@ The RSI had reverted from 81.3 to 41 in 8 trading days — exactly the pattern t
 
 ## Strategy Parameters
 
-| Parameter | Default | Range | Description |
-|---|---|---|---|
-| RSI period | 14 | 2–21 | Standard = 14; sensitive = 2 (Connors) |
-| Overbought threshold | 75 | 70–85 | Minimum RSI for bearish entry |
-| Oversold threshold | 25 | 15–30 | Maximum RSI for bullish entry |
-| Divergence required | Preferred | Optional | Price/RSI divergence dramatically improves win rate |
-| Volume confirmation | Declining 3+ days | Preferred | Exhaustion signal |
-| HMM regime filter | NEUTRAL preferred | Required | Avoid RSI shorts in BULL regime |
-| DTE | 10–21 | 7–30 | Near-term expiry for fast reversion capture |
-| Spread width | 8–12 pts (SPY) | 5–20 pts | Match to expected reversion magnitude |
-| Net debit limit | Max 30% of spread width | Firm | Controls R/R ratio — wider entry = worse R/R |
-| Time stop | 10 trading days | 7–15 | Close if RSI hasn't reverted |
-| Price stop | New extreme in wrong direction | Firm | Exit if trend continuing, not reversing |
-| Position size | 2–3% of portfolio | 1–4% | Risk per trade |
-| Max concurrent RSI trades | 3 | 2–4 | Diversify across tickers/timeframes |
+```
+Parameter                  Default                         Range      Description
+-------------------------  ------------------------------  ---------  ---------------------------------------------------
+RSI period                 14                              2–21       Standard = 14; sensitive = 2 (Connors)
+Overbought threshold       75                              70–85      Minimum RSI for bearish entry
+Oversold threshold         25                              15–30      Maximum RSI for bullish entry
+Divergence required        Preferred                       Optional   Price/RSI divergence dramatically improves win rate
+Volume confirmation        Declining 3+ days               Preferred  Exhaustion signal
+HMM regime filter          NEUTRAL preferred               Required   Avoid RSI shorts in BULL regime
+DTE                        10–21                           7–30       Near-term expiry for fast reversion capture
+Spread width               8–12 pts (SPY)                  5–20 pts   Match to expected reversion magnitude
+Net debit limit            Max 30% of spread width         Firm       Controls R/R ratio — wider entry = worse R/R
+Time stop                  10 trading days                 7–15       Close if RSI hasn't reverted
+Price stop                 New extreme in wrong direction  Firm       Exit if trend continuing, not reversing
+Position size              2–3% of portfolio               1–4%       Risk per trade
+Max concurrent RSI trades  3                               2–4        Diversify across tickers/timeframes
+```

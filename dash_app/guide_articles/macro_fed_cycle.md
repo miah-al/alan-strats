@@ -155,12 +155,14 @@ The most important classification in the entire framework:
 
 ### Trade 1 — December 2023: Phase 2 to Phase 3 Pre-Positioning ✅
 
-| Field | Value |
-|---|---|
-| Date | November-December 2023 |
-| Fed status | Phase 2 (pause at 5.25-5.50%) |
-| Key event | December 13, 2023 FOMC — dot plot shows 3 cuts for 2024 |
-| Signal | Language shift from "additional firming may be appropriate" to "question of when" |
+```
+Field       Value
+----------  ---------------------------------------------------------------------------------
+Date        November-December 2023
+Fed status  Phase 2 (pause at 5.25-5.50%)
+Key event   December 13, 2023 FOMC — dot plot shows 3 cuts for 2024
+Signal      Language shift from "additional firming may be appropriate" to "question of when"
+```
 
 **Phase 2 positioning (pre-pivot, November 2023):**
 - 75% equity (neutral for Phase 2)
@@ -187,13 +189,15 @@ The most important classification in the entire framework:
 
 ### Trade 2 — 2019: Insurance Cuts, Soft Landing ✅
 
-| Period | July–October 2019 |
-|---|---|
-| Fed funds rate | 2.25-2.50% entering 2019 |
-| Unemployment | 3.5% (very low — insurance cut context) |
-| Phase 3 trigger | July 31, 2019 — first 25 bps cut |
-| Language | "Insurance against downside risks" |
-| GDP | Still positive (+2.0% Q3 2019) |
+```
+Period           July–October 2019
+---------------  ---------------------------------------
+Fed funds rate   2.25-2.50% entering 2019
+Unemployment     3.5% (very low — insurance cut context)
+Phase 3 trigger  July 31, 2019 — first 25 bps cut
+Language         "Insurance against downside risks"
+GDP              Still positive (+2.0% Q3 2019)
+```
 
 **Insurance cut classification:** Unemployment 3.5% (well below 4.5% threshold), GDP positive, credit spreads tight. Classification: SOFT LANDING → add equity aggressively at pivot.
 
@@ -213,13 +217,15 @@ The most important classification in the entire framework:
 
 ### Trade 3 — September 2007: Panic Cuts, Hard Landing ❌
 
-| Period | September 2007 – March 2009 |
-|---|---|
-| Fed funds rate | 5.25% entering cut cycle |
-| Unemployment | 4.7% (rising from 4.4% — DANGER) |
-| Credit spreads | HYG OAS: 450+ bps (CRISIS LEVEL) |
-| GDP | Positive but decelerating rapidly |
-| Phase 3 trigger | September 18, 2007 — emergency 50 bps cut |
+```
+Period           September 2007 – March 2009
+---------------  -----------------------------------------
+Fed funds rate   5.25% entering cut cycle
+Unemployment     4.7% (rising from 4.4% — DANGER)
+Credit spreads   HYG OAS: 450+ bps (CRISIS LEVEL)
+GDP              Positive but decelerating rapidly
+Phase 3 trigger  September 18, 2007 — emergency 50 bps cut
+```
 
 **Panic cut classification:** Unemployment rising above 4.5% AND credit spreads at crisis level. Classification: HARD LANDING → do NOT add equity; maintain maximum defensiveness.
 
@@ -451,14 +457,16 @@ Putting 30-40% of the portfolio in VNQ or XLU at the Phase 3 pivot because "the 
 
 ## When This Strategy Works Best
 
-| Condition | Optimal Value | Why |
-|---|---|---|
-| Fed cycle clarity | Unambiguous phase transition | Ambiguous transitions have lower alpha |
-| Dot plot alignment | Clear direction change (2+ cuts added or removed) | Dot plot is the most reliable signal |
-| Language specificity | "When appropriate" vs "ongoing increases" | Specific language changes = high signal |
-| Credit market context | Tight spreads (insurance) or extreme widening (panic) | Credit confirms Phase 4 classification |
-| Unemployment trend | Clear direction (falling = insurance; rising = panic) | The key Phase 4 discriminator |
-| Sector OI | Rate-sensitive sectors deeply oversold | More room for re-rating |
+```
+Condition              Optimal Value                                          Why
+---------------------  -----------------------------------------------------  ---------------------------------------
+Fed cycle clarity      Unambiguous phase transition                           Ambiguous transitions have lower alpha
+Dot plot alignment     Clear direction change (2+ cuts added or removed)      Dot plot is the most reliable signal
+Language specificity   "When appropriate" vs "ongoing increases"              Specific language changes = high signal
+Credit market context  Tight spreads (insurance) or extreme widening (panic)  Credit confirms Phase 4 classification
+Unemployment trend     Clear direction (falling = insurance; rising = panic)  The key Phase 4 discriminator
+Sector OI              Rate-sensitive sectors deeply oversold                 More room for re-rating
+```
 
 ---
 
@@ -482,32 +490,36 @@ Putting 30-40% of the portfolio in VNQ or XLU at the Phase 3 pivot because "the 
 
 ## Strategy Parameters
 
-| Parameter | Conservative | Standard | Aggressive |
-|---|---|---|---|
-| `phase_confirmation` | All 3 signals agree | 2 of 3 signals | 1 strong signal |
-| `sector_tilt_size` | 5% per sector | 8% per sector | 15% per sector |
-| `equity_allocation_range` | 55-85% (Phase 1-4) | 60-90% | 65-100% |
-| `options_for_transition` | None | Bull call spreads only | Full options suite |
-| `rebalancing_speed` | Over 4-6 weeks | Over 2-4 weeks | Over 1-2 weeks |
-| `t_bill_in_phase_2` | 20-25% | 12-15% | 8-10% |
-| `max_equity_phase_3` | 80% | 90% | 100% |
-| `unemployment_threshold` | 4.0% (stricter) | 4.5% | 5.0% |
-| `credit_spread_check` | Mandatory (IG OAS) | Mandatory | Preferred |
+```
+Parameter                  Conservative         Standard                Aggressive
+-------------------------  -------------------  ----------------------  ------------------
+`phase_confirmation`       All 3 signals agree  2 of 3 signals          1 strong signal
+`sector_tilt_size`         5% per sector        8% per sector           15% per sector
+`equity_allocation_range`  55-85% (Phase 1-4)   60-90%                  65-100%
+`options_for_transition`   None                 Bull call spreads only  Full options suite
+`rebalancing_speed`        Over 4-6 weeks       Over 2-4 weeks          Over 1-2 weeks
+`t_bill_in_phase_2`        20-25%               12-15%                  8-10%
+`max_equity_phase_3`       80%                  90%                     100%
+`unemployment_threshold`   4.0% (stricter)      4.5%                    5.0%
+`credit_spread_check`      Mandatory (IG OAS)   Mandatory               Preferred
+```
 
 ---
 
 ## Data Requirements
 
-| Data | Source | Usage |
-|---|---|---|
-| FOMC statement text | Federal Reserve website | Language analysis, phase classification |
-| Fed dot plot (SEP) | Federal Reserve website | Projected rate path, phase identification |
-| CME FedWatch probabilities | CME Group | Market-implied rate path (3-6 months forward) |
-| Fed funds rate history | FRED `FEDFUNDS` | Current rate level, change tracking |
-| Unemployment rate (monthly) | BLS / FRED `UNRATE` | Insurance vs panic classification |
-| IG credit spreads (OAS) | FRED / Bloomberg | Credit market health, Phase 4 classification |
-| HYG price and spread | Polygon | High-yield credit check |
-| SPY, QQQ, IWM, VNQ, XLU, XLF, XLE OHLCV | Polygon | Execution and sector performance tracking |
-| TLT, SHY, IEF OHLCV | Polygon | Fixed income execution |
-| Leading Economic Indicators | Conference Board | Phase 4 recession risk assessment |
-| GDP growth (quarterly) | BEA / FRED | Phase 4 context |
+```
+Data                                     Source                   Usage
+---------------------------------------  -----------------------  ---------------------------------------------
+FOMC statement text                      Federal Reserve website  Language analysis, phase classification
+Fed dot plot (SEP)                       Federal Reserve website  Projected rate path, phase identification
+CME FedWatch probabilities               CME Group                Market-implied rate path (3-6 months forward)
+Fed funds rate history                   FRED `FEDFUNDS`          Current rate level, change tracking
+Unemployment rate (monthly)              BLS / FRED `UNRATE`      Insurance vs panic classification
+IG credit spreads (OAS)                  FRED / Bloomberg         Credit market health, Phase 4 classification
+HYG price and spread                     Polygon                  High-yield credit check
+SPY, QQQ, IWM, VNQ, XLU, XLF, XLE OHLCV  Polygon                  Execution and sector performance tracking
+TLT, SHY, IEF OHLCV                      Polygon                  Fixed income execution
+Leading Economic Indicators              Conference Board         Phase 4 recession risk assessment
+GDP growth (quarterly)                   BEA / FRED               Phase 4 context
+```

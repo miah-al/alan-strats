@@ -164,13 +164,15 @@ SNAP gave back the +8% earnings gap over the next 3 days as institutional analys
 
 ## Strategy Parameters
 
-| Parameter | Conservative | Standard | Aggressive |
-|---|---|---|---|
-| Signal threshold | z > ±2.5 | z > ±2.0 | z > ±1.5 |
-| NLP tier | LLM extraction (highest quality) | FinBERT | Lexicon-based |
-| Source quality filter | High weight only (WSJ, SEC, Bloomberg) | Mix | All sources |
-| Transcript required | Yes (mandatory before entry) | Yes | Preferred |
-| Price confirmation | Required (same direction as signal) | Required | Preferred |
-| Entry timing | Within 10 min of signal | Within 30 min | Within 1 hour |
-| Stop loss | −2% from entry | −3% | −5% |
-| Max position size | 2% of portfolio | 4% | 6% |
+```
+Parameter              Conservative                            Standard       Aggressive
+---------------------  --------------------------------------  -------------  -------------
+Signal threshold       z > ±2.5                                z > ±2.0       z > ±1.5
+NLP tier               LLM extraction (highest quality)        FinBERT        Lexicon-based
+Source quality filter  High weight only (WSJ, SEC, Bloomberg)  Mix            All sources
+Transcript required    Yes (mandatory before entry)            Yes            Preferred
+Price confirmation     Required (same direction as signal)     Required       Preferred
+Entry timing           Within 10 min of signal                 Within 30 min  Within 1 hour
+Stop loss              −2% from entry                          −3%            −5%
+Max position size      2% of portfolio                         4%             6%
+```

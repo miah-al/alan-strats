@@ -147,13 +147,15 @@ The lesson: max pain is helpless against macro data releases on expiration day. 
 
 ## Strategy Parameters
 
-| Parameter | Conservative | Standard | Aggressive |
-|---|---|---|---|
-| Expiry type | Quarterly only | Monthly or quarterly | Monthly or weekly |
-| Max distance to max pain | ≤ 0.5% | ≤ 1.0% | ≤ 1.5% |
-| Min OI at pin strike | ≥ 3× adjacent strikes | ≥ 2× adjacent strikes | ≥ 1.5× |
-| Entry time | 11am–1pm | 10am–2pm | 9:35am–2pm |
-| Exit time | By 3:30pm | By 3:45pm | Hold until close |
-| Structure | Iron condor / butterfly | Credit spread | Naked short option |
-| Max position | 2 spreads | 3–5 spreads | 10 spreads |
-| Max macro risk on expiry day | No macro events | Only minor data OK | Any environment |
+```
+Parameter                     Conservative             Standard               Aggressive
+----------------------------  -----------------------  ---------------------  ------------------
+Expiry type                   Quarterly only           Monthly or quarterly   Monthly or weekly
+Max distance to max pain      ≤ 0.5%                   ≤ 1.0%                 ≤ 1.5%
+Min OI at pin strike          ≥ 3× adjacent strikes    ≥ 2× adjacent strikes  ≥ 1.5×
+Entry time                    11am–1pm                 10am–2pm               9:35am–2pm
+Exit time                     By 3:30pm                By 3:45pm              Hold until close
+Structure                     Iron condor / butterfly  Credit spread          Naked short option
+Max position                  2 spreads                3–5 spreads            10 spreads
+Max macro risk on expiry day  No macro events          Only minor data OK     Any environment
+```

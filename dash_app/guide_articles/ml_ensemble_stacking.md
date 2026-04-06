@@ -52,13 +52,15 @@ These weights are not hard-coded — they emerge automatically from meta-model t
 
 The meta-model was trained to recognize base model disagreement as a signal to abstain. Historical analysis:
 
-| Base Model Agreement | # Occurrences | Meta-Model Action | Outcome |
-|---|---|---|---|
-| All 3 agree long | 892 | Long signal | 71% win rate |
-| All 3 agree short | 634 | Short signal | 66% win rate |
-| 2 long, 1 short | 1,241 | Long signal (reduced size) | 60% win rate |
-| 2 short, 1 long | 887 | Short signal (reduced size) | 57% win rate |
-| Disagree / mixed | 1,156 | Abstain | Would have been 51% → correctly avoided |
+```
+Base Model Agreement  # Occurrences  Meta-Model Action            Outcome
+--------------------  -------------  ---------------------------  ---------------------------------------
+All 3 agree long      892            Long signal                  71% win rate
+All 3 agree short     634            Short signal                 66% win rate
+2 long, 1 short       1,241          Long signal (reduced size)   60% win rate
+2 short, 1 long       887            Short signal (reduced size)  57% win rate
+Disagree / mixed      1,156          Abstain                      Would have been 51% → correctly avoided
+```
 
 The 1,156 abstentions prevented taking 578 losing and 578 winning trades that would approximately cancel out, while saving transaction costs and drawdown risk.
 
@@ -66,15 +68,17 @@ The 1,156 abstentions prevented taking 578 losing and 578 winning trades that wo
 
 The ensemble's calibrated confidence score maps directly to realized win rates:
 
-| Meta-model P(long) | Win Rate (historical OOS) | Position Size |
-|---|---|---|
-| > 0.80 | 71% | Full (5-7% of portfolio) |
-| 0.65–0.80 | 63% | Three-quarters (4-5%) |
-| 0.55–0.65 | 57% | Half (2-3%) |
-| 0.45–0.55 | No trade | Zero |
-| 0.35–0.45 | 57% (short) | Half short |
-| < 0.35 | 63% (short) | Three-quarters short |
-| < 0.20 | 71% (short) | Full short |
+```
+Meta-model P(long)  Win Rate (historical OOS)  Position Size
+------------------  -------------------------  ------------------------
+> 0.80              71%                        Full (5-7% of portfolio)
+0.65–0.80           63%                        Three-quarters (4-5%)
+0.55–0.65           57%                        Half (2-3%)
+0.45–0.55           No trade                   Zero
+0.35–0.45           57% (short)                Half short
+< 0.35              63% (short)                Three-quarters short
+< 0.20              71% (short)                Full short
+```
 
 The calibration was verified using Brier score decomposition: the ensemble's calibrated probabilities are within 1.2% of the actual win rates across all confidence buckets — a high bar for financial ML.
 
@@ -188,11 +192,13 @@ This protocol adds substantial training time but is non-negotiable. Any ensemble
 
 **Base model outputs:**
 
-| Model | Prediction | Confidence |
-|---|---|---|
-| XGBoost | P(up) = 0.68 | Strong bullish |
-| LSTM | P(up) = 0.61 | Moderate bullish |
-| Factor Model | Score = +0.72 | XLK/XLC/XLF leading, XLRE/XLU lagging |
+```
+Model         Prediction     Confidence
+------------  -------------  -------------------------------------
+XGBoost       P(up) = 0.68   Strong bullish
+LSTM          P(up) = 0.61   Moderate bullish
+Factor Model  Score = +0.72  XLK/XLC/XLF leading, XLRE/XLU lagging
+```
 
 **Regime features:**
 - VIX: 21.3 (mildly elevated, declining trend)
@@ -219,11 +225,13 @@ This protocol adds substantial training time but is non-negotiable. Any ensemble
 
 **Base model outputs:**
 
-| Model | Prediction | Confidence |
-|---|---|---|
-| XGBoost | P(up) = 0.62 | Bullish |
-| LSTM | P(down) = 0.58 | Bearish |
-| Factor Model | Score = +0.18 | Mildly bullish, low conviction |
+```
+Model         Prediction      Confidence
+------------  --------------  ------------------------------
+XGBoost       P(up) = 0.62    Bullish
+LSTM          P(down) = 0.58  Bearish
+Factor Model  Score = +0.18   Mildly bullish, low conviction
+```
 
 **Meta-model output:** P(long) = 0.51. P(short) = 0.49. No signal (both below 0.55 threshold).
 
@@ -241,11 +249,13 @@ The LSTM had detected the deteriorating sequential pattern (VIX creeping up, yie
 
 **Base model outputs:**
 
-| Model | Prediction | Confidence |
-|---|---|---|
-| XGBoost | P(down) = 0.78 | Strongly bearish |
-| LSTM | P(down) = 0.71 | Strongly bearish |
-| Factor Model | Score = −0.88 | XLP/XLV defensive leading, XLY/XLK leading to downside |
+```
+Model         Prediction      Confidence
+------------  --------------  ------------------------------------------------------
+XGBoost       P(down) = 0.78  Strongly bearish
+LSTM          P(down) = 0.71  Strongly bearish
+Factor Model  Score = −0.88   XLP/XLV defensive leading, XLY/XLK leading to downside
+```
 
 **Meta-model output:** P(short) = 0.82. All models agree. High volatility regime (VIX = 54.5) → LSTM weighted highest (0.55), XGBoost second (0.30), Factor third (0.15).
 
@@ -338,23 +348,27 @@ Ensemble Stacking Dashboard — October 15, 2023:
 
 **Comparison vs individual base models (same test period):**
 
-| Strategy | OOS Sharpe | Max DD | Win Rate |
-|---|---|---|---|
-| Ensemble Stacking | 1.62 | −8.9% | 61% |
-| XGBoost alone | 1.31 | −12.4% | 64% |
-| LSTM alone | 1.18 | −13.8% | 59% |
-| Factor Model alone | 0.96 | −16.2% | 58% |
-| Equal-weight ensemble | 1.44 | −10.7% | 61% |
+```
+Strategy               OOS Sharpe  Max DD  Win Rate
+---------------------  ----------  ------  --------
+Ensemble Stacking      1.62        −8.9%   61%
+XGBoost alone          1.31        −12.4%  64%
+LSTM alone             1.18        −13.8%  59%
+Factor Model alone     0.96        −16.2%  58%
+Equal-weight ensemble  1.44        −10.7%  61%
+```
 
 The stacking meta-model adds 0.18 Sharpe above equal-weighting by correctly routing predictions through the most reliable model in each regime. The reduction in max drawdown from −10.7% (equal-weight) to −8.9% (stacking) reflects the meta-model's improved abstention decisions during model disagreement.
 
 **By consensus level:**
 
-| Agreement level | Signals | Win Rate | Avg P&L | Action |
-|---|---|---|---|---|
-| All 3 agree | 286 | 69% | +$620 | Full position |
-| 2 agree (strong) | 203 | 62% | +$410 | Three-quarter position |
-| Mixed signals | 1,156 | 51% (abstained) | Avoided | No position |
+```
+Agreement level   Signals  Win Rate         Avg P&L  Action
+----------------  -------  ---------------  -------  ----------------------
+All 3 agree       286      69%              +$620    Full position
+2 agree (strong)  203      62%              +$410    Three-quarter position
+Mixed signals     1,156    51% (abstained)  Avoided  No position
+```
 
 ---
 
@@ -457,37 +471,43 @@ position — rather than a literal sizing prescription.
 
 **Failure modes by regime:**
 
-| Failure Mode | Example | Protection |
-|---|---|---|
-| 2022 inflation: all models wrong | GBM + LSTM + Factor all bullish in H1 2022 | Disagreement filter (partially) |
-| COVID crash: tail event | March 2020 models had never seen this speed | VIX out-of-distribution → size reduction |
-| Flash crash: intraday (not modeled) | May 2010 flash crash | Daily-only signals; flash crashes are not captured |
-| Meta-model staleness | New regime emerges between retrains | 3-month retrain cycle |
-| Base model correlation drift | All models discover same "AI bubble" feature | Monthly correlation monitoring |
+```
+Failure Mode                         Example                                       Protection
+-----------------------------------  --------------------------------------------  --------------------------------------------------
+2022 inflation: all models wrong     GBM + LSTM + Factor all bullish in H1 2022    Disagreement filter (partially)
+COVID crash: tail event              March 2020 models had never seen this speed   VIX out-of-distribution → size reduction
+Flash crash: intraday (not modeled)  May 2010 flash crash                          Daily-only signals; flash crashes are not captured
+Meta-model staleness                 New regime emerges between retrains           3-month retrain cycle
+Base model correlation drift         All models discover same "AI bubble" feature  Monthly correlation monitoring
+```
 
 **Position sizing summary:**
 
-| Ensemble confidence | Base model agreement | Position size |
-|---|---|---|
-| P > 0.80 | All 3 agree | Full (5-7% of portfolio) |
-| P 0.65-0.80 | All 3 agree | Full (5-7%) |
-| P 0.65-0.80 | 2 of 3 agree | Three-quarters (4-5%) |
-| P 0.55-0.65 | Any agreement | Half (2-3%) |
-| P 0.45-0.55 | Any | No position |
-| VIX > 2× training mean | Any | 50% reduction applied to all above |
+```
+Ensemble confidence     Base model agreement  Position size
+----------------------  --------------------  ----------------------------------
+P > 0.80                All 3 agree           Full (5-7% of portfolio)
+P 0.65-0.80             All 3 agree           Full (5-7%)
+P 0.65-0.80             2 of 3 agree          Three-quarters (4-5%)
+P 0.55-0.65             Any agreement         Half (2-3%)
+P 0.45-0.55             Any                   No position
+VIX > 2× training mean  Any                   50% reduction applied to all above
+```
 
 ---
 
 ## When This Strategy Works Best
 
-| Condition | Why It Helps | Historical Example |
-|---|---|---|
-| Clear, sustained trend | Factor and LSTM both confirm; meta-model allocates fully | 2023 AI bull market |
-| Post-crash recovery with identifiable bottom | LSTM pattern recognition + XGBoost feature confirmation | Q4 2022 recovery |
-| Moderate VIX (15-25) with macro clarity | All three models in their home regimes | 2019, 2024 |
-| Cross-sector leadership visible | Factor model highly reliable; boosted weight | Q1-Q3 2023 tech leadership |
-| Model disagreement = frequent (choppy market) | High abstention rate protects capital | Sep-Oct 2023 choppy |
-| Base models freshly retrained on recent data | Meta-model weights accurate for current regime | First month post-retrain |
+```
+Condition                                      Why It Helps                                              Historical Example
+---------------------------------------------  --------------------------------------------------------  --------------------------
+Clear, sustained trend                         Factor and LSTM both confirm; meta-model allocates fully  2023 AI bull market
+Post-crash recovery with identifiable bottom   LSTM pattern recognition + XGBoost feature confirmation   Q4 2022 recovery
+Moderate VIX (15-25) with macro clarity        All three models in their home regimes                    2019, 2024
+Cross-sector leadership visible                Factor model highly reliable; boosted weight              Q1-Q3 2023 tech leadership
+Model disagreement = frequent (choppy market)  High abstention rate protects capital                     Sep-Oct 2023 choppy
+Base models freshly retrained on recent data   Meta-model weights accurate for current regime            First month post-retrain
+```
 
 ---
 
@@ -511,37 +531,41 @@ position — rather than a literal sizing prescription.
 
 ## Strategy Parameters
 
-| Parameter | Default | Range | Description |
-|---|---|---|---|
-| Base model count | 3 (GBM + LSTM + Factor) | 2–5 | More than 5 adds complexity without diversity |
-| Max pairwise correlation | 0.70 | 0.60–0.80 | Exclude models if too similar |
-| OOF folds | 5 | 4–8 | Time-ordered folds for meta-model training data |
-| Meta-model type | L2 logistic regression | Logistic / LightGBM | Simple preferred |
-| Regime features in meta | VIX, HMM, 20d return, 2s10s | 3–6 features | Required for regime-conditional weighting |
-| Ensemble trade threshold | P > 0.55 | 0.52–0.60 | Minimum confidence to act |
-| Full position threshold | P > 0.65, all models agree | 0.65–0.80 | When to deploy maximum size |
-| Base model retrain | Every 6 months | Quarterly–annual | Walk-forward window expansion |
-| Meta-model retrain | Every 3 months | Monthly–quarterly | More frequent due to regime sensitivity |
-| Ensemble accuracy halt | < 52% for 20 days | 50–54% | Halt if rolling accuracy falls below |
-| Base model weight override | 0 if any model accuracy −3% | Manual | Immediate response to model failure |
-| VIX out-of-distribution | > 2× training mean | 1.5–2.5× | Trigger 50% size reduction |
-| DTE at entry | 20-30 | 15-45 | Match to base model signal horizons |
-| Paper trading period | 3 months | 2–6 months | Required before live capital |
+```
+Parameter                   Default                      Range                Description
+--------------------------  ---------------------------  -------------------  -----------------------------------------------
+Base model count            3 (GBM + LSTM + Factor)      2–5                  More than 5 adds complexity without diversity
+Max pairwise correlation    0.70                         0.60–0.80            Exclude models if too similar
+OOF folds                   5                            4–8                  Time-ordered folds for meta-model training data
+Meta-model type             L2 logistic regression       Logistic / LightGBM  Simple preferred
+Regime features in meta     VIX, HMM, 20d return, 2s10s  3–6 features         Required for regime-conditional weighting
+Ensemble trade threshold    P > 0.55                     0.52–0.60            Minimum confidence to act
+Full position threshold     P > 0.65, all models agree   0.65–0.80            When to deploy maximum size
+Base model retrain          Every 6 months               Quarterly–annual     Walk-forward window expansion
+Meta-model retrain          Every 3 months               Monthly–quarterly    More frequent due to regime sensitivity
+Ensemble accuracy halt      < 52% for 20 days            50–54%               Halt if rolling accuracy falls below
+Base model weight override  0 if any model accuracy −3%  Manual               Immediate response to model failure
+VIX out-of-distribution     > 2× training mean           1.5–2.5×             Trigger 50% size reduction
+DTE at entry                20-30                        15-45                Match to base model signal horizons
+Paper trading period        3 months                     2–6 months           Required before live capital
+```
 
 ---
 
 ## Data Requirements
 
-| Data | Source | Usage |
-|---|---|---|
-| SPY daily OHLCV (15+ years) | Polygon | All base model features + target variable |
-| VIX daily (15+ years) | Polygon / CBOE | Meta-model regime feature |
-| 10Y and 2Y Treasury yields | FRED / Polygon | Meta-model regime feature (2s10s) |
-| Sector ETF daily returns (11 ETFs) | Polygon | Factor model base + meta-model features |
-| HMM regime state (daily) | Platform regime model (regime_hmm) | Meta-model regime feature |
-| XGBoost model output | Companion model (ml_gradient_boost) | Base model 1 predictions |
-| LSTM model output | Companion model (lstm directional) | Base model 2 predictions |
-| Put/call ratio, IV rank | CBOE / Polygon | XGBoost and LSTM features |
-| Calibration validation set | Historical holdout | Temperature scaling fit |
-| GPU compute (base model training) | Local or cloud | LSTM training ~30 min |
-| CPU compute (meta-model inference) | Standard | <10ms per combined prediction |
+```
+Data                                Source                               Usage
+----------------------------------  -----------------------------------  -----------------------------------------
+SPY daily OHLCV (15+ years)         Polygon                              All base model features + target variable
+VIX daily (15+ years)               Polygon / CBOE                       Meta-model regime feature
+10Y and 2Y Treasury yields          FRED / Polygon                       Meta-model regime feature (2s10s)
+Sector ETF daily returns (11 ETFs)  Polygon                              Factor model base + meta-model features
+HMM regime state (daily)            Platform regime model (regime_hmm)   Meta-model regime feature
+XGBoost model output                Companion model (ml_gradient_boost)  Base model 1 predictions
+LSTM model output                   Companion model (lstm directional)   Base model 2 predictions
+Put/call ratio, IV rank             CBOE / Polygon                       XGBoost and LSTM features
+Calibration validation set          Historical holdout                   Temperature scaling fit
+GPU compute (base model training)   Local or cloud                       LSTM training ~30 min
+CPU compute (meta-model inference)  Standard                             <10ms per combined prediction
+```

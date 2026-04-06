@@ -154,13 +154,15 @@ The lesson: correlation > 0.6 from co-buying (both rising) is not a bearish sign
 
 ## Strategy Parameters
 
-| Parameter | Conservative | Standard | Aggressive |
-|---|---|---|---|
-| Base crypto allocation | 4% of portfolio | 8% | 12% |
-| High-corr trigger | > 0.55 AND BTC −10% in 14d | > 0.60 AND BTC −10% | > 0.65 AND BTC −8% |
-| Crypto reduction on signal | Sell 60% (reduce to 40% of base) | Sell 50% | Sell 30% |
-| SPY hedge (put DTE) | 90 DTE | 60 DTE | 30 DTE |
-| Hedge budget | 1% per 6 months | 0.75% | 0.5% |
-| Correlation normalization exit | < 0.25 for 15 days | < 0.30 for 10 days | < 0.35 for 5 days |
-| BTC vehicle | IBIT (ETF, regulated) | IBIT or direct | Direct crypto holdings |
-| Weekend allocation limit | < 5% | < 8% | < 12% |
+```
+Parameter                       Conservative                      Standard             Aggressive
+------------------------------  --------------------------------  -------------------  ----------------------
+Base crypto allocation          4% of portfolio                   8%                   12%
+High-corr trigger               > 0.55 AND BTC −10% in 14d        > 0.60 AND BTC −10%  > 0.65 AND BTC −8%
+Crypto reduction on signal      Sell 60% (reduce to 40% of base)  Sell 50%             Sell 30%
+SPY hedge (put DTE)             90 DTE                            60 DTE               30 DTE
+Hedge budget                    1% per 6 months                   0.75%                0.5%
+Correlation normalization exit  < 0.25 for 15 days                < 0.30 for 10 days   < 0.35 for 5 days
+BTC vehicle                     IBIT (ETF, regulated)             IBIT or direct       Direct crypto holdings
+Weekend allocation limit        < 5%                              < 8%                 < 12%
+```

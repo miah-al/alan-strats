@@ -76,12 +76,14 @@ Summary:
 
 **Greek profile at entry:**
 
-| Greek | Sign | Practical meaning |
-|---|---|---|
-| Delta | Negative (~−0.40) | Net bearish; gains ~$40 per $1 SPY decline at entry |
-| Theta | Mildly negative | Time decay works against debit spreads — need the move |
-| Vega | Positive (net) | Rising IV initially helps; IV compression after spike hurts |
-| Gamma | Positive | Gains accelerate as underlying approaches and falls through long strike |
+```
+Greek  Sign               Practical meaning
+-----  -----------------  -----------------------------------------------------------------------
+Delta  Negative (~−0.40)  Net bearish; gains ~$40 per $1 SPY decline at entry
+Theta  Mildly negative    Time decay works against debit spreads — need the move
+Vega   Positive (net)     Rising IV initially helps; IV compression after spike hurts
+Gamma  Positive           Gains accelerate as underlying approaches and falls through long strike
+```
 
 ---
 
@@ -93,11 +95,13 @@ Summary:
 
 SPY broke below the 50-day MA on high volume. Unemployment claims had risen for three consecutive weeks. The 2Y/10Y yield spread inverted further to −0.45%. RSI(14) at 38 and declining. Bear thesis: SPY tests $530 support over 3 weeks.
 
-| Leg | Strike | Action | Premium | Contracts |
-|---|---|---|---|---|
-| Long put | Sep 19 $550 (ATM, delta −0.50) | Buy 2× | $5.80 | −$1,160 |
-| Short put | Sep 19 $535 (wing) | Sell 2× | $2.40 | +$480 |
-| **Net debit** | | | | **−$680 (2 contracts, $3.40 each)** |
+```
+Leg        Strike                          Action   Premium  Contracts
+---------  ------------------------------  -------  -------  -------------------------------
+Long put   Sep 19 $550 (ATM, delta −0.50)  Buy 2×   $5.80    −$1,160
+Short put  Sep 19 $535 (wing)              Sell 2×  $2.40    +$480
+Net debit                                                    −$680 (2 contracts, $3.40 each)
+```
 
 Entry rationale: SPY broke key support on high volume — a clean technical breakdown signal. IV Rank at 61% is elevated but not extreme (VIX has not yet spiked to danger levels). Yield curve inversion confirms macroeconomic deterioration. Clear 3-week thesis with specific target ($530).
 
@@ -117,11 +121,13 @@ Day 9: SPY dropped to $539. Spread worth $8.20.
 
 The error was structural: entering a debit spread AFTER VIX had already spiked from 18 to 32 over the preceding week. Put premiums were extremely expensive across the board. The spread that would have cost $2.90 with VIX at 18 now cost $4.80.
 
-| Leg | Strike | Action | Premium | Contracts |
-|---|---|---|---|---|
-| Long put | Apr $545 (ATM, 14 DTE) | Buy 2× | $7.20 | −$1,440 |
-| Short put | Apr $530 (wing) | Sell 2× | $2.40 | +$480 |
-| **Net debit** | | | | **−$960 (2 contracts, $4.80 each)** |
+```
+Leg        Strike                  Action   Premium  Contracts
+---------  ----------------------  -------  -------  -------------------------------
+Long put   Apr $545 (ATM, 14 DTE)  Buy 2×   $7.20    −$1,440
+Short put  Apr $530 (wing)         Sell 2×  $2.40    +$480
+Net debit                                            −$960 (2 contracts, $4.80 each)
+```
 
 ```
 Max profit: ($545 − $530 − $4.80) × 100 = $1,020 per contract
@@ -141,11 +147,13 @@ Entering after a volatility spike has already occurred is a classic structural t
 
 Established downtrend. Fed hiking cycle well underway. CPI printed hot. SPY broke below a consolidation range that had held for 3 weeks. RSI at 35, declining. ADX at 31 — a genuine bear trend in progress.
 
-| Leg | Strike | Action | Premium | Contracts |
-|---|---|---|---|---|
-| Long put | Nov $380 (near ATM) | Buy 3× | $8.40 | −$2,520 |
-| Short put | Nov $360 (wing) | Sell 3× | $3.60 | +$1,080 |
-| **Net debit** | | | | **−$1,440 (3 contracts, $4.80 each)** |
+```
+Leg        Strike               Action   Premium  Contracts
+---------  -------------------  -------  -------  ---------------------------------
+Long put   Nov $380 (near ATM)  Buy 3×   $8.40    −$2,520
+Short put  Nov $360 (wing)      Sell 3×  $3.60    +$1,080
+Net debit                                         −$1,440 (3 contracts, $4.80 each)
+```
 
 ```
 Max profit: ($380 − $360 − $4.80) × 100 = $1,520 per contract = $4,560 total
@@ -307,32 +315,36 @@ At VIX 32 on same structure:
 
 ## Strategy Parameters
 
-| Parameter | Default | Range | Description |
-|---|---|---|---|
-| Long put delta | −0.50 | −0.40 to −0.55 | ATM or just OTM — directly captures the decline |
-| Short put strike | 8–10% below spot | 5–15% | Wing that caps profit and reduces debit |
-| Wing width | $10–$15 | $5–$25 | Wider = more profit potential and more debit |
-| Net debit | ≤ 35% of width | ≤ 40% | Risk/reward filter — structural quality check |
-| DTE at entry | 21 | 14–30 | Shorter for high-conviction fast setups |
-| Profit target | 75–100% of debit | 50–100% | Close at 75%+ gain; do not hold hoping for max |
-| Stop loss | 50% of debit | 40–60% | Close if spread loses half its value |
-| VIX range | 18–28 | 15–32 | Moderate IV best; extreme IV makes debit too expensive |
-| VIX maximum | 30 | Any | Above 30, debit premium degrades reward/risk unacceptably |
-| Reward/risk minimum | 3:1 | 2:1 | Never accept below 2:1; target 3:1 or better |
+```
+Parameter            Default           Range           Description
+-------------------  ----------------  --------------  ---------------------------------------------------------
+Long put delta       −0.50             −0.40 to −0.55  ATM or just OTM — directly captures the decline
+Short put strike     8–10% below spot  5–15%           Wing that caps profit and reduces debit
+Wing width           $10–$15           $5–$25          Wider = more profit potential and more debit
+Net debit            ≤ 35% of width    ≤ 40%           Risk/reward filter — structural quality check
+DTE at entry         21                14–30           Shorter for high-conviction fast setups
+Profit target        75–100% of debit  50–100%         Close at 75%+ gain; do not hold hoping for max
+Stop loss            50% of debit      40–60%          Close if spread loses half its value
+VIX range            18–28             15–32           Moderate IV best; extreme IV makes debit too expensive
+VIX maximum          30                Any             Above 30, debit premium degrades reward/risk unacceptably
+Reward/risk minimum  3:1               2:1             Never accept below 2:1; target 3:1 or better
+```
 
 ---
 
 ## Data Requirements
 
-| Data | Source | Usage |
-|---|---|---|
-| SPY/stock OHLCV daily | Polygon | Spot price, technical indicators (RSI, MACD, MA, ADX) |
-| VIX daily close | Polygon `VIXIND` | Vol regime filter, VIX 5-day change check |
-| Options chain by strike/expiry | Polygon | Debit calculation, reward/risk screening |
-| IVR (52-week rolling) | Computed from VIX | Context for debit evaluation |
-| Volume vs 20-day average | Computed from OHLCV | Breakdown volume confirmation |
-| HYG price history | Polygon | Credit spread signal (leading indicator of equity stress) |
-| RSI (14-period) | Computed from OHLCV | Bearish signal and not-yet-oversold confirmation |
-| ADX (14-period) | Computed from OHLCV | Trend confirmation for breakdown entries |
-| Yield curve data (2Y/10Y spread) | FRED or Polygon | Macro deterioration confirmation |
-| Economic calendar | Fed/BLS | Macro catalyst and FOMC timing |
+```
+Data                              Source               Usage
+--------------------------------  -------------------  ---------------------------------------------------------
+SPY/stock OHLCV daily             Polygon              Spot price, technical indicators (RSI, MACD, MA, ADX)
+VIX daily close                   Polygon `VIXIND`     Vol regime filter, VIX 5-day change check
+Options chain by strike/expiry    Polygon              Debit calculation, reward/risk screening
+IVR (52-week rolling)             Computed from VIX    Context for debit evaluation
+Volume vs 20-day average          Computed from OHLCV  Breakdown volume confirmation
+HYG price history                 Polygon              Credit spread signal (leading indicator of equity stress)
+RSI (14-period)                   Computed from OHLCV  Bearish signal and not-yet-oversold confirmation
+ADX (14-period)                   Computed from OHLCV  Trend confirmation for breakdown entries
+Yield curve data (2Y/10Y spread)  FRED or Polygon      Macro deterioration confirmation
+Economic calendar                 Fed/BLS              Macro catalyst and FOMC timing
+```

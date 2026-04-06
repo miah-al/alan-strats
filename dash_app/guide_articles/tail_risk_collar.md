@@ -122,11 +122,13 @@ Step 3: Upside buffer check
 
 **Position:**
 
-| Leg | Strike | Action | Contracts | Price | Total |
-|---|---|---|---|---|---|
-| Protective put | Jul 18 $517 | Buy 2 | 200 shares | $3.20/share | −$640 |
-| Covered call | Jul 18 $561 | Sell 2 | 200 shares | $3.10/share | +$620 |
-| **Net cost** | | | | | **$20 (nearly free)** |
+```
+Leg             Strike       Action  Contracts   Price        Total
+--------------  -----------  ------  ----------  -----------  -----------------
+Protective put  Jul 18 $517  Buy 2   200 shares  $3.20/share  −$640
+Covered call    Jul 18 $561  Sell 2  200 shares  $3.10/share  +$620
+Net cost                                                      $20 (nearly free)
+```
 
 **Maximum loss:** ($544 − $517) × 200 + $20 = **−$5,420**  (vs −$18,800 uncollared at SPY $450)
 **Maximum gain:** ($561 − $544) × 200 − $20 = **+$3,380**
@@ -156,14 +158,16 @@ Outcome band: −5% floor at $551, +3.4% cap at $600
 **With collar:** Floor at $551. Loss = ($551 − $580) × 200 + $10 = **−$5,810**
 **Collar savings:** $8,000 − $5,810 = **$2,190 protected** on a $10 cost structure.
 
-| SPY at Feb 21 | Without Collar | With Collar | Saved |
-|---|---|---|---|
-| $600 (+3.4%) | +$4,000 | +$3,990 | −$10 (collar cost) |
-| $580 (flat) | $0 | −$10 | $0 |
-| $551 (−5%) | −$5,800 | −$5,810 | $0 |
-| $540 (−6.9%) | −$8,000 | −$5,810 | **$2,190** |
-| $510 (−12%) | −$14,000 | −$5,810 | **$8,190** |
-| $470 (−19%) | −$22,000 | −$5,810 | **$16,190** |
+```
+SPY at Feb 21  Without Collar  With Collar  Saved
+-------------  --------------  -----------  ------------------
+$600 (+3.4%)   +$4,000         +$3,990      −$10 (collar cost)
+$580 (flat)    $0              −$10         $0
+$551 (−5%)     −$5,800         −$5,810      $0
+$540 (−6.9%)   −$8,000         −$5,810      $2,190
+$510 (−12%)    −$14,000        −$5,810      $8,190
+$470 (−19%)    −$22,000        −$5,810      $16,190
+```
 
 **Rebalancing opportunity:** With SPY at $540 and the collar expiring February 21, the investor can now do two things the unhedged investor cannot: (1) hold through the remaining decline with a defined floor, and (2) add new shares at $540 with a fresh collar, setting a new cost basis at the current depressed price. The unhedged investor, down $8,000+ on their existing position, is psychologically inhibited from adding.
 
@@ -209,17 +213,19 @@ RECOMMENDATION: Near-zero cost structure with meaningful protection.
 
 **SPY collars 2018–2024, rolling quarterly (5% OTM put / 3–4% OTM call at zero net cost):**
 
-| Metric | Uncollared SPY | Full Collar | Partial (50%) |
-|---|---|---|---|
-| Annual return (CAGR) | +13.8% | +7.2% | +10.5% |
-| Maximum drawdown (2020) | −34% | −5.8% | −19% |
-| Sharpe ratio | 0.74 | 0.85 | 0.80 |
-| Worst month | −12.4% | −5.2% | −8.8% |
-| Annual option net cost | $0 | ~$0 | ~$0 |
-| Calmar ratio (return/drawdown) | 0.41 | 1.24 | 0.55 |
-| 2020 COVID loss | −$37,200 on $100K | −$5,800 | −$19,000 |
-| 2022 bear market loss | −$19,400 | −$5,800 | −$12,600 |
-| Recovery time (2020) | 5 months | 1.4 months | 3.2 months |
+```
+Metric                          Uncollared SPY     Full Collar  Partial (50%)
+------------------------------  -----------------  -----------  -------------
+Annual return (CAGR)            +13.8%             +7.2%        +10.5%
+Maximum drawdown (2020)         −34%               −5.8%        −19%
+Sharpe ratio                    0.74               0.85         0.80
+Worst month                     −12.4%             −5.2%        −8.8%
+Annual option net cost          $0                 ~$0          ~$0
+Calmar ratio (return/drawdown)  0.41               1.24         0.55
+2020 COVID loss                 −$37,200 on $100K  −$5,800      −$19,000
+2022 bear market loss           −$19,400           −$5,800      −$12,600
+Recovery time (2020)            5 months           1.4 months   3.2 months
+```
 
 **The Sharpe premium of collars:** Despite earning only 52% of uncollared SPY's CAGR (7.2% vs 13.8%), the collared portfolio achieves a superior Sharpe ratio (0.85 vs 0.74) because the dramatic reduction in maximum drawdown (5.8% vs 34%) compresses the portfolio's return volatility. For investors who measure success by Sharpe rather than by absolute returns — wealth managers, near-retirees, institutions with liability matching — the collar is structurally superior.
 
@@ -306,15 +312,17 @@ Cost per dollar of catastrophic protection: $20 / $38,100 = 0.05%
 
 ## When This Strategy Works Best
 
-| Scenario | Collar Outcome | Versus Unhedged |
-|---|---|---|
-| Bear market (−15%+) | Excellent — floor activated, loss minimal | Dramatic outperformance |
-| Correction (−8% to −15%) | Very good — floor softens blow | Strong outperformance |
-| Mild decline (−3% to −8%) | Good — inside band or near floor | Moderate outperformance |
-| Flat market (±3%) | Neutral — participates fully in band | Essentially identical |
-| Mild rally (+3% to +5%) | Good — captures full gain to call strike | Underperforms marginally |
-| Strong rally (+10%+) | Poor — capped at 3–4% | Significant underperformance |
-| Explosive rally (+25%+) | Very poor — full opportunity cost | Severe underperformance |
+```
+Scenario                   Collar Outcome                             Versus Unhedged
+-------------------------  -----------------------------------------  ----------------------------
+Bear market (−15%+)        Excellent — floor activated, loss minimal  Dramatic outperformance
+Correction (−8% to −15%)   Very good — floor softens blow             Strong outperformance
+Mild decline (−3% to −8%)  Good — inside band or near floor           Moderate outperformance
+Flat market (±3%)          Neutral — participates fully in band       Essentially identical
+Mild rally (+3% to +5%)    Good — captures full gain to call strike   Underperforms marginally
+Strong rally (+10%+)       Poor — capped at 3–4%                      Significant underperformance
+Explosive rally (+25%+)    Very poor — full opportunity cost          Severe underperformance
+```
 
 ---
 
@@ -336,31 +344,35 @@ Cost per dollar of catastrophic protection: $20 / $38,100 = 0.05%
 
 ## Strategy Parameters
 
-| Parameter | Default | Tight Protection | Loose Protection |
-|---|---|---|---|
-| Put OTM distance | 5% | 3% | 8% |
-| Call OTM distance | 3–4% | 2–3% | 5–7% |
-| DTE | 45 | 30 | 60 |
-| Net cost target | $0 ± $0.20/share | $0 ± $0.10/share | $0 ± $0.30/share |
-| IVR minimum | 35% | 30% | 40% |
-| Hedge ratio | 100% | 100% | 50% |
-| Roll frequency | At expiry | Monthly | Quarterly |
-| Minimum upside buffer | 2.5% | 2.0% | 4.0% |
-| Max net debit | $0.20/share | $0.10/share | $0.30/share |
-| Early cap removal trigger | Call within 1% ITM | 0.5% | 1.5% |
+```
+Parameter                  Default             Tight Protection  Loose Protection
+-------------------------  ------------------  ----------------  ----------------
+Put OTM distance           5%                  3%                8%
+Call OTM distance          3–4%                2–3%              5–7%
+DTE                        45                  30                60
+Net cost target            $0 ± $0.20/share    $0 ± $0.10/share  $0 ± $0.30/share
+IVR minimum                35%                 30%               40%
+Hedge ratio                100%                100%              50%
+Roll frequency             At expiry           Monthly           Quarterly
+Minimum upside buffer      2.5%                2.0%              4.0%
+Max net debit              $0.20/share         $0.10/share       $0.30/share
+Early cap removal trigger  Call within 1% ITM  0.5%              1.5%
+```
 
 ---
 
 ## Data Requirements
 
-| Data Point | Source | Update Frequency | Purpose |
-|---|---|---|---|
-| Current SPY/stock price | Broker / Yahoo Finance | Real-time | Strike selection starting point |
-| OTM put premiums (3–8% range) | Broker options chain | Real-time | Find protection level cost |
-| OTM call premiums (2–7% range) | Broker options chain | Real-time | Find funding call strike |
-| VIX level | CBOE / broker | Real-time | Efficiency assessment |
-| IV Rank | Broker / TastyTrade | Daily | Confirm call premium sufficiency |
-| Dividend ex-date | Broker / earnings calendar | Weekly | Avoid early exercise risk on calls |
-| Tax lot holding period | Brokerage tax records | At entry | Long-term gain protection check |
-| Maximum drawdown tolerance | Personal financial plan | At setup | Determine put OTM % |
-| Share count owned | Broker account | At entry | Confirm covered status for call |
+```
+Data Point                      Source                      Update Frequency  Purpose
+------------------------------  --------------------------  ----------------  ----------------------------------
+Current SPY/stock price         Broker / Yahoo Finance      Real-time         Strike selection starting point
+OTM put premiums (3–8% range)   Broker options chain        Real-time         Find protection level cost
+OTM call premiums (2–7% range)  Broker options chain        Real-time         Find funding call strike
+VIX level                       CBOE / broker               Real-time         Efficiency assessment
+IV Rank                         Broker / TastyTrade         Daily             Confirm call premium sufficiency
+Dividend ex-date                Broker / earnings calendar  Weekly            Avoid early exercise risk on calls
+Tax lot holding period          Brokerage tax records       At entry          Long-term gain protection check
+Maximum drawdown tolerance      Personal financial plan     At setup          Determine put OTM %
+Share count owned               Broker account              At entry          Confirm covered status for call
+```

@@ -127,20 +127,22 @@ Option C (Split Exit): Sell 75% at 2:15 PM, keep 25% through press conference
 
 ### Trade 1 — December 18, 2024: Hawkish Dot Plot Surprise ✅
 
-| Field | Value |
-|---|---|
-| Date | December 18, 2024 |
-| SPY at 1:30 PM | $590.00 |
-| FOMC expectation | 25 bps cut (87% priced) — rate decision "boring" |
-| Real question | Dot plot: 2 cuts vs 3 cuts for 2025? |
-| Straddle cost | $5.80 (0.98% implied move) |
-| Historical FOMC avg | 1.45% (straddle appeared cheap) |
-| Contracts | 3 |
-| Total debit | $1,740 |
-| Exit time | 2:18 PM |
-| Exit value | $8.35 per straddle |
-| SPY at exit | $582.50 (−1.27%) |
-| **P&L** | **+$765 (+44% in 48 minutes)** |
+```
+Field                Value
+-------------------  ------------------------------------------------
+Date                 December 18, 2024
+SPY at 1:30 PM       $590.00
+FOMC expectation     25 bps cut (87% priced) — rate decision "boring"
+Real question        Dot plot: 2 cuts vs 3 cuts for 2025?
+Straddle cost        $5.80 (0.98% implied move)
+Historical FOMC avg  1.45% (straddle appeared cheap)
+Contracts            3
+Total debit          $1,740
+Exit time            2:18 PM
+Exit value           $8.35 per straddle
+SPY at exit          $582.50 (−1.27%)
+P&L                  +$765 (+44% in 48 minutes)
+```
 
 **What happened:** Fed cut 25 bps as expected. But the dot plot showed only 2 cuts projected for 2025 (vs prior 3-cut projection). Powell reinforced "higher for longer" messaging for the remaining cuts. Market immediately re-priced the 2025 rate path — SPY fell 1.27% in 18 minutes. The put leg gained $8.20; the call leg was nearly worthless at $0.15.
 
@@ -150,18 +152,20 @@ Option C (Split Exit): Sell 75% at 2:15 PM, keep 25% through press conference
 
 ### Trade 2 — March 20, 2024: Perfectly Priced, No Surprise ❌
 
-| Field | Value |
-|---|---|
-| Date | March 20, 2024 |
-| SPY at 1:30 PM | $521.00 |
-| FOMC expectation | Hold (99% priced) — rate decision fully certain |
-| Dot plot expectation | 3 cuts for 2024 — already established |
-| Straddle cost | $4.20 (0.81% implied move) |
-| Contracts | 3 |
-| Total debit | $1,260 |
-| Actual SPY move | +0.4% (closed at $523.08) |
-| Exit value | $0.45 per straddle (IV crushed, minimal move) |
-| **P&L** | **−$1,125 (−89% of premium)** |
+```
+Field                 Value
+--------------------  -----------------------------------------------
+Date                  March 20, 2024
+SPY at 1:30 PM        $521.00
+FOMC expectation      Hold (99% priced) — rate decision fully certain
+Dot plot expectation  3 cuts for 2024 — already established
+Straddle cost         $4.20 (0.81% implied move)
+Contracts             3
+Total debit           $1,260
+Actual SPY move       +0.4% (closed at $523.08)
+Exit value            $0.45 per straddle (IV crushed, minimal move)
+P&L                   −$1,125 (−89% of premium)
+```
 
 **What happened:** Powell confirmed no changes and reiterated patience. SPY ticked up 0.4% on the "dovish enough" tone and then faded to nearly flat. The straddle cost $4.20 but the actual move generated only $2.08 of intrinsic value on the up side — far below the $4.20 break-even. IV crush from 65% to 22% destroyed the residual value rapidly.
 
@@ -171,20 +175,22 @@ Option C (Split Exit): Sell 75% at 2:15 PM, keep 25% through press conference
 
 ### Trade 3 — November 2, 2022: Hawkish Pivot in Press Conference ✅
 
-| Field | Value |
-|---|---|
-| Date | November 2, 2022 |
-| SPY at 1:30 PM | $381.50 |
-| FOMC expectation | 75 bps hike (81% priced) |
-| Straddle cost | $7.20 (1.89% implied — at the high end) |
-| Entry decision | Marginal — implied move is already near historical avg. Entered half size. |
-| Contracts | 2 (half normal size) |
-| Total debit | $1,440 |
-| 2:05 PM (initial reaction) | SPY rose to $386.30 (+1.26%) — "relief rally" |
-| 2:35 PM (press conference) | Powell states terminal rate "likely higher than thought" → SPY collapses |
-| 2:55 PM exit | SPY at $378.80 (−0.71% from entry, −1.97% from 2:05 PM high) |
-| Exit value | $9.90 per straddle (put leg dominated) |
-| **P&L** | **+$540 (+37.5% in 85 minutes)** |
+```
+Field                       Value
+--------------------------  --------------------------------------------------------------------------
+Date                        November 2, 2022
+SPY at 1:30 PM              $381.50
+FOMC expectation            75 bps hike (81% priced)
+Straddle cost               $7.20 (1.89% implied — at the high end)
+Entry decision              Marginal — implied move is already near historical avg. Entered half size.
+Contracts                   2 (half normal size)
+Total debit                 $1,440
+2:05 PM (initial reaction)  SPY rose to $386.30 (+1.26%) — "relief rally"
+2:35 PM (press conference)  Powell states terminal rate "likely higher than thought" → SPY collapses
+2:55 PM exit                SPY at $378.80 (−0.71% from entry, −1.97% from 2:05 PM high)
+Exit value                  $9.90 per straddle (put leg dominated)
+P&L                         +$540 (+37.5% in 85 minutes)
+```
 
 **The press conference reversal dynamic:** The market initially rallied on the 75 bps decision (in line with expectation). The straddle briefly looked like a loser at 2:15 PM with SPY at $386. But holding through the press conference captured the reversal — the put leg went from nearly worthless to deeply in-the-money as Powell delivered hawkish guidance. This is the "press conference hold" trade working exactly as designed.
 
@@ -429,15 +435,17 @@ The market correctly prices the meeting, Powell says nothing unexpected, and the
 
 ## When This Strategy Works Best
 
-| Condition | Optimal Value | Why |
-|---|---|---|
-| Rate decision certainty | 50-80% for one outcome | Genuine uncertainty drives larger reactions |
-| Dot plot revision likely | Yes | Dot plot surprises generate 1.5-3.0% moves |
-| Press conference risk | High (new Fed language) | Language surprises create reversal opportunities |
-| Implied move | < 0.90% | Cheapest straddle relative to historical average |
-| VIX context | 15-25 | Moderate macro vol — FOMC move will be significant |
-| Cycle phase | Active hiking/cutting | Meetings with rate changes generate larger moves |
-| Number of cuts/hikes priced for year | Changing (up or down) | Path uncertainty = straddle opportunity |
+```
+Condition                             Optimal Value            Why
+------------------------------------  -----------------------  --------------------------------------------------
+Rate decision certainty               50-80% for one outcome   Genuine uncertainty drives larger reactions
+Dot plot revision likely              Yes                      Dot plot surprises generate 1.5-3.0% moves
+Press conference risk                 High (new Fed language)  Language surprises create reversal opportunities
+Implied move                          < 0.90%                  Cheapest straddle relative to historical average
+VIX context                           15-25                    Moderate macro vol — FOMC move will be significant
+Cycle phase                           Active hiking/cutting    Meetings with rate changes generate larger moves
+Number of cuts/hikes priced for year  Changing (up or down)    Path uncertainty = straddle opportunity
+```
 
 ---
 
@@ -461,29 +469,33 @@ The market correctly prices the meeting, Powell says nothing unexpected, and the
 
 ## Strategy Parameters
 
-| Parameter | Conservative | Standard | Aggressive | Description |
-|---|---|---|---|---|
-| `max_implied_move_entry` | < 1.00% | < 1.30% | < 1.50% | Maximum implied move to buy straddle |
-| `max_outcome_certainty` | < 80% | < 85% | < 90% | Max % priced for one rate outcome |
-| `entry_timing` | 1:30–1:45 PM | 1:20–1:45 PM | 1:15–1:50 PM | Window before 2:00 PM |
-| `exit_timing` | Within 15 min of move | Within 25 min | Hold 50% through press conf |  |
-| `dte` | 0DTE (same day) | 0DTE | 1DTE (next day) |  |
-| `max_position_size` | 1% of portfolio | 1.5% | 2.5% |  |
-| `press_conference_hold` | Never | 25% of position | 50% of position |  |
-| `min_uncertainty_factors` | 2 of 3 required | 1 of 3 | Any ambiguity | Rate/dot plot/language |
+```
+Parameter                  Conservative           Standard         Aggressive                   Description
+-------------------------  ---------------------  ---------------  ---------------------------  ------------------------------------
+`max_implied_move_entry`   < 1.00%                < 1.30%          < 1.50%                      Maximum implied move to buy straddle
+`max_outcome_certainty`    < 80%                  < 85%            < 90%                        Max % priced for one rate outcome
+`entry_timing`             1:30–1:45 PM           1:20–1:45 PM     1:15–1:50 PM                 Window before 2:00 PM
+`exit_timing`              Within 15 min of move  Within 25 min    Hold 50% through press conf
+`dte`                      0DTE (same day)        0DTE             1DTE (next day)
+`max_position_size`        1% of portfolio        1.5%             2.5%
+`press_conference_hold`    Never                  25% of position  50% of position
+`min_uncertainty_factors`  2 of 3 required        1 of 3           Any ambiguity                Rate/dot plot/language
+```
 
 ---
 
 ## Data Requirements
 
-| Data | Source | Usage |
-|---|---|---|
-| FOMC meeting calendar | Federal Reserve website | Know exact 8 meeting dates per year |
-| SPY real-time price (1:30 PM) | Polygon / broker feed | Strike selection |
-| 0DTE options chain (SPY) | Polygon / broker | Straddle pricing and implied move calculation |
-| CME FedWatch probabilities | CME Group website | Rate outcome certainty check |
-| Historical FOMC moves (SPY %) | Compiled from SPY data | Implied vs historical move comparison |
-| VIX real-time | Polygon `VIXIND` | Macro vol context |
-| Previous FOMC statement | Federal Reserve | Language comparison — what might change? |
-| Current dot plot vs prior | Federal Reserve | Dot plot revision risk assessment |
-| Fed funds futures strip | CME / broker | Full rate path pricing beyond current meeting |
+```
+Data                           Source                   Usage
+-----------------------------  -----------------------  ---------------------------------------------
+FOMC meeting calendar          Federal Reserve website  Know exact 8 meeting dates per year
+SPY real-time price (1:30 PM)  Polygon / broker feed    Strike selection
+0DTE options chain (SPY)       Polygon / broker         Straddle pricing and implied move calculation
+CME FedWatch probabilities     CME Group website        Rate outcome certainty check
+Historical FOMC moves (SPY %)  Compiled from SPY data   Implied vs historical move comparison
+VIX real-time                  Polygon `VIXIND`         Macro vol context
+Previous FOMC statement        Federal Reserve          Language comparison — what might change?
+Current dot plot vs prior      Federal Reserve          Dot plot revision risk assessment
+Fed funds futures strip        CME / broker             Full rate path pricing beyond current meeting
+```

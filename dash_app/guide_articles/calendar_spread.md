@@ -101,11 +101,13 @@ Key: Calendar loses money when the underlying moves significantly in EITHER dire
 
 **The trade:**
 
-| Leg | Expiry | Strike | Action | Price | Total |
-|---|---|---|---|---|---|
-| Short (front month) | May 23 (11 DTE) | $572 call | Sell 1× | $2.40 | +$2.40 |
-| Long (back month) | Jun 20 (39 DTE) | $572 call | Buy 1× | $5.80 | −$5.80 |
-| **Net debit** | — | — | — | — | **$3.40 = $340 per contract** |
+```
+Leg                  Expiry           Strike     Action   Price  Total
+-------------------  ---------------  ---------  -------  -----  -------------------------
+Short (front month)  May 23 (11 DTE)  $572 call  Sell 1×  $2.40  +$2.40
+Long (back month)    Jun 20 (39 DTE)  $572 call  Buy 1×   $5.80  −$5.80
+Net debit            —                —          —        —      $3.40 = $340 per contract
+```
 
 **Theta differential:**
 ```
@@ -117,23 +119,27 @@ Over 11 days in perfect scenario: +$2.09 net theta harvest
 
 **Results at May 23 expiry (SPY at $572):**
 
-| Component | Value at May 23 |
-|---|---|
-| Short May 23 $572 call | Expires worthless: +$2.40 collected in full |
-| Long Jun 20 $572 call | Still worth ~$4.10 (lost 11 days of decay only) |
-| **Net position value** | **$4.10** |
-| **Profit** | $4.10 − $3.40 = **+$70 per contract** |
-| **Return** | +$70 / $340 = **+20.6% in 11 days** |
+```
+Component               Value at May 23
+----------------------  -----------------------------------------------
+Short May 23 $572 call  Expires worthless: +$2.40 collected in full
+Long Jun 20 $572 call   Still worth ~$4.10 (lost 11 days of decay only)
+Net position value      $4.10
+Profit                  $4.10 − $3.40 = +$70 per contract
+Return                  +$70 / $340 = +20.6% in 11 days
+```
 
 **Scenario table (various SPY outcomes at May 23):**
 
-| SPY at May 23 | Short Call P&L | Long Call Value | Calendar P&L | Notes |
-|---|---|---|---|---|
-| $572 (flat) | +$2.40 | $4.10 | **+$70** | Ideal outcome |
-| $575 (+0.5%) | +$0.20 (still OTM) | $4.50 | **+$110** | Slight rally actually helps |
-| $580 (+1.4%) | −$5.20 (ITM) | $8.40 | **−$120** | Short call breached |
-| $565 (−1.2%) | +$2.40 (expired) | $2.80 | **−$60** | Far call lost value from move |
-| $555 (−3.0%) | +$2.40 (expired) | $2.00 | **−$100** | Far call lost significantly |
+```
+SPY at May 23  Short Call P&L      Long Call Value  Calendar P&L  Notes
+-------------  ------------------  ---------------  ------------  -----------------------------
+$572 (flat)    +$2.40              $4.10            +$70          Ideal outcome
+$575 (+0.5%)   +$0.20 (still OTM)  $4.50            +$110         Slight rally actually helps
+$580 (+1.4%)   −$5.20 (ITM)        $8.40            −$120         Short call breached
+$565 (−1.2%)   +$2.40 (expired)    $2.80            −$60          Far call lost value from move
+$555 (−3.0%)   +$2.40 (expired)    $2.00            −$100         Far call lost significantly
+```
 
 **The calendar loses on moves greater than approximately ±2% from the strike.** This is the fundamental risk.
 
@@ -182,12 +188,14 @@ Three-week P&L summary:
 
 **Stop-loss rules:**
 
-| Trigger | Action |
-|---|---|
-| Calendar value falls to 50% of debit | Close the full spread |
-| Underlying moves more than 2× ATR from strike before expiry | Close |
-| IV regime shifts (VIX spikes above 30) | Close immediately — vega risk inverts |
-| Front-month reaches 5 DTE with significant loss | Close; avoid gamma blow-up |
+```
+Trigger                                                      Action
+-----------------------------------------------------------  -------------------------------------
+Calendar value falls to 50% of debit                         Close the full spread
+Underlying moves more than 2× ATR from strike before expiry  Close
+IV regime shifts (VIX spikes above 30)                       Close immediately — vega risk inverts
+Front-month reaches 5 DTE with significant loss              Close; avoid gamma blow-up
+```
 
 **Maximum concurrent calendars:** 3 positions on different underlyings or strikes. More than 3 creates correlated losses if IV spikes.
 
@@ -211,12 +219,14 @@ Three-week P&L summary:
 
 ## Calendar vs Other Theta Strategies
 
-| Strategy | Best Regime | IV Preference | Max Loss |
-|---|---|---|---|
-| Calendar spread | Rangebound, moderate IV | Stable or rising | Debit paid |
-| Iron condor | Rangebound, high IVR | Falling | Wing width − credit |
-| Bull put spread | Neutral-to-bullish, elevated IV | Falling | Wing width − credit |
-| Butterfly | Near-expiry, OI pin | Low to moderate | Debit paid |
+```
+Strategy         Best Regime                      IV Preference     Max Loss
+---------------  -------------------------------  ----------------  -------------------
+Calendar spread  Rangebound, moderate IV          Stable or rising  Debit paid
+Iron condor      Rangebound, high IVR             Falling           Wing width − credit
+Bull put spread  Neutral-to-bullish, elevated IV  Falling           Wing width − credit
+Butterfly        Near-expiry, OI pin              Low to moderate   Debit paid
+```
 
 **Calendar vs Iron Condor:** Iron condor is superior when IVR > 60% (collect large credits, benefit from IV falling). Calendar is better at IVR 30–60% when you expect IV to remain stable or rise slightly — the long vega gives you a tailwind.
 
@@ -224,17 +234,19 @@ Three-week P&L summary:
 
 ## Quick Reference
 
-| Parameter | Default | Range | Description |
-|---|---|---|---|
-| Strike | ATM | ATM ± 0.5% | Center at or very near current spot |
-| Front-month DTE | 14 | 10–21 | Fast-decay short leg |
-| Back-month DTE | 45 | 35–60 | Slow-decay long leg |
-| DTE gap | ≥ 21 days | 21–45 | Minimum gap for meaningful theta differential |
-| VIX range | 14–25 | 12–28 | Optimal premium and vega environment |
-| ADX maximum | 22 | 15–25 | Require range-bound conditions |
-| IVR maximum | 60% | 40–70% | Avoid entering in very high IV |
-| Profit target | 30–50% of max | 25–60% | Close; don't hold for perfect pin |
-| Stop loss | 50% of debit | 40–60% | Close if position loses half its value |
-| Front expiry exit | 5 DTE | 3–7 DTE | Always close or roll before this |
-| Max concurrent | 3 | 1–4 | Monitor actively |
-| Position size | 2% of account | 1–3% | Per calendar on debit basis |
+```
+Parameter          Default        Range       Description
+-----------------  -------------  ----------  ---------------------------------------------
+Strike             ATM            ATM ± 0.5%  Center at or very near current spot
+Front-month DTE    14             10–21       Fast-decay short leg
+Back-month DTE     45             35–60       Slow-decay long leg
+DTE gap            ≥ 21 days      21–45       Minimum gap for meaningful theta differential
+VIX range          14–25          12–28       Optimal premium and vega environment
+ADX maximum        22             15–25       Require range-bound conditions
+IVR maximum        60%            40–70%      Avoid entering in very high IV
+Profit target      30–50% of max  25–60%      Close; don't hold for perfect pin
+Stop loss          50% of debit   40–60%      Close if position loses half its value
+Front expiry exit  5 DTE          3–7 DTE     Always close or roll before this
+Max concurrent     3              1–4         Monitor actively
+Position size      2% of account  1–3%        Per calendar on debit basis
+```

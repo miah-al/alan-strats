@@ -281,14 +281,16 @@ expected value trade by capping the left tail.
 
 **Ideal conditions:**
 
-| Condition | Preferred Range | Why |
-|---|---|---|
-| VIX level | 15–25 | Low enough that puts are priced from retail fear, not systemic risk |
-| Put/call OI ratio | 1.5–2.5 | Sweet spot — clearly elevated but not "the market knows something" |
-| IV 5d z-score | 1.5–3.0 | Statistical overpricing is confirmed |
-| Days to FOMC | ≥ 10 | No near-term event to sustain the premium |
-| Stock 5d return | −3% to −10% | Recent pullback created the fear; bounce is mean-reversion candidate |
-| VRP | ≥ 10 vol pts | ATM put IV is materially above realized vol |
+```
+Condition          Preferred Range  Why
+-----------------  ---------------  --------------------------------------------------------------------
+VIX level          15–25            Low enough that puts are priced from retail fear, not systemic risk
+Put/call OI ratio  1.5–2.5          Sweet spot — clearly elevated but not "the market knows something"
+IV 5d z-score      1.5–3.0          Statistical overpricing is confirmed
+Days to FOMC       ≥ 10             No near-term event to sustain the premium
+Stock 5d return    −3% to −10%      Recent pullback created the fear; bounce is mean-reversion candidate
+VRP                ≥ 10 vol pts     ATM put IV is materially above realized vol
+```
 
 **Best sector:** Technology and consumer discretionary — sectors with high retail attention and
 frequent short-term narrative-driven selloffs that reverse.
@@ -362,37 +364,41 @@ November-December (tax-loss selling fear). These create the most concentrated pu
 
 ## Quick Reference
 
-| Parameter | Default | Range | Description |
-|---|---|---|---|
-| `min_put_call_oi_ratio` | 1.5 | 1.3–2.5 | Minimum OI imbalance to scan |
-| `min_iv_zscore` | 1.5σ | 1.0–3.0 | ATM put IV z-score above 20d mean |
-| `min_model_confidence` | 0.60 | 0.55–0.80 | Logistic regression P(crush ≥5 vol pts) |
-| `dte_range` | 7–14 DTE | 5–21 | Holding window targeting theta sweet spot |
-| `short_strike_delta` | 0.25 | 0.20–0.30 | Short put delta (≈25% probability of ITM) |
-| `spread_width_pct` | 4% of spot | 3–6% | Wing width as % of stock price |
-| `profit_target` | 50% of credit | 40–70% | Close early when credit decays to target |
-| `stop_loss_mult` | 2.0× credit | 1.5–3.0 | Close if spread costs 2× credit to buy back |
-| `dte_time_stop` | 5 DTE | 3–7 | Close regardless at this DTE to avoid gamma |
-| `position_size_pct` | 3% | 1–5% | Capital at risk based on max loss |
-| `warmup_bars` | 150 | 100–200 | Minimum history for logistic regression |
-| `retrain_frequency` | 30 bars | 20–60 | Walk-forward retrain window |
+```
+Parameter                Default        Range      Description
+-----------------------  -------------  ---------  -------------------------------------------
+`min_put_call_oi_ratio`  1.5            1.3–2.5    Minimum OI imbalance to scan
+`min_iv_zscore`          1.5σ           1.0–3.0    ATM put IV z-score above 20d mean
+`min_model_confidence`   0.60           0.55–0.80  Logistic regression P(crush ≥5 vol pts)
+`dte_range`              7–14 DTE       5–21       Holding window targeting theta sweet spot
+`short_strike_delta`     0.25           0.20–0.30  Short put delta (≈25% probability of ITM)
+`spread_width_pct`       4% of spot     3–6%       Wing width as % of stock price
+`profit_target`          50% of credit  40–70%     Close early when credit decays to target
+`stop_loss_mult`         2.0× credit    1.5–3.0    Close if spread costs 2× credit to buy back
+`dte_time_stop`          5 DTE          3–7        Close regardless at this DTE to avoid gamma
+`position_size_pct`      3%             1–5%       Capital at risk based on max loss
+`warmup_bars`            150            100–200    Minimum history for logistic regression
+`retrain_frequency`      30 bars        20–60      Walk-forward retrain window
+```
 
 ---
 
 ## Data Requirements
 
-| Data Field | Source | Usage |
-|---|---|---|
-| `stock_put_call_oi_ratio` | Polygon options chain | Primary signal — imbalance detection |
-| `stock_atm_put_iv` | Polygon options (IV field) | Signal strength and z-score computation |
-| `stock_iv_5d_zscore` | Computed from `stock_atm_put_iv` | Derived feature — z-score of ATM put IV |
-| `stock_20d_realized_vol` | Computed from OHLCV returns | VRP calculation |
-| `stock_5d_return` | Polygon OHLCV | Context feature — is this a fresh panic? |
-| `stock_oi_spike` | Polygon options chain (5-day OI change) | Is the imbalance recent or stale? |
-| `vix` | Polygon `VIXIND` | Macro vol regime filter |
-| `days_to_fomc` | Fed meeting calendar | Event risk filter |
-| Per-contract IV | Polygon options chain | Strike selection and pricing |
-| Risk-free rate | Polygon `DGS10` | Black-Scholes pricing |
+```
+Data Field                 Source                                   Usage
+-------------------------  ---------------------------------------  ----------------------------------------
+`stock_put_call_oi_ratio`  Polygon options chain                    Primary signal — imbalance detection
+`stock_atm_put_iv`         Polygon options (IV field)               Signal strength and z-score computation
+`stock_iv_5d_zscore`       Computed from `stock_atm_put_iv`         Derived feature — z-score of ATM put IV
+`stock_20d_realized_vol`   Computed from OHLCV returns              VRP calculation
+`stock_5d_return`          Polygon OHLCV                            Context feature — is this a fresh panic?
+`stock_oi_spike`           Polygon options chain (5-day OI change)  Is the imbalance recent or stale?
+`vix`                      Polygon `VIXIND`                         Macro vol regime filter
+`days_to_fomc`             Fed meeting calendar                     Event risk filter
+Per-contract IV            Polygon options chain                    Strike selection and pricing
+Risk-free rate             Polygon `DGS10`                          Black-Scholes pricing
+```
 
 The strategy requires options data with per-strike OI and IV for the underlying ticker.
 If only ATM IV is available (no per-strike breakdown), the put/call OI ratio can be

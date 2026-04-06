@@ -162,14 +162,16 @@ The lesson: short interest alone is not enough. Wait for the volume spike and pr
 
 ## Strategy Parameters
 
-| Parameter | Conservative | Standard | Aggressive |
-|---|---|---|---|
-| Min short interest | > 35% | > 20% | > 15% |
-| Max days-to-cover | < 3 days | < 5 days | < 8 days |
-| Catalyst requirement | Confirmed volume spike | Volume spike or social surge | Any identifiable catalyst |
-| Volume trigger | > 5× average | > 3× average | > 2× average |
-| Position structure | Long call spread | Long call or small stock position | Long calls only |
-| Call DTE | 45–60 | 30–60 | 20–45 |
-| Stop loss | −20% | −25% | −35% |
-| Profit ladder | 33% at +50%, 33% at +100% | 50% at +50% | 25% at +50%, 50% at +100% |
-| Max position size | 1% of portfolio | 2% | 3% |
+```
+Parameter             Conservative               Standard                           Aggressive
+--------------------  -------------------------  ---------------------------------  -------------------------
+Min short interest    > 35%                      > 20%                              > 15%
+Max days-to-cover     < 3 days                   < 5 days                           < 8 days
+Catalyst requirement  Confirmed volume spike     Volume spike or social surge       Any identifiable catalyst
+Volume trigger        > 5× average               > 3× average                       > 2× average
+Position structure    Long call spread           Long call or small stock position  Long calls only
+Call DTE              45–60                      30–60                              20–45
+Stop loss             −20%                       −25%                               −35%
+Profit ladder         33% at +50%, 33% at +100%  50% at +50%                        25% at +50%, 50% at +100%
+Max position size     1% of portfolio            2%                                 3%
+```

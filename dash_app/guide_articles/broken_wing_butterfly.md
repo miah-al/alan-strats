@@ -67,25 +67,29 @@ Net: $4.20 + $0.80 − $4.60 = $0.40 credit received
 
 **P&L at expiry (SPY $555/$560/$570 call BWB, $0.40 credit):**
 
-| SPY at Expiry | P&L | Notes |
-|---|---|---|
-| Below $555 | **+$40** | All calls expire worthless; keep credit |
-| $555 | **+$40** | At lower wing; credit kept |
-| $558 | **+$340** | Moving toward body peak |
-| $560 (pin) | **+$540** | Maximum profit: $500 intrinsic + $40 credit |
-| $565 | **+$40** | Past the body; profit compresses back to credit |
-| $570 | **+$40** | At wide wing; still keep credit |
-| $575 | **−$460** | Wide wing breach: beginning losses |
-| $580+ | **−$460** | Maximum loss — capped at wide wing distance from body |
+```
+SPY at Expiry  P&L    Notes
+-------------  -----  -----------------------------------------------------
+Below $555     +$40   All calls expire worthless; keep credit
+$555           +$40   At lower wing; credit kept
+$558           +$340  Moving toward body peak
+$560 (pin)     +$540  Maximum profit: $500 intrinsic + $40 credit
+$565           +$40   Past the body; profit compresses back to credit
+$570           +$40   At wide wing; still keep credit
+$575           −$460  Wide wing breach: beginning losses
+$580+          −$460  Maximum loss — capped at wide wing distance from body
+```
 
 **Greek profile:**
 
-| Greek | Sign | Practical meaning |
-|---|---|---|
-| Delta | Slightly positive (call BWB with upside bias) | Small directional exposure toward the body |
-| Theta | Positive | Time passing helps as both wings decay toward body |
-| Vega | Mildly negative | Benefits from moderate IV compression |
-| Gamma | Short near body, complex | Near body strike, gamma can be positive or negative depending on proximity |
+```
+Greek  Sign                                           Practical meaning
+-----  ---------------------------------------------  --------------------------------------------------------------------------
+Delta  Slightly positive (call BWB with upside bias)  Small directional exposure toward the body
+Theta  Positive                                       Time passing helps as both wings decay toward body
+Vega   Mildly negative                                Benefits from moderate IV compression
+Gamma  Short near body, complex                       Near body strike, gamma can be positive or negative depending on proximity
+```
 
 ---
 
@@ -97,12 +101,14 @@ Net: $4.20 + $0.80 − $4.60 = $0.40 credit received
 
 Low-IV environment (IVR 28%) — standard credit spreads paying inadequately. BWB provides net credit structure even in this environment. Mildly bullish bias: SPY in a slow uptrend, targeting consolidation near $560.
 
-| Leg | Strike | Action | Premium | Contracts |
-|---|---|---|---|---|
-| Long call | $555 | Buy 3× | $4.20 | −$1,260 |
-| Short call | $560 | Sell 6× | $2.30 | +$1,380 |
-| Long call | $570 | Buy 3× | $0.80 | −$240 |
-| **Net credit** | | | | **+$120 (3 contracts × $0.40)** |
+```
+Leg         Strike  Action   Premium  Contracts
+----------  ------  -------  -------  ---------------------------
+Long call   $555    Buy 3×   $4.20    −$1,260
+Short call  $560    Sell 6×  $2.30    +$1,380
+Long call   $570    Buy 3×   $0.80    −$240
+Net credit                            +$120 (3 contracts × $0.40)
+```
 
 Entry rationale: IVR 28% — standard spreads unviable. BWB generates credit. Clear "magnet" zone near $560 (prior support that became resistance). DTE 21 gives the pin thesis time to develop.
 
@@ -151,12 +157,14 @@ Spread valued at approximately $4.20–$4.60 near max. Closed at $3.80 per sprea
 
 Same motivation: low IV (IVR 24%), BWB provides credit where standard spreads fail.
 
-| Leg | Strike | Action | Premium | Contracts |
-|---|---|---|---|---|
-| Long call | $428 | Buy 2× | $2.80 | −$560 |
-| Short call | $432 | Sell 4× | $1.50 | +$600 |
-| Long call | $440 | Buy 2× | $0.60 | −$120 |
-| **Net credit** | | | | **+$80 (2 contracts × $0.40)** |
+```
+Leg         Strike  Action   Premium  Contracts
+----------  ------  -------  -------  --------------------------
+Long call   $428    Buy 2×   $2.80    −$560
+Short call  $432    Sell 4×  $1.50    +$600
+Long call   $440    Buy 2×   $0.60    −$120
+Net credit                            +$80 (2 contracts × $0.40)
+```
 
 Entry: mildly bullish, targeting $432 consolidation. Wide upper wing at $440 = 8-point wide upper wing vs 4-point narrow wing.
 
@@ -318,16 +326,18 @@ Profit scenarios on 2 contracts:
 
 ## Standard Butterfly vs Broken Wing Butterfly: Decision Guide
 
-| Feature | Standard Butterfly | Broken Wing Butterfly |
-|---|---|---|
-| Wings | Equal width (e.g., $5/$5) | Unequal (e.g., $5/$10) |
-| Entry cost | Debit ($0.60–$1.50 typical) | Zero or small credit |
-| Risk profile | Symmetric — equal risk both directions | Asymmetric — one side has concentrated risk |
-| Best use | High-conviction pin near exact strike; any IV | Mild bias + low IV income generation |
-| Max profit at body | Wing width − debit | Wing width + credit |
-| Max loss | Small debit (symmetric) | Larger on wide wing side |
-| Monitoring needs | Moderate | Higher (wide wing stop required) |
-| IV preference | Any (low reduces debit) | Low IV (generates credit vs debit) |
+```
+Feature             Standard Butterfly                             Broken Wing Butterfly
+------------------  ---------------------------------------------  -------------------------------------------
+Wings               Equal width (e.g., $5/$5)                      Unequal (e.g., $5/$10)
+Entry cost          Debit ($0.60–$1.50 typical)                    Zero or small credit
+Risk profile        Symmetric — equal risk both directions         Asymmetric — one side has concentrated risk
+Best use            High-conviction pin near exact strike; any IV  Mild bias + low IV income generation
+Max profit at body  Wing width − debit                             Wing width + credit
+Max loss            Small debit (symmetric)                        Larger on wide wing side
+Monitoring needs    Moderate                                       Higher (wide wing stop required)
+IV preference       Any (low reduces debit)                        Low IV (generates credit vs debit)
+```
 
 ---
 
@@ -347,29 +357,33 @@ Profit scenarios on 2 contracts:
 
 ## Strategy Parameters
 
-| Parameter | Default | Range | Description |
-|---|---|---|---|
-| Narrow wing width | $5 | $3–$8 | Distance from body to protected wing |
-| Wide wing width | $10 (2× narrow) | $8–$12 | Should be exactly 2× narrow wing |
-| DTE at entry | 21 | 14–30 | Middle ground for theta and gamma balance |
-| Net credit target | ≥ $0.20 | $0.10–$1.00 | Minimum to justify asymmetric risk |
-| Profit target | 75% of max | 60–100% | Close well before expiry pin risk |
-| Stop loss trigger | Wide wing − $1.00 | −$0.50 to −$1.50 | Close entire position if approaching wide wing |
-| Max position size | 2% capital at max loss | 1–3% | Wide wing can deliver significant absolute loss |
-| IVR maximum | 35% | 20–45% | BWB works best in low-IV environments |
-| Wide wing alert level | Wide strike − $2.00 | −$1.50 to −$3.00 | Set price alert to monitor before stop trigger |
+```
+Parameter              Default                 Range             Description
+---------------------  ----------------------  ----------------  -----------------------------------------------
+Narrow wing width      $5                      $3–$8             Distance from body to protected wing
+Wide wing width        $10 (2× narrow)         $8–$12            Should be exactly 2× narrow wing
+DTE at entry           21                      14–30             Middle ground for theta and gamma balance
+Net credit target      ≥ $0.20                 $0.10–$1.00       Minimum to justify asymmetric risk
+Profit target          75% of max              60–100%           Close well before expiry pin risk
+Stop loss trigger      Wide wing − $1.00       −$0.50 to −$1.50  Close entire position if approaching wide wing
+Max position size      2% capital at max loss  1–3%              Wide wing can deliver significant absolute loss
+IVR maximum            35%                     20–45%            BWB works best in low-IV environments
+Wide wing alert level  Wide strike − $2.00     −$1.50 to −$3.00  Set price alert to monitor before stop trigger
+```
 
 ---
 
 ## Data Requirements
 
-| Data | Source | Usage |
-|---|---|---|
-| SPY OHLCV daily | Polygon | Spot price, ADX, directional bias assessment |
-| VIX daily close | Polygon `VIXIND` | IV regime filter (IVR < 35%) |
-| Options chain by strike/expiry | Polygon | Net credit calculation, strike selection |
-| Open interest by strike | Polygon | Identify body strike with OI concentration |
-| IVR (52-week rolling) | Computed from VIX | Primary entry filter |
-| ADX (14-period) | Computed from OHLCV | Range-bound confirmation |
-| Earnings calendar | Company IR | Binary event exclusion |
-| Economic calendar | Fed/BLS | Macro event exclusion |
+```
+Data                            Source               Usage
+------------------------------  -------------------  --------------------------------------------
+SPY OHLCV daily                 Polygon              Spot price, ADX, directional bias assessment
+VIX daily close                 Polygon `VIXIND`     IV regime filter (IVR < 35%)
+Options chain by strike/expiry  Polygon              Net credit calculation, strike selection
+Open interest by strike         Polygon              Identify body strike with OI concentration
+IVR (52-week rolling)           Computed from VIX    Primary entry filter
+ADX (14-period)                 Computed from OHLCV  Range-bound confirmation
+Earnings calendar               Company IR           Binary event exclusion
+Economic calendar               Fed/BLS              Macro event exclusion
+```

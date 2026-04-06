@@ -140,23 +140,25 @@ Bull put spread example: SPY at $576.80, IVR 62%, VIX 21.3
 
 ### Trade 1 — SPY Bull Put Spread, October 2024: Textbook IVR Entry ✅
 
-| Field | Value |
-|---|---|
-| Date | October 15, 2024 |
-| SPY price | $576.80 |
-| VIX | 21.3 |
-| IVR (SPY, 52-week) | 62% |
-| IV Percentile | 68% |
-| Context | 3% pullback on hot CPI; VIX spiked from 15 to 21 |
-| Direction filter | SPY above 50-day MA ($565) → bullish → bull put spread |
-| Structure | Sell Nov 15 $560 put / Buy Nov 15 $550 put (30 DTE) |
-| Net credit | $1.45 = $145 per contract |
-| Max loss | $855 per contract |
-| Break-even | $558.55 (−3.1% from entry) |
-| Contracts | 5 |
-| Total credit | $725 |
-| Exit | Nov 15: SPY at $587.20 — both puts expired OTM |
-| **P&L** | **+$725 (full credit, 100% of max gain)** |
+```
+Field               Value
+------------------  ------------------------------------------------------
+Date                October 15, 2024
+SPY price           $576.80
+VIX                 21.3
+IVR (SPY, 52-week)  62%
+IV Percentile       68%
+Context             3% pullback on hot CPI; VIX spiked from 15 to 21
+Direction filter    SPY above 50-day MA ($565) → bullish → bull put spread
+Structure           Sell Nov 15 $560 put / Buy Nov 15 $550 put (30 DTE)
+Net credit          $1.45 = $145 per contract
+Max loss            $855 per contract
+Break-even          $558.55 (−3.1% from entry)
+Contracts           5
+Total credit        $725
+Exit                Nov 15: SPY at $587.20 — both puts expired OTM
+P&L                 +$725 (full credit, 100% of max gain)
+```
 
 **Entry rationale:** IVR at 62% confirmed options were elevated vs the prior year's average. The VIX rise from 15 to 21 was driven by a single CPI print, not fundamental economic deterioration — classic episodic overreaction. SPY was above its 50-day MA, confirming the bullish positioning was appropriate.
 
@@ -168,22 +170,24 @@ Bull put spread example: SPY at $576.80, IVR 62%, VIX 21.3
 
 ### Trade 2 — SPY Put Spread Through VIX Spike, February 2022: Macro Override ❌
 
-| Field | Value |
-|---|---|
-| Date | January 20, 2022 |
-| SPY price | $453 |
-| VIX | 28.3 |
-| IVR (SPY) | 72% |
-| Context | Fed hawkishness concerns building; VIX already elevated |
-| SPX vs 200-day MA | Barely above 200-day (marginal — warning sign missed) |
-| Structure | Sell Feb 25 $430 put / Buy Feb 25 $420 put (35 DTE) |
-| Net credit | $1.85 = $185 per contract |
-| Contracts | 5 |
-| Total credit | $925 |
-| Fed announcement (Jan 26) | Signaled more aggressive hiking than expected |
-| SPY at expiry | $426 (−5.97% from entry; breached short strike) |
-| Loss calculation | $430 − $426 − $1.85 = $2.15/share × 500 = $1,075 + wing not fully ITM |
-| **P&L** | **−$640 per 5-spread position (net of initial credit)** |
+```
+Field                      Value
+-------------------------  ---------------------------------------------------------------------
+Date                       January 20, 2022
+SPY price                  $453
+VIX                        28.3
+IVR (SPY)                  72%
+Context                    Fed hawkishness concerns building; VIX already elevated
+SPX vs 200-day MA          Barely above 200-day (marginal — warning sign missed)
+Structure                  Sell Feb 25 $430 put / Buy Feb 25 $420 put (35 DTE)
+Net credit                 $1.85 = $185 per contract
+Contracts                  5
+Total credit               $925
+Fed announcement (Jan 26)  Signaled more aggressive hiking than expected
+SPY at expiry              $426 (−5.97% from entry; breached short strike)
+Loss calculation           $430 − $426 − $1.85 = $2.15/share × 500 = $1,075 + wing not fully ITM
+P&L                        −$640 per 5-spread position (net of initial credit)
+```
 
 **What happened:** The IVR at 72% was technically a valid entry signal, but the macro context was wrong. SPY was barely above its 200-day MA when the trade was entered — a warning sign that the market was in a weakened state, not a bounce-prone dip. The Fed's hawkish January 26 statement drove SPY below both the 200-day MA and the short strike by expiry.
 
@@ -195,27 +199,29 @@ Bull put spread example: SPY at $576.80, IVR 62%, VIX 21.3
 
 ### Trade 3 — QQQ Iron Condor, November 2024 Election Week ✅
 
-| Field | Value |
-|---|---|
-| Date | November 1, 2024 (3 days before US election) |
-| QQQ price | $487.50 |
-| IVR (QQQ) | 78% |
-| IV Percentile | 82% |
-| Context | Pre-election uncertainty spiked QQQ IV to 38% (vs 52-week avg 22%) |
-| Direction filter | No clear trend — SPY/QQQ at all-time highs; use iron condor |
-| Structure | Sell $500/$510 call spread + sell $475/$465 put spread (22 DTE) |
-| Call credit | $1.20 |
-| Put credit | $1.65 |
-| Total credit | $2.85 = $285 per iron condor |
-| Max loss | ($10 − $2.85) × 100 = $715 per condor |
-| Break-even range | $472.15 to $502.85 |
-| Contracts | 3 condors |
-| Total credit | $855 |
-| QQQ post-election | $514.80 (election night: Trump wins, QQQ gaps +3.4%) |
-| Action at open | Close call spread immediately ($500 call ITM); put spread worthless |
-| Call spread exit | Buy back $500/$510 call spread at $6.20 → loss of $500 on call spread |
-| Put spread at exit | $0.05 (near worthless) → sell at $0.05 per spread |
-| **P&L** | **+$855 credit − $1,500 call spread loss − $15 put exit = −$660** |
+```
+Field               Value
+------------------  ---------------------------------------------------------------------
+Date                November 1, 2024 (3 days before US election)
+QQQ price           $487.50
+IVR (QQQ)           78%
+IV Percentile       82%
+Context             Pre-election uncertainty spiked QQQ IV to 38% (vs 52-week avg 22%)
+Direction filter    No clear trend — SPY/QQQ at all-time highs; use iron condor
+Structure           Sell $500/$510 call spread + sell $475/$465 put spread (22 DTE)
+Call credit         $1.20
+Put credit          $1.65
+Total credit        $2.85 = $285 per iron condor
+Max loss            ($10 − $2.85) × 100 = $715 per condor
+Break-even range    $472.15 to $502.85
+Contracts           3 condors
+Total credit        $855
+QQQ post-election   $514.80 (election night: Trump wins, QQQ gaps +3.4%)
+Action at open      Close call spread immediately ($500 call ITM); put spread worthless
+Call spread exit    Buy back $500/$510 call spread at $6.20 → loss of $500 on call spread
+Put spread at exit  $0.05 (near worthless) → sell at $0.05 per spread
+P&L                 +$855 credit − $1,500 call spread loss − $15 put exit = −$660
+```
 
 **The near-miss analysis:** The IVR was high and the condor was appropriately structured, but the binary election outcome (a 3.4% QQQ gap) overwhelmed the premium collection. With a $10-wide call spread and $1.20 credit, a 3.4% move required precisely the kind of rapid adjustment the risk management plan called for.
 
@@ -492,16 +498,18 @@ Using 25-delta or higher (closer to ATM) instead of 20-delta increases credit bu
 
 ## When This Strategy Works Best
 
-| Condition | Optimal Value | Why |
-|---|---|---|
-| IV Rank | 60-80% | Maximum overpricing without genuine crisis probability |
-| IV Percentile | 65-85% | Confirms IVR reading is not a single-outlier artifact |
-| Underlying | SPY, QQQ, IWM (broad ETFs) | Diversified — genuine tail events less likely to breach |
-| DTE at entry | 30-45 days | Optimal theta/gamma — theta highest, gamma risk manageable |
-| Market trend | SPY above 200-day MA | Directional tailwind for bull put spreads |
-| VIX level | 18-30 | Elevated enough for premium; not so extreme as to signal crisis |
-| Macro calendar | No events within DTE window | Clean theta decay without binary events |
-| Credit/width | ≥ 30% | Comfortable positive EV above break-even win rate |
+```
+Condition       Optimal Value                Why
+--------------  ---------------------------  ---------------------------------------------------------------
+IV Rank         60-80%                       Maximum overpricing without genuine crisis probability
+IV Percentile   65-85%                       Confirms IVR reading is not a single-outlier artifact
+Underlying      SPY, QQQ, IWM (broad ETFs)   Diversified — genuine tail events less likely to breach
+DTE at entry    30-45 days                   Optimal theta/gamma — theta highest, gamma risk manageable
+Market trend    SPY above 200-day MA         Directional tailwind for bull put spreads
+VIX level       18-30                        Elevated enough for premium; not so extreme as to signal crisis
+Macro calendar  No events within DTE window  Clean theta decay without binary events
+Credit/width    ≥ 30%                        Comfortable positive EV above break-even win rate
+```
 
 ---
 
@@ -525,35 +533,39 @@ Using 25-delta or higher (closer to ATM) instead of 20-delta increases credit bu
 
 ## Strategy Parameters
 
-| Parameter | Conservative | Standard | Aggressive | Description |
-|---|---|---|---|---|
-| `min_ivr` | ≥ 60% | ≥ 50% | ≥ 40% | Minimum IVR to enter |
-| `min_iv_percentile` | ≥ 65% | ≥ 50% | ≥ 40% | Minimum IV Percentile |
-| `short_strike_delta` | 15 delta (further OTM) | 20 delta | 25 delta (closer ATM) | Short strike distance |
-| `wing_distance` | 5% OTM from short | 3% OTM | 2% OTM | Wing (long strike) distance |
-| `min_credit_to_width` | ≥ 30% | ≥ 25% | ≥ 20% | Minimum credit as % of wing width |
-| `dte_at_entry` | 35–45 | 25–40 | 20–35 | Entry DTE window |
-| `stop_loss` | 1.5× credit | 2× credit | 3× credit | Close if spread reaches this loss |
-| `close_at_dte` | 7 DTE (close all) | 7 DTE | 5 DTE | Exit remaining positions at this DTE |
-| `max_position_size` | $5,000 max risk per trade | $8,000 max risk | $12,000 max risk | Per $100K portfolio |
-| `max_concurrent` | 2 simultaneous positions | 3-4 | 5+ | Active spreads at any time |
-| `spx_filter` | Must be 3%+ above 200-day | Must be above 200-day | Preferred above | Market trend requirement |
-| `vix_cap` | VIX < 28 | VIX < 35 | Any VIX | Max VIX for individual stock trades |
+```
+Parameter              Conservative               Standard               Aggressive             Description
+---------------------  -------------------------  ---------------------  ---------------------  ------------------------------------
+`min_ivr`              ≥ 60%                      ≥ 50%                  ≥ 40%                  Minimum IVR to enter
+`min_iv_percentile`    ≥ 65%                      ≥ 50%                  ≥ 40%                  Minimum IV Percentile
+`short_strike_delta`   15 delta (further OTM)     20 delta               25 delta (closer ATM)  Short strike distance
+`wing_distance`        5% OTM from short          3% OTM                 2% OTM                 Wing (long strike) distance
+`min_credit_to_width`  ≥ 30%                      ≥ 25%                  ≥ 20%                  Minimum credit as % of wing width
+`dte_at_entry`         35–45                      25–40                  20–35                  Entry DTE window
+`stop_loss`            1.5× credit                2× credit              3× credit              Close if spread reaches this loss
+`close_at_dte`         7 DTE (close all)          7 DTE                  5 DTE                  Exit remaining positions at this DTE
+`max_position_size`    $5,000 max risk per trade  $8,000 max risk        $12,000 max risk       Per $100K portfolio
+`max_concurrent`       2 simultaneous positions   3-4                    5+                     Active spreads at any time
+`spx_filter`           Must be 3%+ above 200-day  Must be above 200-day  Preferred above        Market trend requirement
+`vix_cap`              VIX < 28                   VIX < 35               Any VIX                Max VIX for individual stock trades
+```
 
 ---
 
 ## Data Requirements
 
-| Data | Source | Usage |
-|---|---|---|
-| Current ATM IV (real-time) | Polygon options chain | Current IV for IVR calculation |
-| 52-week IV history (daily) | Polygon historical options | IVR and IV Percentile calculation |
-| IV Rank (computed) | Derived from Polygon | Primary entry filter |
-| IV Percentile (computed) | Derived from Polygon | Secondary confirmation filter |
-| Options chain (all strikes) | Polygon real-time | Strike selection, bid-ask check |
-| SPY/QQQ OHLCV (daily) | Polygon | 50-day and 200-day MA calculation |
-| VIX daily | Polygon `VIXIND` | Macro vol context, crisis filter |
-| Earnings calendar | Earnings DB | Binary catalyst check — mandatory |
-| FOMC / CPI / NFP calendar | Economic calendar DB | Macro event check within DTE window |
-| HYG daily price | Polygon | Credit market health (crisis vs episodic filter) |
-| Bid-ask spread per contract | Polygon real-time | Execution quality verification |
+```
+Data                         Source                      Usage
+---------------------------  --------------------------  ------------------------------------------------
+Current ATM IV (real-time)   Polygon options chain       Current IV for IVR calculation
+52-week IV history (daily)   Polygon historical options  IVR and IV Percentile calculation
+IV Rank (computed)           Derived from Polygon        Primary entry filter
+IV Percentile (computed)     Derived from Polygon        Secondary confirmation filter
+Options chain (all strikes)  Polygon real-time           Strike selection, bid-ask check
+SPY/QQQ OHLCV (daily)        Polygon                     50-day and 200-day MA calculation
+VIX daily                    Polygon `VIXIND`            Macro vol context, crisis filter
+Earnings calendar            Earnings DB                 Binary catalyst check — mandatory
+FOMC / CPI / NFP calendar    Economic calendar DB        Macro event check within DTE window
+HYG daily price              Polygon                     Credit market health (crisis vs episodic filter)
+Bid-ask spread per contract  Polygon real-time           Execution quality verification
+```

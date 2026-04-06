@@ -151,13 +151,15 @@ The lesson: check the macro calendar for known risk events (FOMC decisions, majo
 
 ## Strategy Parameters
 
-| Parameter | Conservative | Standard | Aggressive |
-|---|---|---|---|
-| Expression | Bull put spread | Bull put spread or ATM call | ATM call only |
-| Call DTE | 8–10 | 7 | 5–7 |
-| Call strike | $2–$3 OTM | $0–$2 OTM | ATM |
-| Max VIX for entry | < 22 | < 28 | < 35 |
-| 200-day MA requirement | Must be above | Above preferred | Not required |
-| Sector tilt | SPY only | SPY + QQQ 50/50 | QQQ overweight |
-| Exit rule | Day +2 if +30% | Day +3 (close) | Day +3 (close) |
-| Max position size | 1% of portfolio | 2% | 3% |
+```
+Parameter               Conservative     Standard                     Aggressive
+----------------------  ---------------  ---------------------------  --------------
+Expression              Bull put spread  Bull put spread or ATM call  ATM call only
+Call DTE                8–10             7                            5–7
+Call strike             $2–$3 OTM        $0–$2 OTM                    ATM
+Max VIX for entry       < 22             < 28                         < 35
+200-day MA requirement  Must be above    Above preferred              Not required
+Sector tilt             SPY only         SPY + QQQ 50/50              QQQ overweight
+Exit rule               Day +2 if +30%   Day +3 (close)               Day +3 (close)
+Max position size       1% of portfolio  2%                           3%
+```

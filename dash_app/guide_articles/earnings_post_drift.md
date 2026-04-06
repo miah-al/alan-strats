@@ -587,24 +587,28 @@ IV has fallen significantly from the peak. This is the correct entry timing.
 
 The PEAD anomaly is strongest on names with these characteristics:
 
-| Characteristic | Why It Matters |
-|---|---|
-| Mid or large cap (> $5B market cap) | Sufficient analyst coverage; adequate options liquidity |
-| ≥ 5 analyst estimates | Consensus is meaningful; surprise vs consensus is informative |
-| Options volume ≥ 1,000 contracts/day | Ensures acceptable bid/ask spreads on both legs |
-| Quarterly reporting history ≥ 8 quarters | Needed for reliable historical move calculation |
-| Not reporting for the first time | First-time reporters lack comparable estimate quality |
-| Positive EPS (or improving losses) | Negative EPS situations make % calculations unreliable |
+```
+Characteristic                            Why It Matters
+----------------------------------------  -------------------------------------------------------------
+Mid or large cap (> $5B market cap)       Sufficient analyst coverage; adequate options liquidity
+≥ 5 analyst estimates                     Consensus is meaningful; surprise vs consensus is informative
+Options volume ≥ 1,000 contracts/day      Ensures acceptable bid/ask spreads on both legs
+Quarterly reporting history ≥ 8 quarters  Needed for reliable historical move calculation
+Not reporting for the first time          First-time reporters lack comparable estimate quality
+Positive EPS (or improving losses)        Negative EPS situations make % calculations unreliable
+```
 
 ---
 
 ## Comparison: Three Earnings Strategies
 
-| Strategy | Direction | Hold Time | Primary Edge | Max Loss |
-|---|---|---|---|---|
-| Earnings IV Crush | Neutral (condor) | 1 day | IV overpricing collapses after event | wing_width − credit |
-| Earnings Post-Drift | Directional bullish (spread) | 14 days | Underreaction → drift after beat | debit paid |
-| Vol Calendar (for reference) | Neutral (calendar) | 21 days | AI-predicted vol regime | debit paid (long cal) |
+```
+Strategy                      Direction                     Hold Time  Primary Edge                          Max Loss
+----------------------------  ----------------------------  ---------  ------------------------------------  ---------------------
+Earnings IV Crush             Neutral (condor)              1 day      IV overpricing collapses after event  wing_width − credit
+Earnings Post-Drift           Directional bullish (spread)  14 days    Underreaction → drift after beat      debit paid
+Vol Calendar (for reference)  Neutral (calendar)            21 days    AI-predicted vol regime               debit paid (long cal)
+```
 
 **The IV Crush and Post-Drift strategies are perfectly complementary.** They can both fire
 on the same earnings event:
@@ -619,12 +623,14 @@ announcement price drift.
 
 ## Data Requirements
 
-| Data | Source | Usage |
-|---|---|---|
-| Individual stock OHLCV (with opening prices) | Polygon | Entry price, gap calculation, daily MTM |
-| VIX daily close | Polygon `VIXIND` | IV proxy for Black-Scholes pricing |
-| Earnings calendar (eps_actual, eps_estimate) | DB earnings table | Signal generation |
-| 10-year Treasury rate | Polygon `DGS10` | Risk-free rate for Black-Scholes |
+```
+Data                                          Source             Usage
+--------------------------------------------  -----------------  ---------------------------------------
+Individual stock OHLCV (with opening prices)  Polygon            Entry price, gap calculation, daily MTM
+VIX daily close                               Polygon `VIXIND`   IV proxy for Black-Scholes pricing
+Earnings calendar (eps_actual, eps_estimate)  DB earnings table  Signal generation
+10-year Treasury rate                         Polygon `DGS10`    Risk-free rate for Black-Scholes
+```
 
 The earnings table must contain: date, ticker, eps_actual, eps_estimate.
 Opening prices are required for accurate gap and entry computation.
@@ -644,17 +650,19 @@ Opening prices are required for accurate gap and entry computation.
 
 ## Quick Reference
 
-| Parameter | Default | Description |
-|---|---|---|
-| `min_surprise_pct` | 10% | Minimum EPS beat vs consensus to enter |
-| `max_gap_pct` | 15% | Reject if stock already gapped more than this on announcement morning |
-| `spread_width_pct` | 5% of spot | Distance between long and short call strikes |
-| `dte_entry` | 21 DTE | Days to expiry when buying the call spread |
-| `hold_days` | 14 days | Maximum holding period (time stop) |
-| `profit_target_pct` | 50% | Close when unrealised gain = 50% of debit paid |
-| `stop_loss_pct` | 100% | Close when loss = 100% of debit paid |
-| `position_size_pct` | 3% | Capital at risk per trade |
-| Entry timing | Morning after earnings | Day after announcement, at next open |
-| Legs | 2 (bull call spread) | Long ATM call + short OTM call |
-| Max loss | debit paid × 100 | Per contract, fully defined |
-| Target Sharpe | 1.3 | Strategy performance target |
+```
+Parameter            Default                 Description
+-------------------  ----------------------  ---------------------------------------------------------------------
+`min_surprise_pct`   10%                     Minimum EPS beat vs consensus to enter
+`max_gap_pct`        15%                     Reject if stock already gapped more than this on announcement morning
+`spread_width_pct`   5% of spot              Distance between long and short call strikes
+`dte_entry`          21 DTE                  Days to expiry when buying the call spread
+`hold_days`          14 days                 Maximum holding period (time stop)
+`profit_target_pct`  50%                     Close when unrealised gain = 50% of debit paid
+`stop_loss_pct`      100%                    Close when loss = 100% of debit paid
+`position_size_pct`  3%                      Capital at risk per trade
+Entry timing         Morning after earnings  Day after announcement, at next open
+Legs                 2 (bull call spread)    Long ATM call + short OTM call
+Max loss             debit paid × 100        Per contract, fully defined
+Target Sharpe        1.3                     Strategy performance target
+```

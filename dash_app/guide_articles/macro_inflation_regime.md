@@ -148,14 +148,16 @@ DISINFLATION (Core CPI > 3.0%, falling):
 
 ### Trade 1 — Stagflation to Disinflation, November 2022 ✅
 
-| Date | October-November 2022 |
-|---|---|
-| Core CPI (Sept 2022) | 6.6% (peak) |
-| Core CPI (Oct 2022) | 6.3% (falling — 1st month) |
-| 5-year TIPS breakeven | 2.39% (had peaked at 3.62% in April 2022 — falling for 6 months) |
-| PPI trend | Falling for 3 months |
-| Leading indicator signal | DISINFLATION REGIME BEGINNING (confirmed) |
-| October 2022 Stagflation positioning | XLE 15%, GLD 10%, TLT 0%, QQQ 20%, SHY 20% |
+```
+Date                                  October-November 2022
+------------------------------------  ----------------------------------------------------------------
+Core CPI (Sept 2022)                  6.6% (peak)
+Core CPI (Oct 2022)                   6.3% (falling — 1st month)
+5-year TIPS breakeven                 2.39% (had peaked at 3.62% in April 2022 — falling for 6 months)
+PPI trend                             Falling for 3 months
+Leading indicator signal              DISINFLATION REGIME BEGINNING (confirmed)
+October 2022 Stagflation positioning  XLE 15%, GLD 10%, TLT 0%, QQQ 20%, SHY 20%
+```
 
 **November 10, 2022 CPI print: 7.7% (below expectations of 7.9%) AND below 3-month average → REGIME SHIFT CONFIRMED**
 
@@ -176,11 +178,13 @@ DISINFLATION (Core CPI > 3.0%, falling):
 
 ### Trade 2 — The 2022 Stagflation Year: Regime Awareness Saves 20% ✅
 
-| Period | January 1 – December 31, 2022 |
-|---|---|
-| Starting regime | Reflation (inflation rising, below 3% in Jan 2022) |
-| Regime transition | Stagflation by March 2022 (Core CPI crossed 3%, still rising) |
-| Key asset signal | 5-year breakeven peaked April 2022 at 3.62% |
+```
+Period             January 1 – December 31, 2022
+-----------------  -------------------------------------------------------------
+Starting regime    Reflation (inflation rising, below 3% in Jan 2022)
+Regime transition  Stagflation by March 2022 (Core CPI crossed 3%, still rising)
+Key asset signal   5-year breakeven peaked April 2022 at 3.62%
+```
 
 **Static 60/40 investor (no regime awareness):**
 - 60% SPY: −19.4%
@@ -189,16 +193,18 @@ DISINFLATION (Core CPI > 3.0%, falling):
 
 **Regime-aware investor (stagflation positioning from March 2022):**
 
-| Position | Allocation | 2022 Return | Contribution |
-|---|---|---|---|
-| XLE (energy) | 18% | +65.7% | +11.8% |
-| Broad commodities | 12% | +26.0% | +3.1% |
-| TIPS (TIP) | 8% | −11.4% | −0.9% |
-| Gold (GLD) | 8% | −0.4% | −0.03% |
-| Defensive equity (XLP+XLV+XLU) | 25% | −2.1% avg | −0.5% |
-| SHY/T-bills | 18% | +2.1% | +0.4% |
-| SPY | 11% | −19.4% | −2.1% |
-| **Total** | **100%** | | **+11.8%** |
+```
+Position                        Allocation  2022 Return  Contribution
+------------------------------  ----------  -----------  ------------
+XLE (energy)                    18%         +65.7%       +11.8%
+Broad commodities               12%         +26.0%       +3.1%
+TIPS (TIP)                      8%          −11.4%       −0.9%
+Gold (GLD)                      8%          −0.4%        −0.03%
+Defensive equity (XLP+XLV+XLU)  25%         −2.1% avg    −0.5%
+SHY/T-bills                     18%         +2.1%        +0.4%
+SPY                             11%         −19.4%       −2.1%
+Total                           100%                     +11.8%
+```
 
 **Regime-aware 2022 return: approximately +8% to +12% (depending on exact timing)**
 **vs. 60/40 return: −24.0%**
@@ -208,12 +214,14 @@ DISINFLATION (Core CPI > 3.0%, falling):
 
 ### Trade 3 — Reflation 2009-2010: Missing the Cyclical Recovery ❌
 
-| Period | March 2009 – December 2010 |
-|---|---|
-| Starting inflation | Low and falling (deflation risk) |
-| Regime transition | Goldilocks → Reflation as recovery began |
-| Key signal | ISM Manufacturing crossing 50 (expansion) |
-| Signal timing | September 2009 (ISM back above 50) |
+```
+Period              March 2009 – December 2010
+------------------  -----------------------------------------
+Starting inflation  Low and falling (deflation risk)
+Regime transition   Goldilocks → Reflation as recovery began
+Key signal          ISM Manufacturing crossing 50 (expansion)
+Signal timing       September 2009 (ISM back above 50)
+```
 
 **Investor who stayed in Goldilocks positioning (TLT heavy, tech overweight) through the Reflation transition:**
 - TLT 2009-2010: +6.2% (low yield, but rising rates reduced upside)
@@ -449,14 +457,16 @@ The standard 60/40 correlation assumption breaks down in Stagflation — this is
 
 ## When This Strategy Works Best
 
-| Condition | Optimal Value | Why |
-|---|---|---|
-| Regime clarity | Unambiguous 2+ months of data | Ambiguous regimes produce whipsaw rotation |
-| Leading indicators | All 3 confirming same direction | Multiple confirmations reduce false positives |
-| Regime transition frequency | 1-2 per year | More frequent transitions increase whipsaw |
-| Policy responsiveness | Fed reacts quickly to inflation | Rapid Fed response accelerates regime transitions |
-| Asset class liquidity | All positions in liquid ETFs | Large allocations require liquid markets |
-| Rebalancing tolerance | Accept 2-3 month lag | Being early is the goal — accept early discomfort |
+```
+Condition                    Optimal Value                    Why
+---------------------------  -------------------------------  -------------------------------------------------
+Regime clarity               Unambiguous 2+ months of data    Ambiguous regimes produce whipsaw rotation
+Leading indicators           All 3 confirming same direction  Multiple confirmations reduce false positives
+Regime transition frequency  1-2 per year                     More frequent transitions increase whipsaw
+Policy responsiveness        Fed reacts quickly to inflation  Rapid Fed response accelerates regime transitions
+Asset class liquidity        All positions in liquid ETFs     Large allocations require liquid markets
+Rebalancing tolerance        Accept 2-3 month lag             Being early is the goal — accept early discomfort
+```
 
 ---
 
@@ -480,33 +490,37 @@ The standard 60/40 correlation assumption breaks down in Stagflation — this is
 
 ## Strategy Parameters
 
-| Parameter | Conservative | Standard | Aggressive |
-|---|---|---|---|
-| `cpi_level_threshold` | 3.5% | 3.0% Core CPI | 2.5% Core CPI |
-| `pce_level_threshold` | 3.0% | 2.5% PCE | 2.0% PCE |
-| `direction_confirmation` | 3 consecutive prints | 2 consecutive | 1 + TIPS confirmation |
-| `max_sector_overweight` | 10% | 15% | 20% |
-| `transition_speed` | Over 4-6 weeks | Over 2-4 weeks | Over 1-2 weeks |
-| `lead_indicator_use` | CPI only (lagged) | CPI + PPI | CPI + PPI + breakevens + oil |
-| `two_stage_rotation` | Always | Preferred | Optional (one stage) |
-| `options_by_regime` | None | Modest adjustment | Full options suite adjustment |
-| `rebalance_frequency` | Quarterly | At each CPI release | Monthly + leading indicators |
-| `energy_allocation_stagflation` | 10% max | 15% max | 20% max |
+```
+Parameter                        Conservative          Standard             Aggressive
+-------------------------------  --------------------  -------------------  -----------------------------
+`cpi_level_threshold`            3.5%                  3.0% Core CPI        2.5% Core CPI
+`pce_level_threshold`            3.0%                  2.5% PCE             2.0% PCE
+`direction_confirmation`         3 consecutive prints  2 consecutive        1 + TIPS confirmation
+`max_sector_overweight`          10%                   15%                  20%
+`transition_speed`               Over 4-6 weeks        Over 2-4 weeks       Over 1-2 weeks
+`lead_indicator_use`             CPI only (lagged)     CPI + PPI            CPI + PPI + breakevens + oil
+`two_stage_rotation`             Always                Preferred            Optional (one stage)
+`options_by_regime`              None                  Modest adjustment    Full options suite adjustment
+`rebalance_frequency`            Quarterly             At each CPI release  Monthly + leading indicators
+`energy_allocation_stagflation`  10% max               15% max              20% max
+```
 
 ---
 
 ## Data Requirements
 
-| Data | Source | Usage |
-|---|---|---|
-| Core CPI YoY (monthly) | BLS / FRED `CPILFESL` | Primary regime classification |
-| Core PCE YoY (monthly) | BEA / FRED `PCEPILFE` | Cross-confirmation (Fed's measure) |
-| CPI 3-month moving average | Derived from FRED | Direction determination |
-| 5-year TIPS breakeven | FRED `T5YIE` | Real-time leading indicator |
-| PPI Final Demand YoY | BLS / FRED `PPIACO` | 2-month CPI lead signal |
-| WTI crude oil (daily) | Polygon `CL=F` | 1-2 month lead on PPI energy |
-| Bloomberg Commodity Index | Bloomberg / proxy ETF | Broad commodity trend |
-| ISM Manufacturing | ISM website / FRED | Reflation/Goldilocks discriminator |
-| SPY, QQQ, IWM, XLE, XLU, VNQ, TLT, GLD, TIP OHLCV | Polygon | Execution prices |
-| SPY-TLT rolling correlation | Computed daily | Stagflation correlation breakdown monitor |
-| Fed funds rate | FRED `FEDFUNDS` | Monetary policy context |
+```
+Data                                               Source                 Usage
+-------------------------------------------------  ---------------------  -----------------------------------------
+Core CPI YoY (monthly)                             BLS / FRED `CPILFESL`  Primary regime classification
+Core PCE YoY (monthly)                             BEA / FRED `PCEPILFE`  Cross-confirmation (Fed's measure)
+CPI 3-month moving average                         Derived from FRED      Direction determination
+5-year TIPS breakeven                              FRED `T5YIE`           Real-time leading indicator
+PPI Final Demand YoY                               BLS / FRED `PPIACO`    2-month CPI lead signal
+WTI crude oil (daily)                              Polygon `CL=F`         1-2 month lead on PPI energy
+Bloomberg Commodity Index                          Bloomberg / proxy ETF  Broad commodity trend
+ISM Manufacturing                                  ISM website / FRED     Reflation/Goldilocks discriminator
+SPY, QQQ, IWM, XLE, XLU, VNQ, TLT, GLD, TIP OHLCV  Polygon                Execution prices
+SPY-TLT rolling correlation                        Computed daily         Stagflation correlation breakdown monitor
+Fed funds rate                                     FRED `FEDFUNDS`        Monetary policy context
+```

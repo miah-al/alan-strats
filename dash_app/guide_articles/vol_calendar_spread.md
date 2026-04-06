@@ -157,41 +157,49 @@ most common class without a threshold.
 
 **Group 1 — IV Term Structure (primary signals):**
 
-| Feature | Description |
-|---|---|
-| `front_iv` | ATM IV of nearest monthly expiry ≥ 21 DTE |
-| `back_iv` | ATM IV of next monthly expiry (~45 DTE) |
-| `term_slope` | `back_iv − front_iv` — positive = contango, negative = backwardation |
-| `front_ivr` | Front IV rank vs 52-week rolling history |
-| `back_ivr` | Back IV rank vs 52-week rolling history |
-| `ivr_spread` | `front_ivr − back_ivr` — is front disproportionately elevated? |
+```
+Feature       Description
+------------  --------------------------------------------------------------------
+`front_iv`    ATM IV of nearest monthly expiry ≥ 21 DTE
+`back_iv`     ATM IV of next monthly expiry (~45 DTE)
+`term_slope`  `back_iv − front_iv` — positive = contango, negative = backwardation
+`front_ivr`   Front IV rank vs 52-week rolling history
+`back_ivr`    Back IV rank vs 52-week rolling history
+`ivr_spread`  `front_ivr − back_ivr` — is front disproportionately elevated?
+```
 
 **Group 2 — Variance Risk Premium:**
 
-| Feature | Description |
-|---|---|
-| `realized_vol_20d` | 20-day realized vol: `std(log_returns) × √252 × 100` |
-| `vrp` | `front_iv − realized_vol_20d` — positive = market overpaying |
-| `vrp_zscore` | VRP vs its own 90-day history — extreme values signal mean-reversion |
+```
+Feature             Description
+------------------  --------------------------------------------------------------------
+`realized_vol_20d`  20-day realized vol: `std(log_returns) × √252 × 100`
+`vrp`               `front_iv − realized_vol_20d` — positive = market overpaying
+`vrp_zscore`        VRP vs its own 90-day history — extreme values signal mean-reversion
+```
 
 **Group 3 — Market Context:**
 
-| Feature | Description |
-|---|---|
-| `vix` | CBOE VIX — macro vol regime |
-| `vix` | CBOE VIX level — macro vol regime |
-| `pc_ratio` | Put/call OI ratio — sentiment and hedging demand |
-| `iv_vol_spike` | Today's option volume / 20-day average — unusual activity flag |
-| `ticker_mkt_corr_20d` | 20-day rolling correlation of ticker to SPY (code feature name) |
+```
+Feature                Description
+---------------------  ---------------------------------------------------------------
+`vix`                  CBOE VIX — macro vol regime
+`vix`                  CBOE VIX level — macro vol regime
+`pc_ratio`             Put/call OI ratio — sentiment and hedging demand
+`iv_vol_spike`         Today's option volume / 20-day average — unusual activity flag
+`ticker_mkt_corr_20d`  20-day rolling correlation of ticker to SPY (code feature name)
+```
 
 **Group 4 — News Sentiment:**
 
-| Feature | Description |
-|---|---|
-| `news_sentiment` | FinBERT sentiment score on ticker-specific news (−1 to +1) |
-| `macro_sentiment` | FinBERT sentiment score on macroeconomic headlines |
-| `sentiment_velocity` | 3-day avg − 10-day avg sentiment — momentum of shift |
-| `sentiment_velocity` | 3-day avg − 10-day avg sentiment — momentum of shift |
+```
+Feature               Description
+--------------------  ----------------------------------------------------------
+`news_sentiment`      FinBERT sentiment score on ticker-specific news (−1 to +1)
+`macro_sentiment`     FinBERT sentiment score on macroeconomic headlines
+`sentiment_velocity`  3-day avg − 10-day avg sentiment — momentum of shift
+`sentiment_velocity`  3-day avg − 10-day avg sentiment — momentum of shift
+```
 
 ---
 
@@ -457,23 +465,27 @@ Key insight:
 
 ### Best COMPRESS Setups
 
-| Signal | Value | Why |
-|---|---|---|
-| Front IVR | > 70% | Front IV at near-52-week highs — most likely to compress |
-| VRP | > +8 vol pts | Options dramatically overpriced vs realized vol |
-| Term slope | In backwardation (< 0) | Front expensive relative to back — compression likely |
-| Post-earnings timing | 1-3 days after report | Earnings event premium about to evaporate |
-| News velocity | Declining (3d avg < 10d avg) | Media attention fading = IV fading |
+```
+Signal                Value                         Why
+--------------------  ----------------------------  --------------------------------------------------------
+Front IVR             > 70%                         Front IV at near-52-week highs — most likely to compress
+VRP                   > +8 vol pts                  Options dramatically overpriced vs realized vol
+Term slope            In backwardation (< 0)        Front expensive relative to back — compression likely
+Post-earnings timing  1-3 days after report         Earnings event premium about to evaporate
+News velocity         Declining (3d avg < 10d avg)  Media attention fading = IV fading
+```
 
 ### Best EXPAND Setups
 
-| Signal | Value | Why |
-|---|---|---|
-| VRP | < 0 (negative) | Options underpricing realized vol — expansion likely |
-| Term slope | Contango widening | Normal structure but widening further = vol compression expected to end |
-| Front IVR | < 30% | Front IV cheaply priced — good entry for long vega |
-| VIX term slope | Flattening or inverting | Macro vol curve signaling near-term risk |
-| Known upcoming catalyst | 10-20 days out | Unpriced event risk creates expansion opportunity |
+```
+Signal                   Value                    Why
+-----------------------  -----------------------  -----------------------------------------------------------------------
+VRP                      < 0 (negative)           Options underpricing realized vol — expansion likely
+Term slope               Contango widening        Normal structure but widening further = vol compression expected to end
+Front IVR                < 30%                    Front IV cheaply priced — good entry for long vega
+VIX term slope           Flattening or inverting  Macro vol curve signaling near-term risk
+Known upcoming catalyst  10-20 days out           Unpriced event risk creates expansion opportunity
+```
 
 ---
 
@@ -522,13 +534,15 @@ Back leg:  next monthly expiry (~45 DTE, typically 21-30 days after front)
 
 ### Exit Rules
 
-| Condition | Action |
-|---|---|
-| 50% of max profit reached | Close the full calendar spread |
-| Front-month at 5 DTE | Roll or close to avoid pin risk and gamma amplification |
-| IV regime signal flips | Close immediately — the thesis has reversed |
-| Loss > 2× credit (short cal) | Stop loss — IV expanded contrary to forecast |
-| Loss > 50% of debit (long cal) | Stop loss — IV compressed contrary to forecast |
+```
+Condition                       Action
+------------------------------  -------------------------------------------------------
+50% of max profit reached       Close the full calendar spread
+Front-month at 5 DTE            Roll or close to avoid pin risk and gamma amplification
+IV regime signal flips          Close immediately — the thesis has reversed
+Loss > 2× credit (short cal)    Stop loss — IV expanded contrary to forecast
+Loss > 50% of debit (long cal)  Stop loss — IV compressed contrary to forecast
+```
 
 ---
 
@@ -562,32 +576,36 @@ Back leg:  next monthly expiry (~45 DTE, typically 21-30 days after front)
 
 ## Quick Reference
 
-| Parameter | Default | Range | Description |
-|---|---|---|---|
-| `min_confidence` | 0.60 | 0.55–0.75 | XGBoost min probability for COMPRESS or EXPAND |
-| `front_dte_min` | 21 DTE | 15–30 | Minimum front-month DTE at entry |
-| `back_dte_target` | 45 DTE | 35–60 | Target back-month DTE |
-| `strike` | ATM | ATM ± 1 strike | Calendar strike (keep ATM for maximum theta) |
-| `profit_target` | 50% of max | 40–70% | Close calendar at % of max profit |
-| `stop_compress` | 2× credit | 1.5–3× | Close short calendar if loss reaches this |
-| `stop_expand` | 50% of debit | 40–60% | Close long calendar if debit lost by this % |
-| `front_expiry_exit` | 5 DTE | 3–7 | Close before this DTE on front leg |
-| `position_size_pct` | 2% | 1–3% | Capital at risk per trade |
-| `min_vrp` | +3 for COMPRESS | 0–+8 | Minimum VRP for short calendar |
-| `max_vrp` | +5 for EXPAND | 0–+10 | Maximum VRP for long calendar (lower = better) |
+```
+Parameter            Default          Range           Description
+-------------------  ---------------  --------------  ----------------------------------------------
+`min_confidence`     0.60             0.55–0.75       XGBoost min probability for COMPRESS or EXPAND
+`front_dte_min`      21 DTE           15–30           Minimum front-month DTE at entry
+`back_dte_target`    45 DTE           35–60           Target back-month DTE
+`strike`             ATM              ATM ± 1 strike  Calendar strike (keep ATM for maximum theta)
+`profit_target`      50% of max       40–70%          Close calendar at % of max profit
+`stop_compress`      2× credit        1.5–3×          Close short calendar if loss reaches this
+`stop_expand`        50% of debit     40–60%          Close long calendar if debit lost by this %
+`front_expiry_exit`  5 DTE            3–7             Close before this DTE on front leg
+`position_size_pct`  2%               1–3%            Capital at risk per trade
+`min_vrp`            +3 for COMPRESS  0–+8            Minimum VRP for short calendar
+`max_vrp`            +5 for EXPAND    0–+10           Maximum VRP for long calendar (lower = better)
+```
 
 ---
 
 ## Data Requirements
 
-| Data | Source | Usage |
-|---|---|---|
-| Options IV by expiry | Polygon (live + historical) | `front_iv`, `back_iv`, `term_slope` |
-| OHLCV price history | Polygon | `realized_vol_20d`, `ticker_mkt_corr_20d` |
-| VIX | Polygon `VIXIND` | Macro vol regime (`vix` feature) |
-| VIX term structure | Polygon VIX M1/M2 | Systemic backwardation detection |
-| News corpus | DB — news table | FinBERT sentiment features |
-| Open Interest, Volume | Polygon options chain | `pc_ratio`, `iv_vol_spike` |
+```
+Data                   Source                       Usage
+---------------------  ---------------------------  -----------------------------------------
+Options IV by expiry   Polygon (live + historical)  `front_iv`, `back_iv`, `term_slope`
+OHLCV price history    Polygon                      `realized_vol_20d`, `ticker_mkt_corr_20d`
+VIX                    Polygon `VIXIND`             Macro vol regime (`vix` feature)
+VIX term structure     Polygon VIX M1/M2            Systemic backwardation detection
+News corpus            DB — news table              FinBERT sentiment features
+Open Interest, Volume  Polygon options chain        `pc_ratio`, `iv_vol_spike`
+```
 
 ---
 

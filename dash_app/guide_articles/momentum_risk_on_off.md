@@ -222,12 +222,14 @@ Risk-On/Off Switcher — October 12, 2018:
 
 **Performance by macro environment:**
 
-| Macro Environment | Switcher Return | SPY Return | TLT Return | Assessment |
-|---|---|---|---|---|
-| Normal expansion (low VIX) | +11.2%/yr | +13.8%/yr | +4.2%/yr | Slight lag vs SPY (cost of insurance) |
-| Recession risk / elevated VIX | +8.4%/yr | -12.6%/yr | +14.1%/yr | Strategy massively outperforms |
-| Inflationary regime (2022-type) | -5.1%/yr | -18.1%/yr | -31.2%/yr | All fail; CPI override helps |
-| Recovery / relief rally | +22.3%/yr | +28.4%/yr | -2.1%/yr | Switcher lags on sharp recoveries |
+```
+Macro Environment                Switcher Return  SPY Return  TLT Return  Assessment
+-------------------------------  ---------------  ----------  ----------  -------------------------------------
+Normal expansion (low VIX)       +11.2%/yr        +13.8%/yr   +4.2%/yr    Slight lag vs SPY (cost of insurance)
+Recession risk / elevated VIX    +8.4%/yr         -12.6%/yr   +14.1%/yr   Strategy massively outperforms
+Inflationary regime (2022-type)  -5.1%/yr         -18.1%/yr   -31.2%/yr   All fail; CPI override helps
+Recovery / relief rally          +22.3%/yr        +28.4%/yr   -2.1%/yr    Switcher lags on sharp recoveries
+```
 
 ---
 
@@ -304,14 +306,16 @@ protects better against rapid selloffs, while a higher SPY re-entry bar
 
 ## When This Strategy Works Best
 
-| Condition | Optimal Value | Why |
-|---|---|---|
-| Stock-bond correlation | Negative (< -0.2) | The structural basis for the strategy |
-| Inflation | Low and stable (< 3%) | Inflation destroys bond performance as a safe haven |
-| Fed policy | Responsive to growth/recession | Central bank willing to cut rates on recession = TLT rallies |
-| Macro regime duration | Sustained (3+ months) | Short regimes are costly due to switching frequency |
-| VIX regime | Clearly one or the other (< 15 or > 25) | Uncertainty band is worst state for the strategy |
-| Interest rate trend | Defined direction | Rising rates = hurt TLT; falling rates = hurt SPY |
+```
+Condition               Optimal Value                            Why
+----------------------  ---------------------------------------  ------------------------------------------------------------
+Stock-bond correlation  Negative (< -0.2)                        The structural basis for the strategy
+Inflation               Low and stable (< 3%)                    Inflation destroys bond performance as a safe haven
+Fed policy              Responsive to growth/recession           Central bank willing to cut rates on recession = TLT rallies
+Macro regime duration   Sustained (3+ months)                    Short regimes are costly due to switching frequency
+VIX regime              Clearly one or the other (< 15 or > 25)  Uncertainty band is worst state for the strategy
+Interest rate trend     Defined direction                        Rising rates = hurt TLT; falling rates = hurt SPY
+```
 
 ---
 
@@ -331,38 +335,42 @@ protects better against rapid selloffs, while a higher SPY re-entry bar
 
 ## Strategy Parameters
 
-| Parameter | Default | Range | Description |
-|---|---|---|---|
-| Risk-on asset | SPY | Extensible | Equity ETF |
-| Risk-off asset | TLT | TLT / SHY / TIPS | Long Treasury ETF; SHY in inflationary regimes |
-| LSTM lookback | 30 days | 20–60 | Input sequence length |
-| Feature count | 15–20 | 10–30 | Macro + technical + credit features |
-| Switch threshold high | 0.65 | 0.60–0.75 | P(risk-on) to switch into SPY |
-| Switch threshold low | 0.35 | 0.25–0.40 | P(risk-on) to switch into TLT |
-| Hysteresis days | 3 | 2–5 | Days signal must persist before switching |
-| Uncertainty band | 0.35–0.65 | Adjustable | Hold current position, no switch |
-| Max drawdown override | -12% | -8 to -15% | Force 50% cash if position down this much |
-| CPI override threshold | CPI > 5% and rising | Conditional | Switch TLT to SHY when inflation elevated |
-| Retraining frequency | Quarterly | Monthly–semi-annual | Walk-forward window expansion |
-| Min training period | 10 years | 8–15 years | Must include at least one bear market |
-| Hard stop override | SPY -5% intraday | Non-negotiable | Switch to TLT immediately on crash |
-| Stock-bond corr monitor | 60-day rolling | Monthly check | If > +0.3, consider three-asset framework |
+```
+Parameter                Default              Range                Description
+-----------------------  -------------------  -------------------  ----------------------------------------------
+Risk-on asset            SPY                  Extensible           Equity ETF
+Risk-off asset           TLT                  TLT / SHY / TIPS     Long Treasury ETF; SHY in inflationary regimes
+LSTM lookback            30 days              20–60                Input sequence length
+Feature count            15–20                10–30                Macro + technical + credit features
+Switch threshold high    0.65                 0.60–0.75            P(risk-on) to switch into SPY
+Switch threshold low     0.35                 0.25–0.40            P(risk-on) to switch into TLT
+Hysteresis days          3                    2–5                  Days signal must persist before switching
+Uncertainty band         0.35–0.65            Adjustable           Hold current position, no switch
+Max drawdown override    -12%                 -8 to -15%           Force 50% cash if position down this much
+CPI override threshold   CPI > 5% and rising  Conditional          Switch TLT to SHY when inflation elevated
+Retraining frequency     Quarterly            Monthly–semi-annual  Walk-forward window expansion
+Min training period      10 years             8–15 years           Must include at least one bear market
+Hard stop override       SPY -5% intraday     Non-negotiable       Switch to TLT immediately on crash
+Stock-bond corr monitor  60-day rolling       Monthly check        If > +0.3, consider three-asset framework
+```
 
 ---
 
 ## Data Requirements
 
-| Data | Source | Usage |
-|---|---|---|
-| SPY daily OHLCV | Polygon | Risk-on performance tracking |
-| TLT daily OHLCV | Polygon | Risk-off performance tracking |
-| VIX daily level and 5d change | Polygon / CBOE | LSTM input feature |
-| 2s10s yield curve | FRED / DB | LSTM input — recession predictor |
-| HYG daily price | Polygon | 20-day return, credit condition proxy |
-| CPI monthly trend | BLS / FRED | Inflation regime detection, TLT override |
-| ISM Manufacturing PMI | ISM | Economic expansion/contraction signal |
-| IG credit spreads (OAS) | FRED / Bloomberg | Credit stress early warning |
-| Real 10-year yield | FRED | Financial conditions measure |
-| SPY 200-day MA | Calculated | Technical confirmation |
-| FOMC calendar | Federal Reserve | Suspension period around decisions |
-| Unemployment rate (Sahm Rule) | BLS | Leading recession indicator |
+```
+Data                           Source            Usage
+-----------------------------  ----------------  ----------------------------------------
+SPY daily OHLCV                Polygon           Risk-on performance tracking
+TLT daily OHLCV                Polygon           Risk-off performance tracking
+VIX daily level and 5d change  Polygon / CBOE    LSTM input feature
+2s10s yield curve              FRED / DB         LSTM input — recession predictor
+HYG daily price                Polygon           20-day return, credit condition proxy
+CPI monthly trend              BLS / FRED        Inflation regime detection, TLT override
+ISM Manufacturing PMI          ISM               Economic expansion/contraction signal
+IG credit spreads (OAS)        FRED / Bloomberg  Credit stress early warning
+Real 10-year yield             FRED              Financial conditions measure
+SPY 200-day MA                 Calculated        Technical confirmation
+FOMC calendar                  Federal Reserve   Suspension period around decisions
+Unemployment rate (Sahm Rule)  BLS               Leading recession indicator
+```

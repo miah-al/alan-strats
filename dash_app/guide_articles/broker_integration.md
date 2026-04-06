@@ -36,11 +36,13 @@ You are selling an SPY Iron Condor:
 - Sell 5x SPY 460C / Buy 5x SPY 465C (bear call spread) at $0.45 credit
 - Net credit target: **$1.10 per spread** (4 legs × 5 contracts = 20 total contracts)
 
-| Broker | Theoretical mid | Actual fill | Credit received | On 5 contracts |
-|---|---|---|---|---|
-| Robinhood (PFOF) | $1.10 | $1.02–$1.05 | $1.03 avg | **$515** |
-| Tastytrade (CBOE/PHLX) | $1.10 | $1.07–$1.10 | $1.08 avg | **$540** |
-| IBKR SmartRoute | $1.10 | $1.08–$1.11 | $1.09 avg | **$545** |
+```
+Broker                  Theoretical mid  Actual fill  Credit received  On 5 contracts
+----------------------  ---------------  -----------  ---------------  --------------
+Robinhood (PFOF)        $1.10            $1.02–$1.05  $1.03 avg        $515
+Tastytrade (CBOE/PHLX)  $1.10            $1.07–$1.10  $1.08 avg        $540
+IBKR SmartRoute         $1.10            $1.08–$1.11  $1.09 avg        $545
+```
 
 **Difference: $25–$30 per Iron Condor, before commissions.** Running 50 Iron Condors per month, that is **$1,250–$1,500/month in pure execution drag** that never shows up on your commission statement. It is invisible, but it is very real.
 
@@ -78,23 +80,25 @@ No SPX 0DTE. No VIX options for hedging. No portfolio margin (Reg T only). If yo
 
 ### The Master Comparison Table
 
-| Feature | Tastytrade | IBKR | Tradier | Schwab/ToS | Alpaca | E*TRADE/Morgan |
-|---|---|---|---|---|---|---|
-| **Options commissions** | $1/contract (open), $0 (close), $10/leg cap | $0.25–$0.65/contract | $0 flat | $0.65/contract | $0 equities, no options API | $0.65/contract |
-| **Iron Condor 5-contract round trip** | $20 open / $0 close | $5.20–$13 each way | $0 | $26 each way | N/A | $26 each way |
-| **API type** | REST + WebSocket (streaming) | FIX, TWS API, ibkr_web_api (REST) | REST | REST (unofficial ThinkScript API) | REST + WebSocket | REST |
-| **Authentication** | OAuth2 (session tokens) | Username/Password + 2FA (TWS), OAuth2 (web API) | API Key (simple) | No official API | OAuth2 | OAuth2 |
-| **Rate limits** | ~120 req/min REST; streaming unlimited | TWS: effectively unlimited; Web API: 10 req/sec | 60 req/min | N/A (unofficial) | 200 req/min | 10 req/sec |
-| **Multi-leg orders** | Native (single order, 4 legs) | Native combo orders | REST multi-leg | Native in ToS platform | No options | Native |
-| **Options chain depth** | Full chain, all expirations | Full chain, all exchanges | Full chain | Full chain | No | Full chain |
-| **Greeks accuracy** | Model-based, real-time | Exchange-reported + IBKR model | Polygon-sourced | ToS proprietary model | N/A | E*TRADE model |
-| **Fill quality (PFOF?)** | No PFOF; routes to CBOE/ISE/PHLX | SmartRouting; no PFOF | Routes to exchanges; no PFOF | PFOF on equities; options via CBOE | No options | PFOF |
-| **Margin: spreads** | Reg T by default; portfolio margin available | Reg T or portfolio margin | Reg T | Reg T or portfolio margin | N/A | Reg T |
-| **Paper trading** | Yes, real-time simulated | Yes, Paper TWS account | No (simulate in-app only) | Yes (paperMoney) | Yes | No |
-| **Official Python library** | `tastytrade` (official, maintained) | `ib_insync` (community, excellent) | None official; REST is trivial | None | `alpaca-trade-api` (official) | None |
-| **WebSocket streaming** | Yes (DXFeed integration) | Yes (TWS market data) | No (polling only) | No official | Yes | No |
-| **Index options** | SPY, QQQ (ETF), not SPX/NDX cash | Full: SPX, NDX, VIX, /ES, /NQ | ETFs only | Full SPX, VIX, futures | No | ETF options only |
-| **Minimum account** | $0 but $2,000 practical | $0 (stocks), $2,000 (options) | $0 | $0 | $0 | $0 |
+```
+Feature                            Tastytrade                                    IBKR                                             Tradier                         Schwab/ToS                          Alpaca                         E*TRADE/Morgan
+---------------------------------  --------------------------------------------  -----------------------------------------------  ------------------------------  ----------------------------------  -----------------------------  ----------------
+Options commissions                $1/contract (open), $0 (close), $10/leg cap   $0.25–$0.65/contract                             $0 flat                         $0.65/contract                      $0 equities, no options API    $0.65/contract
+Iron Condor 5-contract round trip  $20 open / $0 close                           $5.20–$13 each way                               $0                              $26 each way                        N/A                            $26 each way
+API type                           REST + WebSocket (streaming)                  FIX, TWS API, ibkr_web_api (REST)                REST                            REST (unofficial ThinkScript API)   REST + WebSocket               REST
+Authentication                     OAuth2 (session tokens)                       Username/Password + 2FA (TWS), OAuth2 (web API)  API Key (simple)                No official API                     OAuth2                         OAuth2
+Rate limits                        ~120 req/min REST; streaming unlimited        TWS: effectively unlimited; Web API: 10 req/sec  60 req/min                      N/A (unofficial)                    200 req/min                    10 req/sec
+Multi-leg orders                   Native (single order, 4 legs)                 Native combo orders                              REST multi-leg                  Native in ToS platform              No options                     Native
+Options chain depth                Full chain, all expirations                   Full chain, all exchanges                        Full chain                      Full chain                          No                             Full chain
+Greeks accuracy                    Model-based, real-time                        Exchange-reported + IBKR model                   Polygon-sourced                 ToS proprietary model               N/A                            E*TRADE model
+Fill quality (PFOF?)               No PFOF; routes to CBOE/ISE/PHLX              SmartRouting; no PFOF                            Routes to exchanges; no PFOF    PFOF on equities; options via CBOE  No options                     PFOF
+Margin: spreads                    Reg T by default; portfolio margin available  Reg T or portfolio margin                        Reg T                           Reg T or portfolio margin           N/A                            Reg T
+Paper trading                      Yes, real-time simulated                      Yes, Paper TWS account                           No (simulate in-app only)       Yes (paperMoney)                    Yes                            No
+Official Python library            `tastytrade` (official, maintained)           `ib_insync` (community, excellent)               None official; REST is trivial  None                                `alpaca-trade-api` (official)  None
+WebSocket streaming                Yes (DXFeed integration)                      Yes (TWS market data)                            No (polling only)               No official                         Yes                            No
+Index options                      SPY, QQQ (ETF), not SPX/NDX cash              Full: SPX, NDX, VIX, /ES, /NQ                    ETFs only                       Full SPX, VIX, futures              No                             ETF options only
+Minimum account                    $0 but $2,000 practical                       $0 (stocks), $2,000 (options)                    $0                              $0                                  $0                             $0
+```
 
 ### Commission Math — Iron Condor, 5 Contracts, Round Trip
 
@@ -1782,14 +1786,16 @@ The right response is never to increase position size to compensate for lower-th
 
 ### Commission Table
 
-| Platform | Open ($/contract) | Close ($/contract) | Open cost (400 contracts) | Close cost | Monthly total | Annual total | Notes |
-|---|---|---|---|---|---|---|---|
-| **Tastytrade** | $1.00 (cap $10/leg) | $0.00 | $200 (at 2 contracts/leg, below cap) | $0 | **$200** | **$2,400** | Cap of $10/leg saves at 5+ contracts |
-| **IBKR (< 10k/mo)** | $0.65 | $0.65 | $260 | $260 | **$520** | **$6,240** | Add ~$16/mo exchange fees |
-| **IBKR (tiered, > 100k/mo)** | $0.25 | $0.25 | $100 | $100 | **$200** | **$2,400** | High volume only |
-| **Tradier** | $0.00 | $0.00 | $0 | $0 | **$10** | **$120** | $10/mo flat subscription |
-| **Schwab/ToS** | $0.65 | $0.65 | $260 | $260 | **$520** | **$6,240** | Standard retail |
-| **E*TRADE** | $0.65 | $0.65 | $260 | $260 | **$520** | **$6,240** | No advantage over Schwab |
+```
+Platform                  Open ($/contract)    Close ($/contract)  Open cost (400 contracts)             Close cost  Monthly total  Annual total  Notes
+------------------------  -------------------  ------------------  ------------------------------------  ----------  -------------  ------------  ------------------------------------
+Tastytrade                $1.00 (cap $10/leg)  $0.00               $200 (at 2 contracts/leg, below cap)  $0          $200           $2,400        Cap of $10/leg saves at 5+ contracts
+IBKR (< 10k/mo)           $0.65                $0.65               $260                                  $260        $520           $6,240        Add ~$16/mo exchange fees
+IBKR (tiered, > 100k/mo)  $0.25                $0.25               $100                                  $100        $200           $2,400        High volume only
+Tradier                   $0.00                $0.00               $0                                    $0          $10            $120          $10/mo flat subscription
+Schwab/ToS                $0.65                $0.65               $260                                  $260        $520           $6,240        Standard retail
+E*TRADE                   $0.65                $0.65               $260                                  $260        $520           $6,240        No advantage over Schwab
+```
 
 **Tastytrade math at 2 contracts per leg**:
 - 50 ICs x 4 legs x min(2 contracts x $1.00, $10.00 cap) = 50 x 4 x $2.00 = $400 open
@@ -1803,13 +1809,15 @@ At 5 contracts (hitting the $10 cap):
 
 The commission table is only half the story. Add the fill quality cost:
 
-| Platform | Commission/month | Fill slippage/month (50 ICs) | True monthly cost | Annual |
-|---|---|---|---|---|
-| **Tastytrade** | $400 | ~$500 (no PFOF, good routing) | **$900** | **$10,800** |
-| **IBKR SmartRoute** | $520 | ~$400 (SmartRoute is excellent) | **$920** | **$11,040** |
-| **Tradier** | $10 | ~$600 (good routing, no PFOF) | **$610** | **$7,320** |
-| **Schwab/ToS** | $520 | ~$450 (ToS routes to CBOE) | **$970** | **$11,640** |
-| **Robinhood** | $0 | ~$1,500–$2,000 (PFOF + legging penalty) | **$1,500–$2,000** | **$18,000–$24,000** |
+```
+Platform         Commission/month  Fill slippage/month (50 ICs)             True monthly cost  Annual
+---------------  ----------------  ---------------------------------------  -----------------  ---------------
+Tastytrade       $400              ~$500 (no PFOF, good routing)            $900               $10,800
+IBKR SmartRoute  $520              ~$400 (SmartRoute is excellent)          $920               $11,040
+Tradier          $10               ~$600 (good routing, no PFOF)            $610               $7,320
+Schwab/ToS       $520              ~$450 (ToS routes to CBOE)               $970               $11,640
+Robinhood        $0                ~$1,500–$2,000 (PFOF + legging penalty)  $1,500–$2,000      $18,000–$24,000
+```
 
 Note: Fill slippage estimated at $0.10/spread x 2 contracts x 50 ICs = $1,000 baseline, adjusted per platform quality. Robinhood includes the cost of legging in 4 legs separately in a moving market.
 

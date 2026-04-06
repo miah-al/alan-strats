@@ -67,8 +67,8 @@ logger = logging.getLogger(__name__)
 
 # ── Constants ──────────────────────────────────────────────────────────────────
 _RISK_FREE_RATE  = 0.045
-_WARMUP_BARS     = 180      # bars before first ML prediction
-_RETRAIN_EVERY   = 30       # bars between model retraining
+_WARMUP_BARS     = 90       # bars before first ML prediction (was 180 — 4 months is enough)
+_RETRAIN_EVERY   = 15       # bars between model retraining (was 30 — more frequent for small datasets)
 _SAVED_MODELS_DIR = Path(__file__).parent.parent / "saved_models"
 
 
@@ -106,6 +106,22 @@ def _compute_atr(high, low, close, period=14):
     return tr.rolling(period, min_periods=period // 2).mean()
 
 
+def _compute_adx(high: pd.Series, low: pd.Series, close: pd.Series,
+                  period: int = 14) -> pd.Series:
+    """Average Directional Index — measures trend strength. Low ADX = range-bound."""
+    prev_high  = high.shift(1)
+    prev_low   = low.shift(1)
+    prev_close = close.shift(1)
+    tr = pd.concat([high - low, (high - prev_close).abs(), (low - prev_close).abs()], axis=1).max(axis=1)
+    plus_dm  = (high - prev_high).clip(lower=0).where((high - prev_high) > (prev_low - low), 0)
+    minus_dm = (prev_low - low).clip(lower=0).where((prev_low - low) > (high - prev_high), 0)
+    atr_s    = tr.rolling(period, min_periods=period // 2).mean()
+    plus_di  = 100 * plus_dm.rolling(period,  min_periods=period // 2).mean() / atr_s.replace(0, np.nan)
+    minus_di = 100 * minus_dm.rolling(period, min_periods=period // 2).mean() / atr_s.replace(0, np.nan)
+    dx       = (100 * (plus_di - minus_di).abs() / (plus_di + minus_di).replace(0, np.nan))
+    return dx.rolling(period, min_periods=period // 2).mean().fillna(20.0)
+
+
 def _build_feature_matrix(
     close:   pd.Series,
     high:    pd.Series,
@@ -134,45 +150,43 @@ def _build_feature_matrix(
     vix_ma20       = vix.rolling(20, min_periods=10).mean()
     vix_ma_ratio   = vix / vix_ma20.replace(0, np.nan)
 
-    # Term structure proxy: VIX 5d momentum as slope approximation
-    iv_term_slope  = vix.diff(5) / 5.0
+    # ADX — best single range-bound discriminator (low = range-bound, high = trending)
+    adx = _compute_adx(high, low, close, 14)
 
-    # Put/call skew proxy: 1-month vs 3-month VIX ratio (contango = positive)
-    # Using rolling std ratio as a crude proxy without real term structure data
-    vol_1m  = close.pct_change().rolling(21,  min_periods=10).std()
-    vol_3m  = close.pct_change().rolling(63,  min_periods=20).std()
+    # Put/call skew proxy: 1-month vs 3-month realized vol ratio
+    vol_1m        = close.pct_change().rolling(21, min_periods=10).std()
+    vol_3m        = close.pct_change().rolling(63, min_periods=20).std()
     put_call_skew = (vol_1m / vol_3m.replace(0, np.nan)).clip(0.5, 2.0)
 
+    # VRP term slope (5d VIX momentum)
+    iv_term_slope = vix.diff(5) / 5.0
+
     # Macro features
-    r10y  = rate10y.reindex(close.index).ffill().fillna(0.04) if rate10y is not None else pd.Series(0.04, index=close.index)
-    r2y   = rate2y.reindex(close.index).ffill().fillna(0.04)  if rate2y  is not None else pd.Series(0.04, index=close.index)
+    r10y        = rate10y.reindex(close.index).ffill().fillna(0.04) if rate10y is not None else pd.Series(0.04, index=close.index)
+    r2y         = rate2y.reindex(close.index).ffill().fillna(0.04)  if rate2y  is not None else pd.Series(0.04, index=close.index)
     yield_curve = r10y - r2y
 
-    # Calendar: days to month end (options tend to cluster around month-end expiry)
-    days_to_month_end = pd.Series(
-        [(_d + pd.offsets.MonthEnd(0) - _d).days for _d in close.index],
-        index=close.index, dtype=float
-    )
-
+    # 15 clean, non-redundant features (removed atm_iv=vix/100 and oi_put_call_proxy=put_call_skew)
     features = pd.DataFrame({
-        "ivr":              ivr,
-        "iv_term_slope":    iv_term_slope,
-        "put_call_skew":    put_call_skew,
-        "atm_iv":           iv_prx,
-        "realized_vol_20d": realized_vol,
-        "vrp":              vrp,
-        "atr_pct":          atr_pct,
-        "ret_5d":           ret_5d,
-        "ret_20d":          ret_20d,
-        "dist_from_ma50":   dist_from_ma50,
-        "vix_level":        vix,
-        "vix_5d_change":    vix_5d_chg,
-        "vix_ma_ratio":     vix_ma_ratio,
-        "rate_10y":         r10y,
+        "ivr":               ivr,
+        "adx":               adx,               # NEW: trend-strength filter
+        "put_call_skew":     put_call_skew,
+        "iv_term_slope":     iv_term_slope,
+        "realized_vol_20d":  realized_vol,
+        "vrp":               vrp,
+        "atr_pct":           atr_pct,
+        "ret_5d":            ret_5d,
+        "ret_20d":           ret_20d,
+        "dist_from_ma50":    dist_from_ma50,
+        "vix_level":         vix,
+        "vix_5d_change":     vix_5d_chg,
+        "vix_ma_ratio":      vix_ma_ratio,
         "yield_curve_2y10y": yield_curve,
-        "days_to_month_end": days_to_month_end,
-        "oi_put_call_proxy": put_call_skew,   # reused as OI proxy without real OI data
-        "close_price":      close,            # used for label construction only
+        "days_to_month_end": pd.Series(
+            [(_d + pd.offsets.MonthEnd(0) - _d).days for _d in close.index],
+            index=close.index, dtype=float
+        ),
+        "close_price":       close,             # label construction only, not in FEATURE_COLS
     })
     return features.ffill().bfill()
 
@@ -197,8 +211,9 @@ def _build_labels(close: pd.Series, realized_vol: pd.Series,
         ann_vol = float(realized_vol.iloc[i])
         if np.isnan(ann_vol) or ann_vol <= 0:
             continue
-        # 1-sigma N-day expected move (from ATM straddle pricing theory)
-        sigma_n_day = ann_vol * np.sqrt(n_forward / 252.0)
+        # IC break-even range ≈ ±1.5σ of the N-day move (16-delta short strikes
+        # are placed at ~1.5σ from spot, so the stock must stay within that band)
+        sigma_n_day = ann_vol * np.sqrt(n_forward / 252.0) * 1.5
 
         # Actual N-day price range as fraction of entry price
         entry_px = float(close.iloc[i])
@@ -209,7 +224,7 @@ def _build_labels(close: pd.Series, realized_vol: pd.Series,
         low_ret  = (entry_px - fwd_prices.min()) / entry_px
         max_excursion = max(high_ret, low_ret)
 
-        # Range-bound if max excursion stays within 1× N-day sigma
+        # Range-bound if max excursion stays within ±1.5σ (IC break-even band)
         labels.iloc[i] = 1.0 if max_excursion <= sigma_n_day else 0.0
 
     return labels
@@ -248,36 +263,31 @@ class IronCondorAIStrategy(BaseStrategy):
     target_sharpe        = 1.8
 
     FEATURE_COLS = [
-        "ivr", "iv_term_slope", "put_call_skew", "atm_iv", "realized_vol_20d",
+        "ivr", "adx", "put_call_skew", "iv_term_slope", "realized_vol_20d",
         "vrp", "atr_pct", "ret_5d", "ret_20d", "dist_from_ma50",
-        "vix_level", "vix_5d_change", "vix_ma_ratio", "rate_10y",
-        "yield_curve_2y10y", "days_to_month_end", "oi_put_call_proxy",
-    ]  # 17 features (close_price excluded from ML input)
+        "vix_level", "vix_5d_change", "vix_ma_ratio",
+        "yield_curve_2y10y", "days_to_month_end",
+    ]  # 15 clean features (removed atm_iv=vix/100 dupe, oi_put_call_proxy=put_call_skew dupe)
 
-    # Sensible neutral defaults when forward-fill still leaves NaN.
-    # Values chosen so they represent "no signal / normal regime" rather than zero.
     _FEATURE_DEFAULTS = {
-        "ivr":              0.50,   # neutral IV rank
-        "iv_term_slope":    0.00,
-        "put_call_skew":    0.00,
-        "atm_iv":           0.20,   # typical equity IV
-        "realized_vol_20d": 0.15,   # typical HV
-        "vrp":              0.00,
-        "atr_pct":          0.015,
-        "ret_5d":           0.00,
-        "ret_20d":          0.00,
-        "dist_from_ma50":   0.00,
-        "vix_level":        20.0,   # long-run VIX mean
-        "vix_5d_change":    0.00,
-        "vix_ma_ratio":     1.00,   # no spike
-        "rate_10y":         0.04,
-        "yield_curve_2y10y":0.00,
-        "days_to_month_end":10,
-        "oi_put_call_proxy":1.00,
+        "ivr":               0.50,
+        "adx":               20.0,  # neutral trend strength
+        "put_call_skew":     1.00,
+        "iv_term_slope":     0.00,
+        "realized_vol_20d":  0.15,
+        "vrp":               0.00,
+        "atr_pct":           0.015,
+        "ret_5d":            0.00,
+        "ret_20d":           0.00,
+        "dist_from_ma50":    0.00,
+        "vix_level":         20.0,
+        "vix_5d_change":     0.00,
+        "vix_ma_ratio":      1.00,
+        "yield_curve_2y10y": 0.00,
+        "days_to_month_end": 10,
     }
 
-    # Features that are critical — if still NaN after defaults, HOLD rather than predict
-    _CRITICAL_FEATURES = {"vix_level", "realized_vol_20d", "atm_iv"}
+    _CRITICAL_FEATURES = {"vix_level", "realized_vol_20d", "ivr"}
 
     @classmethod
     def _prepare_feat_row(cls, df_slice: "pd.DataFrame") -> "pd.DataFrame":
@@ -291,8 +301,8 @@ class IronCondorAIStrategy(BaseStrategy):
 
     def __init__(
         self,
-        signal_threshold:   float = 0.60,  # P(range-bound) must exceed this
-        ivr_min:            float = 0.35,  # IVR floor (AI relaxed vs rules)
+        signal_threshold:   float = 0.50,  # P(range-bound) must exceed this (was 0.60)
+        ivr_min:            float = 0.20,  # IVR floor — matches Rules default (was 0.35)
         vix_max:            float = 38.0,  # VIX ceiling
         delta_short:        float = 0.16,  # default short strike delta
         wing_width_pct:     float = 0.05,  # wing width as % of spot
@@ -302,10 +312,10 @@ class IronCondorAIStrategy(BaseStrategy):
         stop_loss_mult:     float = 2.0,   # 2× credit stop
         position_size_pct:  float = 0.03,  # capital at risk per trade
         commission_per_leg: float = 0.65,
-        max_concurrent:     int   = 3,
-        n_estimators:       int   = 100,   # GBM trees
-        max_depth:          int   = 3,     # GBM depth (shallow = less overfit)
-        learning_rate:      float = 0.05,  # GBM learning rate
+        max_concurrent:     int   = 4,     # was 5 — cap at 4 to limit correlated drawdowns
+        n_estimators:       int   = 50,    # GBM trees (was 100 — more regularized for small datasets)
+        max_depth:          int   = 2,     # GBM depth (was 3 — shallower = less overfit)
+        learning_rate:      float = 0.05,
     ):
         self.signal_threshold   = signal_threshold
         self.ivr_min            = ivr_min
@@ -346,17 +356,17 @@ class IronCondorAIStrategy(BaseStrategy):
     def get_backtest_ui_params(self) -> list:
         return [
             {"key": "signal_threshold",  "label": "Signal threshold",  "type": "slider",
-             "min": 0.45, "max": 0.80, "default": 0.60, "step": 0.05,
+             "min": 0.45, "max": 0.80, "default": 0.50, "step": 0.05,
              "col": 0, "row": 0, "help": "P(range-bound) must exceed this to enter"},
             {"key": "ivr_min",           "label": "Min IVR",           "type": "slider",
-             "min": 0.20, "max": 0.65, "default": 0.35, "step": 0.05,
-             "col": 1, "row": 0, "help": "IVR floor (AI model relaxes this vs rules)"},
+             "min": 0.10, "max": 0.65, "default": 0.20, "step": 0.05,
+             "col": 1, "row": 0, "help": "IVR floor — matches Rules default (0.20)"},
             {"key": "vix_max",           "label": "Max VIX",           "type": "slider",
              "min": 25.0, "max": 50.0, "default": 38.0, "step": 1.0,
              "col": 2, "row": 0},
             {"key": "delta_short",       "label": "Short strike delta","type": "slider",
              "min": 0.10, "max": 0.25, "default": 0.16, "step": 0.01,
-             "col": 0, "row": 1, "help": "Default delta — AI may override per regime"},
+             "col": 0, "row": 1, "help": "Default delta — AI widens on high conviction, tightens on marginal"},
             {"key": "wing_width_pct",    "label": "Wing width (%)",    "type": "slider",
              "min": 0.02, "max": 0.12, "default": 0.05, "step": 0.01,
              "col": 1, "row": 1},
@@ -370,8 +380,8 @@ class IronCondorAIStrategy(BaseStrategy):
              "min": 0.01, "max": 0.08, "default": 0.03, "step": 0.01,
              "col": 1, "row": 2},
             {"key": "n_estimators",      "label": "GBM trees",         "type": "slider",
-             "min": 50,   "max": 300,  "default": 100,  "step": 25,
-             "col": 2, "row": 2, "help": "Number of gradient boosting trees"},
+             "min": 25,   "max": 200,  "default": 50,   "step": 25,
+             "col": 2, "row": 2, "help": "GBM trees (50 is more regularized for small datasets)"},
         ]
 
     def save_model(self, ticker: str = "default") -> str:
@@ -412,7 +422,7 @@ class IronCondorAIStrategy(BaseStrategy):
                 logger.warning("iron_condor_ai: critical features NaN at inference — HOLD")
                 prob = 0.0
             else:
-                prob = float(self._model.predict_proba(feat_row)[0][1])
+                prob = float(self._model.predict_proba(feat_row.values)[0][1])
         except Exception as e:
             logger.warning(f"iron_condor_ai live signal failed: {e}")
             prob = 0.0
@@ -430,7 +440,7 @@ class IronCondorAIStrategy(BaseStrategy):
         self,
         price_data:         pd.DataFrame,
         auxiliary_data:     dict,
-        starting_capital:   float = 100_000,
+        starting_capital:   float = 10_000,
         signal_threshold:   Optional[float] = None,
         ivr_min:            Optional[float] = None,
         vix_max:            Optional[float] = None,
@@ -489,6 +499,9 @@ class IronCondorAIStrategy(BaseStrategy):
         feat_df["close_price"] = close.values
         labels  = _build_labels(close, feat_df["realized_vol_20d"], dte_tgt)
 
+        # VIX 20d MA for circuit breaker (suspend entries when VIX spikes > 15% above MA)
+        vix_ma20 = vix.rolling(20, min_periods=10).mean()
+
         all_dates = list(price_data.index)
         n         = len(all_dates)
 
@@ -501,7 +514,10 @@ class IronCondorAIStrategy(BaseStrategy):
             raise ImportError("scikit-learn is required. pip install scikit-learn")
 
         capital         = float(starting_capital)
+        reserved_margin = 0.0
         equity_curve    = []
+        cash_curve      = []
+        margin_curve    = []
         open_trades:   list[dict] = []
         closed_trades: list[dict] = []
         signal_ledger: list[dict] = []
@@ -517,7 +533,8 @@ class IronCondorAIStrategy(BaseStrategy):
             ivr_val = float(feat_df["ivr"].iloc[i]) if not np.isnan(feat_df["ivr"].iloc[i]) else 0.0
 
             # ── 1. Check exits ────────────────────────────────────────────
-            still_open: list[dict] = []
+            still_open:    list[dict] = []
+            unrealized_pnl = 0.0
             for trade in open_trades:
                 dte_rem = trade["expiry_idx"] - i
                 T_now   = max(dte_rem / 252.0, 1e-6)
@@ -544,27 +561,34 @@ class IronCondorAIStrategy(BaseStrategy):
 
                 if exit_reason:
                     net_pnl = round(pnl_tot - close_comm, 2)
-                    capital += net_pnl
+                    reserved_margin -= trade["margin_reserved"]
+                    capital         += net_pnl
                     closed_trades.append({
-                        "entry_date":    trade["entry_date"].date(),
-                        "exit_date":     dt.date(),
-                        "call_short_K":  round(trade["call_short_K"], 2),
-                        "call_long_K":   round(trade["call_long_K"],  2),
-                        "put_short_K":   round(trade["put_short_K"],  2),
-                        "put_long_K":    round(trade["put_long_K"],   2),
-                        "credit":        round(trade["credit"],        4),
-                        "contracts":     trade["contracts"],
-                        "pnl":           net_pnl,
-                        "exit_reason":   exit_reason,
-                        "dte_held":      trade["dte_entry"] - dte_rem,
-                        "winner":        net_pnl > 0,
-                        "model_prob":    trade.get("model_prob", np.nan),
+                        "entry_date":      trade["entry_date"].date(),
+                        "exit_date":       dt.date(),
+                        "call_short_K":    round(trade["call_short_K"], 2),
+                        "call_long_K":     round(trade["call_long_K"],  2),
+                        "put_short_K":     round(trade["put_short_K"],  2),
+                        "put_long_K":      round(trade["put_long_K"],   2),
+                        "credit":          round(trade["credit"],        4),
+                        "contracts":       trade["contracts"],
+                        "margin_reserved": round(trade["margin_reserved"], 2),
+                        "pnl":             net_pnl,
+                        "exit_reason":     exit_reason,
+                        "dte_held":        trade["dte_entry"] - dte_rem,
+                        "winner":          net_pnl > 0,
+                        "model_prob":      trade.get("model_prob", np.nan),
                     })
                 else:
                     still_open.append(trade)
+                    unrealized_pnl += pnl_per * trade["contracts"] * 100
 
-            open_trades = still_open
-            equity_curve.append(capital)
+            open_trades  = still_open
+            free_capital = capital - reserved_margin
+            mtm_equity   = capital + unrealized_pnl
+            equity_curve.append(mtm_equity)
+            cash_curve.append(free_capital)
+            margin_curve.append(unrealized_pnl)
 
             # ── 2. Retrain model if due ────────────────────────────────────
             if i >= _WARMUP_BARS and (i - last_retrain) >= _RETRAIN_EVERY:
@@ -602,7 +626,7 @@ class IronCondorAIStrategy(BaseStrategy):
             if model_ready and enough_history:
                 try:
                     feat_row = self._prepare_feat_row(feat_df.iloc[i:i+1])
-                    prob = float(model_pipeline.predict_proba(feat_row)[0][1])
+                    prob = float(model_pipeline.predict_proba(feat_row.values)[0][1])
                 except Exception:
                     prob = 0.0
 
@@ -615,6 +639,10 @@ class IronCondorAIStrategy(BaseStrategy):
                 "n_open":  len(open_trades),
             })
 
+            # VIX circuit breaker: suspend new entries when VIX spikes >15% above 20d MA
+            vix_ma20_val  = float(vix_ma20.iloc[i]) if not np.isnan(vix_ma20.iloc[i]) else vix_val
+            vix_spiking   = vix_val > vix_ma20_val * 1.15
+
             can_enter = (
                 enough_history
                 and enough_data
@@ -622,6 +650,7 @@ class IronCondorAIStrategy(BaseStrategy):
                 and prob >= thresh
                 and ivr_val >= ivr_min_eff
                 and vix_val <= vix_max_eff
+                and not vix_spiking
                 and len(open_trades) < max_conc
                 and spot > 0
             )
@@ -629,14 +658,14 @@ class IronCondorAIStrategy(BaseStrategy):
             if can_enter:
                 T_entry = dte_tgt / 252.0
 
-                # Regime-adapted delta: in high-prob regime use tighter strikes
-                # (higher delta = closer to money = more credit but more risk)
-                # In marginal signals, use wider strikes (lower delta)
+                # Regime-adapted delta: high conviction = wider strikes (give stock more room,
+                # lock in premium efficiently). Marginal signal = tighter strikes (need more
+                # credit to justify the uncertainty).
                 adaptive_delta = d_short
                 if prob >= 0.75:
-                    adaptive_delta = min(d_short + 0.04, 0.22)   # high conviction → tighter strikes
+                    adaptive_delta = max(d_short - 0.03, 0.10)   # high conviction → wider strikes
                 elif prob < thresh + 0.10:
-                    adaptive_delta = max(d_short - 0.03, 0.10)   # marginal signal → wider strikes
+                    adaptive_delta = min(d_short + 0.04, 0.22)   # marginal signal → tighter strikes
 
                 call_short_K = _find_strike_for_delta(spot, T_entry, r, iv_val, adaptive_delta, "call")
                 put_short_K  = _find_strike_for_delta(spot, T_entry, r, iv_val, adaptive_delta, "put")
@@ -662,24 +691,27 @@ class IronCondorAIStrategy(BaseStrategy):
                 contracts = max(1, int(capital * pos_sz / (max_loss_per_spread * 100)))
                 contracts = min(contracts, 20)
 
-                open_comm = 4 * comm * contracts
-                expiry_idx = min(i + dte_tgt, n - 1)
+                margin_needed = max_loss_per_spread * contracts * 100
+                open_comm     = 4 * comm * contracts
+                expiry_idx    = min(i + dte_tgt, n - 1)
 
+                reserved_margin += margin_needed
                 open_trades.append({
-                    "entry_date":   dt,
-                    "expiry_idx":   expiry_idx,
-                    "dte_entry":    dte_tgt,
-                    "call_short_K": call_short_K,
-                    "call_long_K":  call_long_K,
-                    "put_short_K":  put_short_K,
-                    "put_long_K":   put_long_K,
-                    "credit":       credit,
-                    "wing_width":   wing_width,
-                    "contracts":    contracts,
-                    "entry_capital": capital,
-                    "model_prob":   prob,
-                    "ivr_at_entry": ivr_val,
-                    "vix_at_entry": vix_val,
+                    "entry_date":      dt,
+                    "expiry_idx":      expiry_idx,
+                    "dte_entry":       dte_tgt,
+                    "call_short_K":    call_short_K,
+                    "call_long_K":     call_long_K,
+                    "put_short_K":     put_short_K,
+                    "put_long_K":      put_long_K,
+                    "credit":          credit,
+                    "wing_width":      wing_width,
+                    "contracts":       contracts,
+                    "margin_reserved": margin_needed,
+                    "entry_capital":   capital,
+                    "model_prob":      prob,
+                    "ivr_at_entry":    ivr_val,
+                    "vix_at_entry":    vix_val,
                 })
                 capital -= open_comm
                 signal_ledger.append({
@@ -696,15 +728,25 @@ class IronCondorAIStrategy(BaseStrategy):
                 })
 
         # ── Build output ──────────────────────────────────────────────────
-        eq            = pd.Series(equity_curve, index=all_dates, dtype=float)
+        eq       = pd.Series(equity_curve, index=all_dates, dtype=float)
+        cash_s   = pd.Series(cash_curve,   index=all_dates, dtype=float)
+        margin_s = pd.Series(margin_curve,  index=all_dates, dtype=float)
+
         daily_returns = eq.pct_change().dropna()
         trades_df     = pd.DataFrame(closed_trades) if closed_trades else pd.DataFrame()
         signal_df     = pd.DataFrame(signal_ledger) if signal_ledger else pd.DataFrame()
         regime_df     = pd.DataFrame(regime_series) if regime_series else pd.DataFrame()
         metrics       = compute_all_metrics(eq, trades_df if not trades_df.empty else None)
 
-        # Store trained model for live use
+        # Store trained model + save per-ticker file for live use
         self._model = model_pipeline
+        if model_pipeline is not None:
+            try:
+                ticker_slug = auxiliary_data.get("ticker", "default")
+                self.save_model(ticker_slug)
+                logger.info(f"IronCondorAI: model saved for ticker '{ticker_slug}'")
+            except Exception as _e:
+                logger.warning(f"IronCondorAI: model save failed: {_e}")
 
         if not trades_df.empty:
             n_trades  = len(trades_df)
@@ -734,5 +776,7 @@ class IronCondorAIStrategy(BaseStrategy):
                     if model_pipeline is not None else {}
                 ),
                 "n_open_at_end": len(open_trades),
+                "cash_curve":    cash_s,
+                "margin_curve":  margin_s,
             },
         )

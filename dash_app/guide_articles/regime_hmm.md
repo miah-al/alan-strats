@@ -166,16 +166,18 @@ The tail risk hedge (SPY $430 put spread) paid $3.80 at peak on March 8 ($380 SP
 
 ## Strategy Parameters
 
-| Parameter | Default | Range | Description |
-|---|---|---|---|
-| Number of hidden states | 3 (Bull/Neutral/Bear) | 2–5 | 3 is standard; 4 adds High Vol state |
-| Feature set | 15+ macro/price/vol | Comprehensive | Yield curve and credit required, not just price |
-| Persistence smoothing | 3 days | 2–5 | Days of same state before regime switch enacted |
-| Bull → full risk multiplier | 1.0 | Fixed | 100% of target position in bull |
-| Neutral → reduced multiplier | 0.6 | 0.5–0.7 | 60% of target in neutral |
-| Bear → defensive multiplier | 0.25 | 0.1–0.4 | 25% of target in bear (mostly hedges) |
-| Minimum P(dominant) to act | 0.50 | 0.45–0.60 | Below this → use next conservative regime |
-| Hard override threshold | SPY single session −5% | Non-negotiable | Immediate Bear switch regardless of model |
-| Retrain frequency | Quarterly | Monthly–semi-annual | Walk-forward window expansion |
-| Minimum training data | 10 years | 8–15 years | Must include genuine bear market |
-| Post-mortem trigger | Any regime miss > 5 days | Required | Mandatory review after misclassification |
+```
+Parameter                     Default                   Range                Description
+----------------------------  ------------------------  -------------------  -----------------------------------------------
+Number of hidden states       3 (Bull/Neutral/Bear)     2–5                  3 is standard; 4 adds High Vol state
+Feature set                   15+ macro/price/vol       Comprehensive        Yield curve and credit required, not just price
+Persistence smoothing         3 days                    2–5                  Days of same state before regime switch enacted
+Bull → full risk multiplier   1.0                       Fixed                100% of target position in bull
+Neutral → reduced multiplier  0.6                       0.5–0.7              60% of target in neutral
+Bear → defensive multiplier   0.25                      0.1–0.4              25% of target in bear (mostly hedges)
+Minimum P(dominant) to act    0.50                      0.45–0.60            Below this → use next conservative regime
+Hard override threshold       SPY single session −5%    Non-negotiable       Immediate Bear switch regardless of model
+Retrain frequency             Quarterly                 Monthly–semi-annual  Walk-forward window expansion
+Minimum training data         10 years                  8–15 years           Must include genuine bear market
+Post-mortem trigger           Any regime miss > 5 days  Required             Mandatory review after misclassification
+```

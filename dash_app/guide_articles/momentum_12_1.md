@@ -116,13 +116,15 @@ spreads expire monthly, requiring roll decisions.
 **Rank date:** December 31, 2024.
 **Top 5 momentum stocks (12-1 returns):**
 
-| Stock | 12-1 Return | Sector | Z-Score | Action |
-|---|---|---|---|---|
-| NVDA | +172% | Technology | +3.2 | LONG — bull call spread |
-| PLTR | +108% | Technology | +2.8 | LONG — bull call spread |
-| AXON | +89% | Technology | +2.4 | LONG — bull call spread |
-| META | +73% | Communication | +2.1 | LONG — bull call spread |
-| GEV | +67% | Industrials | +1.9 | LONG — bull call spread |
+```
+Stock  12-1 Return  Sector         Z-Score  Action
+-----  -----------  -------------  -------  -----------------------
+NVDA   +172%        Technology     +3.2     LONG — bull call spread
+PLTR   +108%        Technology     +2.8     LONG — bull call spread
+AXON   +89%         Technology     +2.4     LONG — bull call spread
+META   +73%         Communication  +2.1     LONG — bull call spread
+GEV    +67%         Industrials    +1.9     LONG — bull call spread
+```
 
 **Sector check:** XLK + XLC would be 80% of portfolio without constraint. Apply 40% sector cap: reduce tech/comm to 2 names, add industrial (GEV) and one financial name.
 
@@ -234,12 +236,14 @@ favorable trade at a ratio of ~1:20 (give up 1 to save 20).
 
 **Z-score stratification:**
 
-| Z-score range | Win Rate | Avg Monthly Return | Notes |
-|---|---|---|---|
-| Z > +2.5 | 71% | +3.8% | Highest conviction — best entries |
-| Z +1.5 to +2.5 | 64% | +2.6% | Core long book |
-| Z +1.0 to +1.5 | 58% | +1.8% | Borderline — reduced weight |
-| Z < +1.0 | 51% | +0.8% | Near-random — skip or exclude |
+```
+Z-score range   Win Rate  Avg Monthly Return  Notes
+--------------  --------  ------------------  ---------------------------------
+Z > +2.5        71%       +3.8%               Highest conviction — best entries
+Z +1.5 to +2.5  64%       +2.6%               Core long book
+Z +1.0 to +1.5  58%       +1.8%               Borderline — reduced weight
+Z < +1.0        51%       +0.8%               Near-random — skip or exclude
+```
 
 ---
 
@@ -336,15 +340,17 @@ Combined with options leverage (bull call spreads):
 
 ## When This Strategy Works Best
 
-| Condition | Optimal Value | Why |
-|---|---|---|
-| HMM Regime | BULL | Momentum crashes occur at BEAR→BULL transitions; bull regimes sustain winners |
-| Cross-sector return dispersion | High (>15% spread R1 vs R10) | Strong dispersion creates reliable ranking |
-| VIX | 14–24 | Moderate vol allows sector trends to persist |
-| Macro backdrop | Stable or moderately improving | Earnings revision cycles take 3+ months to play out |
-| Time in business cycle | Mid-cycle expansion | Sectors rotating in predictable order |
-| Average holding period | 1–3 months | Long enough for factor to work; short enough to adapt |
-| Market breadth | Rising (>60% stocks above 50d MA) | Confirms broad participation, not narrow leadership |
+```
+Condition                       Optimal Value                      Why
+------------------------------  ---------------------------------  -----------------------------------------------------------------------------
+HMM Regime                      BULL                               Momentum crashes occur at BEAR→BULL transitions; bull regimes sustain winners
+Cross-sector return dispersion  High (>15% spread R1 vs R10)       Strong dispersion creates reliable ranking
+VIX                             14–24                              Moderate vol allows sector trends to persist
+Macro backdrop                  Stable or moderately improving     Earnings revision cycles take 3+ months to play out
+Time in business cycle          Mid-cycle expansion                Sectors rotating in predictable order
+Average holding period          1–3 months                         Long enough for factor to work; short enough to adapt
+Market breadth                  Rising (>60% stocks above 50d MA)  Confirms broad participation, not narrow leadership
+```
 
 ---
 
@@ -368,35 +374,39 @@ Combined with options leverage (bull call spreads):
 
 ## Strategy Parameters
 
-| Parameter | Default | Range | Description |
-|---|---|---|---|
-| Lookback start | Month -12 | -18 to -6 | Beginning of return window |
-| Lookback end | Month -1 | -3 to -1 | End of return window (exclude recent reversal) |
-| Long decile | Top 10% | Top 5–20% | Stocks to buy |
-| Short decile | Bottom 10% | Bottom 5–20% | Stocks to avoid or short (with spread) |
-| Rebalance frequency | Monthly | Monthly only | More frequent = higher costs, no signal gain |
-| Max single stock weight | 5% | 3–8% | Position cap per name |
-| Max single sector weight | 40% | 30–50% | Sector concentration cap |
-| Universe minimum | 200 stocks | 100–1000+ | S&P 500 or Russell 1000 recommended |
-| Stop loss per position | -20% | -15 to -25% | Exit individual name if down this much |
-| Regime filter | HMM ≠ BEAR | Required | Do not run in confirmed bear regime |
-| Z-score minimum | +1.0 | +0.8–1.5 | Minimum Z-score to include in long book |
-| Options DTE | 30–45 | 21–60 | For spread expression of long positions |
-| Tail hedge allocation | 3–5% of portfolio | 2–6% | SPY put spreads, rolled quarterly |
-| Crash protocol trigger | SPY -5% single day | Non-negotiable | Close momentum book on crash signal |
+```
+Parameter                 Default             Range           Description
+------------------------  ------------------  --------------  ----------------------------------------------
+Lookback start            Month -12           -18 to -6       Beginning of return window
+Lookback end              Month -1            -3 to -1        End of return window (exclude recent reversal)
+Long decile               Top 10%             Top 5–20%       Stocks to buy
+Short decile              Bottom 10%          Bottom 5–20%    Stocks to avoid or short (with spread)
+Rebalance frequency       Monthly             Monthly only    More frequent = higher costs, no signal gain
+Max single stock weight   5%                  3–8%            Position cap per name
+Max single sector weight  40%                 30–50%          Sector concentration cap
+Universe minimum          200 stocks          100–1000+       S&P 500 or Russell 1000 recommended
+Stop loss per position    -20%                -15 to -25%     Exit individual name if down this much
+Regime filter             HMM ≠ BEAR          Required        Do not run in confirmed bear regime
+Z-score minimum           +1.0                +0.8–1.5        Minimum Z-score to include in long book
+Options DTE               30–45               21–60           For spread expression of long positions
+Tail hedge allocation     3–5% of portfolio   2–6%            SPY put spreads, rolled quarterly
+Crash protocol trigger    SPY -5% single day  Non-negotiable  Close momentum book on crash signal
+```
 
 ---
 
 ## Data Requirements
 
-| Data | Source | Usage |
-|---|---|---|
-| Daily stock prices (OHLCV) | Polygon | 12-1 return calculation |
-| Total return data (dividends) | Polygon | Dividends must be included in return calculation |
-| S&P 500 / Russell 1000 constituents | Index provider | Universe definition (changes monthly) |
-| Sector classifications (GICS) | MSCI / S&P | Sector concentration check |
-| HMM regime | Platform regime model | Master filter — suppress in BEAR |
-| VIX daily level | Polygon / CBOE | Secondary regime filter |
-| Earnings calendar | DB | Avoid rebalancing immediately after mass earnings |
-| Hedge fund 13F data (quarterly) | SEC EDGAR | Crowding risk assessment |
-| FOMC meeting calendar | Federal Reserve | Avoid rebalancing within 5 days of decision |
+```
+Data                                 Source                 Usage
+-----------------------------------  ---------------------  -------------------------------------------------
+Daily stock prices (OHLCV)           Polygon                12-1 return calculation
+Total return data (dividends)        Polygon                Dividends must be included in return calculation
+S&P 500 / Russell 1000 constituents  Index provider         Universe definition (changes monthly)
+Sector classifications (GICS)        MSCI / S&P             Sector concentration check
+HMM regime                           Platform regime model  Master filter — suppress in BEAR
+VIX daily level                      Polygon / CBOE         Secondary regime filter
+Earnings calendar                    DB                     Avoid rebalancing immediately after mass earnings
+Hedge fund 13F data (quarterly)      SEC EDGAR              Crowding risk assessment
+FOMC meeting calendar                Federal Reserve        Avoid rebalancing within 5 days of decision
+```

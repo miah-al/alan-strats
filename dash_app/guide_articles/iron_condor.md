@@ -88,12 +88,14 @@ The "collect at least 1/3 of wing width" rule is the credit quality filter. A co
 
 **Greek profile at entry:**
 
-| Greek | Sign | Practical meaning |
-|---|---|---|
-| Delta | Near zero (±0.05) | Direction-neutral; profits from the market sitting still |
-| Theta | Positive (+$8–18/day/contract) | Every passing day inside the profit zone is earned premium |
-| Vega | Negative | Rising IV after entry hurts — short options reprice more expensively |
-| Gamma | Negative | Accelerating losses as underlying approaches either short strike near expiry |
+```
+Greek  Sign                            Practical meaning
+-----  ------------------------------  ----------------------------------------------------------------------------
+Delta  Near zero (±0.05)               Direction-neutral; profits from the market sitting still
+Theta  Positive (+$8–18/day/contract)  Every passing day inside the profit zone is earned premium
+Vega   Negative                        Rising IV after entry hurts — short options reprice more expensively
+Gamma  Negative                        Accelerating losses as underlying approaches either short strike near expiry
+```
 
 The theta/gamma trade-off is the fundamental dynamic. Early in the trade (DTE > 30), gamma is low and theta accumulates quietly. As DTE falls below 21, theta harvest accelerates but gamma risk amplifies — each dollar of adverse movement creates exponentially larger losses. This is precisely why 21 DTE is the "golden zone" and why the 50% profit close rule protects you from turning a theta-positive position into a gamma-negative disaster.
 
@@ -109,13 +111,15 @@ The theta/gamma trade-off is the fundamental dynamic. Early in the trade (DTE > 
 
 SPY had consolidated between $575–$596 for three consecutive weeks following a post-holiday volatility spike. VIX had pulled off a 21 peak and was settling back down. IVR remained elevated at 47% from the prior spike — the fear premium lingered even as the actual fear faded, creating a structural overpricing opportunity. No FOMC or CPI events for 19 days. ADX at 16 confirmed textbook range-bound conditions.
 
-| Leg | Strike | Action | Premium | Total |
-|---|---|---|---|---|
-| Short put | Feb $570 (15-delta) | Sell 3× | $1.23 | +$369 |
-| Long put | Feb $560 | Buy 3× | $0.61 | −$183 |
-| Short call | Feb $600 (15-delta) | Sell 3× | $1.12 | +$336 |
-| Long call | Feb $610 | Buy 3× | $0.42 | −$126 |
-| **Net credit** | | | | **+$396 (3 contracts)** |
+```
+Leg         Strike               Action   Premium  Total
+----------  -------------------  -------  -------  -------------------
+Short put   Feb $570 (15-delta)  Sell 3×  $1.23    +$369
+Long put    Feb $560             Buy 3×   $0.61    −$183
+Short call  Feb $600 (15-delta)  Sell 3×  $1.12    +$336
+Long call   Feb $610             Buy 3×   $0.42    −$126
+Net credit                                         +$396 (3 contracts)
+```
 
 Entry rationale: IVR at 47% confirms elevated premium — the fear tax is being charged above its historical mean. No binary events in the next 19 days. ADX confirms range. VIX at 16.4 in the optimal 14–28 band. Credit of $2.35 on $10-wide wings is 23.5% of width — above the 1/3 minimum.
 
@@ -136,13 +140,15 @@ Entry rationale: IVR at 47% confirms elevated premium — the fear tax is being 
 
 This was the archetypal error setup. IVR at 28% — premium was historically cheap. The credit barely covered 14% of wing width ($1.45 on a $10 spread), well below the 1/3 minimum. The thin credit was visible in the signal snapshot but was rationalized as "VIX looks calm."
 
-| Leg | Strike | Action | Premium | Total |
-|---|---|---|---|---|
-| Short put | Aug $525 (20-delta) | Sell 2× | $0.65 | +$130 |
-| Long put | Aug $515 | Buy 2× | $0.21 | −$42 |
-| Short call | Aug $555 (20-delta) | Sell 2× | $0.80 | +$160 |
-| Long call | Aug $565 | Buy 2× | $0.30 | −$60 |
-| **Net credit** | | | | **+$188 (2 contracts)** |
+```
+Leg         Strike               Action   Premium  Total
+----------  -------------------  -------  -------  -------------------
+Short put   Aug $525 (20-delta)  Sell 2×  $0.65    +$130
+Long put    Aug $515             Buy 2×   $0.21    −$42
+Short call  Aug $555 (20-delta)  Sell 2×  $0.80    +$160
+Long call   Aug $565             Buy 2×   $0.30    −$60
+Net credit                                         +$188 (2 contracts)
+```
 
 NVIDIA earnings triggered a 2.3% single-session SPY rally. The $555 short call moved to 35-delta. The position was held hoping for a reversal. SPY extended to $558, pushing the call spread to a $4.10 market value with 12 DTE remaining.
 
@@ -160,13 +166,15 @@ The second lesson from this trade: in low-IV environments, the credit is so thin
 
 Entry was technically sound. IVR 55%, VIX moderate, ADX 14, credit $2.60 on a $10-wide condor (26% of width). No known events in the window.
 
-| Leg | Strike | Action | Premium | Total |
-|---|---|---|---|---|
-| Short put | Mar $383 (15-delta) | Sell 2× | $1.42 | +$284 |
-| Long put | Mar $373 | Buy 2× | $0.64 | −$128 |
-| Short call | Mar $414 (15-delta) | Sell 2× | $1.18 | +$236 |
-| Long call | Mar $424 | Buy 2× | $0.40 | −$80 |
-| **Net credit** | | | | **+$312 (2 contracts)** |
+```
+Leg         Strike               Action   Premium  Total
+----------  -------------------  -------  -------  -------------------
+Short put   Mar $383 (15-delta)  Sell 2×  $1.42    +$284
+Long put    Mar $373             Buy 2×   $0.64    −$128
+Short call  Mar $414 (15-delta)  Sell 2×  $1.18    +$236
+Long call   Mar $424             Buy 2×   $0.40    −$80
+Net credit                                         +$312 (2 contracts)
+```
 
 Day 7: Silicon Valley Bank failure announced. SPY dropped 3.2% in one session. The $383 short put moved from 15-delta to 48-delta. VIX spiked from 19 to 28 simultaneously.
 
@@ -414,17 +422,19 @@ Failure Mode 3: IV spike during hold (uncommon, ~8% of entries)
 
 ## When This Strategy Works Best
 
-| Condition | Optimal Value | Why |
-|---|---|---|
-| IV Rank | 45–70% | Premium elevated; vol compression tailwind active |
-| VIX | 18–26 | Moderate fear produces meaningful credits without extreme daily ranges |
-| ADX | < 18 | Deepest range-bound conditions; each oscillation reinforces the trade |
-| DTE at entry | 28–32 | Steepest theta curve; adequate buffer before gamma risk dominates |
-| Days to nearest binary event | > 25 | Event risk doesn't dominate the position's risk/reward |
-| ATR% | 0.6–1.2% | Calm daily ranges provide comfortable buffer around short strikes |
-| VRP | +3 to +8 vol pts | Positive but not extreme — confirms structural edge without warning of regime shift |
-| Market context | Post-earnings season, mid-quarter consolidation | Calendars free of major events; companies have reported |
-| VIX term structure | Contango (M1 < M2) | Normal vol curve indicates no acute stress event anticipated |
+```
+Condition                     Optimal Value                                    Why
+----------------------------  -----------------------------------------------  -----------------------------------------------------------------------------------
+IV Rank                       45–70%                                           Premium elevated; vol compression tailwind active
+VIX                           18–26                                            Moderate fear produces meaningful credits without extreme daily ranges
+ADX                           < 18                                             Deepest range-bound conditions; each oscillation reinforces the trade
+DTE at entry                  28–32                                            Steepest theta curve; adequate buffer before gamma risk dominates
+Days to nearest binary event  > 25                                             Event risk doesn't dominate the position's risk/reward
+ATR%                          0.6–1.2%                                         Calm daily ranges provide comfortable buffer around short strikes
+VRP                           +3 to +8 vol pts                                 Positive but not extreme — confirms structural edge without warning of regime shift
+Market context                Post-earnings season, mid-quarter consolidation  Calendars free of major events; companies have reported
+VIX term structure            Contango (M1 < M2)                               Normal vol curve indicates no acute stress event anticipated
+```
 
 ---
 
@@ -450,35 +460,39 @@ Failure Mode 3: IV spike during hold (uncommon, ~8% of entries)
 
 ## Strategy Parameters
 
-| Parameter | Conservative | Standard | Income-Focused | Description |
-|---|---|---|---|---|
-| Short delta | 10-delta | 16-delta | 20-delta | Higher delta = more premium, more tested-risk |
-| Wing width | $15 | $10 | $7 | Wider = lower max loss percentage; narrower increases credit-to-width ratio |
-| DTE at entry | 45 | 30 | 21 | 30 DTE is the theta sweet spot |
-| Profit target | 25% of credit | 50% of credit | 75% of credit | Never hold for the last 25% — gamma risk is not compensated |
-| IVR minimum | 50% | 40% | 30% | Higher IVR = better premium environment; never compromise below 30% |
-| Max position size | 2% capital | 4% capital | 6% capital | One max-loss should not wound the portfolio |
-| Stop-loss | 1.5× credit | 2× credit | 3× credit | Close before the loss compounds with negative gamma acceleration |
-| VIX maximum | 22 | 28 | 32 | Wider moves above 28 regularly breach narrow strike zones |
-| Max concurrent condors | 2 | 4 | 6 | Diversification reduces correlation risk in broad market shocks |
-| ADX maximum at entry | 18 | 22 | 26 | Stricter ADX limit reduces trend-exposure risk |
-| Min credit/width ratio | 33% | 25% | 20% | Minimum structural quality threshold |
+```
+Parameter               Conservative   Standard       Income-Focused  Description
+----------------------  -------------  -------------  --------------  ---------------------------------------------------------------------------
+Short delta             10-delta       16-delta       20-delta        Higher delta = more premium, more tested-risk
+Wing width              $15            $10            $7              Wider = lower max loss percentage; narrower increases credit-to-width ratio
+DTE at entry            45             30             21              30 DTE is the theta sweet spot
+Profit target           25% of credit  50% of credit  75% of credit   Never hold for the last 25% — gamma risk is not compensated
+IVR minimum             50%            40%            30%             Higher IVR = better premium environment; never compromise below 30%
+Max position size       2% capital     4% capital     6% capital      One max-loss should not wound the portfolio
+Stop-loss               1.5× credit    2× credit      3× credit       Close before the loss compounds with negative gamma acceleration
+VIX maximum             22             28             32              Wider moves above 28 regularly breach narrow strike zones
+Max concurrent condors  2              4              6               Diversification reduces correlation risk in broad market shocks
+ADX maximum at entry    18             22             26              Stricter ADX limit reduces trend-exposure risk
+Min credit/width ratio  33%            25%            20%             Minimum structural quality threshold
+```
 
 ---
 
 ## Data Requirements
 
-| Data | Source | Usage |
-|---|---|---|
-| SPY OHLCV daily | Polygon | Spot price, ADX, ATR calculation |
-| VIX daily close | Polygon `VIXIND` | Vol regime filter and VRP calculation |
-| ATM IV (SPY options chain) | Polygon options | Credit estimation, IVR calculation |
-| 30-day realized vol (historical) | Computed from OHLCV | VRP calculation (IV minus RV30) |
-| IVR (52-week rolling) | Computed from VIX history | Entry filter — require ≥ 40th percentile |
-| Options chain by strike/expiry | Polygon | Strike selection, credit verification |
-| Economic calendar | Fed/BLS/Earnings schedule | Exclude binary events from hold window |
-| Open interest by strike | Polygon | Verify strike selection vs open interest clusters |
-| ADX (14-period) | Computed from OHLCV | Range-bound confirmation filter |
-| VIX futures term structure (M1/M2) | CBOE / Polygon | Contango vs backwardation regime check |
-| SPY large-cap constituent earnings dates | Earnings databases | Screen for AAPL, NVDA, MSFT reporting in window |
-| ATR% (14-day) | Computed from OHLCV | Daily range filter — confirm calm environment |
+```
+Data                                      Source                     Usage
+----------------------------------------  -------------------------  -------------------------------------------------
+SPY OHLCV daily                           Polygon                    Spot price, ADX, ATR calculation
+VIX daily close                           Polygon `VIXIND`           Vol regime filter and VRP calculation
+ATM IV (SPY options chain)                Polygon options            Credit estimation, IVR calculation
+30-day realized vol (historical)          Computed from OHLCV        VRP calculation (IV minus RV30)
+IVR (52-week rolling)                     Computed from VIX history  Entry filter — require ≥ 40th percentile
+Options chain by strike/expiry            Polygon                    Strike selection, credit verification
+Economic calendar                         Fed/BLS/Earnings schedule  Exclude binary events from hold window
+Open interest by strike                   Polygon                    Verify strike selection vs open interest clusters
+ADX (14-period)                           Computed from OHLCV        Range-bound confirmation filter
+VIX futures term structure (M1/M2)        CBOE / Polygon             Contango vs backwardation regime check
+SPY large-cap constituent earnings dates  Earnings databases         Screen for AAPL, NVDA, MSFT reporting in window
+ATR% (14-day)                             Computed from OHLCV        Daily range filter — confirm calm environment
+```

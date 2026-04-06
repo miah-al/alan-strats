@@ -49,12 +49,14 @@ Signal strength:
 
 **Performance comparison (SPY 2000-2024):**
 
-| Strategy | CAGR | Max Drawdown | Sharpe |
-|---|---|---|---|
-| Buy and hold SPY | 10.2% | −55% (2008) | 0.68 |
-| 50/200 MA crossover | 9.1% | −26% (2022) | 0.82 |
-| 50/200 + ADX filter | 10.4% | −22% | 0.91 |
-| 50/200 + volume + ADX | 11.2% | −19% | 1.03 |
+```
+Strategy               CAGR   Max Drawdown  Sharpe
+---------------------  -----  ------------  ------
+Buy and hold SPY       10.2%  −55% (2008)   0.68
+50/200 MA crossover    9.1%   −26% (2022)   0.82
+50/200 + ADX filter    10.4%  −22%          0.91
+50/200 + volume + ADX  11.2%  −19%          1.03
+```
 
 The strategy sacrifices modest return for large drawdown reduction. With filters, return exceeds buy-and-hold while drawdown is cut by more than half.
 
@@ -145,20 +147,22 @@ Avoiding -22.9% loss, then re-entering 13% below exit = net saved approximately 
 
 ## Strategy Parameters
 
-| Parameter | Default | Range | Description |
-|---|---|---|---|
-| Short MA period | 50 days | 30–80 | The faster MA |
-| Long MA period | 200 days | 100–250 | The slower baseline |
-| MA type | SMA | SMA / EMA | Consistent use required |
-| Prior separation | 20 days minimum | 10–30 | Filter false crossings |
-| Volume confirmation | 1.2× 30d avg | 1.1–1.5× | Crossover day volume |
-| ADX filter | ≥ 18 | 15–25 | Trend strength threshold |
-| RSI at entry | 45–65 | 40–70 | Not overbought at signal |
-| 3-day confirmation | Required | 2–5 days | Before sizing up to full position |
-| VIX cap | 25 | 20–30 | Skip in high-vol regime |
-| Exit signal | Death Cross | Primary exit | SMA(50) crosses below SMA(200) |
-| Drawdown stop | −8% from entry | −6 to −12% | Secondary exit before Death Cross |
-| Options DTE (if used) | 45–90 | 30–120 | Medium-term signal needs room |
-| Spread width | $20–$30 (SPY) | $15–$40 | Match to expected trend magnitude |
-| Position size (strong) | 6–8% of portfolio | 5–10% | Full-conviction Golden Cross |
-| Position size (moderate) | 3–4% of portfolio | 2–5% | Moderate-signal Golden Cross |
+```
+Parameter                 Default            Range         Description
+------------------------  -----------------  ------------  ---------------------------------
+Short MA period           50 days            30–80         The faster MA
+Long MA period            200 days           100–250       The slower baseline
+MA type                   SMA                SMA / EMA     Consistent use required
+Prior separation          20 days minimum    10–30         Filter false crossings
+Volume confirmation       1.2× 30d avg       1.1–1.5×      Crossover day volume
+ADX filter                ≥ 18               15–25         Trend strength threshold
+RSI at entry              45–65              40–70         Not overbought at signal
+3-day confirmation        Required           2–5 days      Before sizing up to full position
+VIX cap                   25                 20–30         Skip in high-vol regime
+Exit signal               Death Cross        Primary exit  SMA(50) crosses below SMA(200)
+Drawdown stop             −8% from entry     −6 to −12%    Secondary exit before Death Cross
+Options DTE (if used)     45–90              30–120        Medium-term signal needs room
+Spread width              $20–$30 (SPY)      $15–$40       Match to expected trend magnitude
+Position size (strong)    6–8% of portfolio  5–10%         Full-conviction Golden Cross
+Position size (moderate)  3–4% of portfolio  2–5%          Moderate-signal Golden Cross
+```

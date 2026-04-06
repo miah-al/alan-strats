@@ -29,13 +29,15 @@ The core mechanism: speculators, active funds, and ETF arbitrageurs all buy the 
 
 **Historical S&P 500 addition return data:**
 
-| Year | Avg Pre-Effective Return | Avg Post-Effective Return (next month) |
-|---|---|---|
-| 2020 | +8.2% | -3.1% |
-| 2021 | +5.7% | -2.8% |
-| 2022 | +3.4% | -1.9% |
-| 2023 | +4.1% | -2.3% |
-| 2024 | +3.8% | -1.7% |
+```
+Year  Avg Pre-Effective Return  Avg Post-Effective Return (next month)
+----  ------------------------  --------------------------------------
+2020  +8.2%                     -3.1%
+2021  +5.7%                     -2.8%
+2022  +3.4%                     -1.9%
+2023  +4.1%                     -2.3%
+2024  +3.8%                     -1.7%
+```
 
 The pre-effective return has been decreasing over time as more capital chases the same trade. Still, 3-5% in 5 days with known timing is compelling.
 
@@ -204,12 +206,14 @@ Index Reconstitution Signal — November 29, 2023 (CRWD Addition):
 
 **Market cap stratification (S&P 500 additions, 2010-2024):**
 
-| Addition market cap | Avg announcement-to-eff return | Win rate |
-|---|---|---|
-| < $5 billion | +8.3% | 78% |
-| $5-20 billion | +5.1% | 74% |
-| $20-100 billion | +3.2% | 71% |
-| > $100 billion | +1.9% | 63% |
+```
+Addition market cap  Avg announcement-to-eff return  Win rate
+-------------------  ------------------------------  --------
+< $5 billion         +8.3%                           78%
+$5-20 billion        +5.1%                           74%
+$20-100 billion      +3.2%                           71%
+> $100 billion       +1.9%                           63%
+```
 
 ---
 
@@ -239,33 +243,37 @@ For any S&P 500 addition:
 
 ## Strategy Parameters
 
-| Parameter | Default | Range | Description |
-|---|---|---|---|
-| Index universe | S&P 500 + Russell 2000 | All major | S&P: quarterly; Russell: annual |
-| Entry day | Day 1 post-announcement | Day 1 only | Day 1 has most unpriced premium |
-| Entry timing | First 30 minutes | First 45 min | Buy promptly — momentum continues |
-| Max gap-open | 5% preferred; 8% absolute max | 3-8% | Skip if stock already gapped too much |
-| Hold period (S&P) | Day 1 through Day 5 | 3-5 days | Exit before effective date MOC |
-| Hold period (Russell) | Rank day through effective | ~4 weeks | Full reconstitution premium |
-| Exit timing | Day 5, 2:00-3:30 PM | 1:30-3:45 PM | Before MOC rush |
-| Stop loss | 3% reversal from entry | 2-4% | Exit on reversal |
-| Position size | 2-4% of portfolio risk | 1-5% | Scaled by market cap of addition |
-| Instrument | Long call or bull call spread | Required | Defined risk; captures announcement premium |
-| DTE | 14-21 for S&P; 30-40 for Russell | Varies | Match hold period |
-| Market cap preference | < $20B | Any | Smaller = higher expected return |
+```
+Parameter              Default                           Range         Description
+---------------------  --------------------------------  ------------  -------------------------------------------
+Index universe         S&P 500 + Russell 2000            All major     S&P: quarterly; Russell: annual
+Entry day              Day 1 post-announcement           Day 1 only    Day 1 has most unpriced premium
+Entry timing           First 30 minutes                  First 45 min  Buy promptly — momentum continues
+Max gap-open           5% preferred; 8% absolute max     3-8%          Skip if stock already gapped too much
+Hold period (S&P)      Day 1 through Day 5               3-5 days      Exit before effective date MOC
+Hold period (Russell)  Rank day through effective        ~4 weeks      Full reconstitution premium
+Exit timing            Day 5, 2:00-3:30 PM               1:30-3:45 PM  Before MOC rush
+Stop loss              3% reversal from entry            2-4%          Exit on reversal
+Position size          2-4% of portfolio risk            1-5%          Scaled by market cap of addition
+Instrument             Long call or bull call spread     Required      Defined risk; captures announcement premium
+DTE                    14-21 for S&P; 30-40 for Russell  Varies        Match hold period
+Market cap preference  < $20B                            Any           Smaller = higher expected return
+```
 
 ---
 
 ## Data Requirements
 
-| Data | Source | Usage |
-|---|---|---|
-| S&P 500 addition/deletion announcements | S&P Global (press releases) | Event identification, daily monitoring |
-| Stock real-time and historical OHLCV | Polygon | Entry/exit price tracking |
-| S&P 500 total market cap | S&P Global | Estimating index weight of addition |
-| Total assets benchmarked to S&P 500 | ICI / Investment Company Institute | Forced buying calculation |
-| Average daily volume | Polygon | Days-of-volume calculation |
-| Short interest | FINRA / Iborrowdesk | Short squeeze risk assessment |
-| News feed (real-time) | News API | Secondary negative news check |
-| Russell 2000 rank day announcements | FTSE Russell | Annual reconstitution additions |
-| Pre-announcement price history | Polygon | Detect pre-announcement drift |
+```
+Data                                     Source                              Usage
+---------------------------------------  ----------------------------------  --------------------------------------
+S&P 500 addition/deletion announcements  S&P Global (press releases)         Event identification, daily monitoring
+Stock real-time and historical OHLCV     Polygon                             Entry/exit price tracking
+S&P 500 total market cap                 S&P Global                          Estimating index weight of addition
+Total assets benchmarked to S&P 500      ICI / Investment Company Institute  Forced buying calculation
+Average daily volume                     Polygon                             Days-of-volume calculation
+Short interest                           FINRA / Iborrowdesk                 Short squeeze risk assessment
+News feed (real-time)                    News API                            Secondary negative news check
+Russell 2000 rank day announcements      FTSE Russell                        Annual reconstitution additions
+Pre-announcement price history           Polygon                             Detect pre-announcement drift
+```

@@ -78,12 +78,14 @@ The "collect at least 1/3 of wing width" rule ($3.33 on a $10-wide spread) is ac
 
 **Greek profile at entry:**
 
-| Greek | Sign | Practical meaning |
-|---|---|---|
-| Delta | Positive (small, ~+0.10 to +0.20) | Moderately bullish; profits from modest upside or flat price |
-| Theta | Positive (+$4–$9/day) | Time passing reduces put premium — every day is a step toward full profit |
-| Vega | Negative | Rising IV hurts — sold options get more expensive to buy back |
-| Gamma | Negative | Near expiry and near the short strike, adverse moves hurt more sharply |
+```
+Greek  Sign                               Practical meaning
+-----  ---------------------------------  -------------------------------------------------------------------------
+Delta  Positive (small, ~+0.10 to +0.20)  Moderately bullish; profits from modest upside or flat price
+Theta  Positive (+$4–$9/day)              Time passing reduces put premium — every day is a step toward full profit
+Vega   Negative                           Rising IV hurts — sold options get more expensive to buy back
+Gamma  Negative                           Near expiry and near the short strike, adverse moves hurt more sharply
+```
 
 The negative gamma is most dangerous in the final week before expiry. A position that is well within the profit zone at 21 DTE can be tested to dangerous levels by DTE 10 if the underlying makes a sustained 1.5–2% move. This is the structural reason for the 50% profit close — you exit before the gamma acceleration zone converts a winning position into a management challenge.
 
@@ -97,11 +99,13 @@ The negative gamma is most dangerous in the final week before expiry. A position
 
 SPY had pulled back 2.1% to the 50-day moving average over three sessions. Put IV was elevated at the 52nd percentile — the fear tax was being charged at full rate due to the recent decline. The macro backdrop was intact: no imminent FOMC, no CPI for 18 days, major tech earnings season was complete. The setup was textbook: fear-elevated puts, clear technical support, intact intermediate trend.
 
-| Leg | Strike | Action | Premium | Contracts |
-|---|---|---|---|---|
-| Short put | Apr $560 (20-delta) | Sell 3× | $2.45 | +$735 |
-| Long put | Apr $550 (wing) | Buy 3× | $1.20 | −$360 |
-| **Net credit** | | | | **+$375 (3 contracts)** |
+```
+Leg         Strike               Action   Premium  Contracts
+----------  -------------------  -------  -------  -------------------
+Short put   Apr $560 (20-delta)  Sell 3×  $2.45    +$735
+Long put    Apr $550 (wing)      Buy 3×   $1.20    −$360
+Net credit                                         +$375 (3 contracts)
+```
 
 Entry rationale: IVR 52% at the 50-day MA creates the optimal entry — fear-elevated put IV with visible technical support underneath. 23 DTE captures the steep theta acceleration window. ADX 15 confirms range-bound conditions rather than directional momentum.
 
@@ -115,11 +119,13 @@ Day 17: SPY recovered to $578. Spread worth $0.38. Closed for $0.38.
 
 Conditions looked technically favorable at entry. IVR at 48%, VIX at 22.4 — moderate and not extreme. SPY near the 200-day MA support, which had held as a floor for several months. The Israel-Hamas conflict escalated sharply over the following week, triggering a risk-off equity selloff that was not foreseeable from any market data available at entry.
 
-| Leg | Strike | Action | Premium | Contracts |
-|---|---|---|---|---|
-| Short put | Nov $415 (20-delta) | Sell 2× | $2.80 | +$560 |
-| Long put | Nov $405 (wing) | Buy 2× | $1.35 | −$270 |
-| **Net credit** | | | | **+$290 (2 contracts)** |
+```
+Leg         Strike               Action   Premium  Contracts
+----------  -------------------  -------  -------  -------------------
+Short put   Nov $415 (20-delta)  Sell 2×  $2.80    +$560
+Long put    Nov $405 (wing)      Buy 2×   $1.35    −$270
+Net credit                                         +$290 (2 contracts)
+```
 
 SPY fell to $409 within 10 days. The $415 short put reached 42-delta. The position was held waiting for recovery — a critical error that compounded the initial loss into a near-max outcome. SPY continued lower, testing the wing. Closed at $5.70 debit.
 
@@ -336,29 +342,33 @@ Note: IVR < 40% the EV becomes negative:
 
 ## Strategy Parameters
 
-| Parameter | Conservative | Standard | Aggressive | Description |
-|---|---|---|---|---|
-| Short put delta | 10-delta | 20-delta | 30-delta | Lower delta = higher probability of success |
-| Wing width | $15 | $10 | $5 | Wider = lower max loss percentage, but credit thins |
-| DTE at entry | 45 | 30 | 21 | 30 DTE captures steepest theta curve |
-| Profit target | 25% of credit | 50% of credit | 75% of credit | 50% is the statistically superior exit point |
-| IVR minimum | 50% | 40% | 30% | Higher IVR = better premium environment |
-| Max position size | 2% capital | 4% capital | 6% capital | Single-trade max loss must be survivable |
-| Stop-loss | 1.5× credit | 2× credit | 2.5× credit | Close before loss compounds with negative gamma |
-| Max concurrent | 2 | 4 | 6 | Correlation risk caps diversification benefit |
-| VIX maximum | 25 | 30 | 35 | Higher VIX = more credit but more daily move risk |
+```
+Parameter          Conservative   Standard       Aggressive     Description
+-----------------  -------------  -------------  -------------  ---------------------------------------------------
+Short put delta    10-delta       20-delta       30-delta       Lower delta = higher probability of success
+Wing width         $15            $10            $5             Wider = lower max loss percentage, but credit thins
+DTE at entry       45             30             21             30 DTE captures steepest theta curve
+Profit target      25% of credit  50% of credit  75% of credit  50% is the statistically superior exit point
+IVR minimum        50%            40%            30%            Higher IVR = better premium environment
+Max position size  2% capital     4% capital     6% capital     Single-trade max loss must be survivable
+Stop-loss          1.5× credit    2× credit      2.5× credit    Close before loss compounds with negative gamma
+Max concurrent     2              4              6              Correlation risk caps diversification benefit
+VIX maximum        25             30             35             Higher VIX = more credit but more daily move risk
+```
 
 ---
 
 ## Data Requirements
 
-| Data | Source | Usage |
-|---|---|---|
-| SPY OHLCV daily | Polygon | Spot price, 50-day/200-day MA, ADX |
-| VIX daily close | Polygon `VIXIND` | Vol regime filter, VRP calculation |
-| Options chain by strike/expiry | Polygon | Credit calculation, delta verification |
-| IVR (52-week rolling) | Computed from VIX | Entry filter (≥40%) |
-| 30-day realized volatility | Computed from OHLCV | VRP calculation |
-| Economic calendar | Fed/BLS/Earnings | Binary event exclusion |
-| HYG price history | Polygon | Credit spread signal (leading indicator of equity stress) |
-| RSI (14-period) | Computed from OHLCV | Technical condition at entry |
+```
+Data                            Source               Usage
+------------------------------  -------------------  ---------------------------------------------------------
+SPY OHLCV daily                 Polygon              Spot price, 50-day/200-day MA, ADX
+VIX daily close                 Polygon `VIXIND`     Vol regime filter, VRP calculation
+Options chain by strike/expiry  Polygon              Credit calculation, delta verification
+IVR (52-week rolling)           Computed from VIX    Entry filter (≥40%)
+30-day realized volatility      Computed from OHLCV  VRP calculation
+Economic calendar               Fed/BLS/Earnings     Binary event exclusion
+HYG price history               Polygon              Credit spread signal (leading indicator of equity stress)
+RSI (14-period)                 Computed from OHLCV  Technical condition at entry
+```

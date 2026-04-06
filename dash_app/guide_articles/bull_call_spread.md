@@ -83,12 +83,14 @@ High IV inflates the debit faster than the max profit (which is capped at spread
 
 **Greek profile at entry:**
 
-| Greek | Sign | Practical meaning |
-|---|---|---|
-| Delta | Positive (0.40–0.55 net) | Bullish exposure; gains from upside move |
-| Theta | Negative | Time passing hurts — you need the move before expiry |
-| Vega | Slightly positive | Modest IV expansion helps; IV crush hurts less than naked long call |
-| Gamma | Positive (near long strike) | Accelerating gains as underlying moves toward the short strike |
+```
+Greek  Sign                         Practical meaning
+-----  ---------------------------  -------------------------------------------------------------------
+Delta  Positive (0.40–0.55 net)     Bullish exposure; gains from upside move
+Theta  Negative                     Time passing hurts — you need the move before expiry
+Vega   Slightly positive            Modest IV expansion helps; IV crush hurts less than naked long call
+Gamma  Positive (near long strike)  Accelerating gains as underlying moves toward the short strike
+```
 
 Comparing to a naked long call: the bull call spread has lower vega (sells some vega back via the short call) and lower negative theta (the short call offsets some decay). This makes it a fundamentally more forgiving structure. In a flat market, a naked $4.20 call decays at $0.14/day; the spread at $2.55 decays at approximately $0.09/day — 36% less daily decay for only 59% of the cost.
 
@@ -102,11 +104,13 @@ Comparing to a naked long call: the bull call spread has lower vega (sells some 
 
 SPY bounced off the 100-day moving average on above-average volume. MACD crossed bullish on the daily chart. Price target: rally to $578–$582 over 2–3 weeks. IVR at 43% is near the acceptable ceiling — not ideal, but options are not wildly overpriced.
 
-| Leg | Strike | Action | Premium | Contracts |
-|---|---|---|---|---|
-| Long call | May $570 (near ATM, 18 DTE) | Buy 4× | $4.20 | −$1,680 |
-| Short call | May $580 (cap at target) | Sell 4× | $1.65 | +$660 |
-| **Net debit** | | | | **−$1,020 (4 contracts, $2.55 each)** |
+```
+Leg         Strike                       Action   Premium  Contracts
+----------  ---------------------------  -------  -------  ---------------------------------
+Long call   May $570 (near ATM, 18 DTE)  Buy 4×   $4.20    −$1,680
+Short call  May $580 (cap at target)     Sell 4×  $1.65    +$660
+Net debit                                                  −$1,020 (4 contracts, $2.55 each)
+```
 
 Entry rationale: Confirmed technical bounce with above-average volume. IVR 43% — elevated but not extreme. Clear price target at $578–$582 (prior resistance level). DTE 18 gives adequate time for a 2–3 week thesis to develop.
 
@@ -120,11 +124,13 @@ Day 10: SPY reached $576.40. Spread worth $5.50.
 
 The setup looked directionally sound — SPY had pulled back from $610 and MACD showed a potential reversal. But IVR at 61% was a critical structural error: buying debit spreads when IV is elevated is paying a "fear premium" for the long call while the short call provides inadequate offset.
 
-| Leg | Strike | Action | Premium | Contracts |
-|---|---|---|---|---|
-| Long call | Mar $595 (ATM, 21 DTE) | Buy 3× | $6.80 | −$2,040 |
-| Short call | Mar $605 (cap) | Sell 3× | $3.10 | +$930 |
-| **Net debit** | | | | **−$1,110 (3 contracts, $3.70 each)** |
+```
+Leg         Strike                  Action   Premium  Contracts
+----------  ----------------------  -------  -------  ---------------------------------
+Long call   Mar $595 (ATM, 21 DTE)  Buy 3×   $6.80    −$2,040
+Short call  Mar $605 (cap)          Sell 3×  $3.10    +$930
+Net debit                                             −$1,110 (3 contracts, $3.70 each)
+```
 
 SPY stayed range-bound and drifted 1.5% lower over 2 weeks. The calls decayed rapidly in the high-IV environment. Reward/risk at entry was only 1.7:1 ($6.30 max profit / $3.70 debit) — structurally unfavorable from the start.
 
@@ -138,11 +144,13 @@ Spread expired at $0.80.
 
 AAPL earnings 2 weeks out. Strategy: capture the pre-earnings run-up driven by typical bullish positioning into results, then close before earnings to avoid IV crush. IVR at 32% — options relatively cheap for the setup. Target: AAPL reaches $232–$235 over the next 10 days.
 
-| Leg | Strike | Action | Premium | Contracts |
-|---|---|---|---|---|
-| Long call | Apr $225 (near ATM) | Buy 3× | $3.45 | −$1,035 |
-| Short call | Apr $235 (cap at target) | Sell 3× | $0.85 | +$255 |
-| **Net debit** | | | | **−$780 (3 contracts, $2.60 each)** |
+```
+Leg         Strike                    Action   Premium  Contracts
+----------  ------------------------  -------  -------  -------------------------------
+Long call   Apr $225 (near ATM)       Buy 3×   $3.45    −$1,035
+Short call  Apr $235 (cap at target)  Sell 3×  $0.85    +$255
+Net debit                                               −$780 (3 contracts, $2.60 each)
+```
 
 Max profit: ($235 − $225 − $2.60) × 100 = $740 per contract. Reward/risk: $740/$260 = 2.85:1.
 
@@ -345,30 +353,34 @@ Test: $10-wide spread, $570/$580, debit $4.50 (high IV):
 
 ## Strategy Parameters
 
-| Parameter | Low-IV Setup | Standard | High-Conviction | Description |
-|---|---|---|---|---|
-| Long strike delta | 0.55 (slightly ITM) | 0.50 (ATM) | 0.45 (slightly OTM) | Higher delta = more expensive but more responsive |
-| Short strike delta | 0.35 | 0.25–0.30 | 0.20 | Sets your profit ceiling at the target price |
-| Spread width | $5 | $10 | $20 | Wider = higher max profit, higher debit |
-| DTE at entry | 14–21 | 21–30 | 30–45 | More time for slower, high-conviction theses |
-| Profit target | 75% of max | 75% of max | Hold to max | Lock in gains vs chasing perfect exit |
-| IVR maximum | 30% | 40% | 50% | Tighter limit ensures options are not overpriced |
-| Max position size | 2% capital | 3% capital | 5% capital | Debit spreads have capped loss — sizing is simpler |
-| Reward/risk minimum | 3.0:1 | 2.5:1 | 2.0:1 | Do not compromise on structural quality |
-| Stop-loss | 40% of debit | 50% of debit | 60% of debit | Cut losses before full debit is gone |
+```
+Parameter            Low-IV Setup         Standard      High-Conviction      Description
+-------------------  -------------------  ------------  -------------------  --------------------------------------------------
+Long strike delta    0.55 (slightly ITM)  0.50 (ATM)    0.45 (slightly OTM)  Higher delta = more expensive but more responsive
+Short strike delta   0.35                 0.25–0.30     0.20                 Sets your profit ceiling at the target price
+Spread width         $5                   $10           $20                  Wider = higher max profit, higher debit
+DTE at entry         14–21                21–30         30–45                More time for slower, high-conviction theses
+Profit target        75% of max           75% of max    Hold to max          Lock in gains vs chasing perfect exit
+IVR maximum          30%                  40%           50%                  Tighter limit ensures options are not overpriced
+Max position size    2% capital           3% capital    5% capital           Debit spreads have capped loss — sizing is simpler
+Reward/risk minimum  3.0:1                2.5:1         2.0:1                Do not compromise on structural quality
+Stop-loss            40% of debit         50% of debit  60% of debit         Cut losses before full debit is gone
+```
 
 ---
 
 ## Data Requirements
 
-| Data | Source | Usage |
-|---|---|---|
-| SPY/stock OHLCV daily | Polygon | Technical indicators (MACD, RSI, MA crossovers, volume) |
-| VIX daily close | Polygon `VIXIND` | IV regime filter (< 40% IVR) |
-| Options chain by strike/expiry | Polygon | Debit calculation, reward/risk ratio check |
-| IVR (52-week rolling) | Computed from VIX | Primary entry filter — must be below 40% |
-| MACD (12/26/9) | Computed from OHLCV | Directional catalyst signal |
-| Volume (vs 20-day average) | Computed from OHLCV | Confirms technical signal validity |
-| 50-day, 200-day MA | Computed from OHLCV | Trend context and support/resistance |
-| Earnings calendar | Company IR / Polygon | Pre-earnings IV risk management |
-| Economic calendar | Fed/BLS | Macro event exclusion |
+```
+Data                            Source                Usage
+------------------------------  --------------------  -------------------------------------------------------
+SPY/stock OHLCV daily           Polygon               Technical indicators (MACD, RSI, MA crossovers, volume)
+VIX daily close                 Polygon `VIXIND`      IV regime filter (< 40% IVR)
+Options chain by strike/expiry  Polygon               Debit calculation, reward/risk ratio check
+IVR (52-week rolling)           Computed from VIX     Primary entry filter — must be below 40%
+MACD (12/26/9)                  Computed from OHLCV   Directional catalyst signal
+Volume (vs 20-day average)      Computed from OHLCV   Confirms technical signal validity
+50-day, 200-day MA              Computed from OHLCV   Trend context and support/resistance
+Earnings calendar               Company IR / Polygon  Pre-earnings IV risk management
+Economic calendar               Fed/BLS               Macro event exclusion
+```

@@ -411,13 +411,15 @@ more trades, useful for users who want more activity at the cost of slightly low
 
 **Best conditions:**
 
-| Factor | Optimal State | Why |
-|---|---|---|
-| VIX | 14–22 | Options priced moderately; not too cheap, not too expensive |
-| IV Rank | 30–65% | Enough premium in the short leg; not crisis-level IV |
-| Trend clarity | SPY in clear trend (MA alignment) | Model reads trend features accurately |
-| Recent market | Not immediately post-crash | Post-crash regimes are unusual; model may be out-of-distribution |
-| Model confidence | > 0.55 | Higher confidence = better calibrated signal |
+```
+Factor            Optimal State                      Why
+----------------  ---------------------------------  ----------------------------------------------------------------
+VIX               14–22                              Options priced moderately; not too cheap, not too expensive
+IV Rank           30–65%                             Enough premium in the short leg; not crisis-level IV
+Trend clarity     SPY in clear trend (MA alignment)  Model reads trend features accurately
+Recent market     Not immediately post-crash         Post-crash regimes are unusual; model may be out-of-distribution
+Model confidence  > 0.55                             Higher confidence = better calibrated signal
+```
 
 **Best after a retrain:** The model should be retrained after any major market regime
 change (2022 inflation, 2020 COVID, Fed pivot). A model trained on 2021 bull market
@@ -479,15 +481,17 @@ data firing signals in a 2022 bear market will generate unreliable output.
 
 ## Key Parameters
 
-| Parameter | Conservative | Default | Aggressive |
-|---|---|---|---|
-| `min_confidence` | 0.55 | 0.38 | 0.30 |
-| `max_loss_pct` | 0.01 (1%) | 0.02 (2%) | 0.04 (4%) |
-| `hold_days` | 3 | 5 | 8 |
-| `seq_len` | 20 | 30 | 50 |
-| `spread_type` | bull_put (credit) | bull_call | iron_condor |
-| `spread_width_pct` | 3% of spot | 5% | 8% |
-| `dte_entry` | 21 DTE | 14–21 DTE | 10 DTE |
+```
+Parameter           Conservative       Default    Aggressive
+------------------  -----------------  ---------  -----------
+`min_confidence`    0.55               0.38       0.30
+`max_loss_pct`      0.01 (1%)          0.02 (2%)  0.04 (4%)
+`hold_days`         3                  5          8
+`seq_len`           20                 30         50
+`spread_type`       bull_put (credit)  bull_call  iron_condor
+`spread_width_pct`  3% of spot         5%         8%
+`dte_entry`         21 DTE             14–21 DTE  10 DTE
+```
 
 **Recommendation:** Start with `bull_put` or `iron_condor` — credit spreads generate more
 ENTER labels during training because the "do nothing" bar is lower for premium sellers.
@@ -497,13 +501,15 @@ Debit spreads require the model to be confident enough in direction AND magnitud
 
 ## Data Requirements
 
-| Data | Source | Usage |
-|---|---|---|
-| SPY daily OHLCV | Polygon | Price returns, MA, Bollinger Bands |
-| VIX daily close | Polygon `VIXIND` | VIX features, IV proxy |
-| 10-year Treasury yield | Polygon `DGS10` | Macro yield features |
-| 2-year Treasury yield | Polygon `DGS2` | Yield curve slope |
-| HYG daily close | Polygon `HYG` | Credit market health feature |
-| NYSE advance-decline | Polygon index data | Market breadth feature |
-| IV Rank | Computed from VIX history | Relative IV level |
-| MACD, RSI | Computed from OHLCV | Technical indicator features |
+```
+Data                    Source                     Usage
+----------------------  -------------------------  ----------------------------------
+SPY daily OHLCV         Polygon                    Price returns, MA, Bollinger Bands
+VIX daily close         Polygon `VIXIND`           VIX features, IV proxy
+10-year Treasury yield  Polygon `DGS10`            Macro yield features
+2-year Treasury yield   Polygon `DGS2`             Yield curve slope
+HYG daily close         Polygon `HYG`              Credit market health feature
+NYSE advance-decline    Polygon index data         Market breadth feature
+IV Rank                 Computed from VIX history  Relative IV level
+MACD, RSI               Computed from OHLCV        Technical indicator features
+```

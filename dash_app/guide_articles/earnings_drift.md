@@ -119,22 +119,24 @@ Avoid buying naked calls post-earnings — you're paying for vega that will cont
 
 ### Trade 1 — META Earnings, January 29/30, 2025: Maximum Drift ✅
 
-| Field | Value |
-|---|---|
-| Earnings date | January 29, 2025 (after close) |
-| META pre-earnings price | $617.00 |
-| Earnings result | EPS $8.02 vs $6.75 (18.8% beat); revenue +21% YoY |
-| Revenue beat | +3.0% vs consensus |
-| Guidance | Q1 revenue raised +6% above prior guidance |
-| Quality check | High-quality: revenue-driven, margin expansion |
-| SUE score | EPS beat $1.27 / analyst std dev $0.45 = 2.8 (STRONG) |
-| META at open (Jan 30) | $694 (+12.5% gap) |
-| Trade entry (9:35 AM) | Buy Feb 21 $695/$720 call spread at $8.60 |
-| Contracts | 5 |
-| Total debit | $4,300 |
-| Feb 5 META price | $720 (+3.7% from entry) — spread at max value |
-| Feb 21 META price | $748 — stock blew through the cap |
-| **P&L** | **+$8,200 (+191%) in 22 days** |
+```
+Field                    Value
+-----------------------  -----------------------------------------------------
+Earnings date            January 29, 2025 (after close)
+META pre-earnings price  $617.00
+Earnings result          EPS $8.02 vs $6.75 (18.8% beat); revenue +21% YoY
+Revenue beat             +3.0% vs consensus
+Guidance                 Q1 revenue raised +6% above prior guidance
+Quality check            High-quality: revenue-driven, margin expansion
+SUE score                EPS beat $1.27 / analyst std dev $0.45 = 2.8 (STRONG)
+META at open (Jan 30)    $694 (+12.5% gap)
+Trade entry (9:35 AM)    Buy Feb 21 $695/$720 call spread at $8.60
+Contracts                5
+Total debit              $4,300
+Feb 5 META price         $720 (+3.7% from entry) — spread at max value
+Feb 21 META price        $748 — stock blew through the cap
+P&L                      +$8,200 (+191%) in 22 days
+```
 
 **What happened:** The META beat was structural — the "Year of Efficiency" was proving more durable than consensus models assumed. Sell-side analysts released 14 target price upgrades within 48 hours, averaging target increases of $85/share. Institutional buying was evident in the price action — steady $15-25 daily ranges higher with no reversal, a classic accumulation pattern. The $720 cap was exceeded ahead of schedule (by day 6).
 
@@ -142,18 +144,20 @@ Avoid buying naked calls post-earnings — you're paying for vega that will cont
 
 ### Trade 2 — SNAP Earnings, November 2023: Revenue Miss Kills the Drift ❌
 
-| Field | Value |
-|---|---|
-| Earnings date | November 2023 |
-| SNAP report | Beat on MAU (monthly active users) — miss on revenue |
-| Revenue result | Revenue guidance weak — Q4 outlook below consensus |
-| Quality check | LOW quality: user count beat vs revenue miss — divergence |
-| Initial gap | +5% at the open (market initially focused on user beat) |
-| Trade entry | Buy $10/$11 bull call spread at $0.38 |
-| Contracts | 10 |
-| Total debit | $380 |
-| 5 days later | SNAP at $8.90 (−9.2% from entry) as revenue concerns dominated |
-| P&L | −$380 (−100% of premium) |
+```
+Field           Value
+--------------  --------------------------------------------------------------
+Earnings date   November 2023
+SNAP report     Beat on MAU (monthly active users) — miss on revenue
+Revenue result  Revenue guidance weak — Q4 outlook below consensus
+Quality check   LOW quality: user count beat vs revenue miss — divergence
+Initial gap     +5% at the open (market initially focused on user beat)
+Trade entry     Buy $10/$11 bull call spread at $0.38
+Contracts       10
+Total debit     $380
+5 days later    SNAP at $8.90 (−9.2% from entry) as revenue concerns dominated
+P&L             −$380 (−100% of premium)
+```
 
 **The lesson:** Always check guidance direction, not just headline EPS. A user-count beat with weak revenue guidance is a low-quality beat. Analysts who published notes within 48 hours overwhelmingly focused on the revenue shortfall rather than the user count beat. The initial +5% gap reflected retail enthusiasm for the user metric; institutional selling within 2-5 days reflected the correct interpretation of the revenue miss.
 
@@ -163,20 +167,22 @@ The quality filter would have caught this: revenue missed consensus. Hard pass.
 
 ### Trade 3 — GOOGL Earnings, October 2023: Steady Accumulation ✅
 
-| Field | Value |
-|---|---|
-| Earnings date | October 24, 2023 (after close) |
-| GOOGL result | EPS $1.55 vs $1.45 (6.9% beat); revenue +11% YoY vs +9.4% consensus |
-| SUE score | $0.10 beat / $0.04 analyst std dev = 2.5 |
-| Revenue beat | +1.6% — modest but real |
-| Guidance | "Advertising demand remains healthy"; YouTube growing |
-| GOOGL at open (Oct 25) | $140.50 (+6.1% gap from $132.40) |
-| Trade entry | Buy Nov 17 $141/$150 call spread at $3.20 |
-| Contracts | 5 |
-| Total debit | $1,600 |
-| Nov 10 (17 days later) | GOOGL at $136.80 — drifted back on broader tech weakness |
-| Exit | Closed spread at $1.60 (took 50% loss rather than hold to expiry) |
-| **P&L** | **−$800 (−50% of premium)** |
+```
+Field                   Value
+----------------------  -------------------------------------------------------------------
+Earnings date           October 24, 2023 (after close)
+GOOGL result            EPS $1.55 vs $1.45 (6.9% beat); revenue +11% YoY vs +9.4% consensus
+SUE score               $0.10 beat / $0.04 analyst std dev = 2.5
+Revenue beat            +1.6% — modest but real
+Guidance                "Advertising demand remains healthy"; YouTube growing
+GOOGL at open (Oct 25)  $140.50 (+6.1% gap from $132.40)
+Trade entry             Buy Nov 17 $141/$150 call spread at $3.20
+Contracts               5
+Total debit             $1,600
+Nov 10 (17 days later)  GOOGL at $136.80 — drifted back on broader tech weakness
+Exit                    Closed spread at $1.60 (took 50% loss rather than hold to expiry)
+P&L                     −$800 (−50% of premium)
+```
 
 **The lesson — macro override:** The drift trade thesis was correct for the first week (GOOGL drifted to $143). But broad tech weakness in November 2023 (rate concerns resurging) reversed the drift by week 2. The stop-loss rule (exit if stock gives back 50% of the earnings gap within 5 days) would have triggered on day 10, saving approximately $400 of the loss.
 
@@ -428,15 +434,17 @@ The stock drifts sideways — neither giving back the earnings gap nor continuin
 
 ## When This Strategy Works Best
 
-| Condition | Optimal Value | Why |
-|---|---|---|
-| SUE score | > 2.5 | Largest information surprises drive most drift |
-| Revenue beat | > 3% above consensus | High-quality beat with demand growth evidence |
-| Guidance revision | Raised > 5% above prior | Forward earnings upgrade drives institutional buying |
-| Stock trend | Uptrend pre-earnings | Momentum amplifies the drift factor |
-| Macro environment | SPY in uptrend | Market tailwind reduces reversal risk |
-| Analyst activity | Multiple upgrades post-earnings | Analyst cascades drive institutional buying |
-| Market cap | $50B+ | Institutional participation required for drift mechanism |
+```
+Condition          Optimal Value                    Why
+-----------------  -------------------------------  --------------------------------------------------------
+SUE score          > 2.5                            Largest information surprises drive most drift
+Revenue beat       > 3% above consensus             High-quality beat with demand growth evidence
+Guidance revision  Raised > 5% above prior          Forward earnings upgrade drives institutional buying
+Stock trend        Uptrend pre-earnings             Momentum amplifies the drift factor
+Macro environment  SPY in uptrend                   Market tailwind reduces reversal risk
+Analyst activity   Multiple upgrades post-earnings  Analyst cascades drive institutional buying
+Market cap         $50B+                            Institutional participation required for drift mechanism
+```
 
 ---
 
@@ -460,32 +468,36 @@ The stock drifts sideways — neither giving back the earnings gap nor continuin
 
 ## Strategy Parameters
 
-| Parameter | Conservative | Standard | Aggressive |
-|---|---|---|---|
-| `min_eps_beat` | > 15% of estimate | > 10% | > 5% (with high SUE) |
-| `min_sue_score` | > 2.0 | > 1.5 | > 1.0 |
-| `revenue_beat_required` | Yes — mandatory | Yes — mandatory | Preferred |
-| `guidance_requirement` | Raised > 3% | Maintained or raised | Any |
-| `bull_call_spread_dte` | 25-28 days | 21-25 days | 14-21 days |
-| `cap_strike_distance` | 4-5% above entry | 3-4% above entry | 2-3% (lower cap) |
-| `entry_timing` | At open (9:30-9:45 AM) | Within 60 min of open | Pre-market or first 2 hours |
-| `stop_loss_trigger` | 40% gap reversal | 50% gap reversal | 60% gap reversal |
-| `take_profit_trigger` | 80% of max gain | At cap (max gain) | Hold to expiry |
-| `max_position_size` | 1% of portfolio | 2% | 3% |
+```
+Parameter                Conservative            Standard               Aggressive
+-----------------------  ----------------------  ---------------------  ---------------------------
+`min_eps_beat`           > 15% of estimate       > 10%                  > 5% (with high SUE)
+`min_sue_score`          > 2.0                   > 1.5                  > 1.0
+`revenue_beat_required`  Yes — mandatory         Yes — mandatory        Preferred
+`guidance_requirement`   Raised > 3%             Maintained or raised   Any
+`bull_call_spread_dte`   25-28 days              21-25 days             14-21 days
+`cap_strike_distance`    4-5% above entry        3-4% above entry       2-3% (lower cap)
+`entry_timing`           At open (9:30-9:45 AM)  Within 60 min of open  Pre-market or first 2 hours
+`stop_loss_trigger`      40% gap reversal        50% gap reversal       60% gap reversal
+`take_profit_trigger`    80% of max gain         At cap (max gain)      Hold to expiry
+`max_position_size`      1% of portfolio         2%                     3%
+```
 
 ---
 
 ## Data Requirements
 
-| Data | Source | Usage |
-|---|---|---|
-| Earnings results (EPS, revenue) | Earnings API / financial news | EPS beat calculation |
-| Analyst consensus (EPS, revenue) | Financial data provider | Consensus for beat calculation |
-| Analyst estimate std dev | Bloomberg / financial API | SUE score calculation |
-| Guidance vs prior guidance | Company press release | Guidance quality check |
-| Historical post-earnings drift (per stock) | Computed from OHLCV | SUE-to-drift relationship validation |
-| Current options chain | Polygon real-time | Bull call spread pricing |
-| Stock OHLCV | Polygon | Entry price, stop-loss calculation |
-| Analyst target price changes | Financial news feed | Upgrade/downgrade tracking |
-| SPY trend | Polygon | Macro tailwind assessment |
-| Short interest data | FINRA bi-monthly | Short-covering vs fundamental buying assessment |
+```
+Data                                        Source                         Usage
+------------------------------------------  -----------------------------  -----------------------------------------------
+Earnings results (EPS, revenue)             Earnings API / financial news  EPS beat calculation
+Analyst consensus (EPS, revenue)            Financial data provider        Consensus for beat calculation
+Analyst estimate std dev                    Bloomberg / financial API      SUE score calculation
+Guidance vs prior guidance                  Company press release          Guidance quality check
+Historical post-earnings drift (per stock)  Computed from OHLCV            SUE-to-drift relationship validation
+Current options chain                       Polygon real-time              Bull call spread pricing
+Stock OHLCV                                 Polygon                        Entry price, stop-loss calculation
+Analyst target price changes                Financial news feed            Upgrade/downgrade tracking
+SPY trend                                   Polygon                        Macro tailwind assessment
+Short interest data                         FINRA bi-monthly               Short-covering vs fundamental buying assessment
+```

@@ -165,26 +165,28 @@ This is why the 30-35% of premium stop-loss (not time-based) is the exit rule.
 
 ### Trade 1 — TSLA Pre-Election Call Sweep, November 2024 ✅
 
-| Field | Value |
-|---|---|
-| Alert date | November 4, 2024 (3 days before US election) |
-| TSLA price | $225 |
-| Flow alert | 4,500 Jan $280 calls swept at $4.80 ask (market sweep) |
-| Total premium | $2,160,000 |
-| Premium vs 30-day avg daily call vol | 2.7× (moderate but notable size) |
-| Strike | $280 — 24.4% OTM |
-| DTE | 74 days (January expiry) |
-| V/OI ratio | OI at this strike was 1,200 prior; volume 4,500 → 3.75× OI (new buying) |
-| Flow score | 7/10 — standard size entry |
-| Thesis interpretation | Pre-election; Musk-Trump relationship; EV regulatory tailwind |
-| Follow trade | Buy Dec $250 call, sell Dec $270 call at $2.30 |
-| Contracts | 5 spreads |
-| Total debit | $1,150 |
-| TSLA on Nov 6 (election night) | $264 (+17.3% gap) |
-| TSLA by Nov 27 | $353 (+57% from $225 entry) |
-| $250/$270 spread value at Nov 27 | $20 (maximum value — both strikes deep ITM) |
-| Exit | Nov 27 at $20 per spread |
-| **P&L** | **+$8,850 (+769% in 23 days)** |
+```
+Field                                 Value
+------------------------------------  -----------------------------------------------------------------------
+Alert date                            November 4, 2024 (3 days before US election)
+TSLA price                            $225
+Flow alert                            4,500 Jan $280 calls swept at $4.80 ask (market sweep)
+Total premium                         $2,160,000
+Premium vs 30-day avg daily call vol  2.7× (moderate but notable size)
+Strike                                $280 — 24.4% OTM
+DTE                                   74 days (January expiry)
+V/OI ratio                            OI at this strike was 1,200 prior; volume 4,500 → 3.75× OI (new buying)
+Flow score                            7/10 — standard size entry
+Thesis interpretation                 Pre-election; Musk-Trump relationship; EV regulatory tailwind
+Follow trade                          Buy Dec $250 call, sell Dec $270 call at $2.30
+Contracts                             5 spreads
+Total debit                           $1,150
+TSLA on Nov 6 (election night)        $264 (+17.3% gap)
+TSLA by Nov 27                        $353 (+57% from $225 entry)
+$250/$270 spread value at Nov 27      $20 (maximum value — both strikes deep ITM)
+Exit                                  Nov 27 at $20 per spread
+P&L                                   +$8,850 (+769% in 23 days)
+```
 
 **Entry rationale:** The sweep's timing (3 days before election), size ($2.16M), and OTM distance (24.4%) indicated institutional positioning for a binary event (election outcome with Musk relationship thesis). The pre-election setup was visible; the defined-risk spread required only a 12% TSLA move to profit vs. the 25% needed for the original $280 call.
 
@@ -194,26 +196,28 @@ This is why the 30-35% of premium stop-loss (not time-based) is the exit rule.
 
 ### Trade 2 — Biotech Put Sweep, Partial FDA Approval, March 2023 ❌
 
-| Field | Value |
-|---|---|
-| Alert date | March 6, 2023 |
-| Stock | Mid-cap biotech (ticker withheld) |
-| Stock price | $52.00 |
-| Flow alert | 2,000 $40 puts swept at $3.20 ask |
-| Total premium | $640,000 |
-| Premium vs 30-day avg | 8× daily average (high) |
-| Strike | $40 — 23.1% OTM puts |
-| DTE | 45 days |
-| Flow score | 8/10 — standard size entry |
-| Thesis interpretation | Upcoming FDA decision; informed trader expects partial rejection/black box warning |
-| Follow trade | Buy $45/$38 bear put spread at $1.40 |
-| Contracts | 5 spreads |
-| Total debit | $700 |
-| FDA decision (March 14) | Partial approval — unexpected nuanced outcome |
-| Stock at open (March 15) | $47.50 (−8.65% from $52; not through the $45 strike) |
-| Spread at exit | $0.65 (some value from partial move, but not profitable) |
-| Exit | March 16 at $0.65 (stop-loss: 30% of premium = $0.42 threshold not hit; partial exit) |
-| **P&L** | **−$375 (−53.6% of premium)** |
+```
+Field                     Value
+------------------------  -------------------------------------------------------------------------------------
+Alert date                March 6, 2023
+Stock                     Mid-cap biotech (ticker withheld)
+Stock price               $52.00
+Flow alert                2,000 $40 puts swept at $3.20 ask
+Total premium             $640,000
+Premium vs 30-day avg     8× daily average (high)
+Strike                    $40 — 23.1% OTM puts
+DTE                       45 days
+Flow score                8/10 — standard size entry
+Thesis interpretation     Upcoming FDA decision; informed trader expects partial rejection/black box warning
+Follow trade              Buy $45/$38 bear put spread at $1.40
+Contracts                 5 spreads
+Total debit               $700
+FDA decision (March 14)   Partial approval — unexpected nuanced outcome
+Stock at open (March 15)  $47.50 (−8.65% from $52; not through the $45 strike)
+Spread at exit            $0.65 (some value from partial move, but not profitable)
+Exit                      March 16 at $0.65 (stop-loss: 30% of premium = $0.42 threshold not hit; partial exit)
+P&L                       −$375 (−53.6% of premium)
+```
 
 **What happened:** The FDA issued a partial approval rather than a full rejection or full approval. The stock fell 8.65% — significant but not enough to breach the $45 put spread. The original sweep buyer lost money; the follow trade lost slightly less due to the better risk/reward structure.
 
@@ -225,26 +229,28 @@ This is why the 30-35% of premium stop-loss (not time-based) is the exit rule.
 
 ### Trade 3 — NVDA Pre-Earnings Call Sweep, May 2024 ✅
 
-| Field | Value |
-|---|---|
-| Alert date | May 8, 2024 (14 days before earnings) |
-| NVDA price | $857 |
-| Flow alert | 3,200 May 24 $960 calls swept at $13.50 (market sweep, 3 exchanges) |
-| Total premium | $4,320,000 |
-| Premium vs 30-day avg daily call vol | 11× average (very high) |
-| Strike | $960 — 12.0% OTM |
-| DTE | 16 days (capturing earnings) |
-| V/OI ratio | 3,200 new vs 800 existing OI → 4.0× OI (strong new buying) |
-| Flow score | 9/10 — standard-to-large size entry |
-| Thesis | Structural AI demand beat expected; analyst models behind |
-| Follow trade | Buy May 24 $875/$920 call spread at $14.80 (ATM vs 5% OTM) |
-| Contracts | 3 spreads |
-| Total debit | $4,440 |
-| NVDA earnings result | Beat by +18.8%; datacenter revenue +413% YoY |
-| NVDA at May 24 open | $975 (+13.8% gap) |
-| $875/$920 spread at open | $45.00 (maximum value — deep ITM) |
-| Exit at open (9:32 AM) | $45.00 per spread |
-| **P&L** | **+$9,060 (+204% in 16 days)** |
+```
+Field                                 Value
+------------------------------------  -------------------------------------------------------------------
+Alert date                            May 8, 2024 (14 days before earnings)
+NVDA price                            $857
+Flow alert                            3,200 May 24 $960 calls swept at $13.50 (market sweep, 3 exchanges)
+Total premium                         $4,320,000
+Premium vs 30-day avg daily call vol  11× average (very high)
+Strike                                $960 — 12.0% OTM
+DTE                                   16 days (capturing earnings)
+V/OI ratio                            3,200 new vs 800 existing OI → 4.0× OI (strong new buying)
+Flow score                            9/10 — standard-to-large size entry
+Thesis                                Structural AI demand beat expected; analyst models behind
+Follow trade                          Buy May 24 $875/$920 call spread at $14.80 (ATM vs 5% OTM)
+Contracts                             3 spreads
+Total debit                           $4,440
+NVDA earnings result                  Beat by +18.8%; datacenter revenue +413% YoY
+NVDA at May 24 open                   $975 (+13.8% gap)
+$875/$920 spread at open              $45.00 (maximum value — deep ITM)
+Exit at open (9:32 AM)                $45.00 per spread
+P&L                                   +$9,060 (+204% in 16 days)
+```
 
 **Entry rationale:** The May 8 sweep was notable for three reasons: (1) it was specifically sized to capture the May 24 earnings event (16 DTE = earnings straddle window); (2) the premium multiple (11×) was extremely high; (3) the strike at $960 was exactly 12% OTM — within the range of NVDA's historical earnings gaps but not so far OTM as to be implausible. This pattern (earnings-covering expiry, elevated premium multiple, historically achievable OTM distance) is the strongest flow signal.
 
@@ -528,16 +534,18 @@ By the time a retail trader sees a flow alert that occurred 3 hours earlier, the
 
 ## When This Strategy Works Best
 
-| Condition | Optimal Value | Why |
-|---|---|---|
-| Flow score | 8-10 | Strongest combination of signals → highest win rate |
-| Premium multiple | > 15× daily avg | Strongest size signal — most likely institutional informed |
-| Catalyst type | Binary event or earnings | Known resolution date → tightest holding period |
-| Time to catalyst | 7-21 days | Close enough to capture move before theta decay |
-| Underlying trend | With 50-day MA direction | Trend confirmation reduces wrong-way risk |
-| Market regime | Low VIX (< 20) | Options cheaper to follow, less noise in flow signals |
-| Stock liquidity | Market cap > $20B | Institutional participation required for informed flow |
-| V/OI ratio | > 5× | Confirms completely new positions, not repositioning |
+```
+Condition         Optimal Value             Why
+----------------  ------------------------  ----------------------------------------------------------
+Flow score        8-10                      Strongest combination of signals → highest win rate
+Premium multiple  > 15× daily avg           Strongest size signal — most likely institutional informed
+Catalyst type     Binary event or earnings  Known resolution date → tightest holding period
+Time to catalyst  7-21 days                 Close enough to capture move before theta decay
+Underlying trend  With 50-day MA direction  Trend confirmation reduces wrong-way risk
+Market regime     Low VIX (< 20)            Options cheaper to follow, less noise in flow signals
+Stock liquidity   Market cap > $20B         Institutional participation required for informed flow
+V/OI ratio        > 5×                      Confirms completely new positions, not repositioning
+```
 
 ---
 
@@ -561,33 +569,37 @@ By the time a retail trader sees a flow alert that occurred 3 hours earlier, the
 
 ## Strategy Parameters
 
-| Parameter | Conservative | Standard | Aggressive | Description |
-|---|---|---|---|---|
-| `min_premium_multiple` | > 20× | > 10× | > 5× | Premium vs 30-day avg daily vol |
-| `min_flow_score` | ≥ 8 | ≥ 7 | ≥ 5 | Minimum quality score to enter |
-| `required_sweep_type` | Market sweep only | Market sweep | Sweep or large limit | Order aggression requirement |
-| `dte_range` | 21-60 days | 21-90 days | 14-90 days | Expiry window for flow orders |
-| `otm_range` | 10-20% OTM | 5-25% OTM | 2-30% OTM | Strike distance for speculation |
-| `min_v_oi_ratio` | > 5× | > 3× | > 1.5× | Volume vs open interest |
-| `entry_window` | Within 1 hour | Within 2 hours | Within 4 hours | Max delay after alert |
-| `follow_structure` | Bull/bear call/put spread | Bull/bear spread or naked | Naked long option | Position structure |
-| `stop_loss` | −25% of debit | −30% of debit | −40% of debit | Exit trigger |
-| `max_position_size` | 1% of portfolio | 2% | 3% | Per signal allocation |
-| `max_total_exposure` | 4% total | 6% total | 10% total | All flow positions combined |
+```
+Parameter               Conservative               Standard                   Aggressive            Description
+----------------------  -------------------------  -------------------------  --------------------  -------------------------------
+`min_premium_multiple`  > 20×                      > 10×                      > 5×                  Premium vs 30-day avg daily vol
+`min_flow_score`        ≥ 8                        ≥ 7                        ≥ 5                   Minimum quality score to enter
+`required_sweep_type`   Market sweep only          Market sweep               Sweep or large limit  Order aggression requirement
+`dte_range`             21-60 days                 21-90 days                 14-90 days            Expiry window for flow orders
+`otm_range`             10-20% OTM                 5-25% OTM                  2-30% OTM             Strike distance for speculation
+`min_v_oi_ratio`        > 5×                       > 3×                       > 1.5×                Volume vs open interest
+`entry_window`          Within 1 hour              Within 2 hours             Within 4 hours        Max delay after alert
+`follow_structure`      Bull/bear call/put spread  Bull/bear spread or naked  Naked long option     Position structure
+`stop_loss`             −25% of debit              −30% of debit              −40% of debit         Exit trigger
+`max_position_size`     1% of portfolio            2%                         3%                    Per signal allocation
+`max_total_exposure`    4% total                   6% total                   10% total             All flow positions combined
+```
 
 ---
 
 ## Data Requirements
 
-| Data | Source | Usage |
-|---|---|---|
-| Real-time options tape (all exchanges) | Unusual Whales / Market Chameleon / Tradytics | Live flow alerts |
-| Per-contract volume and OI | Polygon options chain | V/OI ratio, premium calculation |
-| 30-day average daily options volume | Polygon historical | Premium multiple calculation |
-| Order type classification (sweep/limit) | Flow data providers | Aggression filter |
-| Underlying OHLCV | Polygon | 50-day MA trend filter |
-| Short interest | FINRA bi-monthly / S3 Partners | Hedging vs speculation context |
-| Earnings calendar | Earnings DB | Catalyst identification and date proximity |
-| Options chain for follow trade | Polygon real-time | Strike selection and spread pricing |
-| Stock ATM IV | Polygon | IV expansion check (vs baseline) |
-| SEC Form 4 (insider filings) | SEC EDGAR | Confirm no insider hedging context |
+```
+Data                                     Source                                         Usage
+---------------------------------------  ---------------------------------------------  ------------------------------------------
+Real-time options tape (all exchanges)   Unusual Whales / Market Chameleon / Tradytics  Live flow alerts
+Per-contract volume and OI               Polygon options chain                          V/OI ratio, premium calculation
+30-day average daily options volume      Polygon historical                             Premium multiple calculation
+Order type classification (sweep/limit)  Flow data providers                            Aggression filter
+Underlying OHLCV                         Polygon                                        50-day MA trend filter
+Short interest                           FINRA bi-monthly / S3 Partners                 Hedging vs speculation context
+Earnings calendar                        Earnings DB                                    Catalyst identification and date proximity
+Options chain for follow trade           Polygon real-time                              Strike selection and spread pricing
+Stock ATM IV                             Polygon                                        IV expansion check (vs baseline)
+SEC Form 4 (insider filings)             SEC EDGAR                                      Confirm no insider hedging context
+```

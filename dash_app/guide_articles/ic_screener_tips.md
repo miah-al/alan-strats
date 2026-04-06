@@ -15,15 +15,17 @@ Building a real edge from the screener requires understanding what each column a
 
 ## 1. Reading Each Column
 
-| Column | What It Measures | Favorable Range for ICs |
-|---|---|---|
-| **IVR** | Where today's IV sits in its 52-week range (0 = 52-week low, 1 = 52-week high) | > 0.40 |
-| **VRP** | IV minus 30-day realized volatility (vol points). Positive = options priced above actual recent movement | > 2.0 vol pts |
-| **ATM IV** | Current annualized implied volatility at-the-money | Context-dependent (see VIX regime below) |
-| **ADX** | Average Directional Index — strength of any directional trend, regardless of direction | < 22 (range-bound) |
-| **ATR%** | Average True Range as % of price — current daily velocity | < 1.5% preferred |
-| **VIX** | CBOE VIX — proxy for broad market volatility regime | 18–30 sweet spot |
-| **Credit** | Approximate premium collected per share for a balanced condor at standard strikes | Higher is better, but only if ADX is also favorable |
+```
+Column  What It Measures                                                                                          Favorable Range for ICs
+------  --------------------------------------------------------------------------------------------------------  ---------------------------------------------------
+IVR     Where today's IV sits in its 52-week range (0 = 52-week low, 1 = 52-week high)                            > 0.40
+VRP     IV minus 30-day realized volatility (vol points). Positive = options priced above actual recent movement  > 2.0 vol pts
+ATM IV  Current annualized implied volatility at-the-money                                                        Context-dependent (see VIX regime below)
+ADX     Average Directional Index — strength of any directional trend, regardless of direction                    < 22 (range-bound)
+ATR%    Average True Range as % of price — current daily velocity                                                 < 1.5% preferred
+VIX     CBOE VIX — proxy for broad market volatility regime                                                       18–30 sweet spot
+Credit  Approximate premium collected per share for a balanced condor at standard strikes                         Higher is better, but only if ADX is also favorable
+```
 
 **IVR > 0.40:** You are selling volatility that is historically elevated — the foundational condition for positive expected value in premium selling. Below 0.30, you are selling cheap vol into a quiet market; the credit doesn't compensate for the risk. At IVR 0.60+, you have the structural equivalent of entering a casino with the odds clearly in your favor.
 
@@ -98,12 +100,14 @@ These conditions override favorable screener readings. If any is present, do not
 
 ## 5. VIX Regime Context
 
-| VIX Level | Regime | IC Strategy |
-|---|---|---|
-| 14–20 | Low vol | Credits thin; IVR and VRP filters become critical — only trade best setups |
-| 20–30 | Sweet spot | Best risk/reward for balanced condors; standard sizing |
-| 30–45 | Elevated | Widen short strikes by 15–20%; reduce size by 30–40%; shorten to 21 DTE |
-| > 45 | Danger zone | No new iron condors; manage or close existing positions aggressively |
+```
+VIX Level  Regime       IC Strategy
+---------  -----------  --------------------------------------------------------------------------
+14–20      Low vol      Credits thin; IVR and VRP filters become critical — only trade best setups
+20–30      Sweet spot   Best risk/reward for balanced condors; standard sizing
+30–45      Elevated     Widen short strikes by 15–20%; reduce size by 30–40%; shorten to 21 DTE
+> 45       Danger zone  No new iron condors; manage or close existing positions aggressively
+```
 
 In low-vol regimes (VIX 14–17), the IVR filter becomes your most important tool. A $0.60 credit on a well-positioned condor in a genuinely range-bound SPY beats a $1.40 credit on a name with ADX 38. The absolute credit level is less important than whether the structural edge is present.
 

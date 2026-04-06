@@ -99,12 +99,14 @@ Risk contribution verification:
 > **Starting portfolio:** $100,000 | **Starting date:** January 3, 2022
 
 **Initial positions:**
-| Asset | 60/40 Weight | 60/40 $ | Risk Parity Weight | RP $ |
-|---|---|---|---|---|
-| SPY | 60% | $60,000 | 22.6% | $22,600 |
-| TLT | 40% | $40,000 | 27.4% | $27,400 |
-| GLD | 0% | $0 | 29.1% | $29,100 |
-| PDBC | 0% | $0 | 20.8% | $20,800 |
+```
+Asset  60/40 Weight  60/40 $  Risk Parity Weight  RP $
+-----  ------------  -------  ------------------  -------
+SPY    60%           $60,000  22.6%               $22,600
+TLT    40%           $40,000  27.4%               $27,400
+GLD    0%            $0       29.1%               $29,100
+PDBC   0%            $0       20.8%               $20,800
+```
 
 **March 15, 2022 rebalance (3-month check):**
 ```
@@ -125,14 +127,16 @@ New target weights (recalculated):
 ```
 
 **Year-end 2022 results:**
-| Period | 60/40 Return | Risk Parity Return | Alpha |
-|---|---|---|---|
-| Q1 2022 | −5.9% | −1.8% | +4.1% |
-| Q2 2022 | −14.2% | −6.1% | +8.1% |
-| Q3 2022 | −4.1% | −2.4% | +1.7% |
-| Q4 2022 | +8.7% | +5.2% | −3.5% |
-| **Full year 2022** | **−16.3%** | **−5.9%** | **+10.4%** |
-| **Max drawdown** | **−24.1%** | **−9.3%** | **+14.8%** |
+```
+Period          60/40 Return  Risk Parity Return  Alpha
+--------------  ------------  ------------------  ------
+Q1 2022         −5.9%         −1.8%               +4.1%
+Q2 2022         −14.2%        −6.1%               +8.1%
+Q3 2022         −4.1%         −2.4%               +1.7%
+Q4 2022         +8.7%         +5.2%               −3.5%
+Full year 2022  −16.3%        −5.9%               +10.4%
+Max drawdown    −24.1%        −9.3%               +14.8%
+```
 
 ---
 
@@ -178,14 +182,16 @@ New target weights (recalculated):
 ## Performance Expectations
 
 **Historical comparison (2012–2024, 4-asset risk parity):**
-| Metric | 100% SPY | 60/40 | 4-Asset RP | RP with 1.5× |
-|---|---|---|---|---|
-| CAGR | 14.3% | 8.2% | 6.9% | 10.4% |
-| Max drawdown | −34% | −24% | −12% | −18% |
-| Sharpe ratio | 0.74 | 0.62 | 0.78 | 0.82 |
-| Worst year | −19% (2022) | −16% (2022) | −6% (2022) | −9% (2022) |
-| Best year | +31% (2019) | +22% (2019) | +13% (2019) | +20% (2019) |
-| Std deviation | 17.1% | 11.4% | 7.2% | 10.8% |
+```
+Metric         100% SPY     60/40        4-Asset RP   RP with 1.5×
+-------------  -----------  -----------  -----------  ------------
+CAGR           14.3%        8.2%         6.9%         10.4%
+Max drawdown   −34%         −24%         −12%         −18%
+Sharpe ratio   0.74         0.62         0.78         0.82
+Worst year     −19% (2022)  −16% (2022)  −6% (2022)   −9% (2022)
+Best year      +31% (2019)  +22% (2019)  +13% (2019)  +20% (2019)
+Std deviation  17.1%        11.4%        7.2%         10.8%
+```
 
 **Key finding:** Unlevered risk parity delivers lower absolute returns than 60/40 but a meaningfully higher Sharpe ratio. With 1.5× leverage, risk parity exceeds 60/40 on both absolute return AND Sharpe ratio — the institutional "free lunch" that drives the strategy's widespread adoption.
 
@@ -193,26 +199,30 @@ New target weights (recalculated):
 
 ## Strategy Parameters
 
-| Parameter | Conservative | Standard | Aggressive |
-|---|---|---|---|
-| Asset universe | SPY, TLT, GLD, PDBC | SPY, TLT, GLD, PDBC | SPY, TLT, GLD, PDBC + REITs |
-| Vol lookback | 252 days (annual) | 63–252 days | 63 days (quarterly) |
-| Rebalance trigger | 3% weight drift | 4% weight drift | 5% weight drift |
-| Min rebalance frequency | Monthly | Quarterly | Semi-annually |
-| Max leverage | 1.0× (no leverage) | 1.0× | 1.2× |
-| Correlation review | Quarterly | Annual | Annual |
-| Cash buffer | 3% | 2% | 0% |
-| Min account size | $25,000 | $20,000 | $15,000 |
+```
+Parameter                Conservative         Standard             Aggressive
+-----------------------  -------------------  -------------------  ---------------------------
+Asset universe           SPY, TLT, GLD, PDBC  SPY, TLT, GLD, PDBC  SPY, TLT, GLD, PDBC + REITs
+Vol lookback             252 days (annual)    63–252 days          63 days (quarterly)
+Rebalance trigger        3% weight drift      4% weight drift      5% weight drift
+Min rebalance frequency  Monthly              Quarterly            Semi-annually
+Max leverage             1.0× (no leverage)   1.0×                 1.2×
+Correlation review       Quarterly            Annual               Annual
+Cash buffer              3%                   2%                   0%
+Min account size         $25,000              $20,000              $15,000
+```
 
 ---
 
 ## Data Requirements
 
-| Data | Source | Usage |
-|---|---|---|
-| SPY, TLT, GLD, PDBC OHLCV | Polygon / Yahoo Finance | Daily returns for vol calculation |
-| Rolling 252-day volatility | Computed from price data | Inverse-vol weights |
-| Pairwise correlations | Computed from returns | Verify diversification remains intact |
-| VIX | Polygon `VIXIND` | Macro vol regime context |
-| 10-year Treasury yield | Polygon / FRED | Rate regime context (affects TLT/equity relationship) |
-| CPI / PCE | BLS / FRED | Inflation regime monitoring (affects GLD/PDBC allocation) |
+```
+Data                        Source                    Usage
+--------------------------  ------------------------  ---------------------------------------------------------
+SPY, TLT, GLD, PDBC OHLCV   Polygon / Yahoo Finance   Daily returns for vol calculation
+Rolling 252-day volatility  Computed from price data  Inverse-vol weights
+Pairwise correlations       Computed from returns     Verify diversification remains intact
+VIX                         Polygon `VIXIND`          Macro vol regime context
+10-year Treasury yield      Polygon / FRED            Rate regime context (affects TLT/equity relationship)
+CPI / PCE                   BLS / FRED                Inflation regime monitoring (affects GLD/PDBC allocation)
+```

@@ -17,11 +17,13 @@ The panel has two charts side by side:
 
 ## The Bars
 
-| Bar | What it means |
-|---|---|
-| **Green (Call GEX)** | Dealers are long call gamma here. As price rises through this strike, dealers must sell — capping the rally. |
-| **Red (Put GEX)** | Dealers are short put gamma here (shown negative). As price falls through this strike, dealers must also sell — accelerating the drop. |
-| **Blue/Purple (Net GEX)** | Call + Put combined at this strike. **Positive = dampening. Negative = amplifying.** This is the most actionable bar. |
+```
+Bar                    What it means
+---------------------  --------------------------------------------------------------------------------------------------------------------------------------
+Green (Call GEX)       Dealers are long call gamma here. As price rises through this strike, dealers must sell — capping the rally.
+Red (Put GEX)          Dealers are short put gamma here (shown negative). As price falls through this strike, dealers must also sell — accelerating the drop.
+Blue/Purple (Net GEX)  Call + Put combined at this strike. Positive = dampening. Negative = amplifying. This is the most actionable bar.
+```
 
 ---
 
@@ -154,15 +156,17 @@ Red flags on the chart:
 
 ## The Pills — Quick Reference
 
-| Pill | What to watch |
-|---|---|
-| **Net GEX** | Positive = dampening regime. Negative = amplifying. ±$0.5B is noise. |
-| **Dealers** | Long Gamma / Short Gamma — plain English summary of the regime. |
-| **G1** | Your mechanical ceiling. Short call strikes should be at or beyond G1. |
-| **ZERO G** | The pivot. Spot above = sell premium. Spot below = protect positions. |
-| **G2** | Your mechanical floor. Short put strikes should be at or inside G2. |
-| **σ range** | The outer boundaries. Strikes beyond σ carry less mechanical protection. |
-| **Spot** | Where you are relative to all levels above. |
+```
+Pill     What to watch
+-------  ------------------------------------------------------------------------
+Net GEX  Positive = dampening regime. Negative = amplifying. ±$0.5B is noise.
+Dealers  Long Gamma / Short Gamma — plain English summary of the regime.
+G1       Your mechanical ceiling. Short call strikes should be at or beyond G1.
+ZERO G   The pivot. Spot above = sell premium. Spot below = protect positions.
+G2       Your mechanical floor. Short put strikes should be at or inside G2.
+σ range  The outer boundaries. Strikes beyond σ carry less mechanical protection.
+Spot     Where you are relative to all levels above.
+```
 
 ---
 

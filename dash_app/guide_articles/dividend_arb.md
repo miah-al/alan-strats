@@ -154,12 +154,14 @@ At VIX 26.8, the put cost ($4.20) is nearly 3× the dividend ($1.52). The arithm
 
 ## Strategy Parameters
 
-| Parameter | Conservative | Standard | Aggressive |
-|---|---|---|---|
-| Entry timing (before ex-date) | 1 day | 2–3 days | 5 days |
-| Max VIX | < 15 | < 20 | < 25 |
-| Hedge structure | Put spread (cheaper) | ATM put | No hedge (naked equity) |
-| Put DTE | 7 | 7 | 10–14 |
-| Min dividend yield (annual) | > 1.5% | > 1.0% | > 0.8% |
-| Min net edge | > $0.50/share | > $0.20/share | > $0/share |
-| Max position size | 5% of portfolio | 10% | 15% |
+```
+Parameter                      Conservative          Standard       Aggressive
+-----------------------------  --------------------  -------------  -----------------------
+Entry timing (before ex-date)  1 day                 2–3 days       5 days
+Max VIX                        < 15                  < 20           < 25
+Hedge structure                Put spread (cheaper)  ATM put        No hedge (naked equity)
+Put DTE                        7                     7              10–14
+Min dividend yield (annual)    > 1.5%                > 1.0%         > 0.8%
+Min net edge                   > $0.50/share         > $0.20/share  > $0/share
+Max position size              5% of portfolio       10%            15%
+```

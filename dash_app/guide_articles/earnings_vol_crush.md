@@ -137,22 +137,24 @@ The Greeks work in concert:
 
 ### Trade 1 — AAPL Earnings, January 29, 2025: Classic Vol Crush ✅
 
-| Field | Value |
-|---|---|
-| Date | January 29, 2025 (entry, 3:45 PM), January 30 (exit) |
-| AAPL price | $232.50 |
-| Implied move | 4.95% |
-| Historical AAPL avg move | 2.79% |
-| Implied/actual ratio | 1.77× — excellent seller's market |
-| IV Rank (AAPL) | 91% — elevated, prime for selling |
-| Structure | Iron condor: $243/$253 call spread + $222/$212 put spread |
-| Net credit | $3.10 = $310 per condor |
-| Contracts | 3 condors |
-| Total credit | $930 |
-| AAPL earnings result | Beat by $0.08 EPS; gap to $239.90 (+3.2%) |
-| AAPL at 9:45 AM | $239.90 — safely between $222 and $243 ✓ |
-| Exit cost | $0.40 (residual value, both sides near-worthless) |
-| **P&L** | **+$810 (+87% of max gain)** |
+```
+Field                     Value
+------------------------  ---------------------------------------------------------
+Date                      January 29, 2025 (entry, 3:45 PM), January 30 (exit)
+AAPL price                $232.50
+Implied move              4.95%
+Historical AAPL avg move  2.79%
+Implied/actual ratio      1.77× — excellent seller's market
+IV Rank (AAPL)            91% — elevated, prime for selling
+Structure                 Iron condor: $243/$253 call spread + $222/$212 put spread
+Net credit                $3.10 = $310 per condor
+Contracts                 3 condors
+Total credit              $930
+AAPL earnings result      Beat by $0.08 EPS; gap to $239.90 (+3.2%)
+AAPL at 9:45 AM           $239.90 — safely between $222 and $243 ✓
+Exit cost                 $0.40 (residual value, both sides near-worthless)
+P&L                       +$810 (+87% of max gain)
+```
 
 **What happened:** AAPL beat estimates modestly. The stock gapped +3.2%, well within the $243 short call strike (5% OTM). IV crushed from 55% to 22% overnight. The call spread value: $243 call was $0.30 (OTM after rally), $253 call was $0. The put spread: $222 put was $0.10, $212 put was $0. Total condor value at exit: $0.40. Collected $3.10, closed at $0.40 → +$2.70 profit per condor.
 
@@ -160,20 +162,22 @@ The Greeks work in concert:
 
 ### Trade 2 — TSLA Earnings, April 2022: Gap Through Short Strike ❌
 
-| Field | Value |
-|---|---|
-| Date | April 19, 2022 (entry), April 20 (exit) |
-| TSLA price at entry | $996.00 (pre-split) |
-| Implied move | 8.2% |
-| Historical TSLA avg move | 8.1% (implies ratio of 1.01 — marginal) |
-| IV Rank | 73% — elevated but TSLA avg move already HIGH |
-| Structure | Iron condor: $1,082/$1,132 call spread + $910/$860 put spread |
-| Net credit | $16.80 = $1,680 per condor |
-| TSLA earnings result | Miss on deliveries and margins; significant concern |
-| TSLA at 9:31 AM | $876.40 (−12.0% gap — through both put strikes) |
-| Both put strikes deep ITM | Loss on full put spread |
-| Exit | $33.20 per condor (maximum loss on put side, call side worthless) |
-| **P&L** | **−$1,640 per condor (max loss minus initial credit)** |
+```
+Field                      Value
+-------------------------  -----------------------------------------------------------------
+Date                       April 19, 2022 (entry), April 20 (exit)
+TSLA price at entry        $996.00 (pre-split)
+Implied move               8.2%
+Historical TSLA avg move   8.1% (implies ratio of 1.01 — marginal)
+IV Rank                    73% — elevated but TSLA avg move already HIGH
+Structure                  Iron condor: $1,082/$1,132 call spread + $910/$860 put spread
+Net credit                 $16.80 = $1,680 per condor
+TSLA earnings result       Miss on deliveries and margins; significant concern
+TSLA at 9:31 AM            $876.40 (−12.0% gap — through both put strikes)
+Both put strikes deep ITM  Loss on full put spread
+Exit                       $33.20 per condor (maximum loss on put side, call side worthless)
+P&L                        −$1,640 per condor (max loss minus initial credit)
+```
 
 **The fundamental error:** TSLA has a historical implied/actual ratio of approximately 1.01 — the market correctly prices TSLA's earnings volatility (barely). With a ratio this close to 1.0, there is no systematic edge for vol sellers. The high IV Rank reflected real uncertainty about TSLA's volatile business fundamentals, not mere retail overpricing of a stable company. **TSLA is the wrong stock for this strategy.**
 
@@ -183,20 +187,22 @@ The Greeks work in concert:
 
 ### Trade 3 — AMZN Earnings, February 2, 2023: Near Miss ✅
 
-| Field | Value |
-|---|---|
-| Date | February 1, 2023 (entry), February 2 (exit) |
-| AMZN price | $103.40 |
-| Implied move | 7.1% |
-| Historical AMZN avg move | 4.8% |
-| Implied/actual ratio | 1.48× — good selling opportunity |
-| Structure | Iron condor: $111/$117 call spread + $96/$90 put spread |
-| Net credit | $1.45 = $145 per condor |
-| AMZN earnings result | Beat on cloud, raised guidance |
-| AMZN at 9:31 AM | $112.30 (+8.6% — briefly above short call strike) |
-| Action at 9:40 AM | Stock pulled back to $109.80 — call spread no longer threatened |
-| Exit at 11:00 AM | Condor worth $0.85 (stock at $109.80 — well inside short call) |
-| **P&L** | **+$60 per condor (41% of max gain — thin but positive)** |
+```
+Field                     Value
+------------------------  ---------------------------------------------------------------
+Date                      February 1, 2023 (entry), February 2 (exit)
+AMZN price                $103.40
+Implied move              7.1%
+Historical AMZN avg move  4.8%
+Implied/actual ratio      1.48× — good selling opportunity
+Structure                 Iron condor: $111/$117 call spread + $96/$90 put spread
+Net credit                $1.45 = $145 per condor
+AMZN earnings result      Beat on cloud, raised guidance
+AMZN at 9:31 AM           $112.30 (+8.6% — briefly above short call strike)
+Action at 9:40 AM         Stock pulled back to $109.80 — call spread no longer threatened
+Exit at 11:00 AM          Condor worth $0.85 (stock at $109.80 — well inside short call)
+P&L                       +$60 per condor (41% of max gain — thin but positive)
+```
 
 **The near-miss lesson:** The stock gapped above the short call strike initially but pulled back intraday. This demonstrates why monitoring immediately at the open is essential. If the stock had stayed above $111 at 9:31 AM, closing the call spread immediately would have saved most of the position. Instead, patience was rewarded as the initial over-reaction reversed.
 
@@ -463,15 +469,17 @@ An extreme earnings event (biotech-scale, or a massive company-specific shock) g
 
 ## When This Strategy Works Best
 
-| Condition | Optimal Value | Why |
-|---|---|---|
-| Implied/actual move ratio | > 1.40 (8 quarters) | Largest overpricing of earnings vol |
-| IV Rank | 65-85% | Elevated premium without approaching panic level |
-| Stock category | Stable large-cap tech | Predictable moves, liquid options, consistent overpricing |
-| Earnings cycle frequency | 4/year | Systematic compounding across full calendar |
-| Macro environment | Calm, VIX < 20 | Lower macro noise = move driven by earnings |
-| Analyst estimate accuracy | High (< 5% estimate error) | Stable companies have predictable beats |
-| Wing width | 8-10% OTM | Sufficient buffer for extraordinary events |
+```
+Condition                  Optimal Value               Why
+-------------------------  --------------------------  ---------------------------------------------------------
+Implied/actual move ratio  > 1.40 (8 quarters)         Largest overpricing of earnings vol
+IV Rank                    65-85%                      Elevated premium without approaching panic level
+Stock category             Stable large-cap tech       Predictable moves, liquid options, consistent overpricing
+Earnings cycle frequency   4/year                      Systematic compounding across full calendar
+Macro environment          Calm, VIX < 20              Lower macro noise = move driven by earnings
+Analyst estimate accuracy  High (< 5% estimate error)  Stable companies have predictable beats
+Wing width                 8-10% OTM                   Sufficient buffer for extraordinary events
+```
 
 ---
 
@@ -495,31 +503,35 @@ An extreme earnings event (biotech-scale, or a massive company-specific shock) g
 
 ## Strategy Parameters
 
-| Parameter | Conservative | Standard | Aggressive | Description |
-|---|---|---|---|---|
-| `min_implied_actual_ratio` | > 1.40 | > 1.20 | > 1.10 | Historical vol overpricing requirement |
-| `min_iv_rank` | > 70% | > 60% | > 50% | Pre-earnings IV elevation |
-| `short_strike_otm` | 6% OTM | 5% OTM | 4% OTM (closer, more premium) | Short strike distance |
-| `wing_distance` | 10% OTM | 8% OTM | 6% OTM | Wing (long strike) distance |
-| `min_credit_to_width` | > 30% | > 25% | > 20% | Minimum credit as % of wing width |
-| `entry_time` | 3:45–4:00 PM | 3:30–4:00 PM | 3:00–4:00 PM | Entry window on earnings day |
-| `exit_rule` | Within 15 min of open | Within 30 min | Within 2 hours | Next-day exit window |
-| `max_position_size` | 1.5% of portfolio | 2% | 3% | Max loss as % of portfolio |
-| `max_concurrent_positions` | 2 | 3-4 | 5+ | Simultaneous earnings condors |
-| `stop_loss_trigger` | Stock > 1% through short | Stock > 2% through | Full max loss | Close threatened spread |
+```
+Parameter                   Conservative              Standard            Aggressive                     Description
+--------------------------  ------------------------  ------------------  -----------------------------  --------------------------------------
+`min_implied_actual_ratio`  > 1.40                    > 1.20              > 1.10                         Historical vol overpricing requirement
+`min_iv_rank`               > 70%                     > 60%               > 50%                          Pre-earnings IV elevation
+`short_strike_otm`          6% OTM                    5% OTM              4% OTM (closer, more premium)  Short strike distance
+`wing_distance`             10% OTM                   8% OTM              6% OTM                         Wing (long strike) distance
+`min_credit_to_width`       > 30%                     > 25%               > 20%                          Minimum credit as % of wing width
+`entry_time`                3:45–4:00 PM              3:30–4:00 PM        3:00–4:00 PM                   Entry window on earnings day
+`exit_rule`                 Within 15 min of open     Within 30 min       Within 2 hours                 Next-day exit window
+`max_position_size`         1.5% of portfolio         2%                  3%                             Max loss as % of portfolio
+`max_concurrent_positions`  2                         3-4                 5+                             Simultaneous earnings condors
+`stop_loss_trigger`         Stock > 1% through short  Stock > 2% through  Full max loss                  Close threatened spread
+```
 
 ---
 
 ## Data Requirements
 
-| Data | Source | Usage |
-|---|---|---|
-| Historical options chain (earnings) | Polygon historical | Compute prior implied moves |
-| Historical stock OHLCV | Polygon | Compute actual post-earnings moves, ratio |
-| Current options chain (all strikes) | Polygon real-time | Strike selection, current implied move |
-| IV Rank (52-week) for stock | Derived from IV history | Primary entry filter |
-| Bid-ask spread per strike | Polygon real-time | Execution quality verification |
-| Earnings date and time | Earnings calendar | Correct expiry selection, alert timing |
-| Analyst consensus (EPS, revenue) | Financial API | Estimate dispersion context |
-| VIX daily | Polygon | Macro vol regime filter |
-| Sector rotation indicators | Polygon | Confirm macro environment not distorting |
+```
+Data                                 Source                   Usage
+-----------------------------------  -----------------------  -----------------------------------------
+Historical options chain (earnings)  Polygon historical       Compute prior implied moves
+Historical stock OHLCV               Polygon                  Compute actual post-earnings moves, ratio
+Current options chain (all strikes)  Polygon real-time        Strike selection, current implied move
+IV Rank (52-week) for stock          Derived from IV history  Primary entry filter
+Bid-ask spread per strike            Polygon real-time        Execution quality verification
+Earnings date and time               Earnings calendar        Correct expiry selection, alert timing
+Analyst consensus (EPS, revenue)     Financial API            Estimate dispersion context
+VIX daily                            Polygon                  Macro vol regime filter
+Sector rotation indicators           Polygon                  Confirm macro environment not distorting
+```

@@ -64,14 +64,16 @@ Seasonal (4 features):
 
 **The six regimes and their system responses:**
 
-| Regime | P(regime) trigger | Strategy response |
-|---|---|---|
-| 1. Trending Bull | > 0.50 | Full risk-on: size up all long strategies |
-| 2. Trending Bear | > 0.50 | Close longs; activate tail hedges; bear spreads |
-| 3. High Vol Spike | > 0.40 | Close all short premium; buy VIX calls; max defensive |
-| 4. Low Vol Grind | > 0.55 | Iron condors, covered calls, premium selling |
-| 5. Mean Reverting | > 0.50 | RSI bounce trades, VWAP reversion, range strategies |
-| 6. Transition | > 0.35 | Reduce all sizes 50%; hold cash; wait for clarity |
+```
+Regime             P(regime) trigger  Strategy response
+-----------------  -----------------  -----------------------------------------------------
+1. Trending Bull   > 0.50             Full risk-on: size up all long strategies
+2. Trending Bear   > 0.50             Close longs; activate tail hedges; bear spreads
+3. High Vol Spike  > 0.40             Close all short premium; buy VIX calls; max defensive
+4. Low Vol Grind   > 0.55             Iron condors, covered calls, premium selling
+5. Mean Reverting  > 0.50             RSI bounce trades, VWAP reversion, range strategies
+6. Transition      > 0.35             Reduce all sizes 50%; hold cash; wait for clarity
+```
 
 ---
 
@@ -154,18 +156,20 @@ Seasonal (4 features):
 
 ## Strategy Parameters
 
-| Parameter | Default | Range | Description |
-|---|---|---|---|
-| Input sequence | 40 days | 30–60 | Daily lookback for attention |
-| Feature count | 52 per day | 40–70 | Comprehensive cross-asset feature set |
-| d_model | 128 | 64–256 | Transformer embedding dimension |
-| Attention heads | 6 (one per regime) | 4–8 | Multi-head — each can specialize |
-| Transformer blocks | 3 | 2–4 | Model depth |
-| Output classes | 6 | 4–8 | Regime taxonomy |
-| Confidence threshold | 0.40 | 0.35–0.50 | Min P(regime) to act |
-| Transition trigger | P(Transition) > 0.35 | 0.30–0.40 | Reduce size on uncertainty |
-| Persistence requirement | 3 consecutive days | 2–5 | Days before regime change is enacted |
-| Monthly retrain | Rolling +1 month | Required | Walk-forward extension |
-| Emergency halt threshold | Accuracy < 60% | Firm | Weekly validation check |
-| HMM fallback | 3-state HMM | Required | Never be regimeless |
-| Max position in High Vol | 0 short premium | Non-negotiable | Iron condors never in High Vol Spike |
+```
+Parameter                 Default               Range           Description
+------------------------  --------------------  --------------  -------------------------------------
+Input sequence            40 days               30–60           Daily lookback for attention
+Feature count             52 per day            40–70           Comprehensive cross-asset feature set
+d_model                   128                   64–256          Transformer embedding dimension
+Attention heads           6 (one per regime)    4–8             Multi-head — each can specialize
+Transformer blocks        3                     2–4             Model depth
+Output classes            6                     4–8             Regime taxonomy
+Confidence threshold      0.40                  0.35–0.50       Min P(regime) to act
+Transition trigger        P(Transition) > 0.35  0.30–0.40       Reduce size on uncertainty
+Persistence requirement   3 consecutive days    2–5             Days before regime change is enacted
+Monthly retrain           Rolling +1 month      Required        Walk-forward extension
+Emergency halt threshold  Accuracy < 60%        Firm            Weekly validation check
+HMM fallback              3-state HMM           Required        Never be regimeless
+Max position in High Vol  0 short premium       Non-negotiable  Iron condors never in High Vol Spike
+```
