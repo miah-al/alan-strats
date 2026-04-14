@@ -238,7 +238,7 @@ def fetch_option_prices(api_key: str, legs_df: pd.DataFrame) -> dict[str, dict]:
     result: dict[str, dict] = {}
     if "SecurityType" not in legs_df.columns:
         return result
-    opt_legs = legs_df[legs_df["SecurityType"] == "option"].dropna(subset=["Strike", "Expiration"])
+    opt_legs = legs_df[legs_df["SecurityType"].str.lower() == "option"].dropna(subset=["Strike", "Expiration"])
     if opt_legs.empty:
         return result
     client = PolygonClient(api_key=api_key)
@@ -562,14 +562,24 @@ def insert_generic_paper_trade(
 
     try:
         d = details or {}
-        # Extract strike and expiry from screener details if available
-        credit_str   = str(d.get("~Credit", d.get("~Premium", "0")) or "0")
-        short_k_str  = str(d.get("Short Strike", d.get("Put Strike", "0")) or "0")
-        long_k_str   = str(d.get("Long Strike",  "0") or "0")
+        # Extract strike and expiry from screener details if available.
+        # Accepts both naming conventions: "Short Strike"/"Long Strike" (BPS/IVR)
+        # and "Short Put"/"Long Put" (Put Steal) and "Put Strike" (legacy).
+        credit_str  = str(d.get("~Credit", d.get("~Premium", "0")) or "0")
+        short_k_str = str(
+            d.get("Short Strike") or d.get("Short Put") or d.get("Put Strike") or "0"
+        )
+        long_k_str  = str(d.get("Long Strike") or d.get("Long Put") or "0")
+        # Long leg premium — used when the spread has two separate mids (e.g. Put Steal)
+        long_prem_str = str(d.get("~Long Premium", "0") or "0")
         try:
             credit  = float(credit_str.lstrip("$"))
         except Exception:
             credit  = 0.0
+        try:
+            long_prem = float(long_prem_str.lstrip("$"))
+        except Exception:
+            long_prem = 0.0
         try:
             short_k = float(short_k_str) if short_k_str not in ("0", "", "—") else None
         except Exception:
@@ -579,7 +589,14 @@ def insert_generic_paper_trade(
         except Exception:
             long_k  = None
 
-        expiry = (today + datetime.timedelta(days=30)).isoformat()
+        # Use real expiry from details if available; otherwise default to +30 days
+        exp_str = str(d.get("Expiry", "") or "")
+        try:
+            expiry = str(datetime.date.fromisoformat(exp_str[:10])) if exp_str else None
+        except Exception:
+            expiry = None
+        if not expiry:
+            expiry = (today + datetime.timedelta(days=30)).isoformat()
 
         def _find_or_create_option(conn, sym: str, strike, opt_type: str):
             row = conn.execute(text(
@@ -624,10 +641,10 @@ def insert_generic_paper_trade(
                         (BusinessDate, AccountId, TradeGroupId, StrategyName, SecurityId,
                          Direction, Quantity, TransactionPrice, Commission, LegType, Notes)
                     VALUES (:d, :aid, :tg, :strat, :sid,
-                            'Buy', :qty, 0, :comm, 'LongLeg', :notes)
+                            'Buy', :qty, :px, :comm, 'LongLeg', :notes)
                 """), {"d": today, "aid": account_id, "tg": tgid, "strat": strategy_name,
-                       "sid": long_sid, "qty": float(contracts), "comm": _COMMISSION,
-                       "notes": ""})
+                       "sid": long_sid, "qty": float(contracts), "px": long_prem,
+                       "comm": _COMMISSION, "notes": ""})
         return None
     except Exception as e:
         return str(e)

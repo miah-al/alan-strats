@@ -1445,13 +1445,18 @@ def _render_intraday(ticker: str, api_key: str):
         row_heights=[0.75, 0.25], vertical_spacing=0.02,
     )
 
-    # Price area line
-    fig.add_trace(go.Scatter(
-        x=df["datetime"], y=close,
+    # Candlestick chart
+    high_px = pd.to_numeric(df.get("high", close), errors="coerce")
+    low_px  = pd.to_numeric(df.get("low",  close), errors="coerce")
+    fig.add_trace(go.Candlestick(
+        x=df["datetime"],
+        open=open_px, high=high_px, low=low_px, close=close,
         name="Price",
-        line=dict(color=line_color, width=2),
-        fill="tozeroy", fillcolor=fill_color,
-        hovertemplate="%{x|%H:%M}  $%{y:.2f}<extra></extra>",
+        increasing_line_color=T.SUCCESS, decreasing_line_color=T.DANGER,
+        increasing_fillcolor=T.SUCCESS,  decreasing_fillcolor=T.DANGER,
+        hovertext=[f"{t.strftime('%H:%M')}  O:{o:.2f} H:{h:.2f} L:{l:.2f} C:{c:.2f}"
+                   for t, o, h, l, c in zip(df["datetime"], open_px, high_px, low_px, close)],
+        hoverinfo="text",
     ), row=1, col=1)
 
     # VWAP
@@ -1492,9 +1497,13 @@ def _render_intraday(ticker: str, api_key: str):
                     font=dict(size=11, color=T.TEXT_SEC), bgcolor="rgba(0,0,0,0)"),
         margin=dict(l=0, r=0, t=50, b=0),
     )
-    fig.update_yaxes(gridcolor=T.BORDER)
-    fig.update_xaxes(gridcolor=T.BORDER)
+    fig.update_yaxes(gridcolor=T.BORDER, autorange=True)
+    fig.update_xaxes(gridcolor=T.BORDER, rangeslider_visible=False)
     fig.update_yaxes(title_text="Vol", row=2, col=1)
+    # Price axis: auto-scale to candle range, not from zero
+    price_min = float(low_px.min()) * 0.999
+    price_max = float(high_px.max()) * 1.001
+    fig.update_yaxes(range=[price_min, price_max], row=1, col=1)
 
     chg_str = f"{chg:+.2f} ({chg_pct:+.1f}%)"
     return html.Div([

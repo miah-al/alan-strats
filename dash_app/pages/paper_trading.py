@@ -12,7 +12,7 @@ import numpy as np
 import plotly.graph_objects as go
 import dash_ag_grid as dag
 import dash_bootstrap_components as dbc
-from dash import html, dcc, callback, Input, Output, State, no_update, ctx
+from dash import html, dcc, callback, Input, Output, State, no_update, ctx, ALL
 
 from dash_app import theme as T
 
@@ -56,7 +56,13 @@ _OPEN_COLS = [
     {"field": "Open Date",   "minWidth": 100, "flex": 1, "sort": "asc"},
     {"field": "Legs",        "minWidth": 60,  "width": 65,  "type": "numericColumn"},
     {"field": "DTE",         "minWidth": 55,  "width": 60,  "type": "numericColumn"},
-    {"field": "Net Entry",   "minWidth": 100, "flex": 1},
+    {"field": "_net",        "hide": True},
+    {"field": "Net Entry",   "minWidth": 100, "flex": 1,
+     "cellClassRules": {
+         "cell-positive": {"function": "params.data._net > 0"},
+         "cell-negative": {"function": "params.data._net < 0"},
+         "cell-neutral":  {"function": "params.data._net === 0"},
+     }},
     {"field": "Alerts",      "minWidth": 80,  "width": 90},
     {"field": "View", "width": 90, "sortable": False, "filter": False,
      "pinned": "right", "suppressSizeToFit": True,
@@ -71,8 +77,16 @@ _CLOSED_COLS = [
     {"field": "Strategy",    "minWidth": 150, "flex": 2},
     {"field": "Open Date",   "minWidth": 100, "flex": 1, "sort": "desc"},
     {"field": "Close Date",  "minWidth": 100, "flex": 1},
-    {"field": "P&L",         "minWidth": 100, "flex": 1},
-    {"field": "Result",      "minWidth": 75,  "width": 85},
+    {"field": "P&L",         "minWidth": 100, "flex": 1,
+     "cellClassRules": {
+         "cell-positive": {"function": "params.value && params.value.startsWith('+')"},
+         "cell-negative": {"function": "params.value && params.value.startsWith('-')"},
+     }},
+    {"field": "Result",      "minWidth": 75,  "width": 85,
+     "cellClassRules": {
+         "cell-positive": {"function": "params.value === 'WIN'"},
+         "cell-negative": {"function": "params.value === 'LOSS'"},
+     }},
 ]
 
 _TXNS_COLS = [
@@ -135,16 +149,22 @@ def _plot_payoff(grp: pd.DataFrame, spot: float | None) -> go.Figure | None:
         return None
 
     strikes = opt["Strike"].dropna().astype(float)
-    if strikes.empty:
+    # Filter out placeholder 0-strikes (stored when real strike wasn't available)
+    strikes = strikes[strikes > 0]
+    if strikes.empty and spot is None:
         return None
 
-    s_min  = float(strikes.min())
-    s_max  = float(strikes.max())
-    spread = max(s_max - s_min, 5.0)
-    refs   = [s_min - spread * 0.5, s_max + spread * 0.5]
-    if spot:
-        refs += [spot * 0.85, spot * 1.15]
-    lo, hi = min(refs), max(refs)
+    if strikes.empty:
+        # No real strikes — use spot-centered range
+        lo, hi = spot * 0.80, spot * 1.20
+    else:
+        s_min  = float(strikes.min())
+        s_max  = float(strikes.max())
+        spread = max(s_max - s_min, s_min * 0.05, 5.0)
+        refs   = [s_min - spread * 0.5, s_max + spread * 0.5]
+        if spot:
+            refs += [spot * 0.85, spot * 1.15]
+        lo, hi = min(refs), max(refs)
     N      = 400
     prices = [lo + (hi - lo) * i / N for i in range(N + 1)]
 
@@ -556,9 +576,9 @@ def _build_ic_modal_body(
     spot: float | None = None
     live_prices: dict = {}
     try:
-        from dash_app import get_api_key
+        from dash_app import get_polygon_api_key
         from engine.positions import fetch_stock_price, fetch_option_prices
-        api_key = get_api_key()
+        api_key = get_polygon_api_key()
         if api_key:
             spot = fetch_stock_price(api_key, underlying)
             live_prices = fetch_option_prices(api_key, grp)
@@ -747,9 +767,9 @@ def _build_screener_modal_body(
     spot: float | None = None
     live_prices: dict  = {}
     try:
-        from dash_app import get_api_key
+        from dash_app import get_polygon_api_key
         from engine.positions import fetch_stock_price, fetch_option_prices
-        api_key = get_api_key()
+        api_key = get_polygon_api_key()
         if api_key and underlying:
             spot        = fetch_stock_price(api_key, underlying)
             live_prices = fetch_option_prices(api_key, grp)
@@ -1204,6 +1224,74 @@ def layout() -> html.Div:
                     type="circle", color=T.ACCENT,
                 ),
             ]),
+            dbc.Tab(label="Risk", tab_id="risk", children=[
+                html.Div(style={"height": "12px"}),
+                # ── Config row ───────────────────────────────────────────────
+                dbc.Card(dbc.CardBody([
+                    html.Div([
+                        html.Div([
+                            html.Label("Step size", style={"color": T.TEXT_SEC, "fontSize": "11px",
+                                "fontWeight": "600", "marginBottom": "4px"}),
+                            dbc.Input(id="pt-risk-step", type="number", value=2, min=1, max=10, step=1,
+                                      style={"width": "80px", "fontSize": "12px",
+                                             "backgroundColor": T.BG_ELEVATED, "color": "#e5e7eb",
+                                             "border": f"1px solid {T.BORDER}"}),
+                        ]),
+                        html.Div([
+                            html.Label("Vol Up %", style={"color": T.TEXT_SEC, "fontSize": "11px",
+                                "fontWeight": "600", "marginBottom": "4px"}),
+                            dbc.Input(id="pt-risk-vol-up", type="number", value=25, min=1, max=200,
+                                      style={"width": "80px", "fontSize": "12px",
+                                             "backgroundColor": T.BG_ELEVATED, "color": "#e5e7eb",
+                                             "border": f"1px solid {T.BORDER}"}),
+                        ]),
+                        html.Div([
+                            html.Label("Vol Down %", style={"color": T.TEXT_SEC, "fontSize": "11px",
+                                "fontWeight": "600", "marginBottom": "4px"}),
+                            dbc.Input(id="pt-risk-vol-down", type="number", value=25, min=1, max=200,
+                                      style={"width": "80px", "fontSize": "12px",
+                                             "backgroundColor": T.BG_ELEVATED, "color": "#e5e7eb",
+                                             "border": f"1px solid {T.BORDER}"}),
+                        ]),
+                        html.Div([
+                            html.Label("Default IV %", style={"color": T.TEXT_SEC, "fontSize": "11px",
+                                "fontWeight": "600", "marginBottom": "4px"}),
+                            dbc.Input(id="pt-risk-iv-default", type="number", value=20, min=1, max=300,
+                                      style={"width": "80px", "fontSize": "12px",
+                                             "backgroundColor": T.BG_ELEVATED, "color": "#e5e7eb",
+                                             "border": f"1px solid {T.BORDER}"}),
+                        ]),
+                        html.Div([
+                            html.Label("Rate %", style={"color": T.TEXT_SEC, "fontSize": "11px",
+                                "fontWeight": "600", "marginBottom": "4px"}),
+                            dbc.Input(id="pt-risk-rate", type="number", value=4.3, min=0, max=20, step=0.1,
+                                      style={"width": "80px", "fontSize": "12px",
+                                             "backgroundColor": T.BG_ELEVATED, "color": "#e5e7eb",
+                                             "border": f"1px solid {T.BORDER}"}),
+                        ]),
+                        html.Div([
+                            html.Label("\u00a0", style={"fontSize": "11px", "marginBottom": "4px",
+                                                         "display": "block"}),
+                            dbc.Button("Calculate", id="pt-risk-calc-btn", size="sm",
+                                       color="primary", style={"fontSize": "12px"}),
+                        ]),
+                    ], style={"display": "flex", "gap": "16px", "alignItems": "flex-end",
+                               "flexWrap": "wrap"}),
+                ]), style={**T.STYLE_CARD, "marginBottom": "12px"}),
+
+                dcc.Store(id="pt-risk-position", data="__all__"),
+                dcc.Store(id="pt-risk-leg",      data="__all__"),
+
+                # Row 1: position pills
+                html.Div(id="pt-risk-pos-pills", style={"marginBottom": "6px"}),
+                # Row 2: leg pills (shown only when a position is selected)
+                html.Div(id="pt-risk-leg-pills", style={"marginBottom": "10px"}),
+
+                dcc.Loading(
+                    html.Div(id="pt-risk-matrix"),
+                    type="circle", color=T.ACCENT,
+                ),
+            ]),
         ], id="pt-tabs", active_tab="open",
            style={"borderBottom": f"1px solid {T.BORDER}"}),
 
@@ -1324,7 +1412,7 @@ def refresh_all(_n, _btn):
             "Open Date":   str(grp["BusinessDate"].min())[:10],
             "Legs":        len(grp),
             "DTE":         dte,
-            "Net Entry":   f"{'+' if ne >= 0 else ''}${ne:,.2f}",
+            "Net Entry":   f"+${ne:,.2f}" if ne >= 0 else f"-${abs(ne):,.2f}",
             "Alerts":      alert_str,
             "_net":        ne,
             "_tgid":       str(tgid),
@@ -1360,6 +1448,18 @@ def refresh_all(_n, _btn):
     n_wins       = sum(1 for r in closed_rows if r.get("P&L $", 0) > 0) if closed_rows else 0
     ytd_return   = total_closed / 100_000 * 100
 
+    today_str  = datetime.date.today().isoformat()
+    today_pnl  = sum(
+        r.get("P&L $", 0) for r in closed_rows
+        if str(r.get("Close Date", ""))[:10] == today_str
+    ) if closed_rows else 0.0
+
+    n_closed     = len(closed_rows) if closed_rows else 0
+    win_rate     = (n_wins / n_closed * 100) if n_closed > 0 else None
+    gross_wins   = sum(r.get("P&L $", 0) for r in closed_rows if r.get("P&L $", 0) > 0) if closed_rows else 0.0
+    gross_losses = abs(sum(r.get("P&L $", 0) for r in closed_rows if r.get("P&L $", 0) < 0)) if closed_rows else 0.0
+    net_premium  = sum(r["_net"] for r in open_data)
+
     def _metric(label, value, color=T.TEXT_PRIMARY):
         return html.Div([
             html.Div(label, style={
@@ -1371,18 +1471,32 @@ def refresh_all(_n, _btn):
         ], style={**T.STYLE_CARD, "minWidth": "110px", "flex": "1", "padding": "10px 12px"})
 
     status_color = T.SUCCESS if acct.get("Status") == "Active" else T.WARNING
-    metrics = html.Div([
-        _metric("Account",       str(acct.get("AccountName", "—"))),
-        _metric("Type",          str(acct.get("AccountType", "—"))),
-        _metric("Status",        str(acct.get("Status", "—")), status_color),
-        _metric("Cash Balance",  f"${cash_bal:,.0f}",
+    win_rate_str = f"{win_rate:.0f}%" if win_rate is not None else "—"
+    win_rate_color = (T.SUCCESS if win_rate and win_rate >= 50 else T.DANGER) if win_rate is not None else T.TEXT_MUTED
+    net_prem_str = f"{'+'if net_premium>=0 else ''}${net_premium:,.2f}"
+
+    row1 = html.Div([
+        _metric("Account",      str(acct.get("AccountName", "—"))),
+        _metric("Type",         str(acct.get("AccountType", "—"))),
+        _metric("Status",       str(acct.get("Status", "—")), status_color),
+        _metric("Cash Balance", f"${cash_bal:,.0f}",
                 T.SUCCESS if cash_bal >= 0 else T.DANGER),
+    ], style={"display": "flex", "gap": "10px", "flexWrap": "wrap"})
+
+    row2 = html.Div([
         _metric("Open Trades",   str(n_open)),
-        _metric("Realized P&L",  f"{'+'if total_closed>=0 else ''}${total_closed:,.2f}",
+        _metric("Net Premium",   net_prem_str,
+                T.SUCCESS if net_premium > 0 else T.DANGER if net_premium < 0 else T.TEXT_MUTED),
+        _metric("Today's P&L",  f"{'+'if today_pnl>=0 else ''}${today_pnl:,.2f}",
+                T.SUCCESS if today_pnl > 0 else T.DANGER if today_pnl < 0 else T.TEXT_MUTED),
+        _metric("Realized P&L", f"{'+'if total_closed>=0 else ''}${total_closed:,.2f}",
                 T.SUCCESS if total_closed >= 0 else T.DANGER),
-        _metric("YTD Return",    f"{'+'if ytd_return>=0 else ''}{ytd_return:.1f}%",
+        _metric("Win Rate",     win_rate_str, win_rate_color),
+        _metric("YTD Return",   f"{'+'if ytd_return>=0 else ''}{ytd_return:.1f}%",
                 T.SUCCESS if ytd_return >= 0 else T.DANGER),
     ], style={"display": "flex", "gap": "10px", "flexWrap": "wrap"})
+
+    metrics = html.Div([row1, row2], style={"display": "flex", "flexDirection": "column", "gap": "10px"})
 
     # ── Closed positions ──────────────────────────────────────────────────────
     closed_data = []
@@ -1492,6 +1606,7 @@ def refresh_all(_n, _btn):
 @callback(
     Output("pt-modal",         "is_open",  allow_duplicate=True),
     Output("pt-modal-title",   "children", allow_duplicate=True),
+    Output("pt-modal-body",    "children", allow_duplicate=True),
     Output("pt-selected-tgid", "data"),
     Input("pt-open-grid",      "selectedRows"),
     Input("pt-url",            "search"),
@@ -1499,27 +1614,28 @@ def refresh_all(_n, _btn):
 )
 def open_position_modal(selected_rows, url_search):
     from dash import ctx
+    _loading = html.Div("Loading…", style={"color": T.TEXT_MUTED, "padding": "20px"})
     # Deep-link from blotter: /paper-trading?tgid=xxx
     if ctx.triggered_id == "pt-url" and url_search:
         from urllib.parse import parse_qs, urlparse
         qs = parse_qs(url_search.lstrip("?"))
         tgid = (qs.get("tgid") or [""])[0].strip()
         if tgid:
-            return True, "Position Detail", tgid
-        return no_update, no_update, no_update
+            return True, "Position Detail", _loading, tgid
+        return no_update, no_update, no_update, no_update
 
     if not selected_rows:
-        return no_update, no_update, no_update
+        return no_update, no_update, no_update, no_update
 
     row = selected_rows[0]
     tgid = str(row.get("_tgid", "") or "").strip()
     if not tgid:
-        return no_update, no_update, no_update
+        return no_update, no_update, no_update, no_update
 
     underlying = str(row.get("Underlying", row.get("Trade Group", "?")))
     strategy   = str(row.get("Strategy", ""))
     title      = f"{underlying}  ·  {strategy}"
-    return True, title, tgid
+    return True, title, _loading, tgid
 
 
 # ── Modal open: step 2 — build body from tgid ────────────────────────────────
@@ -2143,3 +2259,659 @@ def execute_close(n_confirm, n_cancel, tgid, current_n):
                 open_grp=grp, live_opt={}, fallback_price=0.0,
             )
     return False, False, (current_n or 0) + 1
+
+
+# ── Risk tab: Black-Scholes engine ────────────────────────────────────────────
+
+def _bs_full(S: float, K: float, T: float, r: float, sigma: float, otype: str):
+    """
+    Returns (price, delta, gamma, vega_per1pct, theta_per_day, vanna_per1pct).
+    All Greeks are per-share (multiply by qty × mult for dollar Greeks).
+    vega / vanna are per 1 percentage-point move in IV.
+    """
+    from scipy.stats import norm
+    if T <= 1e-6:
+        intrinsic = max(S - K, 0.0) if otype == "call" else max(K - S, 0.0)
+        delta = (1.0 if S > K else 0.0) if otype == "call" else (-1.0 if S < K else 0.0)
+        return intrinsic, delta, 0.0, 0.0, 0.0, 0.0
+    if sigma <= 1e-6 or S <= 0 or K <= 0:
+        intrinsic = max(S - K, 0.0) if otype == "call" else max(K - S, 0.0)
+        return intrinsic, 0.0, 0.0, 0.0, 0.0, 0.0
+    sqT  = np.sqrt(T)
+    d1   = (np.log(S / K) + (r + 0.5 * sigma ** 2) * T) / (sigma * sqT)
+    d2   = d1 - sigma * sqT
+    φd1  = norm.pdf(d1)
+    disc = np.exp(-r * T)
+    if otype == "call":
+        price = S * norm.cdf(d1) - K * disc * norm.cdf(d2)
+        delta = norm.cdf(d1)
+        theta = (-S * φd1 * sigma / (2 * sqT) - r * K * disc * norm.cdf(d2)) / 365
+    else:
+        price = K * disc * norm.cdf(-d2) - S * norm.cdf(-d1)
+        delta = norm.cdf(d1) - 1.0
+        theta = (-S * φd1 * sigma / (2 * sqT) + r * K * disc * norm.cdf(-d2)) / 365
+    gamma = φd1 / (S * sigma * sqT)
+    vega  = S * φd1 * sqT / 100.0          # per 1 pp IV change
+    vanna = φd1 * d2 / sigma / 100.0       # per 1 pp IV change
+    return price, delta, gamma, vega, theta, vanna
+
+
+def _compute_risk_matrix(
+    txns_df: "pd.DataFrame",
+    step_pct:    int   = 2,
+    vol_up_pct:  float = 25.0,
+    vol_down_pct: float = 25.0,
+    default_iv_pct: float = 20.0,
+    rate_pct:    float = 4.3,
+) -> dict | None:
+    """
+    Compute the risk matrix for all open option positions.
+    Returns a dict with keys: shocks, pnl_none, pnl_vol_up, pnl_vol_down,
+    underlying_px, delta, gamma, vega, vanna, theta, spots (per underlying).
+    """
+    import json
+
+    opt = txns_df[
+        txns_df["SecurityType"].str.lower().eq("option") &
+        txns_df["Strike"].notna() &
+        (pd.to_numeric(txns_df["Strike"], errors="coerce") > 0)
+    ].copy() if "SecurityType" in txns_df.columns else pd.DataFrame()
+
+    eq = txns_df[
+        txns_df["SecurityType"].str.lower().ne("option") &
+        txns_df["SecurityType"].str.lower().ne("cash")
+    ].copy() if "SecurityType" in txns_df.columns else pd.DataFrame()
+
+    if opt.empty and eq.empty:
+        return None
+
+    # Numeric coercions
+    for col in ["Strike", "Quantity", "TransactionPrice", "Multiplier"]:
+        if col in opt.columns:
+            opt[col] = pd.to_numeric(opt[col], errors="coerce")
+    opt["Multiplier"] = opt["Multiplier"].fillna(100)
+    opt["Quantity"]   = opt["Quantity"].fillna(1)
+
+    # Always 11 columns centered on 0; range scales with step size
+    shocks = [s * step_pct / 100.0 for s in range(-5, 6)]
+
+    r   = rate_pct / 100.0
+    today = datetime.date.today()
+
+    # Get unique underlyings and fetch spot prices
+    underlyings = list(txns_df["Underlying"].dropna().unique()) if "Underlying" in txns_df.columns else []
+    spots: dict[str, float] = {}
+    try:
+        from dash_app import get_polygon_api_key
+        from engine.positions import fetch_stock_price
+        api_key = get_polygon_api_key()
+        if api_key:
+            for und in underlyings:
+                px = fetch_stock_price(api_key, und)
+                if px:
+                    spots[und] = px
+    except Exception:
+        pass
+
+    # Aggregate across all underlyings + legs
+    pnl_none    = [0.0] * len(shocks)
+    pnl_vol_up  = [0.0] * len(shocks)
+    pnl_vol_dn  = [0.0] * len(shocks)
+    agg_delta   = [0.0] * len(shocks)
+    agg_gamma   = [0.0] * len(shocks)
+    agg_vega    = [0.0] * len(shocks)
+    agg_vanna   = [0.0] * len(shocks)
+    agg_theta   = [0.0] * len(shocks)
+    ref_spots   = {}   # underlying → spot (for display)
+
+    for _, row in opt.iterrows():
+        und  = str(row.get("Underlying") or "")
+        S    = spots.get(und)
+        if not S or S <= 0:
+            continue
+
+        K    = float(row["Strike"])
+        qty  = float(row["Quantity"])
+        mult = float(row["Multiplier"])
+        sign = 1.0 if str(row.get("Direction", "")).upper() == "BUY" else -1.0
+        pos  = sign * qty * mult       # +ve = long, -ve = short
+        entry_px = float(row.get("TransactionPrice") or 0)
+        otype = str(row.get("OptionType") or "put").lower()
+
+        # T in years
+        exp_str = str(row.get("Expiration") or "")
+        try:
+            exp_date = datetime.date.fromisoformat(exp_str[:10])
+            T_years  = max((exp_date - today).days / 365.0, 1 / 365)
+        except Exception:
+            T_years = 21 / 365.0
+
+        # IV: try Notes JSON, else default
+        sigma = default_iv_pct / 100.0
+        try:
+            notes = json.loads(str(row.get("Notes") or "{}") or "{}")
+            iv_raw = notes.get("ATM IV") or notes.get("atm_iv")
+            if iv_raw is not None:
+                iv_f = float(str(iv_raw).strip("%")) / 100.0 if "%" in str(iv_raw) else float(iv_raw)
+                if 0.01 < iv_f < 5.0:
+                    sigma = iv_f
+        except Exception:
+            pass
+
+        sigma_up = sigma * (1 + vol_up_pct / 100.0)
+        sigma_dn = max(sigma * (1 - vol_down_pct / 100.0), 0.01)
+
+        ref_spots.setdefault(und, S)
+
+        # Baseline = BS price at current spot + current vol (no shock).
+        # All P&L cells show INCREMENTAL change from current mark, so 0%/None = $0.
+        price_base, _, _, _, _, _ = _bs_full(S, K, T_years, r, sigma, otype)
+
+        for i, shock in enumerate(shocks):
+            S_shock = S * (1 + shock)
+            price_none, d, g, v, th, va = _bs_full(S_shock, K, T_years, r, sigma, otype)
+            price_up,   _, _, _, _,  _  = _bs_full(S_shock, K, T_years, r, sigma_up, otype)
+            price_dn,   _, _, _, _,  _  = _bs_full(S_shock, K, T_years, r, sigma_dn, otype)
+
+            pnl_none[i]   += (price_none - price_base) * pos
+            pnl_vol_up[i] += (price_up   - price_base) * pos
+            pnl_vol_dn[i] += (price_dn   - price_base) * pos
+            # Dollarized Greeks:
+            # $ Delta  = delta × S × pos          ($ equiv stock exposure)
+            # $ Gamma  = 0.5 × gamma × (S×0.01)² × pos  ($ P&L per additional 1% move)
+            # $ Vega   = vega × pos               (already $/pp from _bs_full dividing by 100)
+            # $ Vanna  = vanna × S × pos          ($ vega change per 1% spot move)
+            # $ Theta  = theta × pos              (already $/day from _bs_full dividing by 365)
+            agg_delta[i]  += d  * pos * S_shock
+            agg_gamma[i]  += 0.5 * g * pos * (S_shock * 0.01) ** 2
+            agg_vega[i]   += v  * pos
+            agg_vanna[i]  += va * pos * S_shock
+            agg_theta[i]  += th * pos
+
+    # Equity legs: delta = qty × mult × sign per shock
+    for _, row in eq.iterrows():
+        und  = str(row.get("Underlying") or row.get("Symbol") or "")
+        S    = spots.get(und)
+        if not S or S <= 0:
+            continue
+        qty  = float(row.get("Quantity") or 0)
+        mult = float(row.get("Multiplier") or 1)
+        sign = 1.0 if str(row.get("Direction", "")).upper() == "BUY" else -1.0
+        entry_px = float(row.get("TransactionPrice") or 0)
+        pos  = sign * qty * mult
+        ref_spots.setdefault(und, S)
+        for i, shock in enumerate(shocks):
+            S_shock = S * (1 + shock)
+            gain    = (S_shock - S) * pos   # baseline = current spot, so 0%=0
+            pnl_none[i]   += gain
+            pnl_vol_up[i] += gain
+            pnl_vol_dn[i] += gain
+            agg_delta[i]  += pos * S_shock    # $ delta: shares × price
+
+    # Primary underlying for display (pick most common)
+    primary_und = max(ref_spots, key=lambda u: 1) if ref_spots else None
+    S0 = ref_spots.get(primary_und, 0) if primary_und else 0
+
+    pnl_stress = [min(pnl_none[i], pnl_vol_up[i], pnl_vol_dn[i]) for i in range(len(shocks))]
+
+    return {
+        "shocks":       shocks,
+        "pnl_stress":   pnl_stress,
+        "pnl_vol_up":   pnl_vol_up,
+        "pnl_none":     pnl_none,
+        "pnl_vol_dn":   pnl_vol_dn,
+        "delta":        agg_delta,
+        "gamma":        agg_gamma,
+        "vega":         agg_vega,
+        "vanna":        agg_vanna,
+        "theta":        agg_theta,
+        "spot0":        S0,
+        "ref_spots":    ref_spots,
+        "primary_und":  primary_und or "",
+        "multi_und":    len(ref_spots) > 1,
+    }
+
+
+def _render_risk_table(mx: dict) -> html.Div:
+    shocks = mx["shocks"]
+    spot0  = mx["spot0"]
+
+    _TH = {
+        "padding": "6px 10px", "textAlign": "center", "fontSize": "11px",
+        "fontWeight": "700", "color": T.TEXT_SEC, "whiteSpace": "nowrap",
+        "borderBottom": f"1px solid {T.BORDER_BRT}",
+        "backgroundColor": T.BG_ELEVATED,
+    }
+    _ROW_LABEL = {
+        "padding": "5px 12px", "fontSize": "12px", "fontWeight": "600",
+        "whiteSpace": "nowrap", "color": T.TEXT_SEC,
+        "borderRight": f"1px solid {T.BORDER}",
+    }
+    _SEP_ROW = {
+        "padding": "2px 12px", "fontSize": "10px", "fontWeight": "700",
+        "letterSpacing": "0.08em", "textTransform": "uppercase",
+        "color": T.TEXT_MUTED, "backgroundColor": T.BG_ELEVATED,
+        "borderTop": f"2px solid {T.BORDER_BRT}",
+    }
+
+    def _pnl_cell(val: float) -> html.Td:
+        if val is None:
+            return html.Td("—", style={"textAlign": "center", "color": T.TEXT_MUTED, "padding": "5px 6px"})
+        color = T.SUCCESS if val > 0 else T.DANGER if val < 0 else T.TEXT_MUTED
+        intensity = min(abs(val) / max(abs(v) for row in [mx["pnl_none"], mx["pnl_vol_up"], mx["pnl_vol_dn"]]
+                                       for v in row if v != 0) if any(
+            v != 0 for row in [mx["pnl_none"], mx["pnl_vol_up"], mx["pnl_vol_dn"]] for v in row) else 1, 1.0)
+        bg = (f"rgba(16,185,129,{intensity*0.35})" if val > 0
+              else f"rgba(239,68,68,{intensity*0.35})" if val < 0 else "transparent")
+        r = round(val)
+        sign = "+" if r > 0 else "-" if r < 0 else ""
+        return html.Td(
+            f"{sign}${abs(r):,}",
+            style={"textAlign": "right", "color": color, "backgroundColor": bg,
+                   "padding": "5px 8px", "fontSize": "12px", "fontFamily": "monospace"},
+        )
+
+    def _greek_cell(val: float) -> html.Td:
+        if val is None:
+            return html.Td("—", style={"textAlign": "center", "color": T.TEXT_MUTED, "padding": "5px 6px"})
+        color = T.SUCCESS if val > 0 else T.DANGER if val < 0 else T.TEXT_MUTED
+        sign = "+" if val > 0 else "-" if val < 0 else ""
+        return html.Td(
+            f"{sign}${abs(val):,.2f}",
+            style={"textAlign": "right", "color": color, "backgroundColor": "transparent",
+                   "padding": "5px 8px", "fontSize": "12px", "fontFamily": "monospace"},
+        )
+
+    def _spot_cell(shock: float) -> html.Td:
+        if spot0 <= 0:
+            return html.Td("—", style={"textAlign": "right", "color": T.TEXT_MUTED,
+                                        "padding": "5px 8px", "fontSize": "12px"})
+        px = spot0 * (1 + shock)
+        color = T.SUCCESS if shock > 0 else T.DANGER if shock < 0 else "#e5e7eb"
+        return html.Td(f"${px:,.2f}", style={"textAlign": "right", "color": color,
+                                              "padding": "5px 8px", "fontSize": "12px",
+                                              "fontFamily": "monospace"})
+
+    # Normalise P&L intensities across all scenario rows (including stress)
+    all_pnl_vals = mx["pnl_none"] + mx["pnl_vol_up"] + mx["pnl_vol_dn"] + mx["pnl_stress"]
+    max_abs_pnl  = max((abs(v) for v in all_pnl_vals if v), default=1.0)
+
+    def _pnl_cell2(val: float) -> html.Td:
+        intensity = min(abs(val) / max_abs_pnl, 1.0)
+        if val > 0:
+            bg    = f"rgba(59,130,246,{intensity*0.25})"
+            color = "#93c5fd"
+        elif val < 0:
+            bg    = f"rgba(239,68,68,{intensity*0.25})"
+            color = "#fca5a5"
+        else:
+            bg    = "transparent"
+            color = T.TEXT_MUTED
+        sign = "+" if val > 0 else "-" if val < 0 else ""
+        return html.Td(
+            f"{sign}${abs(val):,.2f}",
+            style={"textAlign": "right", "color": color, "backgroundColor": bg,
+                   "padding": "5px 8px", "fontSize": "12px", "fontFamily": "monospace"},
+        )
+
+    header = html.Tr(
+        [html.Th("", style=_TH)] +
+        [html.Th(f"{'+'if s>0 else ''}{s:.0%}", style={
+            **_TH,
+            "color": T.SUCCESS if s > 0 else T.DANGER if s < 0 else "#e5e7eb",
+        }) for s in shocks]
+    )
+
+    def _row(label, cells, sep=False):
+        lbl_style = _SEP_ROW if sep else _ROW_LABEL
+        return html.Tr([html.Td(label, style=lbl_style)] + cells)
+
+    multi_und = mx.get("multi_und", False)
+    tbody_rows = [
+        _row("Vol Up",     [_pnl_cell2(v) for v in mx["pnl_vol_up"]]),
+        _row("None",       [_pnl_cell2(v) for v in mx["pnl_none"]]),
+        _row("Vol Down",   [_pnl_cell2(v) for v in mx["pnl_vol_dn"]]),
+        _row("Greeks",     [html.Td("", style={"padding": "2px"}) for _ in shocks], sep=True),
+        # Underlying only shown for single-underlying view
+        *([_row("Underlying", [_spot_cell(s) for s in shocks])] if not multi_und else []),
+        _row("$ Delta",  [_greek_cell(v) for v in mx["delta"]]),
+        _row("$ Gamma",  [_greek_cell(v) for v in mx["gamma"]]),
+        _row("$ Vega",   [_greek_cell(v) for v in mx["vega"]]),
+        _row("$ Vanna",  [_greek_cell(v) for v in mx["vanna"]]),
+        _row("$ Theta",  [_greek_cell(v) for v in mx["theta"]]),
+    ]
+
+    label = mx.get("primary_und", "")
+    if mx.get("ref_spots"):
+        parts = [f"{u} @ ${s:,.2f}" for u, s in mx["ref_spots"].items()]
+        label = "  ·  ".join(parts[:4])
+
+    table = html.Table(
+        [html.Thead(header), html.Tbody(tbody_rows)],
+        style={
+            "width": "100%", "borderCollapse": "collapse",
+            "backgroundColor": T.BG_CARD,
+        },
+    )
+    # Single stress number: worst P&L across entire matrix
+    stress_val = min(mx["pnl_stress"])
+    stress_str = f"-${abs(stress_val):,.2f}" if stress_val < 0 else f"+${stress_val:,.2f}"
+    stress_card = html.Div([
+        html.Div("STRESS (worst case)", style={
+            "fontSize": "10px", "fontWeight": "700", "letterSpacing": "0.08em",
+            "color": T.WARNING, "marginBottom": "4px",
+        }),
+        html.Div(stress_str, style={
+            "fontSize": "22px", "fontWeight": "700",
+            "color": T.DANGER if stress_val < 0 else T.SUCCESS,
+            "fontFamily": "monospace",
+        }),
+        html.Div("max loss across all price × vol scenarios", style={
+            "fontSize": "10px", "color": T.TEXT_MUTED, "marginTop": "2px",
+        }),
+    ], style={
+        "display": "inline-block", "padding": "10px 18px",
+        "border": f"1px solid {T.WARNING}",
+        "borderRadius": "8px", "marginBottom": "14px",
+        "backgroundColor": "rgba(245,158,11,0.07)",
+    })
+
+    # ── Payoff chart ──────────────────────────────────────────────────────────
+    x_labels = [f"{'+' if s > 0 else ''}{s:.0%}" for s in shocks]
+
+    fig = go.Figure()
+
+    all_vals  = mx["pnl_vol_up"] + mx["pnl_none"] + mx["pnl_vol_dn"]
+    y_max = max(max(all_vals) * 1.15, 1)
+    y_min = min(min(all_vals) * 1.15, -1)
+
+    # Positive region shading (above zero)
+    fig.add_hrect(y0=0, y1=y_max, fillcolor="rgba(16,185,129,0.04)", line_width=0, layer="below")
+    # Negative region shading (below zero)
+    fig.add_hrect(y0=y_min, y1=0, fillcolor="rgba(239,68,68,0.04)", line_width=0, layer="below")
+
+    # Vol band fill
+    fig.add_trace(go.Scatter(
+        x=x_labels + x_labels[::-1],
+        y=mx["pnl_vol_up"] + mx["pnl_vol_dn"][::-1],
+        fill="toself",
+        fillcolor="rgba(99,102,241,0.07)",
+        line={"width": 0},
+        hoverinfo="skip",
+        showlegend=False,
+    ))
+
+    fig.add_trace(go.Scatter(
+        x=x_labels, y=mx["pnl_vol_up"],
+        name="Vol Up ↑", mode="lines",
+        line={"color": "#ef4444", "width": 1.5, "dash": "dot"},
+    ))
+    fig.add_trace(go.Scatter(
+        x=x_labels, y=mx["pnl_none"],
+        name="Base (no vol Δ)", mode="lines",
+        line={"color": "#6366f1", "width": 2.5},
+    ))
+    fig.add_trace(go.Scatter(
+        x=x_labels, y=mx["pnl_vol_dn"],
+        name="Vol Down ↓", mode="lines",
+        line={"color": "#10b981", "width": 1.5, "dash": "dot"},
+    ))
+
+    # Zero line with +/- annotations
+    fig.add_hline(y=0, line={"color": "#4b5563", "width": 1, "dash": "dash"},
+                  annotation_text="  $0", annotation_position="left",
+                  annotation_font={"color": "#6b7280", "size": 10})
+
+    fig.update_layout(
+        template="none",
+        height=220,
+        margin={"t": 10, "b": 30, "l": 70, "r": 20},
+        paper_bgcolor="rgba(0,0,0,0)",
+        plot_bgcolor="rgba(0,0,0,0)",
+        font={"color": "#9ca3af", "size": 11},
+        legend={"orientation": "h", "x": 0.5, "xanchor": "center",
+                "y": 1.18, "font": {"size": 11, "color": "#9ca3af"},
+                "traceorder": "normal", "itemwidth": 100,
+                "bgcolor": "rgba(0,0,0,0)"},
+        xaxis={"gridcolor": "#1f2937", "color": "#9ca3af",
+               "tickfont": {"size": 10, "color": "#9ca3af"}},
+        yaxis={"gridcolor": "#1f2937", "tickprefix": "$", "tickformat": ",.0f",
+               "zeroline": False, "range": [y_min, y_max],
+               "color": "#9ca3af",
+               "tickfont": {"size": 10, "color": "#9ca3af"}},
+        hovermode="x unified",
+    )
+
+    payoff_chart = dcc.Graph(
+        figure=fig,
+        config={"displayModeBar": False},
+        style={"marginTop": "20px"},
+    )
+
+    return html.Div([
+        html.Div(label, style={"color": T.TEXT_MUTED, "fontSize": "11px",
+                                "marginBottom": "8px", "fontStyle": "italic"}),
+        stress_card,
+        html.Div(table, style={"overflowX": "auto"}),
+        html.Div(
+            "Delta ($) = portfolio $ delta at each shock  ·  "
+            "Gamma ($) = $ P&L per additional 1% move  ·  "
+            "Vega/Vanna ($) = per 1 pp IV change  ·  "
+            "Theta ($) = per-day decay",
+            style={"color": T.TEXT_MUTED, "fontSize": "10px", "marginTop": "8px",
+                   "fontStyle": "italic"},
+        ),
+        payoff_chart,
+    ])
+
+
+@callback(
+    Output("pt-risk-pos-pills", "children"),
+    Output("pt-risk-position",  "data"),
+    Input("pt-tabs",            "active_tab"),
+    Input("pt-refresh",         "n_intervals"),
+    Input({"type": "pt-risk-pill", "tgid": ALL}, "n_clicks"),
+    State("pt-risk-position",   "data"),
+)
+def populate_risk_pills(active_tab, _n, _pill_clicks, current_sel):
+    from dash import callback_context as _ctx
+
+    if active_tab != "risk":
+        return no_update, no_update
+
+    _, _, txns_df = _load_data()
+    if txns_df.empty:
+        return html.P("No open positions.", style={"color": T.TEXT_MUTED, "fontSize": "12px"}), "__all__"
+    if "Notes" in txns_df.columns:
+        txns_df = txns_df[~txns_df["Notes"].str.upper().str.contains("CLOSE", na=False)]
+
+    open_groups = get_open_trade_groups_simple(txns_df)
+
+    # Detect pill click
+    new_sel = current_sel or "__all__"
+    triggered = _ctx.triggered_id
+    if isinstance(triggered, dict) and triggered.get("type") == "pt-risk-pill":
+        new_sel = triggered["tgid"]
+
+    def _pill(label, tgid):
+        selected = tgid == new_sel
+        return dbc.Button(
+            label,
+            id={"type": "pt-risk-pill", "tgid": tgid},
+            n_clicks=0,
+            size="sm",
+            style={
+                "display": "inline-block",
+                "padding": "4px 12px", "borderRadius": "16px",
+                "fontSize": "12px", "fontWeight": "600",
+                "marginRight": "6px", "marginBottom": "6px",
+                "border": f"1px solid {T.ACCENT}",
+                "backgroundColor": T.ACCENT if selected else "transparent",
+                "color": "#fff" if selected else T.ACCENT,
+                "cursor": "pointer",
+            },
+        )
+
+    def _pos_label(tgid: str, g: dict) -> str:
+        base = f"{g['underlying']}  ·  {g['strategy'][:22]}"
+        suffix = g["open_date"] if g.get("open_date") else f"#{tgid[-4:]}"
+        return f"{base}  ({suffix})"
+
+    pills = [_pill("Portfolio", "__all__")] + [
+        _pill(_pos_label(tgid, g), tgid)
+        for tgid, g in open_groups.items()
+    ]
+    return html.Div(pills, style={"flexWrap": "wrap"}), new_sel
+
+
+def get_open_trade_groups_simple(txns_df: "pd.DataFrame") -> dict:
+    """Return {tgid: {underlying, strategy, open_date, grp}} for open positions only."""
+    from engine.positions import get_open_trade_groups
+    groups = get_open_trade_groups(txns_df)
+    result = {}
+    for tgid, grp in groups.items():
+        und = (grp["Underlying"].dropna().iloc[0]
+               if "Underlying" in grp.columns and not grp["Underlying"].dropna().empty
+               else grp["Symbol"].iloc[0] if not grp.empty else "?")
+        strat = str(grp["StrategyName"].iloc[0]) if not grp.empty else "?"
+        # Earliest transaction date for this group
+        open_date = ""
+        for date_col in ("BusinessDate", "Date", "CreatedAt"):
+            if date_col in grp.columns and not grp[date_col].dropna().empty:
+                try:
+                    open_date = pd.to_datetime(grp[date_col].dropna().iloc[0]).strftime("%m/%d")
+                except Exception:
+                    open_date = str(grp[date_col].dropna().iloc[0])[:5]
+                if open_date:
+                    break
+        result[tgid] = {"underlying": und, "strategy": strat, "open_date": open_date, "grp": grp}
+    return result
+
+
+@callback(
+    Output("pt-risk-leg-pills", "children"),
+    Output("pt-risk-leg",       "data"),
+    Input("pt-risk-position",   "data"),
+    Input({"type": "pt-risk-leg-pill", "sid": ALL}, "n_clicks"),
+    State("pt-risk-leg",        "data"),
+)
+def populate_leg_pills(position_tgid, _leg_clicks, current_leg):
+    from dash import callback_context as _ctx
+
+    # Reset leg selection when position changes
+    triggered = _ctx.triggered_id
+    new_leg = current_leg or "__all__"
+    if isinstance(triggered, dict) and triggered.get("type") == "pt-risk-leg-pill":
+        new_leg = triggered["sid"]
+    elif triggered == "pt-risk-position":
+        new_leg = "__all__"
+
+    if not position_tgid or position_tgid == "__all__":
+        return html.Div(), "__all__"
+
+    _, _, txns_df = _load_data()
+    if txns_df.empty:
+        return html.Div(), "__all__"
+    if "Notes" in txns_df.columns:
+        txns_df = txns_df[~txns_df["Notes"].str.upper().str.contains("CLOSE", na=False)]
+
+    grp = txns_df[txns_df["TradeGroupId"] == position_tgid]
+    opt = grp[grp["SecurityType"].str.lower().eq("option")] if "SecurityType" in grp.columns else pd.DataFrame()
+    if opt.empty:
+        return html.Div(), "__all__"
+
+    def _lpill(label, sid):
+        selected = sid == new_leg
+        return dbc.Button(
+            label,
+            id={"type": "pt-risk-leg-pill", "sid": sid},
+            n_clicks=0, size="sm",
+            style={
+                "padding": "3px 10px", "borderRadius": "12px",
+                "fontSize": "11px", "fontWeight": "600",
+                "marginRight": "5px", "marginBottom": "5px",
+                "border": f"1px solid {T.BORDER_BRT}",
+                "backgroundColor": T.BG_ELEVATED if selected else "transparent",
+                "color": "#e5e7eb" if selected else T.TEXT_MUTED,
+                "cursor": "pointer",
+            },
+        )
+
+    pills = [_lpill("All legs", "__all__")]
+    for _, r in opt.iterrows():
+        sid = str(r.get("Symbol") or r.get("SecurityId") or "")
+        k   = r.get("Strike", "")
+        ot  = str(r.get("OptionType") or "").upper()
+        dr  = str(r.get("Direction") or "").capitalize()
+        label = f"{dr}  {ot}  ${float(k):.0f}" if k else sid
+        pills.append(_lpill(label, sid))
+
+    return html.Div([
+        html.Span("  Legs: ", style={"color": T.TEXT_MUTED, "fontSize": "11px",
+                                      "marginRight": "6px", "lineHeight": "28px"}),
+        *pills,
+    ], style={"display": "flex", "alignItems": "center", "flexWrap": "wrap",
+              "paddingLeft": "8px", "borderLeft": f"2px solid {T.BORDER_BRT}"}), new_leg
+
+
+@callback(
+    Output("pt-risk-matrix",    "children"),
+    Input("pt-risk-calc-btn",   "n_clicks"),
+    State("pt-risk-step",       "value"),
+    State("pt-risk-vol-up",     "value"),
+    State("pt-risk-vol-down",   "value"),
+    State("pt-risk-iv-default", "value"),
+    State("pt-risk-rate",       "value"),
+    State("pt-risk-position",   "data"),
+    State("pt-risk-leg",        "data"),
+    prevent_initial_call=True,
+)
+def compute_risk(n_clicks, step, vol_up, vol_dn, iv_default, rate, position_filter, leg_filter):
+    if not n_clicks:
+        return no_update
+    _, _, txns_df = _load_data()
+    if txns_df.empty:
+        return html.P("No transactions found.", style={"color": T.TEXT_MUTED, "padding": "20px"})
+
+    # Only open positions (no CLOSE notes)
+    if "Notes" in txns_df.columns:
+        txns_df = txns_df[~txns_df["Notes"].str.upper().str.contains("CLOSE", na=False)]
+
+    # Filter to single position if requested
+    if position_filter and position_filter != "__all__":
+        txns_df = txns_df[txns_df["TradeGroupId"] == position_filter]
+        if txns_df.empty:
+            return html.P("Position not found.", style={"color": T.TEXT_MUTED, "padding": "20px"})
+
+    # Filter to single leg if requested
+    if leg_filter and leg_filter != "__all__" and "Symbol" in txns_df.columns:
+        leg_mask = txns_df["Symbol"] == leg_filter
+        if leg_mask.any():
+            txns_df = txns_df[leg_mask]
+
+    mx = _compute_risk_matrix(
+        txns_df,
+        step_pct=int(step or 2),
+        vol_up_pct=float(vol_up or 25),
+        vol_down_pct=float(vol_dn or 25),
+        default_iv_pct=float(iv_default or 20),
+        rate_pct=float(rate or 4.3),
+    )
+    if mx is None:
+        return html.P(
+            "No priceable option legs found. Legs may have Strike=0 (incomplete entry data).",
+            style={"color": T.TEXT_MUTED, "padding": "20px", "fontSize": "12px"},
+        )
+
+    if position_filter == "__all__":
+        scope = "Portfolio"
+    elif leg_filter and leg_filter != "__all__":
+        scope = f"{position_filter}  ›  {leg_filter}"
+    else:
+        scope = position_filter
+    header = html.Div(
+        scope,
+        style={"color": T.TEXT_SEC, "fontSize": "13px", "fontWeight": "600", "marginBottom": "10px"},
+    )
+    return dbc.Card(dbc.CardBody([header, _render_risk_table(mx)]),
+                    style={**T.STYLE_CARD})

@@ -721,8 +721,6 @@ def layout() -> html.Div:
                         tab_style=_TAB_STYLE, active_tab_style=_TAB_ACT_STYLE),
                 dbc.Tab(_polygon_explorer_tab(), label="Polygon Explorer",
                         tab_style=_TAB_STYLE, active_tab_style=_TAB_ACT_STYLE),
-                dbc.Tab(_broker_tab(),           label="Broker",
-                        tab_style=_TAB_STYLE, active_tab_style=_TAB_ACT_STYLE),
             ],
             style={"marginBottom": "0"},
         ),

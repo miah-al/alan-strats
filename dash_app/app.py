@@ -31,6 +31,7 @@ from dash import Dash, html, dcc, Input, Output
 
 from dash_app import theme as T
 from dash_app.navbar import build_sidebar
+from dash_app.pages.broker import build_broker_panel, BROKER_WIDTH
 
 # ── App ───────────────────────────────────────────────────────────────────────
 app = Dash(
@@ -50,10 +51,12 @@ app.layout = html.Div(
     [
         dcc.Location(id="url", refresh=False),
         build_sidebar(),
+        build_broker_panel(),
         html.Div(
             id="page-content",
             style={
                 "marginLeft":      T.SIDEBAR_WIDTH,
+                "marginRight":     BROKER_WIDTH,
                 "backgroundColor": T.BG_BASE,
                 "minHeight":       "100vh",
                 "color":           T.TEXT_PRIMARY,
@@ -68,6 +71,7 @@ import dash_app.pages.paper_trading
 import dash_app.pages.market
 import dash_app.pages.strategies
 import dash_app.pages.tools
+import dash_app.pages.broker  # registers broker panel callbacks
 
 # ── Routing ───────────────────────────────────────────────────────────────────
 @app.callback(Output("page-content", "children"), Input("url", "pathname"))
@@ -106,4 +110,4 @@ def render_page(pathname: str):
 
 # ── Entry point ───────────────────────────────────────────────────────────────
 if __name__ == "__main__":
-    app.run(debug=True, host="0.0.0.0", port=8050, threaded=True, use_reloader=False)
+    app.run(debug=True, host="0.0.0.0", port=8051, threaded=True, use_reloader=False)

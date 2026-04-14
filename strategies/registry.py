@@ -122,14 +122,25 @@ STRATEGY_METADATA: dict[str, dict] = {
         "class_path": "",
     },
     "vix_term_structure": {
-        "display_name": "VIX Term Structure",
-        "type": "rule",
-        "status": "stub",
-        "description": "Trade VIX futures contango/backwardation: sell front-month when curve is steep contango.",
-        "asset_class": "volatility",
+        "display_name": "VIX Term Structure AI",
+        "type": "ai",
+        "status": "active",
+        "icon": "📉",
+        "description": (
+            "GBM classifier predicts VIX contango vs backwardation regime. "
+            "Sells bull put credit spreads on SPY in contango (P < 0.40). "
+            "Buys bear put debit spreads in backwardation (P > 0.60). "
+            "12 features: VIX momentum, vol-of-vol, IV-RV spread, SPY trend. Walk-forward, 90-bar warmup."
+        ),
+        "asset_class": "equities_options",
         "typical_holding_days": 14,
-        "target_sharpe": 1.0,
-        "class_path": "",
+        "target_sharpe": 1.3,
+        "class_path": "alan_trader.strategies.vix_term_structure.VIXTermStructureStrategy",
+        "requires_training": True,
+        "uses_ml": True,
+        "requires_ticker": False,
+        "required_data": ["price", "vix"],
+        "has_screener": True,
     },
     "vix_spike_fade": {
         "display_name": "VIX Spike Fade",
@@ -250,14 +261,25 @@ STRATEGY_METADATA: dict[str, dict] = {
 
     # ── Earnings ───────────────────────────────────────────────────────────
     "earnings_vol_crush": {
-        "display_name": "Earnings Vol Crush",
-        "type": "rule",
-        "status": "stub",
-        "description": "Sell straddles before earnings to capture IV crush after announcement.",
+        "display_name": "Earnings Vol Crush — AI",
+        "type": "ai",
+        "status": "active",
+        "icon": "💥",
+        "description": (
+            "Enters credit spread after earnings gap when IV is still elevated but directional risk is resolved. "
+            "Gap up → bear call spread above gap. Gap down → bull put spread below gap. "
+            "GBM predicts P(stock contained) using gap magnitude, IVR, and vol context. "
+            "Walk-forward, 30-event warmup."
+        ),
         "asset_class": "equities_options",
-        "typical_holding_days": 2,
-        "target_sharpe": 1.1,
-        "class_path": "",
+        "typical_holding_days": 10,
+        "target_sharpe": 1.2,
+        "class_path": "alan_trader.strategies.earnings_vol_crush.EarningsVolCrushStrategy",
+        "requires_training": True,
+        "uses_ml": True,
+        "requires_ticker": True,
+        "required_data": ["price", "vix"],
+        "has_screener": True,
     },
     "earnings_straddle": {
         "display_name": "Earnings Straddle",
@@ -1124,6 +1146,94 @@ STRATEGY_METADATA: dict[str, dict] = {
         "uses_ml": True,
         "requires_ticker": True,
         "required_data": ["price", "options", "vix"],
+        "has_screener": True,
+    },
+
+    # ── New AI strategies (2026-04-06) ──────────────────────────────────────
+    "momentum_regime_spread": {
+        "display_name": "Momentum Regime Spread — AI",
+        "type": "ai",
+        "status": "active",
+        "icon": "🎯",
+        "description": (
+            "3-class GBM classifies SPY into bull / bear / chop momentum regimes. "
+            "Bull → buy bull call debit spread. Bear → buy bear put debit spread. Chop → flat. "
+            "Max loss bounded to debit paid. 11 features: momentum, VIX, trend. Walk-forward, 90-bar warmup."
+        ),
+        "asset_class": "equities_options",
+        "typical_holding_days": 10,
+        "target_sharpe": 1.1,
+        "class_path": "alan_trader.strategies.momentum_regime_spread.MomentumRegimeSpreadStrategy",
+        "requires_training": True,
+        "uses_ml": True,
+        "requires_ticker": False,
+        "required_data": ["price", "vix"],
+        "has_screener": True,
+    },
+    "covered_call_ai": {
+        "display_name": "Covered Call Optimizer — AI",
+        "type": "ai",
+        "status": "active",
+        "icon": "📈",
+        "description": (
+            "AI-optimized covered call writing. GBM selects strike delta and DTE based on IVR, "
+            "momentum, earnings proximity, and vol regime. Aggressive 0.30 delta in high-IVR "
+            "low-momentum regimes; conservative 0.15 delta in strong uptrends. Skips when IVR low. "
+            "Walk-forward, 90-bar warmup."
+        ),
+        "asset_class": "equities_options",
+        "typical_holding_days": 21,
+        "target_sharpe": 1.0,
+        "class_path": "alan_trader.strategies.covered_call_ai.CoveredCallAIStrategy",
+        "requires_training": True,
+        "uses_ml": True,
+        "requires_ticker": True,
+        "required_data": ["price", "vix"],
+        "has_screener": True,
+    },
+    "rs_credit_spread": {
+        "display_name": "RS Credit Spread — AI",
+        "type": "ai",
+        "status": "active",
+        "icon": "🔄",
+        "description": (
+            "Sells bear call spread on weakest sector ETF + bull put spread on strongest sector ETF. "
+            "GBM predicts P(sector stays contained) for each leg independently. "
+            "Exploits institutional rebalancing mean-reversion. Weekly rebalance, SPY ADX filter. "
+            "Requires 11 SPDR sector ETF data."
+        ),
+        "asset_class": "equities_options",
+        "typical_holding_days": 10,
+        "target_sharpe": 1.2,
+        "class_path": "alan_trader.strategies.rs_credit_spread.RSCreditSpreadStrategy",
+        "requires_training": True,
+        "uses_ml": True,
+        "requires_ticker": False,
+        "required_data": ["price", "vix", "sectors"],
+        "has_screener": True,
+    },
+
+    # ── Put Steal ──────────────────────────────────────────────────────────────
+    "put_steal": {
+        "display_name": "Put Steal — Interest Arb AI",
+        "type": "ai",
+        "status": "active",
+        "icon": "🪤",
+        "description": (
+            "Exploits retail put holders who fail to exercise deep ITM American puts early "
+            "(Barraclough-Whaley 2011). NII = X(1-e^{-rT}) - call(S,X,T): when NII > 0, "
+            "the long forfeits interest income to the short. "
+            "Sells bull put spreads when NII > threshold and GBM classifier confirms low crash risk. "
+            "Works best in high-rate, low-vol environments. Walk-forward: 90-bar warmup, retrains every 20 bars."
+        ),
+        "asset_class": "equities_options",
+        "typical_holding_days": 21,
+        "target_sharpe": 1.5,
+        "class_path": "alan_trader.strategies.put_steal.PutStealStrategy",
+        "requires_training": True,
+        "uses_ml": True,
+        "requires_ticker": True,
+        "required_data": ["price", "vix", "rates"],
         "has_screener": True,
     },
 }

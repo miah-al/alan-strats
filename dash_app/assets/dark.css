@@ -482,3 +482,16 @@ blockquote {
     background-color: rgba(99,102,241,0.15);
 }
 
+/* ── P&L cell colors ─────────────────────────────────────────────────────── */
+.ag-theme-quartz-dark .cell-positive { color: #10b981 !important; }
+.ag-theme-quartz-dark .cell-negative { color: #ef4444 !important; }
+.ag-theme-quartz-dark .cell-neutral  { color: #9ca3af !important; }
+
+/* ── Plotly chart axis tick labels ───────────────────────────────────────── */
+.js-plotly-plot .plotly .xtick text,
+.js-plotly-plot .plotly .ytick text,
+.js-plotly-plot .plotly .g-xtitle text,
+.js-plotly-plot .plotly .g-ytitle text {
+    fill: #9ca3af !important;
+}
+

@@ -42,8 +42,13 @@ def build_sidebar() -> html.Div:
 
     links = [
         dbc.NavLink(
-            [html.Span(icon, style={"marginRight": "9px", "fontSize": "13px"}),
-             html.Span(label)],
+            [html.Span(icon, style={
+                "marginRight": "9px", "fontSize": "14px",
+                "display": "inline-flex", "alignItems": "center",
+                "width": "18px", "justifyContent": "center",
+                "lineHeight": "1", "flexShrink": "0",
+            }),
+             html.Span(label, style={"lineHeight": "1"})],
             href=href,
             active="exact",
             style={

@@ -65,6 +65,24 @@ _DEFAULT_PARAMS = {
     "bull_put_spread": {
         "ivr_min": 0.40, "adx_max": 30.0, "vix_max": 35.0,
     },
+    "vix_term_structure": {
+        "vix_max": 45.0, "threshold_short": 0.40, "threshold_long": 0.60,
+    },
+    "earnings_vol_crush": {
+        "min_gap_pct": 0.03, "min_confidence": 0.60, "vix_max": 45.0,
+    },
+    "momentum_regime_spread": {
+        "confidence_threshold": 0.55, "vix_max": 40.0,
+    },
+    "covered_call_ai": {
+        "min_ivr": 0.30, "aggressive_delta": 0.30, "conservative_delta": 0.15,
+    },
+    "rs_credit_spread": {
+        "min_confidence": 0.60, "adx_max": 30.0, "vix_max": 40.0,
+    },
+    "put_steal": {
+        "nii_threshold": 0.01, "itm_pct": 0.10, "vix_max": 40.0, "iv_max": 0.60,
+    },
 }
 
 # ── Indicator helpers (price-only, no options needed) ─────────────────────────
@@ -884,6 +902,19 @@ def _get_options_chain(ticker: str, api_key: str, spot: float,
             chain[col] = pd.to_numeric(chain[col], errors="coerce")
     chain["mid"] = (chain["bid"] + chain["ask"]) / 2
 
+    # Fall back to Black-Scholes when bid/ask are null but IV is available
+    null_mid = chain["mid"].isna() & chain["iv"].notna() & (chain["iv"] > 0)
+    if null_mid.any():
+        r = 0.045
+        for idx in chain[null_mid].index:
+            row  = chain.loc[idx]
+            T    = float(row["dte"]) / 365.0
+            iv   = float(row["iv"])
+            K    = float(row["strike"])
+            otype = str(row.get("type", "call")).lower()
+            if T > 0 and iv > 0 and K > 0:
+                chain.at[idx, "mid"] = _bs_price(spot, K, T, iv, r, otype)
+
     exps     = chain.groupby("expiration")["dte"].first()
     best_exp = exps.sub(dte_target).abs().idxmin()
     dte_used = int(exps[best_exp])
@@ -1086,6 +1117,362 @@ def _classify_rotation_regime(
     elif rates_falling and stocks_down: return "Fear"
     elif rates_falling and stocks_up:   return "Risk-On"
     else:                               return "Transition"
+
+
+# ── New AI strategy screener functions (2026-04-06) ─────────────────────────
+
+def _score_vix_term_structure(
+    ticker: str,
+    price_df: pd.DataFrame,
+    vix_series: pd.Series,
+    params: Optional[dict] = None,
+) -> dict:
+    """Score a ticker for VIX Term Structure AI strategy."""
+    p = {**_DEFAULT_PARAMS.get("vix_term_structure", {}), **(params or {})}
+    if price_df.empty or len(vix_series) < 30:
+        return {"Score": 0, "Status": "No data", "Regime": "—", "VRP": "—", "RV20": "—"}
+
+    close   = price_df["close"]
+    vix_now = float(vix_series.iloc[-1])
+    rv20    = float(close.pct_change().rolling(20, min_periods=10).std().iloc[-1] * (252 ** 0.5))
+    vrp     = vix_now / 100.0 - rv20
+    vix_5d  = float(vix_series.pct_change(5).iloc[-1]) if len(vix_series) >= 5 else 0.0
+
+    # Vol-of-vol: std of VIX daily changes over 10d
+    vix_vov = float(vix_series.diff().rolling(10, min_periods=5).std().iloc[-1]) if len(vix_series) >= 10 else 0.5
+
+    if vix_now > p.get("vix_max", 45.0):
+        return {"Score": 0, "Status": "VIX too high", "Regime": "—", "VRP": f"{vrp:.3f}", "RV20": f"{rv20:.1%}"}
+
+    # Heuristic regime score (before ML model is trained)
+    if vrp < -0.03:
+        regime = "Backwardation"
+        score  = min(100, int(50 + abs(vrp) * 400))
+    elif vrp > 0.03:
+        regime = "Contango"
+        score  = min(100, int(50 + vrp * 400))
+    else:
+        regime = "Neutral"
+        score  = 30
+
+    # Penalise if VIX spiking fast (regime shift risk)
+    if vix_5d > 0.30:
+        score = max(0, score - 20)
+
+    status = "BUY" if regime == "Contango" and score >= 50 else \
+             "SELL" if regime == "Backwardation" and score >= 50 else "FLAT"
+
+    return {
+        "Score":   score,
+        "Status":  status,
+        "Regime":  regime,
+        "VIX":     f"{vix_now:.1f}",
+        "VRP":     f"{vrp:+.3f}",
+        "RV20":    f"{rv20:.1%}",
+        "VoV":     f"{vix_vov:.2f}",
+        "5d Chg":  f"{vix_5d:+.1%}",
+    }
+
+
+def _score_earnings_vol_crush(
+    ticker: str,
+    price_df: pd.DataFrame,
+    vix_series: pd.Series,
+    params: Optional[dict] = None,
+) -> dict:
+    """Score a ticker for Earnings Vol Crush AI strategy."""
+    if price_df.empty or len(price_df) < 5:
+        return {"Score": 0, "Status": "No data", "Gap%": "—", "IVR": "—"}
+
+    close    = price_df["close"]
+    gap_pct  = float(close.pct_change().iloc[-1]) if len(close) >= 2 else 0.0
+    abs_gap  = abs(gap_pct)
+    vix_now  = float(vix_series.iloc[-1]) if not vix_series.empty else 20.0
+    rv20     = float(close.pct_change().rolling(20, min_periods=10).std().iloc[-1] * (252 ** 0.5))
+    ivr_raw  = _vix_ivr(vix_series)
+
+    min_gap  = (params or {}).get("min_gap_pct", 0.03)
+
+    if abs_gap < min_gap:
+        return {"Score": 0, "Status": "No earnings gap", "Gap%": f"{gap_pct:.1%}", "IVR": f"{ivr_raw:.2f}"}
+
+    # Score based on gap size and IVR (more premium = higher score)
+    gap_score = min(50, int(abs_gap * 800))
+    ivr_score = min(50, int(ivr_raw * 60))
+    score     = gap_score + ivr_score
+
+    direction = "Gap Up → Bear Call" if gap_pct > 0 else "Gap Down → Bull Put"
+    status    = "ENTER" if score >= 60 else "WEAK"
+
+    return {
+        "Score":     score,
+        "Status":    status,
+        "Gap%":      f"{gap_pct:+.1%}",
+        "Gap Type":  direction,
+        "IVR":       f"{ivr_raw:.2f}",
+        "VIX":       f"{vix_now:.1f}",
+        "RV20":      f"{rv20:.1%}",
+    }
+
+
+def _score_momentum_regime_spread(
+    ticker: str,
+    price_df: pd.DataFrame,
+    vix_series: pd.Series,
+    params: Optional[dict] = None,
+) -> dict:
+    """Score a ticker for Momentum Regime Debit Spread AI strategy."""
+    if price_df.empty or len(price_df) < 25:
+        return {"Score": 0, "Status": "No data", "Regime": "—", "5d Ret": "—", "20d Ret": "—"}
+
+    close   = price_df["close"]
+    ret_5d  = float(close.pct_change(5).iloc[-1])  if len(close) >= 5  else 0.0
+    ret_20d = float(close.pct_change(20).iloc[-1]) if len(close) >= 20 else 0.0
+    vix_now = float(vix_series.iloc[-1]) if not vix_series.empty else 20.0
+    vix_ma  = float(vix_series.rolling(20, min_periods=5).mean().iloc[-1]) if len(vix_series) >= 5 else vix_now
+    vix_rat = vix_now / max(vix_ma, 0.01)
+    accel   = ret_5d - ret_20d / 4.0
+
+    vix_max = (params or {}).get("vix_max", 40.0)
+    if vix_now > vix_max:
+        return {"Score": 0, "Status": "VIX too high", "Regime": "—",
+                "5d Ret": f"{ret_5d:.1%}", "20d Ret": f"{ret_20d:.1%}"}
+
+    if ret_5d > 0.025 and ret_20d > 0.005 and vix_rat < 1.15:
+        regime = "Bull"
+        score  = min(100, int(50 + abs(ret_5d) * 1000 + accel * 500))
+        status = "BUY (Bull Call)"
+    elif ret_5d < -0.025 and ret_20d < -0.005 and vix_rat > 0.90:
+        regime = "Bear"
+        score  = min(100, int(50 + abs(ret_5d) * 1000 + abs(accel) * 500))
+        status = "BUY (Bear Put)"
+    else:
+        regime = "Chop"
+        score  = 20
+        status = "FLAT"
+
+    return {
+        "Score":    score,
+        "Status":   status,
+        "Regime":   regime,
+        "5d Ret":   f"{ret_5d:+.1%}",
+        "20d Ret":  f"{ret_20d:+.1%}",
+        "Accel":    f"{accel:+.3f}",
+        "VIX":      f"{vix_now:.1f}",
+        "VIX/MA":   f"{vix_rat:.2f}",
+    }
+
+
+def _score_covered_call_ai(
+    ticker: str,
+    price_df: pd.DataFrame,
+    vix_series: pd.Series,
+    params: Optional[dict] = None,
+) -> dict:
+    """Score a ticker for Covered Call Optimizer AI strategy."""
+    if price_df.empty or len(price_df) < 25:
+        return {"Score": 0, "Status": "No data", "IVR": "—", "Delta Mode": "—"}
+
+    close   = price_df["close"]
+    spot    = float(close.iloc[-1])
+    ivr_now = _vix_ivr(vix_series)
+    vix_now = float(vix_series.iloc[-1]) if not vix_series.empty else 20.0
+    ret_20d = float(close.pct_change(20).iloc[-1]) if len(close) >= 20 else 0.0
+    rv20    = float(close.pct_change().rolling(20, min_periods=10).std().iloc[-1] * (252 ** 0.5))
+    vrp     = vix_now / 100.0 - rv20
+
+    min_ivr = (params or {}).get("min_ivr", 0.30)
+
+    if ivr_now < min_ivr:
+        return {"Score": 0, "Status": "IVR too low (skip)", "IVR": f"{ivr_now:.2f}",
+                "Delta Mode": "—", "VRP": f"{vrp:+.3f}"}
+
+    # Delta mode selection
+    if ret_20d > 0.08:
+        delta_mode = "Conservative (0.15δ)"
+        mode_score = 50
+    else:
+        delta_mode = "Aggressive (0.30δ)"
+        mode_score = 70
+
+    ivr_score = min(30, int(ivr_now * 50))
+    score     = mode_score + ivr_score
+    status    = "WRITE CC" if score >= 70 else "MARGINAL"
+
+    return {
+        "Score":      score,
+        "Status":     status,
+        "IVR":        f"{ivr_now:.2f}",
+        "Delta Mode": delta_mode,
+        "VRP":        f"{vrp:+.3f}",
+        "20d Ret":    f"{ret_20d:+.1%}",
+        "VIX":        f"{vix_now:.1f}",
+    }
+
+
+def _score_rs_credit_spread(
+    ticker: str,
+    price_df: pd.DataFrame,
+    vix_series: pd.Series,
+    params: Optional[dict] = None,
+) -> dict:
+    """Score a ticker for RS Credit Spread AI strategy.
+    Ticker here represents a sector ETF; score based on its RS rank."""
+    if price_df.empty or len(price_df) < 12:
+        return {"Score": 0, "Status": "No data", "RS Rank": "—", "10d Ret": "—"}
+
+    close    = price_df["close"]
+    ret_10d  = float(close.pct_change(10).iloc[-1]) if len(close) >= 10 else 0.0
+    vix_now  = float(vix_series.iloc[-1]) if not vix_series.empty else 20.0
+    ivr_now  = _vix_ivr(vix_series)
+
+    adx_max = (params or {}).get("adx_max", 30.0)
+    high = price_df.get("high",  close)
+    low  = price_df.get("low",   close)
+    adx_now = _adx(high, low, close) if len(close) >= 20 else 20.0
+
+    if adx_now > adx_max:
+        return {"Score": 0, "Status": "SPY trending (skip)", "RS Rank": "—",
+                "10d Ret": f"{ret_10d:+.1%}", "ADX": f"{adx_now:.1f}"}
+
+    # Score based on extreme RS position
+    abs_ret = abs(ret_10d)
+    score = min(100, int(abs_ret * 1000))
+
+    if ret_10d <= -0.04:
+        role   = "Laggard (Bear Call)"
+        status = "SHORT PREMIUM"
+    elif ret_10d >= 0.04:
+        role   = "Leader (Bull Put)"
+        status = "SHORT PREMIUM"
+    else:
+        role   = "Middle — skip"
+        status = "FLAT"
+        score  = max(0, score - 20)
+
+    return {
+        "Score":   score,
+        "Status":  status,
+        "Role":    role,
+        "10d Ret": f"{ret_10d:+.1%}",
+        "IVR":     f"{ivr_now:.2f}",
+        "VIX":     f"{vix_now:.1f}",
+        "ADX":     f"{adx_now:.1f}",
+    }
+
+
+def _score_put_steal(
+    ticker: str,
+    price_df: pd.DataFrame,
+    vix_series: pd.Series,
+    iv_metrics: dict,
+    params: dict,
+) -> Optional[dict]:
+    """
+    Screen for Put Steal (Short Stock Interest Arbitrage) candidates.
+
+    Conditions for a positive NII signal:
+      1. NII = X(1-e^{-rT}) - call(S,X,T) > nii_threshold  [early exercise edge]
+      2. Stock is not in panic vol (IV < iv_max, VIX < vix_max)
+      3. Not already in a strong downtrend (ADX gives context)
+
+    Note: NII is only meaningfully positive when puts are deep ITM.
+    itm_pct=0.10 means we price a strike 10% above current spot (put is 10% ITM).
+    """
+    if price_df.empty or len(price_df) < 30:
+        return None
+    try:
+        from scipy.stats import norm as _norm
+
+        close = price_df["close"].astype(float)
+        high  = price_df.get("high", close).astype(float)
+        low   = price_df.get("low",  close).astype(float)
+
+        spot    = float(close.iloc[-1])
+        vix_now = float(vix_series.iloc[-1]) if not vix_series.empty else 18.0
+        adx_now = _adx(high, low, close)
+
+        atm_iv = iv_metrics.get("atm_iv")
+        ivr    = iv_metrics.get("ivr")
+        iv_src = iv_metrics.get("iv_source", "no_options_data")
+
+        if atm_iv is None:
+            atm_iv = vix_now / 100.0
+        if ivr is None:
+            ivr = _vix_ivr(vix_series)
+
+        # Risk-free rate proxy: current VIX/100 * 0.5 as crude rate; use 4.3% default
+        r   = 0.043
+        itm = params.get("itm_pct", 0.10)
+        nii_thr = params.get("nii_threshold", 0.01)
+        vix_mx  = params.get("vix_max", 40.0)
+        iv_mx   = params.get("iv_max", 0.60)
+        dte     = 21
+        T       = dte / 365.0
+
+        # Strike X = spot × (1 + itm): a put at X is itm% in-the-money
+        X = spot * (1.0 + itm)
+
+        def _bs_call(S, K, Tt, rr, sig):
+            if Tt <= 0 or sig <= 0 or S <= 0 or K <= 0:
+                return max(0.0, S - K)
+            d1 = (np.log(S / K) + (rr + 0.5 * sig ** 2) * Tt) / (sig * np.sqrt(Tt))
+            d2 = d1 - sig * np.sqrt(Tt)
+            return float(S * _norm.cdf(d1) - K * np.exp(-rr * Tt) * _norm.cdf(d2))
+
+        interest_income = X * (1.0 - np.exp(-r * T))
+        call_val        = _bs_call(spot, X, T, r, max(atm_iv, 0.01))
+        nii             = interest_income - call_val
+
+        vix_ok = vix_now <= vix_mx
+        iv_ok  = atm_iv <= iv_mx
+        nii_ok = nii >= nii_thr
+
+        n_pass = sum([vix_ok, iv_ok, nii_ok])
+
+        # Strikes for the bull put spread
+        short_k = round(spot * (1.0 - itm * 0.5), 2)   # slightly ITM short put
+        long_k  = round(short_k * 0.96, 2)              # 4% wing below short
+
+        short_p = max(0.0, _bs_call(spot, short_k, T, r, atm_iv) -
+                     spot + short_k * np.exp(-r * T))   # approximate put via parity
+        long_p  = max(0.0, _bs_call(spot, long_k,  T, r, atm_iv) -
+                     spot + long_k  * np.exp(-r * T))
+        credit  = max(0.0, short_p - long_p)
+
+        # Score: weighted NII signal + low-vol bonus (max = 8+30+15+15 = 68... scale to 100)
+        nii_strength = min(nii / max(nii_thr, 0.001), 5.0) * 8   # 0-40 (5 × 8 = 40 max)
+        score = min(100, round(
+            nii_strength
+            + (40 if nii_ok else 0)
+            + (30 if vix_ok else 0)
+            + (30 if iv_ok  else 0)
+        ))
+
+        return {
+            "Ticker":       ticker,
+            "Price":        spot,
+            "NII":          round(nii, 3),
+            "Strike X":     round(X, 2),
+            "Short Put":    short_k,
+            "Long Put":     long_k,
+            "~Credit":      round(credit, 2),
+            "~Long Premium": round(long_p, 2),
+            "ATM IV":       atm_iv,
+            "IVR":          round(ivr, 2),
+            "VIX":          round(vix_now, 1),
+            "ADX":          round(adx_now, 1),
+            "IV source":    iv_src,
+            "nii_ok":       nii_ok,
+            "vix_ok":       vix_ok,
+            "iv_ok":        iv_ok,
+            "n_pass":       n_pass,
+            "all_pass":     n_pass == 3,
+            "score":        score,
+        }
+    except Exception as e:
+        logger.warning(f"PutSteal score error for {ticker}: {e}")
+        return None
 
 
 # ── Calendar helpers ───────────────────────────────────────────────────────────
