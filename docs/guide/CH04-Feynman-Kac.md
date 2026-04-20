@@ -53,6 +53,15 @@ The PDE on the left of $(4.1)$ is the (reverse) heat equation. The forward heat 
 ![Heat-equation analogy](figures/ch08-heat-analogy.png)
 *As $t$ moves backward from $T$ toward $0$, the terminal payoff $\varphi$ diffuses and smooths: kinks (vanilla calls) round off, step functions (digitals) bloom into Gaussian-shaped bumps. Every option price is literally a smoothed payoff, where the smoothing kernel is a Gaussian of width $\sqrt{T-t}$.*
 
+![Backward smoothing of a digital payoff](figures/ch04-backward-smoothing.png)
+*Concrete instance of $(4.2)$ with $\varphi(x) = \mathbf{1}_{\{x > 0\}}$: the terminal step function (red) smooths into $\Phi((x - K)/\sqrt{T-t})$ as time runs backward, interpolating between a sharp jump at expiry and a near-flat curve at long look-ahead.*
+
+![FK backward solution for a call-like payoff](figures/ch04-fk-backward-curves.png)
+*The same smoothing pattern on a piecewise-linear payoff $\varphi(x)=(x)^+$. At expiry (red) the kink is sharp; rolling time back toward $t=0$ smooths the kink into an analytic curve whose width grows like $\sqrt{T-t}$. This is the spatial shape every European call price inherits once log-space coordinates are in place.*
+
+![Heat-equation Green's-function convolution](figures/ch04-green-convolution.png)
+*The biconditional $(4.1)$–$(4.2)$ in the simplest possible setting: today's price $f(0,x)$ equals the payoff $\varphi$ convolved with a Gaussian heat kernel of width $\sqrt{T}$. Every Feynman-Kac price is literally a Gaussian-smoothed payoff.*
+
 ### 4.2.2 What the expectation is
 
 The right-hand side of $(4.2)$ is the conditional-expectation scoreboard: at time $t$, given that the current state is $X_t = x$, average the payoff $\varphi(X_T)$ over every Brownian trajectory that starts at $(t, x)$ and wanders until $T$. Because Brownian motion is Markov — it forgets its pre-$t$ history — the expectation only depends on the pair $(t, x)$, never on the path that brought us to $x$. That Markov collapse is why $f$ is a function of two real variables rather than a functional on the full path space.
@@ -355,6 +364,9 @@ The payoff $X_T^2$ is (up to a constant) the variance-swap payoff — it pays th
 
 The formula $f(t, x) = x^2 + (T - t)$ is also the fair value of a specific swap: if one enters a variance swap at time $t$ with "strike" $x^2$ and holds to maturity, the expected payoff at maturity is $X_T^2$. In the driftless, no-discount setting the fair strike is $x^2 + (T - t)$ — the starting squared value plus the remaining variance. Every variance-swap dealer ultimately prices this identity; Feynman-Kac delivers the answer with two lines of Gaussian algebra.
 
+![Quadratic payoff MC vs PDE solution](figures/ch04-quadratic-mc-vs-pde.png)
+*Sanity check of $(4.15)$: Monte-Carlo averages of $X_T^2$ at a grid of initial states $x_0$ (red dots) fall exactly on the PDE closed form $x_0^2 + T$ (blue curve). The $+T$ offset is the "time-value of variance" — the convexity premium that Brownian motion pays out for a quadratic payoff.*
+
 ---
 
 ## 4.7 Example 3 — Exponential Payoffs $\varphi(x) = e^{ax}$
@@ -428,6 +440,9 @@ Terminal: $f(T, x) = e^{ax + 0} = e^{ax}$.
 Setting $a = 1$ gives $f(t, x) = e^{x + \tfrac12 (T - t)}$, the "up-exponential" mirror of $(4.17)$; setting $a = -1$ recovers $(4.17)$. The parameter $a$ controls both the exponential-growth rate of the payoff in $x$ and, via $a^2 / 2$, the convexity premium. Even the sign of $a$ does not affect the convexity bump — only $|a|$ matters, because the Gaussian MGF depends on $a^2$. This is the cleanest illustration that *convexity in Feynman-Kac is an even function of the exponent coefficient*.
 
 **A link forward to Black-Scholes.** For a geometric Brownian motion $S_t = S_0\,e^{(\mu - \tfrac12 \sigma^2)t + \sigma W_t}$ with $W$ a Brownian motion, the $n$-th moment $\mathbb{E}[S_t^n]$ arises from applying $(4.19)$ with $X_t = \ln S_t$, $a = n$, and the appropriate drift correction. The resulting formula $\mathbb{E}[S_t^n] = S_0^n\,e^{n \mu t + \tfrac12 n(n - 1)\sigma^2 t}$ is the basis for variance-swap pricing ($n = 2$), volatility derivatives, and power-option closed forms — all of which are $a \in \{2, 3, \dots\}$ specialisations of the Gaussian MGF identity $(4.19)$. We will pick this thread up in Chapter 6.
+
+![Monte-Carlo sanity check for §§4.5–4.7 closed forms](figures/ch04-fk-mc-check.png)
+*For each of the three worked payoffs (linear $x$, quadratic $x^2$, exponential $e^{ax}$ with $a=0.8$), Monte-Carlo averaging over $N$ Brownian endpoints $X_T \sim \mathcal{N}(x_0, T)$ converges at rate $1/\sqrt{N}$ to the Gaussian-MGF closed form from $(4.13)$–$(4.19)$. Feynman-Kac is a two-way street in code as well as in theory.*
 
 ### 4.7.4 A five-term ledger preview
 
@@ -646,7 +661,7 @@ h_t \;\equiv\; e^{-\int_0^t c(u, X_u)\,\mathrm{d}u}\,g_t \;=\; \mathbb{E}\!\left
 \tag{4.30}
 $$
 
-The content of the second equality: the multiplicative factor $e^{-\int_0^t c\,\mathrm{d}u}$ is $\mathcal{F}_t$-measurable, so it can be pulled inside the conditional expectation in $(4.29)$, combining with the already-present $e^{-\int_t^T c\,\mathrm{d}u}$ to give the single discount factor $e^{-\int_0^T c\,\mathrm{d}u}$ running over the *full* horizon $[0, T]$. The inside of the expectation in $(4.30)$ is an honest $\mathcal{F}_T$-measurable random variable with no residual $t$-dependence. Therefore $h_t$ is manifestly a Doob martingale (conditional expectation of a fixed random variable is always a martingale).
+The content of the second equality: the multiplicative factor $e^{-\int_0^t c\,\mathrm{d}u}$ is $\mathcal{F}_t$-measurable, so it can be pulled inside the conditional expectation in $(4.29)$, combining with the already-present $e^{-\int_t^T c\,\mathrm{d}u}$ to give the single discount factor $e^{-\int_0^T c\,\mathrm{d}u}$ running over the *full* horizon $[0, T]$. The inside of the expectation in $(4.30)$ is an honest $\mathcal{F}_T$-measurable random variable with no residual $t$-dependence. Therefore $h_t$ is manifestly a Doob martingale (conditional expectation of a fixed random variable is always a martingale). The underlying mechanism: rewrite $g_t = e^{+\int_0^t c\,\mathrm du}\cdot \mathbb{E}[H\mid\mathcal{F}_t]$ with $H := \varphi(X_T)e^{-\int_0^T c\,\mathrm du}$ fixed and $\mathcal F_T$-measurable; the Doob piece is a true martingale, but the prefactor $e^{+\int_0^t c\,\mathrm du}$ grows (for $c \ge 0$) and makes $g_t$ a super-martingale rather than a martingale. Multiplying $g_t$ by the integrating factor $e^{-\int_0^t c\,\mathrm du}$ in (4.30) cancels the prefactor *exactly*, which is the compensation that kills the super-martingale drift and restores the martingale property — that is the punchline of the device.
 
 ### 4.9.3 Itô's product rule kills the drift
 
@@ -789,7 +804,7 @@ $$
 \mathrm{d}Y_s \;=\; e^{-\int_t^s c\,\mathrm{d}u}\cdot b(s, X_s)\,\partial_x h(s, X_s)\,\mathrm{d}W_s.
 $$
 
-The right-hand side is a pure stochastic integral against Brownian motion, hence a martingale. So $Y$ is a martingale on $[t, T]$, and taking $\mathbb{E}_{t, x}$ of both $Y_t$ and $Y_T$:
+The right-hand side is a pure stochastic integral against Brownian motion. Under the integrability conditions of §4.4.2 — specifically $\mathbb{E}_{t,x}\!\int_t^T e^{-2\int_t^s c\,\mathrm du}\,b(s, X_s)^2\,(\partial_x h)^2\,\mathrm ds < \infty$, which is the standard regularity hypothesis on the Feynman–Kac solution — the stochastic integral is a true martingale (not merely a local martingale). Hence $Y$ is a martingale on $[t, T]$, and taking $\mathbb{E}_{t, x}$ of both $Y_t$ and $Y_T$:
 
 $$
 h(t, x) \;=\; Y_t \;=\; \mathbb{E}_{t, x}[Y_T] \;=\; \mathbb{E}_{t, x}\!\left[e^{-\int_t^T c\,\mathrm{d}u}\,h(T, X_T)\right] \;=\; \mathbb{E}_{t, x}\!\left[e^{-\int_t^T c\,\mathrm{d}u}\,H(X_T)\right],
@@ -836,6 +851,9 @@ P(t, r) \;=\; \mathbb{E}_{t, r}\!\left[e^{-\int_t^T r_s\,\mathrm{d}s}\right], \q
 $$
 
 the classical fair value of a zero-coupon bond under a Vasicek short rate. Chapter 12 solves this PDE (equivalently, evaluates this expectation) to obtain the affine closed form $P(t, r) = e^{A(t, T) - B(t, T) r}$, where $A$ and $B$ solve a Riccati-like ODE system. The Feynman-Kac representation is what reduces the bond-price problem to a Gaussian path-integral calculation — one of the cleanest applications of the full theorem.
+
+![FK with drift, discount, diffusion: exp payoff on OU](figures/ch04-ou-exp-fk.png)
+*Stress test of $(4.35)$ on a mean-reverting state variable. For $\mathrm{d}X = -\kappa(X-\theta)\,\mathrm{d}t + \sigma\,\mathrm{d}W$ with payoff $e^{aX_T}$ and constant discount $r$, the Gaussian-MGF closed form $e^{-rT}\exp(a\,m + \tfrac12 a^2 v)$ with $m,v$ the OU conditional mean/variance (blue) matches time-stepped Monte Carlo (red) across starting states — a full workout of the drift-plus-diffusion-plus-discount form before meeting Vasicek in Chapter 12.*
 
 ### 4.10.7 The unifying observation
 

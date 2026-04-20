@@ -1980,9 +1980,14 @@ $$
 \varphi_1(\phi) = \frac{\varphi(\phi - i;\,t, x, v)}{\varphi(-i;\,t, x, v)}.
 \tag{14.42}
 $$
-(Division by $\varphi(-i)$ just normalises — it equals
-$F_t\,e^{r\tau}/F_t = e^{r\tau}$ here since $F$ is a
-$\mathbb{Q}$-martingale.)
+(Division by $\varphi(-i) = F_t$ normalises the density for the share
+measure. With $X_T = \ln F_T$, $\varphi(-i) =
+\mathbb{E}_t[e^{-i\cdot i X_T}] = \mathbb{E}_t[e^{X_T}] =
+\mathbb{E}_t[F_T] = F_t$ because $F$ is a $\mathbb{Q}$-martingale in
+the futures frame, so the ratio $F_t/F_t = 1$ drops out cleanly inside
+the Gil-Pelaez integrand. In the spot frame under $\mathbb{Q}$ the
+analogous normaliser would instead be $S_t\,e^{r\tau}$, but we have
+chosen the futures frame throughout this chapter.)
 
 The shift by $-i$ in $\varphi_1$ is the Esscher-transform fingerprint
 of the measure change to the share measure. Under the share measure,
@@ -2155,10 +2160,10 @@ $\partial \mathrm{ATM}/\partial v_0$ is nonzero but decays with $T$
 (short-dated ATM sensitive to $v_0$, long-dated not);
 $\partial \mathrm{ATM}/\partial \theta$ grows with $T$ (long-dated
 ATM tracks $\theta$); $\partial \mathrm{ATM}/\partial \kappa$ is the
-blend-rate sensitivity. The ATM skew (slope of smile at the money)
-is approximately $\rho \alpha / (\sqrt{v_0} \sqrt{T})$ for small
-$T$, so $\rho$ and $\alpha$ both enter but with different
-$T$-dependence. The ATM convexity (curvature of smile) is
+blend-rate sensitivity. The short-maturity ATM skew (slope of smile
+at the money) is approximately $\rho \alpha / (4\sqrt{v_0})$ — a
+*finite* constant as $T \to 0$ — so $\rho$ and $\alpha$ both enter
+multiplicatively. The ATM convexity (curvature of smile) is
 approximately $\alpha^2 T / (v_0 \kappa)$ for moderate $T$, so this
 is primarily an $\alpha$ sensitivity. These formulas are
 approximations, but they capture the dominant structure and are
@@ -2195,10 +2200,12 @@ The term-structure fit problem has a specific structure that is
 worth understanding. At very short maturity, Heston's smile is
 controlled mostly by $v_0$ (the starting variance) and the
 short-time asymptotics of the Riccati solution. The ATM vol matches
-$\sqrt{v_0}$ and the skew is
-$\rho \alpha / (\sqrt{v_0} \sqrt{T})$, diverging as $T \to 0$. Real
-short-dated smiles have finite skews, not divergent ones, so Heston
-overstates the short-dated skew relative to market. At long
+$\sqrt{v_0}$ and the short-time ATM skew is
+$\rho \alpha / (4\sqrt{v_0})$ (Durrleman 2003; Gatheral 2006) — a
+bounded constant as $T \to 0$. Real short-dated smiles, in contrast,
+exhibit a skew that *grows* as maturity shortens (empirically like
+$T^{-H}$ with $H \in (0, 1/2)$), so Heston *understates* the
+short-dated skew relative to market. At long
 maturity, the skew decays faster than $1/\sqrt{T}$ because the
 variance has time to mean-revert and average out the correlation
 effect. The full term-structure shape implied by Heston is "steep
@@ -2865,7 +2872,10 @@ Compute $(-0.35i - 2)^2 = 4 + 1.4 i + 0.1225 i^2 = 4 - 0.1225 +
 $$
 d(i)^2 = 3.8775 + 1.4 i - (-0.25 - 0.25 i) = 4.1275 + 1.65 i.
 $$
-Take the principal square root: $d(i) \approx 2.036 + 0.405 i$.
+Take the principal square root: $|d(i)^2| = \sqrt{4.1275^2 +
+1.65^2} \approx 4.4451$, $\arg(d(i)^2) = \arctan(1.65/4.1275)
+\approx 0.3804$ rad; hence $|d(i)| = \sqrt{4.4451} \approx 2.1083$,
+$\arg d(i) \approx 0.1902$ rad, giving $d(i) \approx 2.070 + 0.399 i$.
 
 **Step 2** — $B, A$ at $\tau = 0.5$ follow (14.34)–(14.35).
 

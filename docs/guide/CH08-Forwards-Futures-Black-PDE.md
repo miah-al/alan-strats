@@ -69,7 +69,8 @@ $$
 $$
 
 At signing, the strike $K$ is chosen so that $\Pi_t = 0$ — neither
-counterparty pays the other to enter. Setting (8.1) to zero and solving,
+counterparty pays the other to enter. Setting (8.1) to zero and solving
+*under the constant-rate assumption*,
 
 $$
 K \;=\; \mathbb{E}^{\mathbb{Q}}[\,S_T \mid \mathcal{F}_t\,] \;=\; S_t\,e^{r(T - t)}, \tag{8.2}
@@ -1414,7 +1415,7 @@ is a Black–Scholes put on $X$ struck at 1 with $r = 0$ (no discount under
 the martingale measure):
 
 $$
-\frac{f_t}{A_t} \;=\; \Phi(-d_-) \;-\; \frac{B_t}{A_t}\,\Phi(-d_+), \qquad d_\pm \;=\; \frac{-\ln(B_t/A_t) \pm \tfrac12 \hat{\sigma}^2 (T - t)}{\hat{\sigma}\,\sqrt{T - t}}. \tag{8.57}
+\frac{f_t}{A_t} \;=\; \Phi(d_+) \;-\; \frac{B_t}{A_t}\,\Phi(d_-), \qquad d_\pm \;=\; \frac{-\ln(B_t/A_t) \pm \tfrac12 \hat{\sigma}^2 (T - t)}{\hat{\sigma}\,\sqrt{T - t}}. \tag{8.57}
 $$
 
 Rearranging into the familiar Margrabe form,

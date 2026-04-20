@@ -289,6 +289,30 @@ This is the Black-76 caplet formula. Each caplet has its own vol $\sigma_k^{B\el
 
 The Black-76 framing is also what makes caps and floors trade as a vol market rather than a price market. Dealers quote Black caplet vols (or flat cap vols); buyers and sellers negotiate in vol units; prices are computed from vols on the fly. This is directly analogous to the equity-option market, with one important distinction: each caplet has its own vol, because each one is struck against a different forward rate at a different maturity. The object that gets quoted is therefore not a single vol number but a *term structure* of caplet vols.
 
+**Alternative derivation: caplet as a put on a zero-coupon bond.**
+There is a second, model-independent route to the caplet that does not
+require a measure change. Start from the caplet payoff at $t_{k-1}$
+(i.e., one period before payment):
+$\Delta t_k (L_{t_{k-1}}(t_k) - K)_+ = (1 - (1 + K\Delta t_k)
+P_{t_{k-1}}(t_k))_+$, using $1 + L_{t_{k-1}}(t_k)\Delta t_k =
+1/P_{t_{k-1}}(t_k)$. Multiplying through by $(1 + K\Delta t_k)$ and
+rearranging,
+```math
+(1 + K\Delta t_k)\cdot\Delta t_k\,(L_{t_{k-1}}(t_k) - K)_+ \;=\; \bigl(K_{\text{bond}} - P_{t_{k-1}}(t_k)\bigr)_+\,,\qquad K_{\text{bond}} := \frac{1}{1 + K\Delta t_k}.
+```
+Discounting from $t_k$ back to $t$ under the money-market measure, the
+caplet is equivalent (up to the scalar $(1 + K\Delta t_k)$) to a
+European *put* on the zero-coupon bond $P_{\cdot}(t_k)$ with expiry
+$t_{k-1}$ and strike $K_{\text{bond}}$. Any short-rate model that
+gives a closed-form European bond-option formula — the Vasicek-Black
+put of CH13 §13.6 is the canonical example — therefore prices the
+caplet without a measure change. This alternative is pedagogically
+useful because it links caplets directly to the bond-option technology
+of CH13 and provides a clean consistency check between the Black-76
+caplet formula (forward-measure route) and the Vasicek-Black bond-put
+formula (money-market-measure route) — agreement of the two routes is
+a good diagnostic for any rates-model implementation.
+
 ![Cap price vs strike (Black model)](figures/ch12-cap-price.png)
 *Cap price vs strike (Black model)*
 

@@ -222,6 +222,8 @@ $$q \;\sim\; \tfrac{1}{2}\!\left(\,1 \;+\; \frac{r - \tfrac{1}{2}\sigma^2}{\sigm
 
 $$p \;\sim\; \tfrac{1}{2}\!\left(\,1 \;+\; \frac{\mu}{\sigma}\,\sqrt{\Delta t}\,\right) + \cdots \qquad\text{(for comparison, under } \mathbb{P}\text{).} \tag{2.24}$$
 
+(The boxed formula (2.22) is *exact* at finite $\Delta t$; only (2.23) is truncated to leading $\sqrt{\Delta t}$ order. The next-order $O(\Delta t)$ correction in (2.23) is numerically small — at daily steps with $\sigma = 20\%$ it is about 0.2% of $q - \tfrac12$, well below bid-ask — but it is worth knowing about when running many-step convergence studies where stacking the truncation error across thousands of steps can produce a measurable bias.)
+
 The $\mathbb{P} \to \mathbb{Q}$ shift replaces the *log-return* drift $\mu$ by the *arithmetic-return* drift $r - \tfrac{1}{2}\sigma^2$ — the Itô convexity adjustment shows up already at the lattice level.
 
 This is a remarkable fact worth lingering on. The Itô correction — the $-\tfrac{1}{2}\sigma^2$ that relates expected log-returns to expected arithmetic returns — is usually introduced as a consequence of Itô's lemma in stochastic calculus (which we formalise in Chapter 3), which itself is a consequence of the $dW_t^2 = dt$ rule. Yet here we see it emerge directly from matching the no-arbitrage constraint on a discrete-time lattice to the small-$\Delta t$ expansion. No calculus required. The reason is that the Itô correction is really a statement about the geometric-vs-arithmetic mean inequality — $\mathbb{E}[e^X]\ge e^{\mathbb{E}[X]}$ with equality only for constant $X$ — and that inequality holds in any setting with non-degenerate randomness. In the continuous-time limit it takes the clean form $-\tfrac{1}{2}\sigma^2$ because Brownian motion has independent Gaussian increments; on the lattice it takes the slightly more cluttered form that matches (2.23), but the qualitative content is identical.
@@ -319,9 +321,9 @@ Placing the two lattices next to each other highlights their symmetry. Every fin
 
 Parameterisation I — symmetric nodes, biased probability (§2.3):
 
-$$A \longrightarrow \begin{cases} A\, e^{+\sigma\sqrt{\Delta t}} & \text{w.p. } p \\[4pt] A\, e^{-\sigma\sqrt{\Delta t}} & \text{w.p. } 1-p \end{cases}, \qquad p = \tfrac{1}{2}\!\left[1 + \tfrac{\mu - \tfrac{1}{2}\sigma^2}{\sigma}\sqrt{\Delta t}\right] + \cdots \tag{2.35}$$
+$$A \longrightarrow \begin{cases} A\, e^{+\sigma\sqrt{\Delta t}} & \text{w.p. } p \\[4pt] A\, e^{-\sigma\sqrt{\Delta t}} & \text{w.p. } 1-p \end{cases}, \qquad p = \tfrac{1}{2}\!\left[1 + \tfrac{\mu}{\sigma}\sqrt{\Delta t}\right] + \cdots \tag{2.35}$$
 
-(Note: this version of $p$ targets $\mathbb{E}^{\mathbb{P}}[A_1] = e^{\mu\Delta t}A$ directly on asset *levels* (not log-levels), picking up an extra $-\tfrac{1}{2}\sigma^2$ Itô term compared with (2.20), (2.24).)
+(This is the same $p$ as (2.20) / (2.24): the calibration targets the log-return mean $\mathbb{E}^{\mathbb{P}}[\ln(A_T/A_0)] = \mu T$ — consistent with (2.25) — and the corresponding arithmetic-return identity at the lattice level is $\mathbb{E}^{\mathbb{P}}[A_1] = e^{(\mu + \tfrac{1}{2}\sigma^2)\Delta t}A + O(\Delta t^{3/2})$, with the Itô convexity adjustment appearing on the expectation rather than being absorbed into $p$.)
 
 Parameterisation II — drift-shifted nodes, symmetric probability (alternate CRR):
 

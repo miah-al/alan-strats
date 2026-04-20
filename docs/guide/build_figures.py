@@ -206,6 +206,132 @@ def ch03():
                  fontsize=12, pad=12)
     save("ch03-ito-isometry-proof.png")
 
+    # (d) Brownian-motion sample paths at three time scales
+    rng_bm = np.random.default_rng(11)
+    fig, ax = plt.subplots(figsize=(7.5, 4))
+    palette = ["#2a62a6", "#a62a2a", "#1f7a1f", "#6a3a8a", "#e07a2a"]
+    n_steps = 4000; T_bm = 1.0
+    t = np.linspace(0.0, T_bm, n_steps + 1)
+    for i in range(5):
+        incr = rng_bm.standard_normal(n_steps) * np.sqrt(T_bm / n_steps)
+        W = np.concatenate([[0.0], np.cumsum(incr)])
+        ax.plot(t, W, lw=1.1, alpha=0.85, color=palette[i])
+    ax.axhline(0, color="black", lw=0.5)
+    ax.set_xlabel("t"); ax.set_ylabel(r"$W_t$")
+    ax.set_title(r"Five Brownian-motion sample paths — continuous but nowhere smooth")
+    save("ch03-bm-paths.png")
+
+    # (f) Itô's lemma vs classical chain rule on f(W_t) = W_t^2
+    # Classical chain rule would predict df = 2 W dW (no drift).
+    # Itô's lemma gives df = dt + 2 W dW, so E[f(W_t)] = t not 0.
+    rng_it = np.random.default_rng(13)
+    T_it = 2.0; n_steps_it = 1000; n_paths_it = 2000
+    dt_it = T_it / n_steps_it
+    t_it = np.linspace(0.0, T_it, n_steps_it + 1)
+    dW_it = rng_it.standard_normal((n_paths_it, n_steps_it)) * np.sqrt(dt_it)
+    W_it = np.concatenate([np.zeros((n_paths_it, 1)), np.cumsum(dW_it, axis=1)], axis=1)
+    f_samples = W_it ** 2
+    mean_f = f_samples.mean(axis=0)
+    # Classical "chain rule" prediction (wrong): drift term missing, so E[W^2] would be 0.
+    fig, ax = plt.subplots(figsize=(7, 4))
+    ax.plot(t_it, mean_f, lw=2, color="#2a62a6", label=r"MC $\mathbb{E}[W_t^2]$")
+    ax.plot(t_it, t_it, ls="--", lw=2, color="#1f7a1f",
+            label=r"Itô: $\mathbb{E}[W_t^2]=t$")
+    ax.plot(t_it, np.zeros_like(t_it), ls=":", lw=2, color="#a62a2a",
+            label=r"Classical chain rule would give $0$")
+    ax.set_xlabel("t"); ax.set_ylabel(r"$\mathbb{E}[f(W_t)]$ with $f(x)=x^2$")
+    ax.set_title(r"Itô vs classical chain rule on $f(W_t)=W_t^2$")
+    ax.legend()
+    save("ch03-ito-vs-chain.png")
+
+    # (g) OU vs GBM sample paths (side-by-side) — §3.10 SDE catalogue
+    rng_og = np.random.default_rng(21)
+    T_og = 3.0; n_steps_og = 600; n_paths_og = 6
+    dt_og = T_og / n_steps_og
+    t_og = np.linspace(0.0, T_og, n_steps_og + 1)
+    # GBM with mu=0.08, sigma=0.25
+    mu_gbm, sig_gbm, S0 = 0.08, 0.25, 100.0
+    S_paths = np.zeros((n_paths_og, n_steps_og + 1)); S_paths[:, 0] = S0
+    # OU with kappa=1.2, theta=0.05, sigma=0.015 starting r0=0.02
+    kappa_ou, theta_ou, sig_ou, r0_ou = 1.2, 0.05, 0.015, 0.02
+    r_paths = np.zeros((n_paths_og, n_steps_og + 1)); r_paths[:, 0] = r0_ou
+    palette_og = ["#2a62a6", "#a62a2a", "#1f7a1f", "#6a3a8a", "#e07a2a", "#2a8a8a"]
+    for k in range(n_steps_og):
+        Z = rng_og.standard_normal(n_paths_og)
+        S_paths[:, k+1] = S_paths[:, k] * np.exp(
+            (mu_gbm - 0.5 * sig_gbm**2) * dt_og + sig_gbm * np.sqrt(dt_og) * Z
+        )
+        Z2 = rng_og.standard_normal(n_paths_og)
+        r_paths[:, k+1] = r_paths[:, k] + kappa_ou * (theta_ou - r_paths[:, k]) * dt_og + sig_ou * np.sqrt(dt_og) * Z2
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(10, 4))
+    for i in range(n_paths_og):
+        ax1.plot(t_og, S_paths[i], lw=1.1, alpha=0.85, color=palette_og[i])
+    ax1.plot(t_og, S0 * np.exp(mu_gbm * t_og), ls="--", lw=2, color="black",
+             label=r"$\mathbb{E}[S_t]=S_0 e^{\mu t}$")
+    ax1.set_xlabel("t"); ax1.set_ylabel(r"$S_t$")
+    ax1.set_title("GBM — multiplicative, trending")
+    ax1.legend(loc="upper left", fontsize=9)
+    for i in range(n_paths_og):
+        ax2.plot(t_og, r_paths[i] * 100, lw=1.1, alpha=0.85, color=palette_og[i])
+    ax2.axhline(theta_ou * 100, ls="--", lw=2, color="black",
+                label=r"$\theta$ (long-run mean)")
+    ax2.set_xlabel("t"); ax2.set_ylabel("$r_t$ (%)")
+    ax2.set_title("OU / Vasicek — mean-reverting")
+    ax2.legend(loc="upper right", fontsize=9)
+    plt.tight_layout()
+    save("ch03-ou-vs-gbm.png")
+
+    # (h) Doléans-Dade exponential: trajectory with E[·]=1 envelope
+    rng_dd = np.random.default_rng(31)
+    sigma_dd = 0.9
+    T_dd = 2.0; n_steps_dd = 800; n_paths_dd = 6
+    dt_dd = T_dd / n_steps_dd
+    t_dd = np.linspace(0.0, T_dd, n_steps_dd + 1)
+    fig, ax = plt.subplots(figsize=(7, 4))
+    palette_dd = ["#2a62a6", "#a62a2a", "#1f7a1f", "#6a3a8a", "#e07a2a", "#2a8a8a"]
+    for i in range(n_paths_dd):
+        dW = rng_dd.standard_normal(n_steps_dd) * np.sqrt(dt_dd)
+        W = np.concatenate([[0.0], np.cumsum(dW)])
+        Z = np.exp(sigma_dd * W - 0.5 * sigma_dd**2 * t_dd)
+        ax.plot(t_dd, Z, lw=1.1, alpha=0.85, color=palette_dd[i])
+    ax.axhline(1.0, ls="--", lw=2, color="black", label=r"$\mathbb{E}[Z_t]=1$")
+    ax.set_xlabel("t"); ax.set_ylabel(r"$Z_t=\exp(\sigma W_t - \frac{1}{2}\sigma^2 t)$")
+    ax.set_title(r"Doléans-Dade exponential — each path diverges, but mean stays at $1$")
+    ax.legend()
+    save("ch03-doleans-dade.png")
+
+    # (e) Quadratic-variation convergence to t vs total-variation divergence
+    rng_qv = np.random.default_rng(7)
+    T_qv = 1.0
+    mesh_sizes = np.array([16, 32, 64, 128, 256, 512, 1024, 2048, 4096, 8192])
+    # Use the SAME Brownian path sampled at increasing resolution via refinement.
+    # Build a very fine master path, then subsample at each mesh.
+    n_master = mesh_sizes.max()
+    dt_master = T_qv / n_master
+    dW_master = rng_qv.standard_normal(n_master) * np.sqrt(dt_master)
+    W_master = np.concatenate([[0.0], np.cumsum(dW_master)])
+    qv_vals = []; tv_vals = []
+    for N in mesh_sizes:
+        stride = n_master // N
+        W_sub = W_master[::stride]
+        dW = np.diff(W_sub)
+        qv_vals.append(np.sum(dW ** 2))
+        tv_vals.append(np.sum(np.abs(dW)))
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(9.5, 4))
+    ax1.semilogx(mesh_sizes, qv_vals, "o-", color="#2a62a6", lw=2, label="realised QV")
+    ax1.axhline(T_qv, ls=":", color="black", label=r"$t = 1$")
+    ax1.set_xlabel("# mesh points N"); ax1.set_ylabel(r"$\sum (\Delta W_k)^2$")
+    ax1.set_title("Quadratic variation $\\to t$ as mesh refines")
+    ax1.legend()
+    ax2.loglog(mesh_sizes, tv_vals, "s-", color="#a62a2a", lw=2, label="realised TV")
+    ax2.loglog(mesh_sizes, 0.8 * np.sqrt(mesh_sizes), ls=":", color="black",
+               label=r"$\sim \sqrt{N}$ reference")
+    ax2.set_xlabel("# mesh points N"); ax2.set_ylabel(r"$\sum |\Delta W_k|$")
+    ax2.set_title("Total variation diverges like $\\sqrt{N}$")
+    ax2.legend()
+    plt.tight_layout()
+    save("ch03-qv-convergence.png")
+
 
 # ────────────────────────────────────────────────────────────
 # CH04 — Calibration
@@ -408,6 +534,235 @@ def ch07():
     ax.set_title("Delta-only vs Delta-Gamma hedge residual"); ax.legend()
     save("ch07-dg-hedge.png")
 
+    # (c) Delta profile across moneyness for three maturities
+    K = 100; r = 0.05; sig = 0.2
+    S_grid = np.linspace(60, 140, 200)
+    maturities = [(0.10, "#e07a2a", "T=0.10y"),
+                  (0.50, "#2a62a6", "T=0.50y"),
+                  (2.00, "#6a3a8a", "T=2.00y")]
+    fig, ax = plt.subplots(figsize=(7.5, 4))
+    for T_v, col, lab in maturities:
+        d1 = (np.log(S_grid / K) + (r + 0.5 * sig**2) * T_v) / (sig * np.sqrt(T_v))
+        ax.plot(S_grid, norm.cdf(d1), lw=2, color=col, label=lab)
+    ax.axvline(K, ls=":", color="black", alpha=0.5, label=f"K={K}")
+    ax.axhline(0.5, ls=":", color="black", alpha=0.3)
+    ax.set_xlabel("Spot S"); ax.set_ylabel(r"Call delta $\Delta = \Phi(d_+)$")
+    ax.set_title("Call delta across moneyness — sharpens as T shrinks")
+    ax.legend()
+    save("ch07-delta-profile.png")
+
+    # (d) Gamma peaks at ATM, taller for shorter maturities
+    fig, ax = plt.subplots(figsize=(7.5, 4))
+    for T_v, col, lab in maturities:
+        d1 = (np.log(S_grid / K) + (r + 0.5 * sig**2) * T_v) / (sig * np.sqrt(T_v))
+        gamma = norm.pdf(d1) / (S_grid * sig * np.sqrt(T_v))
+        ax.plot(S_grid, gamma, lw=2, color=col, label=lab)
+    ax.axvline(K, ls=":", color="black", alpha=0.5, label=f"K={K}")
+    ax.set_xlabel("Spot S"); ax.set_ylabel(r"Gamma $\Gamma = \Phi'(d_+)/(S\sigma\sqrt{T-t})$")
+    ax.set_title("Gamma peaks at ATM and grows unboundedly as $T\\downarrow 0$")
+    ax.legend()
+    save("ch07-gamma-vs-ttm.png")
+
+    # (e1) Call vs put delta across moneyness
+    S_cp = np.linspace(60, 140, 200)
+    K_cp = 100; r_cp = 0.05; sig_cp = 0.2; T_cp = 0.5
+    d1_cp = (np.log(S_cp / K_cp) + (r_cp + 0.5 * sig_cp**2) * T_cp) / (sig_cp * np.sqrt(T_cp))
+    delta_call = norm.cdf(d1_cp)
+    delta_put = norm.cdf(d1_cp) - 1
+    fig, ax = plt.subplots(figsize=(7, 4))
+    ax.plot(S_cp, delta_call, lw=2.4, color="#1f7a1f", label=r"Call $\Delta = \Phi(d_+)$")
+    ax.plot(S_cp, delta_put, lw=2.4, color="#a62a2a", label=r"Put $\Delta = \Phi(d_+)-1$")
+    ax.axvline(K_cp, ls=":", color="black", alpha=0.5, label=f"K={K_cp}")
+    ax.axhline(0, color="black", lw=0.5)
+    ax.axhline(0.5, ls=":", color="black", alpha=0.3)
+    ax.axhline(-0.5, ls=":", color="black", alpha=0.3)
+    ax.set_xlabel("Spot S"); ax.set_ylabel(r"Delta")
+    ax.set_title("Call vs put delta — differ by $1$ at every spot (put-call parity)")
+    ax.legend()
+    save("ch07-call-put-delta.png")
+
+    # (e2) Vega decay: vega vs time-to-expiry for ATM options
+    T_grid_v = np.linspace(0.01, 2.0, 200)
+    S_v = 100; K_v = 100; r_v = 0.05; sig_v = 0.2
+    # For ATM (S=K): d1 = (r + 0.5 sig^2) sqrt(T) / sig
+    d1_v = (np.log(S_v / K_v) + (r_v + 0.5 * sig_v**2) * T_grid_v) / (sig_v * np.sqrt(T_grid_v))
+    vega_v = S_v * np.sqrt(T_grid_v) * norm.pdf(d1_v)
+    fig, ax = plt.subplots(figsize=(7, 4))
+    ax.plot(T_grid_v, vega_v, lw=2.4, color="#2a62a6")
+    ax.set_xlabel("Time to expiry $T-t$ (y)")
+    ax.set_ylabel(r"Vega $\mathcal{V}$ (per vol point, S=K=100)")
+    ax.set_title(r"Vega decay: ATM vega grows as $\sqrt{T-t}$ and vanishes at expiry")
+    # Invert x-axis for intuition: time running forward toward expiry
+    ax.invert_xaxis()
+    save("ch07-vega-decay.png")
+
+    # (e) Vega heatmap in (S, T) space
+    S_grid2 = np.linspace(60, 140, 140)
+    T_grid2 = np.linspace(0.05, 2.0, 100)
+    SS, TT = np.meshgrid(S_grid2, T_grid2)
+    d1v = (np.log(SS / K) + (r + 0.5 * sig**2) * TT) / (sig * np.sqrt(TT))
+    vega = SS * np.sqrt(TT) * norm.pdf(d1v)
+    fig, ax = plt.subplots(figsize=(7.5, 4))
+    im = ax.pcolormesh(SS, TT, vega, cmap="viridis", shading="auto")
+    ax.axvline(K, ls=":", color="white", alpha=0.8)
+    cbar = plt.colorbar(im, ax=ax)
+    cbar.set_label(r"Vega $\mathcal{V} = S\sqrt{T-t}\,\Phi'(d_+)$")
+    ax.set_xlabel("Spot S"); ax.set_ylabel("Time to expiry T (y)")
+    ax.set_title("Vega heatmap — highest for long-dated, at-the-money options")
+    ax.grid(False)
+    save("ch07-vega-heatmap.png")
+
+    # (f) Normal vs Student-t3 densities with VaR/CTE cutoffs (for CH09 §9.4)
+    from scipy.stats import t as student_t
+    x = np.linspace(-5, 5, 600)
+    pdf_n = norm.pdf(x)
+    pdf_t = student_t.pdf(x, df=3)
+    var_n = norm.ppf(0.95)
+    var_t = student_t.ppf(0.95, df=3)
+    # CTE formulas for symmetric distributions, right-tail (losses) at 95%
+    alpha = 0.05
+    cte_n = norm.pdf(var_n) / alpha
+    cte_t = student_t.pdf(var_t, df=3) * (3 + var_t**2) / ((3 - 1) * alpha)
+    fig, ax = plt.subplots(figsize=(7.5, 4))
+    ax.plot(x, pdf_n, lw=2, color="#2a62a6", label="Normal")
+    ax.plot(x, pdf_t, lw=2, color="#a62a2a", label="Student-$t_3$ (fat tails)")
+    ax.fill_between(x, 0, pdf_n, where=(x >= var_n), alpha=0.25, color="#2a62a6")
+    ax.fill_between(x, 0, pdf_t, where=(x >= var_t), alpha=0.25, color="#a62a2a")
+    ax.axvline(var_n, ls="--", color="#2a62a6", alpha=0.8,
+               label=f"VaR$_{{95}}^N$={var_n:.2f}, CTE={cte_n:.2f}")
+    ax.axvline(var_t, ls="--", color="#a62a2a", alpha=0.8,
+               label=f"VaR$_{{95}}^{{t_3}}$={var_t:.2f}, CTE={cte_t:.2f}")
+    ax.set_xlabel("loss $L$"); ax.set_ylabel("density")
+    ax.set_title("Fat tails shift VaR modestly but blow up CTE")
+    ax.legend(fontsize=9)
+    ax.set_ylim(0, 0.45)
+    save("ch09-normal-vs-t3.png")
+
+    # (g0) Historical vs parametric vs MC VaR on the same loss distribution
+    rng_var = np.random.default_rng(2025)
+    # A skewed, mildly fat-tailed loss distribution (mixture)
+    n_hist = 1000
+    base = rng_var.standard_normal(n_hist) * 0.018
+    jump = (rng_var.random(n_hist) < 0.04) * rng_var.standard_normal(n_hist) * 0.05
+    losses_sample = -(base + jump - 0.002)  # losses positive
+    alpha_lvl = 0.95
+    # Historical VaR
+    var_hist = np.percentile(losses_sample, alpha_lvl * 100)
+    # Parametric (Gaussian fit)
+    mu_p = losses_sample.mean(); sd_p = losses_sample.std()
+    var_para = mu_p + norm.ppf(alpha_lvl) * sd_p
+    # Monte Carlo (many draws from fitted mixture)
+    n_mc_var = 200000
+    base_mc = rng_var.standard_normal(n_mc_var) * 0.018
+    jump_mc = (rng_var.random(n_mc_var) < 0.04) * rng_var.standard_normal(n_mc_var) * 0.05
+    losses_mc = -(base_mc + jump_mc - 0.002)
+    var_mc = np.percentile(losses_mc, alpha_lvl * 100)
+    labels = ["Historical\n(1000 obs)", "Parametric\n(Gaussian fit)", "Monte Carlo\n(200k draws)"]
+    vals = [var_hist, var_para, var_mc]
+    colors = ["#2a62a6", "#e07a2a", "#1f7a1f"]
+    fig, ax = plt.subplots(figsize=(7, 4))
+    bars = ax.bar(labels, np.array(vals) * 100, color=colors, alpha=0.85)
+    for rect, v in zip(bars, vals):
+        ax.text(rect.get_x() + rect.get_width() / 2, rect.get_height() + 0.05,
+                f"{v*100:.2f}%", ha="center", fontsize=11)
+    ax.set_ylabel("95% VaR (%)")
+    ax.set_title("Three routes to VaR on the same loss distribution")
+    save("ch09-var-three-routes.png")
+
+    # (g1) Cornish-Fisher adjustment: Normal VaR vs skew/kurt-adjusted
+    # Vary skewness s at fixed kurtosis k_ex=3 (heavy excess kurtosis)
+    z_a = norm.ppf(0.99)
+    skew_grid = np.linspace(-1.5, 1.5, 120)
+    kurt_ex = 3.0
+    normal_var_line = np.full_like(skew_grid, z_a)
+    cf_var = (z_a
+              + (1.0 / 6.0) * (z_a**2 - 1) * skew_grid
+              + (1.0 / 24.0) * (z_a**3 - 3 * z_a) * kurt_ex
+              - (1.0 / 36.0) * (2 * z_a**3 - 5 * z_a) * skew_grid**2)
+    fig, ax = plt.subplots(figsize=(7, 4))
+    ax.plot(skew_grid, normal_var_line, lw=2, ls="--", color="#2a62a6",
+            label=r"Normal quantile $z_{99\%}\approx 2.33$")
+    ax.plot(skew_grid, cf_var, lw=2.4, color="#a62a2a",
+            label=fr"Cornish-Fisher ($\kappa_{{ex}}={kurt_ex}$)")
+    ax.axvline(0, ls=":", color="black", alpha=0.5)
+    ax.set_xlabel("skewness $s$")
+    ax.set_ylabel(r"quantile multiplier $q_{99\%}$")
+    ax.set_title("Cornish-Fisher VaR vs Normal: skew & kurt adjust the multiplier")
+    ax.legend()
+    save("ch09-cornish-fisher.png")
+
+    # (g2) Kupiec test: exceedance count distribution vs accept/reject band
+    # Under H0: X ~ Binomial(n=250, alpha=0.01) for 99% VaR backtest
+    from scipy.stats import binom
+    n_days = 250; alpha_bt = 0.01
+    ks = np.arange(0, 11)
+    pmf = binom.pmf(ks, n_days, alpha_bt)
+    # Kupiec LR cutoff 3.84 at 5% -> derive acceptance range by inversion
+    # For each x compute LR, accept if LR <= 3.84
+    def kupiec_lr(x, n, p):
+        x = np.asarray(x, dtype=float)
+        phat = np.clip(x / n, 1e-9, 1 - 1e-9)
+        with np.errstate(divide="ignore", invalid="ignore"):
+            ll0 = x * np.log(p) + (n - x) * np.log(1 - p)
+            ll1 = x * np.log(phat) + (n - x) * np.log(1 - phat)
+        return -2.0 * (ll0 - ll1)
+    lrs = kupiec_lr(ks, n_days, alpha_bt)
+    accept = lrs <= 3.84
+    colors_k = ["#1f7a1f" if a else "#a62a2a" for a in accept]
+    fig, ax = plt.subplots(figsize=(7.5, 4))
+    ax.bar(ks, pmf, color=colors_k, alpha=0.85, edgecolor="black", lw=0.5)
+    ax.axvline(n_days * alpha_bt, ls=":", color="black",
+               label=fr"expected $n\alpha = {n_days * alpha_bt:.1f}$")
+    # Legend handles for green/red
+    from matplotlib.patches import Patch
+    handles = [
+        Patch(facecolor="#1f7a1f", alpha=0.85, label="Accept (LR ≤ 3.84)"),
+        Patch(facecolor="#a62a2a", alpha=0.85, label="Reject (LR > 3.84)"),
+    ]
+    ax.set_xlabel(f"# exceedances in {n_days} days (99% VaR)")
+    ax.set_ylabel("probability")
+    ax.set_title("Kupiec POF: Binomial pmf with 5% acceptance band")
+    ax.legend(handles=handles + [ax.get_legend_handles_labels()[0][0]]
+              if False else handles, loc="upper right")
+    ax.set_xticks(ks)
+    save("ch09-kupiec-band.png")
+
+    # (g) Sub-additivity failure of VaR on two-loan example (CH09 §9.6.1)
+    # Two independent loans, each defaults with p=4%, loss=100; otherwise 0.
+    rng_s = np.random.default_rng(99)
+    n_mc = 200_000
+    p_def = 0.04
+    L1 = rng_s.binomial(1, p_def, n_mc) * 100.0
+    L2 = rng_s.binomial(1, p_def, n_mc) * 100.0
+    L_sum = L1 + L2
+    alpha_var = 0.95
+    var_L1 = np.percentile(L1, alpha_var * 100)
+    var_L2 = np.percentile(L2, alpha_var * 100)
+    var_sum = np.percentile(L_sum, alpha_var * 100)
+    # CTE as conditional mean above the VaR threshold
+    def cte(x, v):
+        tail = x[x >= v]
+        return tail.mean() if tail.size else 0.0
+    cte_L1 = cte(L1, var_L1); cte_L2 = cte(L2, var_L2); cte_sum = cte(L_sum, var_sum)
+    labels = ["Loan A", "Loan B", "A+B"]
+    var_vals = [var_L1, var_L2, var_sum]
+    cte_vals = [cte_L1, cte_L2, cte_sum]
+    xpos = np.arange(len(labels)); w = 0.38
+    fig, ax = plt.subplots(figsize=(7.5, 4))
+    bars_v = ax.bar(xpos - w/2, var_vals, w, color="#e07a2a", label="VaR 95%")
+    bars_c = ax.bar(xpos + w/2, cte_vals, w, color="#a62a2a", label="CTE 95%")
+    for rect, v in zip(bars_v, var_vals):
+        ax.text(rect.get_x() + rect.get_width()/2, rect.get_height() + 0.5,
+                f"{v:.1f}", ha="center", fontsize=10)
+    for rect, v in zip(bars_c, cte_vals):
+        ax.text(rect.get_x() + rect.get_width()/2, rect.get_height() + 0.5,
+                f"{v:.1f}", ha="center", fontsize=10)
+    ax.set_xticks(xpos); ax.set_xticklabels(labels)
+    ax.set_ylabel("Loss units")
+    ax.set_title("VaR sub-additivity fails; CTE is coherent (two-loan example)")
+    ax.legend()
+    save("ch09-subadditivity-failure.png")
+
 
 # ────────────────────────────────────────────────────────────
 # CH08 — Feynman-Kac
@@ -450,6 +805,167 @@ def ch08():
     ax.set_xlabel("S"); ax.set_ylabel("t"); ax.set_zlabel("V(S,t)")
     ax.set_title("F-K solution $v(t,S)$ with terminal condition"); ax.legend()
     save("ch08-pde-surface.png")
+
+    # (c) FK Monte-Carlo sanity check across three worked payoffs (linear, quadratic, exponential)
+    # Using X_t = Brownian motion; payoffs from sections 4.5-4.7.
+    rng_fk = np.random.default_rng(3)
+    T_fk = 1.0
+    x0 = 0.5
+    n_paths = 5000
+    n_trials = np.logspace(2, 4.3, 25).astype(int)
+    # Closed forms
+    #   phi(x)=x           -> f(0,x0) = x0
+    #   phi(x)=x^2         -> f(0,x0) = x0^2 + T
+    #   phi(x)=exp(a x)    -> f(0,x0) = exp(a x0 + 0.5 a^2 T)
+    a_exp = 0.8
+    closed = {
+        "linear":      x0,
+        "quadratic":   x0**2 + T_fk,
+        "exponential": np.exp(a_exp * x0 + 0.5 * a_exp**2 * T_fk),
+    }
+    colors = {"linear": "#2a62a6", "quadratic": "#1f7a1f", "exponential": "#6a3a8a"}
+    fig, ax = plt.subplots(figsize=(7.5, 4))
+    for name in ["linear", "quadratic", "exponential"]:
+        vals = []
+        for n in n_trials:
+            XT = x0 + np.sqrt(T_fk) * rng_fk.standard_normal(n)
+            if name == "linear":
+                payoff = XT
+            elif name == "quadratic":
+                payoff = XT**2
+            else:
+                payoff = np.exp(a_exp * XT)
+            vals.append(np.mean(payoff))
+        vals = np.array(vals) / closed[name]
+        ax.semilogx(n_trials, vals, "o-", lw=1.5, alpha=0.8, color=colors[name], label=f"{name}")
+    ax.axhline(1.0, ls=":", color="black", label="closed form")
+    ax.set_xlabel("# Monte-Carlo draws"); ax.set_ylabel("MC estimate / closed form")
+    ax.set_title("Feynman-Kac sanity check: MC averages → PDE solutions (§§4.5–4.7)")
+    ax.legend()
+    save("ch04-fk-mc-check.png")
+
+    # (d) Backward smoothing of a digital payoff under the heat-equation flow
+    # f(t, x) = E[ 1{B_T > K} | B_t = x ] = Phi((x - K)/sqrt(T - t))
+    x_bs = np.linspace(-2, 2, 300)
+    K_bs = 0.0
+    fig, ax = plt.subplots(figsize=(7.5, 4))
+    T_bs = 1.0
+    ttm = [1e-4, 0.05, 0.2, 0.5, 1.0]
+    palette_t = ["#a62a2a", "#e07a2a", "#1f7a1f", "#2a62a6", "#6a3a8a"]
+    for tau, col in zip(ttm, palette_t):
+        if tau < 1e-3:
+            y = (x_bs > K_bs).astype(float)
+            lab = r"$T-t = 0$ (terminal)"
+        else:
+            y = norm.cdf((x_bs - K_bs) / np.sqrt(tau))
+            lab = fr"$T-t = {tau:.2f}$"
+        ax.plot(x_bs, y, lw=2, color=col, label=lab)
+    ax.axvline(K_bs, ls=":", color="black", alpha=0.4)
+    ax.set_xlabel("state $x$"); ax.set_ylabel(r"$f(t, x) = \mathbb{E}[\mathbf{1}_{X_T>K}\mid X_t=x]$")
+    ax.set_title("Heat-equation smoothing: digital payoff diffuses backward in time")
+    ax.legend(fontsize=9)
+    save("ch04-backward-smoothing.png")
+
+    # (e) FK backward solution curve for a call-like payoff, at several times
+    # f(t, x) for phi(x) = max(x, 0) under driftless BM:
+    # f(t, x) = E[max(X_T, 0) | X_t = x] with X_T ~ N(x, T-t)
+    # Closed form: x * Phi(x / sqrt(T-t)) + sqrt(T-t) * phi_pdf(x / sqrt(T-t))
+    x_curve = np.linspace(-3, 3, 400)
+    T_curve = 1.0
+    ttm_c = [1e-4, 0.1, 0.3, 0.6, 1.0]
+    palette_c = ["#a62a2a", "#e07a2a", "#1f7a1f", "#2a62a6", "#6a3a8a"]
+    fig, ax = plt.subplots(figsize=(7.5, 4))
+    for tau, col in zip(ttm_c, palette_c):
+        if tau < 1e-3:
+            y = np.maximum(x_curve, 0)
+            lab = r"$T-t = 0$ (terminal)"
+        else:
+            s = np.sqrt(tau)
+            y = x_curve * norm.cdf(x_curve / s) + s * norm.pdf(x_curve / s)
+            lab = fr"$T-t = {tau:.2f}$"
+        ax.plot(x_curve, y, lw=2, color=col, label=lab)
+    ax.set_xlabel("state $x$"); ax.set_ylabel(r"$f(t,x)=\mathbb{E}[(X_T)^+\mid X_t=x]$")
+    ax.set_title("Feynman-Kac backward solution: call-like kink smooths as time remains")
+    ax.legend(fontsize=9)
+    save("ch04-fk-backward-curves.png")
+
+    # (f) Heat-equation Green's-function convolution: payoff × Gaussian kernel → price
+    # Illustrate f(0, x) = ∫ phi(y) * G(y - x; T) dy for a digital payoff.
+    x_plot = np.linspace(-3, 3, 400)
+    T_heat = 0.4
+    K_heat = 0.0
+    phi = (x_plot > K_heat).astype(float)
+    # Gaussian kernel centred at x=0 with width sqrt(T)
+    kernel = np.exp(-x_plot**2 / (2 * T_heat)) / np.sqrt(2 * np.pi * T_heat)
+    # Convolution result == Phi((x - K) / sqrt(T))
+    smoothed = norm.cdf((x_plot - K_heat) / np.sqrt(T_heat))
+    fig, ax = plt.subplots(figsize=(7.5, 4))
+    ax.plot(x_plot, phi, lw=2.2, color="#a62a2a", label=r"payoff $\varphi(y)=\mathbf{1}_{y>K}$")
+    ax.plot(x_plot, kernel / kernel.max() * 0.9, lw=2, color="#1f7a1f", ls="--",
+            label=r"Gaussian kernel $G(y-x;T)$ (scaled)")
+    ax.plot(x_plot, smoothed, lw=2.4, color="#2a62a6",
+            label=r"convolution $=f(0,x)$")
+    ax.axvline(K_heat, ls=":", color="black", alpha=0.4)
+    ax.set_xlabel("$x$"); ax.set_ylabel("value")
+    ax.set_title(r"Price = payoff $\ast$ heat kernel — smoothing via Gaussian convolution")
+    ax.legend(fontsize=9, loc="upper left")
+    save("ch04-green-convolution.png")
+
+    # (g) Quadratic payoff §4.6 — MC sanity check per-x_0 grid
+    # Closed form: f(0, x) = x^2 + T
+    rng_q = np.random.default_rng(55)
+    T_q = 1.0
+    x0_grid = np.linspace(-2, 2, 15)
+    n_paths_q = 40000
+    mc_est = []; closed = []
+    for x0 in x0_grid:
+        XT = x0 + np.sqrt(T_q) * rng_q.standard_normal(n_paths_q)
+        mc_est.append((XT ** 2).mean())
+        closed.append(x0 ** 2 + T_q)
+    mc_est = np.array(mc_est); closed = np.array(closed)
+    fig, ax = plt.subplots(figsize=(7, 4))
+    xs_dense = np.linspace(-2, 2, 200)
+    ax.plot(xs_dense, xs_dense ** 2 + T_q, lw=2, color="#2a62a6",
+            label=r"closed form $x^2 + T$")
+    ax.plot(x0_grid, mc_est, "o", ms=7, color="#a62a2a", label=fr"MC ({n_paths_q:,} paths)")
+    ax.set_xlabel(r"initial state $x_0$"); ax.set_ylabel(r"$f(0, x_0)=\mathbb{E}[X_T^2\mid X_0=x_0]$")
+    ax.set_title("Quadratic payoff: MC vs PDE solution (§4.6)")
+    ax.legend()
+    save("ch04-quadratic-mc-vs-pde.png")
+
+    # (h) OU exponential payoff Feynman-Kac: closed form vs MC for several x0
+    # Under dX = -kappa(X - theta) dt + sigma dW, payoff exp(aX_T), discount r
+    # Distribution of X_T | X_0 = x is Gaussian with mean m and variance v:
+    #   m = x e^{-kappa T} + theta (1 - e^{-kappa T})
+    #   v = sigma^2/(2 kappa) * (1 - e^{-2 kappa T})
+    # Then E[e^{a X_T}] = exp(a*m + 0.5 * a^2 * v); discounted price = e^{-rT} * that.
+    rng_e = np.random.default_rng(77)
+    kappa_e, theta_e, sig_e = 1.0, 0.04, 0.02
+    T_e = 1.5; r_e = 0.03; a_e = 2.0
+    x0_e = np.linspace(0.0, 0.08, 12)
+    n_paths_e = 20000
+    n_steps_e = 400
+    dt_e = T_e / n_steps_e
+    mc_price = []; closed_price = []
+    for x0 in x0_e:
+        X = np.full(n_paths_e, x0)
+        for _ in range(n_steps_e):
+            X = X + kappa_e * (theta_e - X) * dt_e + sig_e * np.sqrt(dt_e) * rng_e.standard_normal(n_paths_e)
+        mc_price.append(np.exp(-r_e * T_e) * np.exp(a_e * X).mean())
+        m = x0 * np.exp(-kappa_e * T_e) + theta_e * (1 - np.exp(-kappa_e * T_e))
+        v = sig_e**2 / (2 * kappa_e) * (1 - np.exp(-2 * kappa_e * T_e))
+        closed_price.append(np.exp(-r_e * T_e) * np.exp(a_e * m + 0.5 * a_e**2 * v))
+    mc_price = np.array(mc_price); closed_price = np.array(closed_price)
+    fig, ax = plt.subplots(figsize=(7, 4))
+    ax.plot(x0_e, closed_price, lw=2.2, color="#2a62a6",
+            label="Gaussian-MGF closed form")
+    ax.plot(x0_e, mc_price, "s", ms=7, color="#a62a2a",
+            label=fr"MC ({n_paths_e:,} paths, {n_steps_e} steps)")
+    ax.set_xlabel(r"initial state $x_0$")
+    ax.set_ylabel(r"$f(0,x_0)=e^{-rT}\mathbb{E}[e^{a X_T}]$")
+    ax.set_title(r"FK with drift+discount: exp payoff on OU process (§4.8)")
+    ax.legend()
+    save("ch04-ou-exp-fk.png")
 
 
 # ────────────────────────────────────────────────────────────
@@ -546,6 +1062,91 @@ def ch10():
 
 
 # ────────────────────────────────────────────────────────────
+# CH10-MC — Monte Carlo & Path-Dependent (distinct from Heston above)
+# ────────────────────────────────────────────────────────────
+def ch10_mc():
+    print("CH10-MC:")
+    from scipy.stats import norm
+
+    # (a) GBM sample paths — the lognormal path generator of §10.4
+    rng = np.random.default_rng(5)
+    S0, r, sig, T = 100.0, 0.05, 0.2, 1.0
+    n_paths, n_steps = 30, 250
+    dt = T / n_steps
+    t = np.linspace(0, T, n_steps + 1)
+    S = np.empty((n_paths, n_steps + 1)); S[:, 0] = S0
+    for k in range(n_steps):
+        Z = rng.standard_normal(n_paths)
+        S[:, k+1] = S[:, k] * np.exp((r - 0.5*sig**2)*dt + sig*np.sqrt(dt)*Z)
+    fig, ax = plt.subplots(figsize=(7.5, 4))
+    for i in range(n_paths):
+        ax.plot(t, S[i], lw=0.9, alpha=0.65, color="#2a62a6")
+    ax.axhline(S0, ls=":", color="black", alpha=0.6, label=r"$S_0$")
+    ax.plot(t, S0 * np.exp(r * t), lw=2.2, color="#a62a2a", label=r"$\mathbb{E}^Q[S_t]=S_0 e^{rt}$")
+    ax.set_xlabel("t (y)"); ax.set_ylabel("S")
+    ax.set_title("GBM sample paths under $\\mathbb{Q}$ (S_0=100, r=5%, σ=20%)")
+    ax.legend()
+    save("ch10-gbm-paths.png")
+
+    # (b) Monte-Carlo standard error ~ 1/sqrt(N)
+    rng2 = np.random.default_rng(13)
+    # Pricing an ATM European call; repeat for growing N.
+    K = 100.0
+    Ns = np.logspace(1.6, 5, 25).astype(int)
+    # Reference price (closed-form BS)
+    d1 = (np.log(S0/K) + (r + 0.5*sig**2)*T) / (sig*np.sqrt(T))
+    d2 = d1 - sig*np.sqrt(T)
+    bs_price = S0*norm.cdf(d1) - K*np.exp(-r*T)*norm.cdf(d2)
+    n_reps = 200
+    std_errs = []
+    for N in Ns:
+        ests = []
+        for _ in range(n_reps):
+            Z = rng2.standard_normal(N)
+            ST = S0 * np.exp((r - 0.5*sig**2)*T + sig*np.sqrt(T)*Z)
+            ests.append(np.exp(-r*T) * np.mean(np.maximum(ST - K, 0)))
+        std_errs.append(np.std(ests))
+    std_errs = np.array(std_errs)
+    ref = std_errs[0] * np.sqrt(Ns[0]) / np.sqrt(Ns)
+    fig, ax = plt.subplots(figsize=(7.5, 4))
+    ax.loglog(Ns, std_errs, "o-", color="#2a62a6", lw=2, label="MC std error (200 replications)")
+    ax.loglog(Ns, ref, ls=":", color="#a62a2a", lw=2, label=r"$\propto 1/\sqrt{N}$")
+    ax.set_xlabel("# Monte-Carlo paths N"); ax.set_ylabel("std error of price estimate")
+    ax.set_title(f"MC convergence: halving error costs 4× more paths  (BS price = {bs_price:.3f})")
+    ax.legend()
+    save("ch10-mc-sqrt-rate.png")
+
+    # (c) Antithetic vs plain MC: empirical std error at fixed compute cost
+    rng3 = np.random.default_rng(21)
+    Ns_cost = np.array([200, 500, 1000, 2000, 5000, 10000, 20000, 50000])
+    n_reps = 150
+    plain_stds, ant_stds = [], []
+    for N_cost in Ns_cost:
+        plain_vals, ant_vals = [], []
+        # Plain MC uses N_cost independent draws.
+        # Antithetic uses N_cost/2 pairs → also N_cost payoff evaluations.
+        N_pair = max(2, N_cost // 2)
+        for _ in range(n_reps):
+            Z = rng3.standard_normal(N_cost)
+            ST = S0 * np.exp((r - 0.5*sig**2)*T + sig*np.sqrt(T)*Z)
+            plain_vals.append(np.exp(-r*T) * np.mean(np.maximum(ST - K, 0)))
+            Zp = rng3.standard_normal(N_pair)
+            ST1 = S0 * np.exp((r - 0.5*sig**2)*T + sig*np.sqrt(T)*Zp)
+            ST2 = S0 * np.exp((r - 0.5*sig**2)*T - sig*np.sqrt(T)*Zp)
+            payoff_pair = 0.5 * (np.maximum(ST1 - K, 0) + np.maximum(ST2 - K, 0))
+            ant_vals.append(np.exp(-r*T) * np.mean(payoff_pair))
+        plain_stds.append(np.std(plain_vals))
+        ant_stds.append(np.std(ant_vals))
+    fig, ax = plt.subplots(figsize=(7.5, 4))
+    ax.loglog(Ns_cost, plain_stds, "o-", color="#a62a2a", lw=2, label="Plain MC")
+    ax.loglog(Ns_cost, ant_stds, "s-", color="#1f7a1f", lw=2, label="Antithetic MC")
+    ax.set_xlabel("payoff evaluations (compute cost)"); ax.set_ylabel("std error of price estimate")
+    ax.set_title("Antithetic variates cut MC std error at equal cost (ATM call)")
+    ax.legend()
+    save("ch10-antithetic-vs-plain.png")
+
+
+# ────────────────────────────────────────────────────────────
 # CH11 — Short-Rate Models (Vasicek)
 # ────────────────────────────────────────────────────────────
 def ch11():
@@ -587,6 +1188,220 @@ def ch11():
 
 
 # ────────────────────────────────────────────────────────────
+# CH11-CAL — Calibration (L-curve, calibrated short-rate tree)
+# ────────────────────────────────────────────────────────────
+def ch11_cal():
+    print("CH11-CAL:")
+    rng = np.random.default_rng(4)
+
+    # (a) L-curve: fit residual vs regularisation strength
+    # Build a toy linear inverse problem:  y_i = sum_j  K_ij theta_j  +  noise
+    # with theta the true parameters (smooth curve) and K a smoothing operator.
+    n_obs, n_par = 30, 30
+    grid = np.linspace(0, 1, n_par)
+    theta_true = 0.3 * np.sin(2 * np.pi * grid) + 0.2 * np.cos(4 * np.pi * grid)
+    # Gaussian convolution kernel — mildly ill-conditioned
+    xx, yy = np.meshgrid(grid, grid)
+    K = np.exp(-((xx - yy) ** 2) / 0.02)
+    K /= K.sum(axis=1, keepdims=True)
+    y_clean = K @ theta_true
+    y_obs = y_clean + 0.015 * rng.standard_normal(n_obs)
+    # Tikhonov solution:   theta(lam) = (K'K + lam I)^-1 K' y_obs
+    I_ = np.eye(n_par)
+    lambdas = np.logspace(-6, 2, 40)
+    fit_err = []; sol_norm = []
+    for lam in lambdas:
+        th = np.linalg.solve(K.T @ K + lam * I_, K.T @ y_obs)
+        fit_err.append(np.linalg.norm(K @ th - y_obs))
+        sol_norm.append(np.linalg.norm(th))
+    fit_err = np.array(fit_err); sol_norm = np.array(sol_norm)
+    # Mark an "elbow" heuristic: corner of the log-log curve.
+    logf = np.log(fit_err); logs = np.log(sol_norm)
+    d1 = np.gradient(logf, np.log(lambdas))
+    d2 = np.gradient(logs, np.log(lambdas))
+    curvature = (d1 * np.gradient(d2, np.log(lambdas))
+                 - d2 * np.gradient(d1, np.log(lambdas))) / (d1 ** 2 + d2 ** 2 + 1e-12) ** 1.5
+    elbow = int(np.argmax(curvature[5:-5])) + 5
+    fig, ax = plt.subplots(figsize=(7.5, 4))
+    ax.loglog(fit_err, sol_norm, "o-", color="#2a62a6", lw=1.6, alpha=0.9)
+    ax.plot(fit_err[elbow], sol_norm[elbow], "o", markersize=12,
+            markerfacecolor="none", markeredgecolor="#a62a2a", markeredgewidth=2,
+            label=fr"suggested $\lambda \approx {lambdas[elbow]:.1e}$")
+    # Label a few lambda values on the curve
+    for idx, txt in [(2, "low λ\n(overfit)"), (elbow, "elbow"), (len(lambdas)-3, "high λ\n(underfit)")]:
+        ax.annotate(txt, (fit_err[idx], sol_norm[idx]),
+                    xytext=(10, 10), textcoords="offset points", fontsize=9,
+                    color="#444")
+    ax.set_xlabel(r"fit residual $\|K\theta - y\|$")
+    ax.set_ylabel(r"solution norm $\|\theta\|$")
+    ax.set_title("L-curve: the fit-vs-regularisation tradeoff")
+    ax.legend()
+    save("ch11-lcurve.png")
+
+    # (a1) RN density across states from multinomial calibration
+    # Five-state world; market-implied risk-neutral probabilities vs the
+    # "physical" uniform prior.  The RN derivative dQ/dP = q_i / p_i.
+    states = [r"$\omega_1$", r"$\omega_2$", r"$\omega_3$", r"$\omega_4$", r"$\omega_5$"]
+    p_phys = np.array([0.20, 0.20, 0.20, 0.20, 0.20])
+    q_rn = np.array([0.08, 0.18, 0.34, 0.28, 0.12])  # sums to 1
+    rn = q_rn / p_phys
+    x = np.arange(len(states))
+    w = 0.38
+    fig, ax = plt.subplots(figsize=(7.5, 4))
+    ax.bar(x - w/2, p_phys, w, color="#2a62a6", label=r"physical $p_i$")
+    ax.bar(x + w/2, q_rn, w, color="#a62a2a", label=r"risk-neutral $q_i$ (calibrated)")
+    ax.plot(x, rn * 0.1, "o-", color="#6a3a8a", lw=1.6, markersize=8,
+            label=r"$dQ/dP = q_i/p_i$ (right axis)")
+    ax.set_xticks(x); ax.set_xticklabels(states)
+    ax.set_ylabel("state probability")
+    ax.set_title("Radon-Nikodym density from a five-state multinomial calibration")
+    ax.legend(loc="upper right", fontsize=9)
+    # Show RN values as text annotations
+    for xi, rni in zip(x, rn):
+        ax.text(xi + w/2 + 0.05, 0.01, f"RN={rni:.2f}", fontsize=8.5, color="#6a3a8a")
+    save("ch11-rn-multinomial.png")
+
+    # (a2) Calibration frequency trade-off — stability vs responsiveness
+    # Simulate a parameter that drifts smoothly with an abrupt regime shift.
+    rng_cf = np.random.default_rng(123)
+    n_days = 260
+    t_days = np.arange(n_days)
+    true_param = 0.20 + 0.02 * np.sin(t_days / 30.0)
+    true_param[140:] += 0.04  # abrupt regime shift at day 140
+    noise = 0.008 * rng_cf.standard_normal(n_days)
+    observed = true_param + noise  # "daily calibration" estimate
+    # Monthly recalibration — piecewise-constant at step boundaries
+    monthly = observed.copy()
+    for k in range(0, n_days, 21):
+        monthly[k:k + 21] = observed[k:min(k + 21, n_days)].mean()
+    # Weekly recalibration
+    weekly = observed.copy()
+    for k in range(0, n_days, 5):
+        weekly[k:k + 5] = observed[k:min(k + 5, n_days)].mean()
+    fig, ax = plt.subplots(figsize=(7.5, 4))
+    ax.plot(t_days, true_param, lw=2.2, color="black", label="true parameter", alpha=0.75)
+    ax.plot(t_days, observed, lw=1.0, color="#a62a2a", alpha=0.55, label="daily calibration (responsive)")
+    ax.plot(t_days, weekly, lw=1.6, color="#e07a2a", label="weekly recalibration")
+    ax.plot(t_days, monthly, lw=2.0, color="#2a62a6", label="monthly recalibration (stable)")
+    ax.axvline(140, ls=":", color="black", alpha=0.5)
+    ax.set_xlabel("trading day"); ax.set_ylabel("calibrated parameter")
+    ax.set_title("Calibration frequency: stability vs responsiveness")
+    ax.legend(fontsize=9)
+    save("ch11-frequency-tradeoff.png")
+
+    # (a3) Out-of-sample validation: training RMSE vs OOS RMSE across lambda
+    # Reuse the L-curve setup; split observations into train/test.
+    rng_oos = np.random.default_rng(9)
+    n_obs_oos, n_par_oos = 40, 40
+    grid_o = np.linspace(0, 1, n_par_oos)
+    theta_oos = 0.3 * np.sin(2 * np.pi * grid_o) + 0.2 * np.cos(4 * np.pi * grid_o)
+    xxo, yyo = np.meshgrid(grid_o, grid_o)
+    K_oos = np.exp(-((xxo - yyo) ** 2) / 0.02)
+    K_oos /= K_oos.sum(axis=1, keepdims=True)
+    y_clean_oos = K_oos @ theta_oos
+    y_noisy = y_clean_oos + 0.020 * rng_oos.standard_normal(n_obs_oos)
+    # Random train/test split 70/30
+    idx = np.arange(n_obs_oos); rng_oos.shuffle(idx)
+    tr_idx = idx[: int(0.7 * n_obs_oos)]; te_idx = idx[int(0.7 * n_obs_oos):]
+    I_o = np.eye(n_par_oos)
+    lams = np.logspace(-5, 1, 30)
+    tr_rmse = []; te_rmse = []
+    for lam in lams:
+        Kt = K_oos[tr_idx]
+        th = np.linalg.solve(Kt.T @ Kt + lam * I_o, Kt.T @ y_noisy[tr_idx])
+        tr_rmse.append(np.sqrt(np.mean((Kt @ th - y_noisy[tr_idx]) ** 2)))
+        Ke = K_oos[te_idx]
+        te_rmse.append(np.sqrt(np.mean((Ke @ th - y_noisy[te_idx]) ** 2)))
+    tr_rmse = np.array(tr_rmse); te_rmse = np.array(te_rmse)
+    elbow_oos = int(np.argmin(te_rmse))
+    fig, ax = plt.subplots(figsize=(7.5, 4))
+    ax.semilogx(lams, tr_rmse, "o-", color="#2a62a6", lw=1.8, label="training RMSE")
+    ax.semilogx(lams, te_rmse, "s-", color="#a62a2a", lw=1.8, label="out-of-sample RMSE")
+    ax.axvline(lams[elbow_oos], ls=":", color="black",
+               label=fr"OOS min at $\lambda\!\approx\!{lams[elbow_oos]:.1e}$")
+    ax.set_xlabel(r"regularisation $\lambda$")
+    ax.set_ylabel("RMSE")
+    ax.set_title("Training vs out-of-sample error — the U-shape of $\\lambda$")
+    ax.legend()
+    save("ch11-oos-validation.png")
+
+    # (a4) Bond-price lattice: rates at each node with bond prices
+    # Three-step recombining tree. Short rates at each node; at each node
+    # we show the one-period bond value 1/(1+r*dt). Display r and P.
+    dt_bl = 0.5
+    rates_bl = {
+        (0, 0): 0.040,
+        (1, 0): 0.050, (1, 1): 0.032,
+        (2, 0): 0.060, (2, 1): 0.042, (2, 2): 0.028,
+        (3, 0): 0.068, (3, 1): 0.052, (3, 2): 0.038, (3, 3): 0.028,
+    }
+    fig, ax = plt.subplots(figsize=(8.5, 5))
+    x_of = lambda k: k * 1.1
+    y_of = lambda k, j: (k - 2 * j) * 0.9
+    # Edges
+    for k in range(3):
+        for j in range(k + 1):
+            x0, y0 = x_of(k), y_of(k, j)
+            x1, y1 = x_of(k + 1), y_of(k + 1, j)
+            x2, y2 = x_of(k + 1), y_of(k + 1, j + 1)
+            ax.plot([x0, x1], [y0, y1], color="#2a62a6", lw=1.1, alpha=0.55)
+            ax.plot([x0, x2], [y0, y2], color="#a62a2a", lw=1.1, alpha=0.55)
+    # Nodes with r and P
+    for (k, j), r_val in rates_bl.items():
+        xn, yn = x_of(k), y_of(k, j)
+        P_val = 1.0 / (1.0 + r_val * dt_bl)
+        ax.add_patch(plt.Circle((xn, yn), 0.23, facecolor="#fef3c7",
+                                 edgecolor="#8a6508", lw=1.2, zorder=3))
+        ax.text(xn, yn + 0.05, f"$r$={r_val*100:.2f}%", ha="center", va="center",
+                fontsize=8.5, zorder=4)
+        ax.text(xn, yn - 0.08, f"$P$={P_val:.4f}", ha="center", va="center",
+                fontsize=8.0, color="#444", zorder=4)
+    ax.set_xlim(-0.4, 3.9); ax.set_ylim(-3.5, 3.5)
+    ax.set_xticks([x_of(k) for k in range(4)]); ax.set_xticklabels([f"$k={k}$" for k in range(4)])
+    ax.set_yticks([])
+    ax.set_title("Calibrated short-rate tree with one-period bond values $P=1/(1+r\\,\\Delta t)$")
+    ax.grid(False)
+    for spine in ["left", "right", "top"]:
+        ax.spines[spine].set_visible(False)
+    save("ch11-bond-lattice.png")
+
+    # (b) Calibrated short-rate tree (3 steps, binomial, recombining) with
+    # rates visibly varying across time and nodes — the §11.3 bootstrap result.
+    rates = {
+        (0, 0): 0.04,
+        (1, 0): 0.048, (1, 1): 0.032,
+        (2, 0): 0.057, (2, 1): 0.040, (2, 2): 0.028,
+        (3, 0): 0.065, (3, 1): 0.050, (3, 2): 0.038, (3, 3): 0.028,
+    }
+    fig, ax = plt.subplots(figsize=(7.5, 4.5))
+    x_of = lambda k: k
+    y_of = lambda k, j: (k - 2 * j)  # recombining layout
+    # Draw edges
+    for k in range(3):
+        for j in range(k + 1):
+            x0, y0 = x_of(k), y_of(k, j)
+            x1, y1 = x_of(k + 1), y_of(k + 1, j)      # up child
+            x2, y2 = x_of(k + 1), y_of(k + 1, j + 1)  # down child
+            ax.plot([x0, x1], [y0, y1], color="#2a62a6", lw=1.2, alpha=0.6)
+            ax.plot([x0, x2], [y0, y2], color="#a62a2a", lw=1.2, alpha=0.6)
+    # Draw nodes with rate labels
+    for (k, j), r_val in rates.items():
+        xn, yn = x_of(k), y_of(k, j)
+        ax.add_patch(plt.Circle((xn, yn), 0.16, facecolor="#fef3c7",
+                                 edgecolor="#8a6508", lw=1.2, zorder=3))
+        ax.text(xn, yn, f"{r_val*100:.2f}%", ha="center", va="center",
+                fontsize=9.5, zorder=4)
+    ax.set_xlim(-0.5, 3.8); ax.set_ylim(-3.5, 3.5)
+    ax.set_xticks([0, 1, 2, 3]); ax.set_yticks([])
+    ax.set_xlabel("time step $k$")
+    ax.set_title("Calibrated short-rate tree — rates fitted to $P_0(1)\\ldots P_0(4)$")
+    ax.grid(False)
+    for spine in ["left", "right", "top"]:
+        ax.spines[spine].set_visible(False)
+    save("ch11-calibrated-tree.png")
+
+
+# ────────────────────────────────────────────────────────────
 # CH12 — Caps and Caplets
 # ────────────────────────────────────────────────────────────
 def ch12():
@@ -621,9 +1436,9 @@ def ch12():
 
 # Drive
 if __name__ == "__main__":
-    for fn in (ch01, ch02, ch03, ch04, ch05, ch06, ch07, ch08, ch09, ch10, ch11, ch12):
+    for fn in (ch01, ch02, ch03, ch04, ch05, ch06, ch07, ch08, ch09, ch10, ch10_mc, ch11, ch11_cal, ch12):
         try:
             fn()
         except Exception as e:
             print(f"  FAILED: {fn.__name__} — {type(e).__name__}: {e}")
-    print("\nAll done → docs/guide/figures/")
+    print("\nAll done -> docs/guide/figures/")

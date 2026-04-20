@@ -718,12 +718,17 @@ years with quarterly coupons ($\Delta t_\ell = 0.25$).
 - Credit-triangle approximation: $(1 - R) \lambda = 0.6 \cdot 0.02 = 120$
   bp. Exact match for low hazard.
 
-Try a higher hazard: $\lambda = 0.10$ (distressed). Risky annuity
-$\approx 2.82$; default-leg PV $\approx 0.34$; par spread $\approx 1206$
-bp (about 12%). Credit triangle: $0.6 \cdot 0.10 = 600$ bp. The exact
-formula gives a substantially higher spread because the high-hazard
-exponential damps the annuity faster than the triangle assumes. This
-"discounting correction" becomes material for very risky credits.
+Try a higher hazard: $\lambda = 0.10$ (distressed). Risky discount
+factor $\widetilde{P}_0(\tau) = e^{-0.13\,\tau}$. Risky annuity
+$\sum_{\ell=1}^{20} 0.25 \cdot e^{-0.13 \cdot 0.25\,\ell} \approx 3.62$;
+default-leg integrand $\int_0^5 0.10 \cdot e^{-0.13\tau}\,\mathrm d\tau
+\approx 0.368$, multiplied by $(1-R) = 0.6$ gives default-leg PV
+$\approx 0.221$; par spread $\approx 0.221 / 3.62 \approx 610$ bp.
+Credit triangle: $0.6 \cdot 0.10 = 600$ bp. The exact formula gives
+a slightly higher spread than the triangle (about 10 bp more) because
+the high-hazard exponential damps the annuity faster than the triangle
+assumes. This "discounting correction" stays modest at $\lambda = 0.10$
+but grows materially for more distressed credits.
 
 ### 13.4.4 Bootstrapping the hazard-rate curve
 

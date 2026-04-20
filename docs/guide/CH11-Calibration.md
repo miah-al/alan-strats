@@ -217,6 +217,9 @@ This is the discrete-time, finite-state incarnation of the Radon–Nikodym deriv
 
 **Multi-step extension.** If the tree branches further at the up-node (children with sub-probabilities $q_u, r_u, \ldots$) and similarly at the down-node, each local change-of-measure is governed by the same ratio. The overall change of measure from $t=0$ to $t=T$ is the composition of all these local operations along every path. In the continuous-time analogue (CH05), this becomes a stochastic exponential; in the discrete case it is a telescoping product of local ratios. A calibrated tree can be diagnosed: at every node, one can check that the local martingale property holds for each numeraire pair. If any of these local checks fails, the calibration has introduced a local arbitrage — which is a bug. Production calibration systems routinely run these checks as unit tests, catching implementation errors that would otherwise manifest as mysterious mispricings downstream.
 
+![Radon-Nikodym density across states from multinomial calibration](figures/ch11-rn-multinomial.png)
+*Five-state discrete world: physical probabilities $p_i$ (blue) are uniform, while calibrated risk-neutral probabilities $q_i$ (red) tilt mass toward the central "stress" states that pricing data implicates. The RN density $dQ/dP = q_i/p_i$ (purple markers) records that tilt state-by-state and is the discrete-tree analogue of the continuous-time Girsanov density of CH05.*
+
 ### 11.2.4 Calibration as Optimisation: The Least-Squares Setup
 
 Before turning to the interest-rate case, we pause to lay out the calibration problem as it is actually formulated in practical systems. Given $N$ observed market instruments with prices $\{C_i^{\text{mkt}}\}_{i=1}^N$, a model with parameter vector $\Theta \in \mathbb{R}^d$, and a model pricing function $C_i^{\text{model}}(\Theta)$, the simplest calibration objective is
@@ -278,7 +281,13 @@ The penalty $\mathcal{R}(\Theta)$ encodes prior knowledge: smoothness ($\|\nabla
 
 The Bayesian interpretation of regularisation is worth holding in mind. A penalty $\|\Theta - \Theta_{\text{prior}}\|^2$ is equivalent to a Gaussian prior on $\Theta$ centred at $\Theta_{\text{prior}}$; a penalty $\|\Theta\|_1$ is equivalent to a Laplace prior at zero; a penalty $\|\nabla^2 \Theta\|^2$ encodes a prior that parameter values change smoothly along some ordering (useful for term-structure calibration where we expect neighbouring maturities to have similar parameters). Regularisation is the frequentist's way of sneaking Bayesian priors into a point-estimate framework.
 
-**The fit-vs-extrapolation tradeoff.** Strong regularisation ($\lambda$ large) produces parameter estimates that are close to the prior, insensitive to the data, and therefore stable but potentially biased. Weak regularisation ($\lambda$ small) produces parameter estimates that fit the data tightly, sensitive to every wiggle, and therefore unbiased in expectation but high-variance in any given run. The sweet spot depends on the application: a conservatively-marked book wants stability (high $\lambda$); an aggressive trading book wants responsiveness (low $\lambda$). There is no universal right answer, and the choice is part of the desk's risk-appetite statement. A related perspective: in-sample fit is a strictly decreasing function of $\lambda$ (regularisation makes the model stiffer, so it fits the training data less well), while out-of-sample fit is typically U-shaped (zero regularisation overfits, infinite regularisation underfits, and the optimum is somewhere in between). Cross-validation finds this optimum empirically.
+**The fit-vs-extrapolation tradeoff.** Strong regularisation ($\lambda$ large) produces parameter estimates that are close to the prior, insensitive to the data, and therefore stable but potentially biased. Weak regularisation ($\lambda$ small) produces parameter estimates that fit the data tightly, sensitive to every wiggle, and therefore unbiased in expectation but high-variance in any given run.
+
+![L-curve: fit residual vs solution norm across lambda](figures/ch11-lcurve.png)
+*L-curve diagnostic for a Tikhonov-regularised linear inverse problem. Each point is one value of $\lambda$; the corner (elbow, marked) is the classical heuristic choice — the regularisation strength beyond which further stiffening raises residual without lowering solution norm. Small-$\lambda$ end: data-fitting, overfit regime. Large-$\lambda$ end: prior-dominated, underfit regime.* The sweet spot depends on the application: a conservatively-marked book wants stability (high $\lambda$); an aggressive trading book wants responsiveness (low $\lambda$). There is no universal right answer, and the choice is part of the desk's risk-appetite statement. A related perspective: in-sample fit is a strictly decreasing function of $\lambda$ (regularisation makes the model stiffer, so it fits the training data less well), while out-of-sample fit is typically U-shaped (zero regularisation overfits, infinite regularisation underfits, and the optimum is somewhere in between). Cross-validation finds this optimum empirically.
+
+![Training vs out-of-sample RMSE across regularisation strength](figures/ch11-oos-validation.png)
+*The U-shape of out-of-sample error (red) in $\lambda$ contrasts with the monotone rise of training error (blue). Small $\lambda$ overfits — training error shrinks but OOS error spikes; large $\lambda$ underfits — both errors rise. The optimum $\lambda$ is the OOS minimiser, found in practice by cross-validation.*
 
 **Out-of-sample stability.** A calibrated model's in-sample performance is tautological: by construction, the model matches its calibration instruments to within the optimiser's tolerance. The real test is *out-of-sample*: does the model correctly price instruments that were not in the calibration basket? There are two flavours of out-of-sample test. The first is *cross-sectional*: calibrate using a subset of instruments (say, vanilla options at strikes $K_1, \ldots, K_{10}$) and check the fit on a held-out strike $K_{11}$. If the model is correctly specified and the calibration is well-regularised, the held-out fit should be nearly as good as the in-sample fit. If the held-out fit is markedly worse, the model is overfitting — squeezing the in-sample error to zero at the cost of off-sample generalisation. The second flavour is *temporal*: calibrate today, price a hold-out instrument today, then hold the model parameters fixed and re-price the same instrument tomorrow. Compare against tomorrow's market price. If parameters are stable day-to-day, the deviation should be small; if parameters wobble, the deviation will be dominated by recalibration noise rather than genuine market movement. Both tests are routinely neglected in practice — the in-sample fit is visually appealing and easy to report to management, while out-of-sample tests require more infrastructure. But any model going into production should be subjected to both.
 
@@ -293,6 +302,17 @@ P_0(1) \;=\; \frac{1}{1 + r_0}
 \qquad\Longleftrightarrow\qquad
 r_0 \;=\; \frac{1}{P_0(1)} - 1. \tag{11.20}
 $$
+
+(Convention note. The discount factor $1/(1 + r_t)$ used throughout
+§11.3 is the *simple-compounding* version; elsewhere in the guide — and
+in the CRR lattice conventions of §11.1.2 — we use exponential
+discounting $e^{-r_t\,\Delta t}$. The two agree to leading order in
+$\Delta t$ — $1/(1+r_t\Delta t) = e^{-r_t\Delta t}(1 + O(\Delta t^2))$ —
+so the sequential-bootstrapping arithmetic below is unaffected at the
+orders of accuracy we care about. We keep the simple-compounding form
+in §11.3 because it matches the market quoting convention for
+short-dated zero coupons, which is how the bootstrap inputs are
+usually presented in practice.)
 
 Two-period bonds satisfy, at each child node,
 
@@ -328,6 +348,12 @@ The practical implication is that a calibration's range of trustworthiness is de
 
 ![Recovered short-rate tree](figures/ch04-bond-tree-recover.png)
 *Recovered short-rate tree — given two bond quotes and a volatility spread $c$, the pair $(r_0, r_{11})$ is pinned down by the no-arbitrage mixing relation (11.22).*
+
+![Calibrated four-step short-rate tree](figures/ch11-calibrated-tree.png)
+*Layered extension: a four-step recombining short-rate tree whose node rates have been bootstrapped from a sequence of bond quotes $P_0(1), \ldots, P_0(4)$ and a term structure of volatilities. Each time-slice is pinned down by the freshly observed bond; the tree is arbitrage-free by construction and exactly reprices its calibration instruments.*
+
+![Bond-price lattice with calibrated rates at each node](figures/ch11-bond-lattice.png)
+*The same calibrated tree, now annotated with the implied one-period bond value $P=1/(1+r\,\Delta t)$ at each node. This is the object pricing routines roll back over: each step multiplies the weighted average of child-node bond values by the parent's discount factor, and matching this roll-back to the observed $P_0(T)$ quotes pins down the calibration.*
 
 ### 11.3.3 Bid-Ask, Stale Quotes, and Data Hygiene
 
@@ -376,6 +402,9 @@ A concrete example: suppose you hedge a five-year cliquet using variance swaps a
 ### 11.5.4 The Choice of Calibration Frequency
 
 How often should a model be recalibrated? The answer depends on the volatility of the market, the cost of computation, the stability properties of the model, and the business's tolerance for mark shifts. Market-making desks may recalibrate implicitly every time they receive a quote, using fast local methods (Levenberg–Marquardt with warm starts) to re-fit in milliseconds; end-of-day calibration against closing quotes is the standard for marking the book and computing regulatory metrics; slower-moving parameters (e.g. mean-reversion speeds in rates models) may be recalibrated only weekly or monthly, producing more stable marks at the cost of slower adaptation to regime changes; event-driven calibration triggered by a central-bank announcement, a volatility spike, or a residual outside a threshold combines stability with responsiveness. A well-designed calibration system supports multiple frequencies simultaneously, with different models tied to different frequencies as appropriate.
+
+![Calibration frequency trade-off: stability vs responsiveness](figures/ch11-frequency-tradeoff.png)
+*A synthetic parameter that drifts smoothly through a regime break at day 140. **Daily** recalibration (faint red) is responsive but noisy; **monthly** recalibration (blue) is stable but lags the regime shift by up to a month; **weekly** recalibration (orange) sits in between. No frequency dominates — the trade-off is real and the choice belongs to the desk's risk-appetite statement.*
 
 ### 11.5.5 The Limits of Market Consistency
 

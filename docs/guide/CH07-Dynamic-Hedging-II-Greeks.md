@@ -101,6 +101,15 @@ standard normal CDF and density, and $d_\pm = [\ln(S/K) + (r \pm
 \tfrac{1}{2}\sigma^2)(T-t)] / (\sigma\sqrt{T-t})$ is the Black-Scholes
 moneyness index.
 
+![Call delta profile across moneyness at three maturities](figures/ch07-delta-profile.png)
+*Black-Scholes call delta $\Phi(d_+)$ as a function of spot for three maturities. Long-dated options have gradual deltas spread across moneyness; near expiry the delta compresses toward a step at the strike, tracking the digital payoff that $\Delta_{\mathrm{call}}$ becomes in the $T\downarrow t$ limit.*
+
+![Gamma vs moneyness and time-to-expiry](figures/ch07-gamma-vs-ttm.png)
+*Gamma $= \Phi'(d_+)/(S\sigma\sqrt{T-t})$ peaks at the at-the-money strike for every maturity, and the peak grows without bound as $T\downarrow t$. A short ATM option is a short-gamma position that becomes dangerously short as expiry approaches — the terminal-gamma pinning effect.*
+
+![Call vs put delta across moneyness](figures/ch07-call-put-delta.png)
+*Put-call parity in delta form: $\Delta_{\mathrm{call}} - \Delta_{\mathrm{put}} = 1$ for every spot. The call delta rises from $0$ to $+1$ through the strike; the put delta sits a parallel unit below, running from $-1$ to $0$. A long call plus a short put with the same strike is always $100\%$ long the underlying.*
+
 What Chapter 6 *proved* was that picking $\alpha_t = \partial_S g(t, S_t)$
 units of the stock against a short position in the claim zeroes out the
 $\mathrm{d}W_t$ coefficient in the self-financing increment. Zeroing the
@@ -1059,6 +1068,13 @@ volatility.
 Second, vega peaks at the at-the-money strike and decays to zero for deep
 in-the-money or deep out-of-the-money options. An ATM short-dated call has
 the largest vega per unit of option; a deep-ITM LEAPS has essentially none.
+
+![Vega decay as expiry approaches](figures/ch07-vega-decay.png)
+*ATM vega as a function of time-to-expiry (x-axis inverted so time runs forward toward expiry on the right). Vega scales as $\sqrt{T-t}$ and collapses to zero at expiry — the option has no volatility sensitivity once the payoff is locked in. This is why short-dated ATM options are the preferred instrument for *discharging* vega risk (low cost per unit) and long-dated ATM options for *accumulating* it.*
+
+![Vega heatmap across spot and time-to-expiry](figures/ch07-vega-heatmap.png)
+*Vega $\mathcal{V} = S\sqrt{T-t}\,\Phi'(d_+)$ plotted over $(S, T)$. The bright band runs along the at-the-money ridge; vega grows with $\sqrt{T-t}$ at fixed moneyness, so long-dated ATM options carry the largest vega per contract. This is why "volatility duration" is a long-dated ATM product by construction.*
+
 That pattern — vega concentrated near the ATM strike — is the reason
 straddles and strangles are the prototypical *volatility trades*: they
 maximise vega exposure per unit of capital deployed. A long straddle (long
@@ -1504,6 +1520,13 @@ $$
 \mathcal{V}_t \;=\; S\,e^{-q(T - t)}\,\sqrt{T - t}\,\Phi'(d_+). \tag{7.58}
 $$
 
+(An equivalent form swaps the $S$-term for a $K$-term via the
+Black–Scholes "$\Phi'$ identity" $S\,e^{-q(T-t)}\,\Phi'(d_+) =
+K\,e^{-r(T-t)}\,\Phi'(d_-)$, giving $\mathcal{V}_t = K\,e^{-r(T-t)}
+\sqrt{T-t}\,\Phi'(d_-)$. Some references quote the $K$-form; both are
+numerically identical and readers cross-checking against other texts
+should recognise the equivalence.)
+
 All Greeks carry the $e^{-q(T - t)}$ dividend-discount factor applied to
 the $S$-dependent part; the $K$-dependent discount factor remains $e^{-r(T-t)}$.
 This structural fact is worth remembering for quick sanity checks on any
@@ -1789,17 +1812,167 @@ formula as the *reference*, not the *answer*.
 
 ## 7.6 Put-call parity, deltas, and gammas
 
+Throughout this section $C = C(t, S)$ and $P = P(t, S)$ denote the
+Black-Scholes European call and put prices on a stock paying a
+continuous dividend yield $q$, struck at $K$ and expiring at $T$; we
+write $\tau = T - t$ for time to expiry. The one identity that ties
+them together is put-call parity,
+```math
+C(t, S) \;-\; P(t, S) \;=\; S\,e^{-q\tau} \;-\; K\,e^{-r\tau}. \tag{7.59}
+```
+(7.59) is a static, *model-independent* identity: it is a no-arbitrage
+consequence of the trivial payoff decomposition
+$\max(S_T - K, 0) - \max(K - S_T, 0) = S_T - K$, discounted to $t$.
+Every Greek identity between call and put follows by differentiating
+(7.59) in the relevant variable — spot, volatility, time, or rate —
+and the right-hand side, which is a simple forward contract minus a
+zero-coupon bond, is transparent in each.
+
 ### 7.6.1 Put price curve
+
+Applying parity to the call formula (7.51) gives the closed-form put
+price under continuous dividend yield:
+```math
+P(t, S) \;=\; K\,e^{-r\tau}\,\Phi(-d_-) \;-\; S\,e^{-q\tau}\,\Phi(-d_+), \tag{7.60}
+```
+with $d_\pm$ as in (7.52). The put is convex in $S$, monotonically
+decreasing (a larger spot lowers the value of the right-to-sell), and
+tends to $K e^{-r\tau} - S e^{-q\tau}$ deep in the money ($S \ll K$)
+and to $0$ deep out of the money ($S \gg K$). At expiry the curve
+collapses to the hockey-stick payoff $\max(K - S_T, 0)$.
 
 ### 7.6.2 Call price curve
 
+For reference alongside (7.60) the call price (7.51) is
+```math
+C(t, S) \;=\; S\,e^{-q\tau}\,\Phi(d_+) \;-\; K\,e^{-r\tau}\,\Phi(d_-). \tag{7.61}
+```
+The call is convex in $S$, monotonically increasing, bounded below by
+the intrinsic value $(S e^{-q\tau} - K e^{-r\tau})_+$ (the modified
+forward-minus-bond) and above by $S e^{-q\tau}$.
+
 ### 7.6.3 Delta curves
+
+Differentiating (7.59) once in $S$ and using
+$\partial_S(S e^{-q\tau}) = e^{-q\tau}$ gives the *parity identity for
+delta*,
+```math
+\Delta^C \;-\; \Delta^P \;=\; e^{-q\tau}. \tag{7.62}
+```
+Combined with the call-delta formula
+$\Delta^C = e^{-q\tau}\Phi(d_+)$ from (7.56), this yields the put
+delta
+```math
+\Delta^P \;=\; e^{-q\tau}\Phi(d_+) \;-\; e^{-q\tau} \;=\; -\,e^{-q\tau}\,\Phi(-d_+). \tag{7.63}
+```
+As expected, $\Delta^P \in [-e^{-q\tau}, 0]$: a long put has negative
+delta bounded below by $-e^{-q\tau}$ (ATM-deep-ITM put $\to$ near
+$-e^{-q\tau}$; OTM put $\to 0$). The two delta curves are vertical
+translates of each other by $e^{-q\tau}$ — a clean visual diagnostic.
 
 ### 7.6.4 Gamma curves and pin risk
 
+Differentiating (7.62) once more in $S$, the right-hand side
+$e^{-q\tau}$ is constant in $S$, so
+```math
+\Gamma^C \;=\; \Gamma^P \;=\; \frac{e^{-q\tau}\,\Phi'(d_+)}{S\,\sigma\sqrt{\tau}}. \tag{7.64}
+```
+This is the *gamma parity identity* previewed in §7.1 — calls and
+puts at the same strike share a single gamma curve. Consequently, a
+delta-neutral spread that is short one call and long one put at the
+same strike has *zero* gamma; the combination is the synthetic short
+forward of §7.6.6, whose value is linear in $S$.
+
+*Pin risk.* As $\tau \downarrow 0$ the ATM gamma blows up like
+$1/\sqrt{\tau}$: from (7.64) at $S = K e^{(r-q)\tau}$,
+$\Gamma \sim 1/(K\sigma\sqrt{2\pi\tau})$. A short ATM option on
+expiry day can whip between $\Delta = 0$ and $\Delta = \pm e^{-q\tau}$
+as $S$ crosses $K$ — the delta becomes a step function and hedging it
+requires arbitrarily-large trades on arbitrarily-small spot moves.
+This is *pin risk*. Because $\Gamma^C = \Gamma^P$, it afflicts calls
+and puts symmetrically, and it is one of the main reasons market
+makers flatten ATM option exposure in the final hours before expiry.
+
 ### 7.6.5 Put-call parity and its Greek consequences
 
+We now collect the full slate of parity consequences obtained by
+differentiating (7.59) in each model variable. All follow
+mechanically, and the right-hand side of each identity has a
+transparent forward-minus-bond interpretation.
+
+**Delta.** $\partial_S$ of (7.59):
+$\Delta^C - \Delta^P = e^{-q\tau}$. (7.62)
+
+**Gamma.** $\partial_{SS}$ of (7.59): $\Gamma^C = \Gamma^P$. (7.64)
+The right-hand side of parity is linear in $S$, so its second
+derivative vanishes.
+
+**Vega.** Neither $S e^{-q\tau}$ nor $K e^{-r\tau}$ depends on $\sigma$
+(parity is a *static* no-arb identity independent of volatility
+assumptions), so $\partial_\sigma$ of (7.59) gives
+```math
+\mathcal{V}^C \;=\; \mathcal{V}^P. \tag{7.65}
+```
+Calls and puts at the same strike share a single vega curve. A
+delta-hedged short call is vega-short; a delta-hedged short put is
+equally vega-short — which is why a straddle (long call + long put at
+the same strike) doubles vega, matching (7.65) with a factor of two.
+
+**Theta.** $\partial_t$ of (7.59), using $\partial_t e^{-q\tau} =
+q e^{-q\tau}$ and $\partial_t e^{-r\tau} = r e^{-r\tau}$:
+```math
+\Theta^C \;-\; \Theta^P \;=\; -\,q\,S\,e^{-q\tau} \;+\; r\,K\,e^{-r\tau}. \tag{7.66}
+```
+The difference in theta is *not* zero, because the forward and the
+bond on the right-hand side of parity each decay at their own rate.
+For $q = 0$ (no dividend), $\Theta^C - \Theta^P = r K e^{-r\tau} > 0$,
+so a call decays less unfavourably than a put of the same strike —
+the standard "rates help calls, hurt puts" intuition.
+
+**Rho.** $\partial_r$ of (7.59), noting that $S e^{-q\tau}$ is
+rate-independent while $K e^{-r\tau}$ carries a $-\tau$:
+```math
+\rho^C \;-\; \rho^P \;=\; \tau\,K\,e^{-r\tau}. \tag{7.67}
+```
+Calls have positive rho and puts negative rho; the gap between them
+is exactly the PV01-scale of the strike-bond.
+
+**Dividend sensitivity.** $\partial_q$ of (7.59):
+$\partial_q C - \partial_q P = -\tau S e^{-q\tau}$. Calls are hurt by
+higher dividends (stock trades ex-div), puts benefit symmetrically.
+
+These identities are all *exact* and *model-free* in the sense that
+they follow from (7.59) without reference to any Black-Scholes or
+log-normal assumption. They therefore hold in Heston, in local-vol,
+in every complete arbitrage-free model — any model in which parity is
+imposed (which is every sensible model) respects (7.62)-(7.67)
+identically.
+
 ### 7.6.6 Synthetic positions
+
+Rewriting parity as
+```math
+C \;-\; P \;=\; S\,e^{-q\tau} \;-\; K\,e^{-r\tau} \tag{7.68}
+```
+says that a *long-call-short-put* portfolio at strike $K$ is
+equivalent to a long position in $e^{-q\tau}$ shares of stock
+(equivalently, one forward contract delivered at $T$) funded by a
+short $K$-notional zero-coupon bond maturing at $T$. This is the
+*synthetic forward*: a way to construct directional equity exposure
+from options alone.
+
+Symmetric rearrangements give the other useful syntheses:
+synthetic long stock is $S e^{-q\tau} = C - P + K e^{-r\tau}$ (long
+call + short put + long bond); synthetic short stock is
+$-S e^{-q\tau} = P - C - K e^{-r\tau}$. Traders use these
+replications when the physical stock is hard to borrow, when margin
+requirements differ between cash equities and options, or when the
+options market is more liquid than the stock at the relevant size.
+The Greek profile of a synthetic is dictated by (7.62)-(7.67): a
+synthetic long forward is delta-$e^{-q\tau}$, gamma-zero, vega-zero,
+and theta-$(-qSe^{-q\tau} + rKe^{-r\tau})$, which is exactly the
+Greek profile of the forward contract it replicates — a consistency
+check with nothing to tune.
 
 ---
 

@@ -109,6 +109,10 @@ A pedagogical remark. The four conditions are conceptually independent, and you 
 
 A typical sample path of BM is a jittery curve, everywhere continuous but nowhere smooth. Heuristically: the typical displacement over a time-step $\Delta t$ is $|\Delta W| \sim \sqrt{\Delta t}$, so the slope
 
+![Five Brownian-motion sample paths](figures/ch03-bm-paths.png)
+*Five independent sample paths of $W$ on $[0, 1]$. Every path is continuous but visibly non-smooth at every scale — zooming in reveals identical-looking wiggles. The unbounded-slope property (3.$\infty$) is visible as the path's inability to be "traced with a pencil".*
+
+
 $$
 \frac{\Delta W}{\Delta t} \;\sim\; \frac{\sqrt{\Delta t}}{\Delta t} \;=\; \frac{1}{\sqrt{\Delta t}} \;\longrightarrow\; \infty \quad(\Delta t \downarrow 0).
 $$
@@ -224,7 +228,7 @@ $$
 
 The mean is *exact* — no limit needed, no $\|\pi\|$ dependence. Every finite partition already gives $\mathbb{E}[Q] = t$.
 
-Variance. Using $\mathrm{Var}((\Delta W_k)^2) = (\Delta t_k)^2\,\mathrm{Var}(Z^2) = 2(\Delta t_k)^2$ (because $\mathrm{Var}(Z^2) = \mathbb{E}[Z^4] - 1 = 3 - 1 = 2$) and independence across $k$,
+Variance. Using $\mathrm{Var}((\Delta W_k)^2) = (\Delta t_k)^2\,\mathrm{Var}(Z^2) = 2(\Delta t_k)^2$ (because $\mathrm{Var}(Z^2) = \mathbb{E}[Z^4] - 1 = 3 - 1 = 2$ — the standard-Normal fourth moment $\mathbb{E}[Z^4] = 3$ is derived via the MGF in §3.7.1) and independence across $k$,
 
 $$
 \mathrm{Var}[Q] \;=\; 2\sum_k (\Delta t_k)^2 \;\le\; 2\,\|\pi\|\sum_k \Delta t_k \;=\; 2\|\pi\|\,t \;\xrightarrow[\|\pi\|\downarrow 0]{}\; 0.
@@ -239,6 +243,9 @@ $$
 $$
 
 A striking feature: a *random* object — the sum of squared increments along a random trajectory — converges to a *deterministic* limit $t$. The randomness is there, but it is concentrated so tightly around the mean that in the limit it disappears. Economically, this is why implied volatility is observable at all: the quadratic variation of a stock price is essentially a deterministic integral of $\sigma^2$, not a random quantity.
+
+![Quadratic variation → t and total variation → ∞ as mesh refines](figures/ch03-qv-convergence.png)
+*The same Brownian path, sampled at progressively finer meshes. Left: $\sum(\Delta W_k)^2$ converges deterministically to $t = 1$ as the mesh refines. Right: $\sum|\Delta W_k|$ diverges like $\sqrt{N}$ — finite energy but unbounded path-length, which is precisely the TV vs QV dichotomy of §3.3–§3.4.*
 
 This "randomness collapsing into determinism" deserves a full beat. In the discrete approximation, $\sum_k(\Delta W_k)^2$ is a sum of $N$ i.i.d. random variables, each equal to $\Delta t\cdot Z_k^2$ for an independent chi-squared-one draw. By the law of large numbers the average of these $Z_k^2$ converges almost surely to $\mathbb{E}[Z^2] = 1$; multiplying by $N\Delta t = t$ gives $\sum(\Delta W_k)^2 \to t$ a.s. The convergence is the LLN dressed up in Brownian clothing. The variance-shrinking-faster-than-mean argument is just Chebyshev telling us the LLN converges rapidly in $L^2$.
 
@@ -400,7 +407,7 @@ $$
 
 The matrix picture: the $n\times n$ grid indexed by $(k,j)$ splits into the lower triangle $A$ ($k<j$), the upper triangle $B$ ($j<k$), and the diagonal $C$ ($k=j$, highlighted). The isometry is the claim that the two triangles die in expectation and only the diagonal survives — matching the time-integral piece exactly.
 
-**Step 2 — $\mathbb{E}[A] = 0$.** For any term in $A$ we have $k < j$. Condition on $\mathcal{F}_{t_{j-1}}$: the factors $g_{k-1}$, $h_{j-1}$, and $\Delta W_k$ are all $\mathcal{F}_{t_{j-1}}$-measurable, while $\Delta W_j$ is independent of $\mathcal{F}_{t_{j-1}}$ with mean zero. Hence
+**Step 2 — $\mathbb{E}[A] = 0$.** For any term in $A$ we have $k < j$. Condition on $\mathcal{F}_{t_{j-1}}$: the factors $g_{k-1}$, $h_{j-1}$, and $\Delta W_k$ are all $\mathcal{F}_{t_{j-1}}$-measurable (by convention $h_{j-1} := h_{t_{j-1}}$ is $\mathcal{F}_{t_{j-1}}$-measurable because it is evaluated at the left endpoint of the $j$-th sub-interval; $g_{k-1}$ and $\Delta W_k$ are $\mathcal{F}_{t_k}\subset\mathcal{F}_{t_{j-1}}$-measurable since $k < j \Rightarrow t_k \le t_{j-1}$), while $\Delta W_j$ is independent of $\mathcal{F}_{t_{j-1}}$ with mean zero. Hence
 
 $$
 \mathbb{E}\!\left[g_{k-1}\,h_{j-1}\,\Delta W_k\,\Delta W_j\right]
@@ -601,6 +608,9 @@ Splitting stochastic processes into "bounded-variation drift + martingale noise"
 
 An important meta-principle. When you apply Itô to a function $f(t,W_t)$ whose expectation you care about, the drift part survives under $\mathbb{E}[\,\cdot\,]$ and the martingale part dies: $\mathbb{E}[f(t,W_t)] - f(0,0) = \int_0^t \mathbb{E}[\partial_s f + \tfrac12\partial_{ww}f]\,\mathrm{d}s$. This is the fastest way to compute expectations — write the Itô differential, take the expectation of the drift, integrate — and it is the core engine of the Feynman-Kac derivations in Chapter 4.
 
+![Itô vs classical chain rule on $f(W_t)=W_t^2$](figures/ch03-ito-vs-chain.png)
+*Monte-Carlo $\mathbb{E}[W_t^2]$ tracks the Itô prediction $t$ (green dashed), not the classical chain rule's $0$ (red dotted). The gap is the Itô correction $\tfrac12 f''\,\mathrm{d}t = \mathrm{d}t$ integrated from $0$ to $t$ — precisely the drift contribution that ordinary calculus discards.*
+
 ### 3.8.3 Reading the formula — options-language translation
 
 For $X_t = f(t, W_t)$ interpreted as an option price with $W_t$ being the underlying:
@@ -671,6 +681,9 @@ $$
 $X_t$ satisfies a driftless geometric SDE and is therefore a martingale. This is the rigorous proof of the $\mathbb{E}[X_t] = 1$ claim in (3.36).
 
 The exponential martingale (3.45) is a prototype of a larger class. The Doléans-Dade exponential $\mathcal{E}(M)_t = \exp(M_t - \tfrac12\langle M\rangle_t)$ of any continuous martingale $M$ is similarly designed: the $-\tfrac12\langle M\rangle_t$ is exactly the drift shift needed to turn $e^{M_t}$ into a martingale. For $M_t = \sigma W_t$, $\langle M\rangle_t = \sigma^2 t$, recovering (3.45). The Doléans-Dade exponential reappears in Chapter 5 as the Radon-Nikodym derivative for Brownian-motion measure changes.
+
+![Doléans-Dade exponential trajectories with expected-value envelope](figures/ch03-doleans-dade.png)
+*Six sample paths of $Z_t = \exp(\sigma W_t - \tfrac12\sigma^2 t)$ with $\sigma = 0.9$. Individual trajectories span orders of magnitude — some rocket upward, others drift toward zero — yet $\mathbb{E}[Z_t] = 1$ for every $t$. The $-\tfrac12\sigma^2 t$ drift is precisely the Itô correction that keeps the process a martingale despite its wildly dispersed paths.*
 
 ---
 
@@ -826,6 +839,9 @@ $$
 Two limits worth registering. As $t \to \infty$, $\mathrm{Var}[r_t] \to \sigma^2/(2\kappa)$: mean-reversion caps the long-run variance at a finite value, unlike plain Brownian motion whose variance grows linearly forever. As $t \downarrow 0$, $\mathrm{Var}[r_t] \to \sigma^2 t$: over short horizons the OU process is indistinguishable from a Brownian motion, because the mean-reversion drift has had no time to act. The density picture — the mean $r_0 e^{-\kappa t} + \theta(1-e^{-\kappa t})$ relaxing from $r_0$ toward $\theta$, flanked by $\pm 2\,\mathrm{sd}$ bands that widen quickly at first and then plateau — captures the qualitative picture that every mean-reverting model shares: transient-widening, long-run stationarity.
 
 The integrated rate $\int_0^T r_u\,\mathrm{d}u$, needed for bond pricing in Chapter 12, is also Gaussian — as a linear functional of the Gaussian process $r_t$ — and its mean and variance are computed by the same Fubini / Itô-isometry combination. We defer the explicit formula to Chapter 12 where it is put to work.
+
+![OU vs GBM sample paths](figures/ch03-ou-vs-gbm.png)
+*Side-by-side comparison of the two workhorse SDEs. **Left:** GBM paths trend exponentially with multiplicative noise; the mean curve $S_0 e^{\mu t}$ grows without bound. **Right:** OU / Vasicek paths wobble around the long-run mean $\theta$; variance saturates at $\sigma^2/(2\kappa)$ so the ensemble never escapes. Mean-reversion is visually unmistakable.*
 
 ### 3.10.3 Constant-coefficient arithmetic BM
 

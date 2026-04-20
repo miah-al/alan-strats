@@ -584,6 +584,18 @@ For no arbitrage, the two bracketed factors must have opposite signs:
 
 $$\left.\begin{array}{l} A_u - \dfrac{A_0}{B_0}\, B_u \;>\; 0 \\[4pt] A_d - \dfrac{A_0}{B_0}\, B_d \;<\; 0 \end{array}\right\} \quad\text{all other cases lead to arb.} \tag{6.8}$$
 
+(Implicit non-degeneracy assumption: the 2$\times$2 payoff matrix
+$\bigl(\begin{smallmatrix}A_u & A_d \\ B_u & B_d\end{smallmatrix}\bigr)$
+is non-singular, equivalently $A_u/B_u \ne A_d/B_d$. This is the
+standard market-completeness hypothesis: if the two assets' relative
+payoffs coincide in the up and down states, the two bracketed
+coefficients are linearly dependent and the "both non-zero, opposite
+signs" dichotomy collapses. For a bond numeraire $B_u = B_d$
+automatically the brackets are monotone in the same direction of
+$\alpha$ so the argument carries through; for a general numeraire,
+non-degeneracy must be imposed at this point for the rest of the
+derivation to go through.)
+
 Equivalently, dividing through by $B_u, B_d > 0$:
 
 $$\boxed{\;\frac{A_d}{B_d} \;<\; \frac{A_0}{B_0} \;<\; \frac{A_u}{B_u}\;} \qquad \text{(no-arbitrage condition)}. \tag{6.9}$$
@@ -1269,11 +1281,9 @@ $$X \;=\; \sigma\sqrt{\Delta t}\,\sum_{n=1}^{N} x_i, \qquad \Delta t \;=\; \frac
 
 With the calibrated probabilities
 
-$$\mathbb{P}(x_i = +1) \;=\; p \;=\; \tfrac{1}{2}\!\left[\,1 \;-\; \frac{\mu - \tfrac{1}{2}\sigma^2}{\sigma}\,\sqrt{\Delta t}\,\right], \tag{14.2}$$
+$$\mathbb{P}(x_i = +1) \;=\; p \;=\; \tfrac{1}{2}\!\left[\,1 \;+\; \frac{\mu - \tfrac{1}{2}\sigma^2}{\sigma}\,\sqrt{\Delta t}\,\right], \tag{14.2}$$
 
-$$\mathbb{P}(x_i = -1) \;=\; 1 - p \;=\; \tfrac{1}{2}\!\left[\,1 \;+\; \frac{\mu - \tfrac{1}{2}\sigma^2}{\sigma}\,\sqrt{\Delta t}\,\right]. \tag{14.3}$$
-
-> ⚠ transcription uncertain — the signs in the instructor's (14.2)/(14.3) as written put the $-$ on the up-branch, which contradicts the earlier calibration (11.5) where the $+$ sits on the up-branch. The derivation continuing to $\mathbb{E}[x_i] = 2p - 1 = \hat\mu\sqrt{\Delta t}/\sigma$ (equation (14.8)) is consistent with (11.5), not with (14.2)–(14.3) as literally transcribed. Treat (14.2)–(14.3) as an instructor sign-typo; the *effective* calibration used below is (11.5), i.e. $p = \tfrac{1}{2}[1 + \hat\mu\sqrt{\Delta t}/\sigma]$.
+$$\mathbb{P}(x_i = -1) \;=\; 1 - p \;=\; \tfrac{1}{2}\!\left[\,1 \;-\; \frac{\mu - \tfrac{1}{2}\sigma^2}{\sigma}\,\sqrt{\Delta t}\,\right]. \tag{14.3}$$
 
 Let $\hat\mu \;\doteq\; \mu - \tfrac{1}{2}\sigma^2$.
 

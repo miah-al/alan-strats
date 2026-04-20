@@ -808,8 +808,11 @@ B_t(T) \;=\; \frac{1 - e^{-\kappa(T-t)}}{\kappa},
 A_t(T) \;=\; -\theta\bigl((T-t) - B_t(T)\bigr) \;+\; \frac{\sigma^2}{2\kappa^2}\!\int_t^T\!\bigl(1 - e^{-\kappa(T-s)}\bigr)^2\,\mathrm{d}s.
 \tag{12.22}
 ```
-The structure $P = e^{A - Br}$ — with $A, B$ deterministic functions of
-$(t, T)$ independent of $r$ — is called an affine term structure.
+(Here $s$ is the dummy integration variable running across the bond's
+life, not to be confused with the current time $t$; the reference
+formulas at §12.9 reuse the same $s$ label.) The structure $P = e^{A -
+Br}$ — with $A, B$ deterministic functions of $(t, T)$ independent of
+$r$ — is called an affine term structure.
 
 ![Vasicek bond-price surface](figures/ch11-bond-surface.png)
 *Vasicek bond-price surface $P(t,T)$ as a function of the current short
@@ -1645,16 +1648,21 @@ From (12.49), taking logs at $t = 0$,
 **Closed-form inversion.** Differentiating twice in $T$ gives the
 pointwise Hull-White calibration identity:
 ```math
-\boxed{\;\; \theta(T) \;=\; \partial_T f_0(T) \;+\; \kappa\,f_0(T) \;+\; \frac{\sigma^2}{2\kappa}\!\left(1 - e^{-2\kappa T}\right), \;\;}
+\boxed{\;\; \theta(T) \;=\; \frac{1}{\kappa}\,\partial_T f_0(T) \;+\; f_0(T) \;+\; \frac{\sigma^2}{2\kappa^2}\!\left(1 - e^{-2\kappa T}\right), \;\;}
 \tag{12.52}
 ```
 where $f_0(T) = -\partial_T \ln P_0^*(T)$ is the market instantaneous
-forward rate. The first term is the slope of the forward curve, the
-second is a mean-reversion correction proportional to the forward
-itself, and the third is a maturity-dependent convexity adjustment
-that saturates at $\sigma^2/(2\kappa)$ for large $T$. In the $\kappa
-\to 0$ limit, the second term vanishes and the third approaches
-$\sigma^2 T$, recovering the Ho-Lee formula (12.42).
+forward rate. The first term is the slope of the forward curve scaled
+by $1/\kappa$, the second is a level match to the forward itself, and
+the third is a maturity-dependent convexity adjustment that saturates
+at $\sigma^2/(2\kappa^2)$ for large $T$. In the $\kappa \to 0$ limit,
+$\kappa\,\theta(T)$ — not $\theta(T)$ itself — must remain finite (see
+§12.5.4): multiplying (12.52) through by $\kappa$ gives
+$\kappa\theta(T) = \partial_T f_0(T) + \kappa f_0(T) +
+(\sigma^2/2\kappa)(1-e^{-2\kappa T})$, and taking $\kappa \to 0$ the
+middle term vanishes while the last approaches $\sigma^2 T$, so
+$\kappa\theta \to \partial_T f_0 + \sigma^2 T = \theta_{\text{HL}}$,
+recovering the Ho-Lee formula (12.42).
 
 **Bucket bootstrap.** In implementation, (12.52) is rarely used
 literally because it requires a second derivative of the observed
@@ -2128,7 +2136,7 @@ B_T = \frac{1 - e^{-\kappa T}}{\kappa}, \quad A_T = \int_0^T \theta_u\bigl(1 - e
 ### Hull-White pointwise calibration
 
 ```math
-\theta(T) \;=\; \partial_T f_0(T) + \kappa\,f_0(T) + \frac{\sigma^2}{2\kappa}\bigl(1 - e^{-2\kappa T}\bigr)
+\theta(T) \;=\; \frac{1}{\kappa}\,\partial_T f_0(T) + f_0(T) + \frac{\sigma^2}{2\kappa^2}\bigl(1 - e^{-2\kappa T}\bigr)
 ```
 
 ### Hull-White bucket bootstrap

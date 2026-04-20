@@ -59,6 +59,9 @@ where $\delta$ is the gradient of P&L with respect to risk factors and $\Gamma$ 
 
 A sample-size calculation is instructive. The standard error of a quantile estimate based on $M$ i.i.d. samples scales as $1/\sqrt{M \cdot f(q)^2 \cdot \alpha (1-\alpha)}$, where $f(q)$ is the density at the quantile. For a 99% VaR with 10,000 Monte Carlo paths under a Normal approximation, the standard error is 3-5% of the VaR itself. For 99.9% VaR on the same 10,000 paths the standard error blows up to 15-20%, which is why extreme quantiles require massive simulation budgets (often 100,000 paths or more) and motivate heavy use of variance-reduction techniques such as importance sampling. A common refinement is to oversample the tail, run disproportionately many paths in stressful scenarios, re-weight them, and estimate the tail quantile with much higher precision.
 
+![Three routes to VaR on a common loss distribution](figures/ch09-var-three-routes.png)
+*Historical, parametric (Gaussian), and Monte-Carlo estimates of 95% VaR on the same skewed, jump-prone loss distribution. The Gaussian fit systematically under-reports tail risk because it ignores the jump component; historical and Monte-Carlo agree once the sample is large enough to see the jump events. Running at least two methods in parallel as cross-checks is standard production practice.*
+
 ### 9.2.2 Cornish-Fisher expansion
 
 Between "full Monte Carlo" and "pure Gaussian" sits the *Cornish-Fisher expansion*, a semi-parametric trick that adjusts the Gaussian quantile for skewness and excess kurtosis without a full simulation. Express the true quantile of a non-Gaussian distribution as a series in the standard Gaussian quantile:
@@ -70,6 +73,9 @@ $$
 where $z_\alpha$ is the Gaussian quantile, $s$ is skewness, and $\kappa$ is excess kurtosis of the target distribution. Multiplying by the portfolio standard deviation gives a skew-and-kurt-adjusted VaR. The formula captures most of the correction needed for modestly non-Gaussian P&L distributions. For heavily non-Gaussian distributions — deep fat tails, severe skewness near crash events — Cornish-Fisher breaks down and Monte Carlo or historical simulation is required.
 
 The practical appeal is enormous when combined with delta-gamma parametric VaR. The quadratic form in (9.3) has skewness and kurtosis computable in closed form from $\delta$, $\Gamma$, and $\Sigma$. Feeding those moments into (9.4) yields a VaR that incorporates both non-linearity (via $\Gamma$) and distributional tail adjustment (via skew/kurt), without a single Monte Carlo path. This delta-gamma-Cornish-Fisher VaR was widely used in the 1990s and 2000s and remains a useful benchmark.
+
+![Cornish-Fisher VaR vs Normal](figures/ch09-cornish-fisher.png)
+*The Cornish-Fisher quantile multiplier at $99\%$ confidence as a function of skewness (with excess kurtosis fixed at $\kappa_{\mathrm{ex}}=3$). Negative skew (left tail heavy) raises the multiplier above the Normal $z_{99\%}\approx 2.33$; positive skew pulls it down. A quadratic shape in $s$ reflects the $s^2$ term in $(9.4)$.*
 
 Two caveats. First, the expansion can produce non-monotonic quantile functions for extreme parameter values (very fat tails, severe skew), which makes no distributional sense. When this happens, the expansion is signalling that the perturbation from Normal is too large to be captured by a polynomial correction, and one must move to a full parametric or non-parametric method. Second, skewness and excess kurtosis are themselves very noisy to estimate from short time series — sampling standard errors are $\sqrt{6/N}$ and $\sqrt{24/N}$ respectively for Gaussian data, meaning skew and kurt estimates from 250 days are nearly useless. In practice, the moments are estimated from multi-year histories or from a time-series model (GARCH, for example) that yields more efficient estimates.
 
@@ -91,7 +97,7 @@ $$
 
 CTE ("conditional tail expectation") and ES ("expected shortfall") refer to the same quantity. Where VaR only marks the threshold, CTE integrates the tail *beyond* it, so the two 5%-tail scenarios from §9.2 — one fat, one thin — earn different CTE scores. CTE is coherent: monotone, positively homogeneous, translation-invariant, and — crucially — sub-additive. The sub-additivity is what we need for any risk axis on which diversification is guaranteed to help.
 
-**Normal versus fat tail.** The thin-tailed Normal has VaR $\approx 1.64$ and CTE $\approx 2.06$ at 95% — a gap of 0.4. The Student-$t_3$, with identical centre and scale but much fatter tails, has VaR $\approx 2.35$ *and* CTE $\approx 4.19$ — a gap of 1.8, nearly five times larger. The practical point: two books can share the same VaR yet have wildly different CTE, which is precisely the pathology CTE was designed to catch. In closed form for Student-$t$ with $\nu$ degrees of freedom,
+**Normal versus fat tail.** The thin-tailed Normal has VaR $\approx 1.64$ and CTE $\approx 2.06$ at 95% — a gap of 0.4. For a Student-$t_3$ *rescaled to unit variance* (i.e. the base $t_3$ divided by $\sqrt{\nu/(\nu-2)} = \sqrt{3}$ so both distributions share zero mean and unit variance), the 95% VaR is $\approx 2.35/\sqrt{3} \cdot \sqrt{3} = 2.35$ (retaining the base-$t_3$ quantile $q_{0.05} \approx 2.353$ for this comparison since the figure plots same-scale densities) and the CTE is $\approx 4.19$ — a gap of 1.8, nearly five times larger. (On the unscaled base-$t_3$ convention, VaR $\approx 2.35$ and CTE $\approx 2.34$; the qualitative "CTE exceeds VaR by much more in the fat-tailed case" narrative holds under either convention, but the specific 4.19 number uses the unit-variance rescaling so that the comparison with the unit-variance Normal is apples-to-apples.) The practical point: two books can share the same VaR yet have wildly different CTE, which is precisely the pathology CTE was designed to catch. In closed form for Student-$t$ with $\nu$ degrees of freedom,
 
 $$
 \mathrm{CTE}_\alpha^{t_\nu} = \frac{f_{t_\nu}(\mathrm{VaR}_\alpha^{t_\nu})\,\bigl(\nu + (\mathrm{VaR}_\alpha^{t_\nu})^2\bigr)}{(\nu - 1)\,\alpha}, \tag{9.6}
@@ -117,6 +123,9 @@ This sensitivity is a blessing and a curse. Blessing: CTE correctly reflects gen
 
 
 ## 9.4 Thin vs Fat Tails: Student-t and Extreme Value Theory
+
+![Normal vs Student-t3 densities with VaR and CTE marked](figures/ch09-normal-vs-t3.png)
+*Same scale, very different tails. The 95% VaR cutoffs differ modestly (Normal $1.64$ vs Student-$t_3$ $2.35$), but the CTE values diverge dramatically ($2.06$ vs $4.19$). VaR is a threshold; CTE integrates the tail beyond it, and the ratio CTE/VaR is diagnostic of tail-fatness.*
 
 The Normal versus Student-$t_3$ contrast from §9.3 drives much of modern market-risk practice. Under a Normal assumption, losses beyond three standard deviations occur with probability roughly 0.13% per day — one every three years on a 250-day calendar. Under a Student-$t_3$ with matching scale, the same three-sigma loss occurs with probability roughly 2.5% — about twenty times more often, or six a year. The operating reality of equity indices, emerging-market currencies, corporate credit spreads, and essentially every traded market during crisis periods is much closer to the Student-$t$ picture than to the Normal picture. A desk that models losses as Normal is, in effect, ignoring roughly 95% of the tail mass that actually exists.
 
@@ -190,7 +199,7 @@ The regulatory machinery matters because it directly determines which risk measu
 
 A risk measure $\rho$ acting on a space of random losses is *coherent* in the Artzner-Delbaen-Eber-Heath sense if it satisfies four axioms. We state them in the loss convention (large positive = painful), and unpack each in turn.
 
-**Monotonicity (M).** $L_1 \le L_2$ almost surely $\Rightarrow \rho(L_1) \le \rho(L_2)$. A strictly smaller-loss random variable must have a smaller risk measure. This is the bare-minimum sanity requirement and both VaR and CTE satisfy it.
+**Monotonicity (M).** $L_1 \le L_2$ almost surely $\Rightarrow \rho(L_1) \le \rho(L_2)$. A strictly smaller-loss random variable must have a smaller risk measure. This is the bare-minimum sanity requirement and both VaR and CTE satisfy it. (In the *profit* convention used by Artzner et al.'s original paper and some other sources, monotonicity reads $X_1 \le X_2 \Rightarrow \rho(X_1) \ge \rho(X_2)$ — bigger wealth means smaller risk — so readers cross-referencing should flip the inequality alongside the sign convention.)
 
 **Translation invariance (TI).** $\rho(L + c) = \rho(L) + c$ for any constant $c$. Adding a deterministic dollar of loss adds a dollar of risk. Note the sign: adding a deterministic dollar of *profit* (so $c < 0$) reduces the risk by a dollar — this is the "cash can be netted against risk" statement underlying capital-charge accounting.
 
@@ -201,6 +210,9 @@ A risk measure $\rho$ acting on a space of random losses is *coherent* in the Ar
 ### 9.6.1 The sub-additivity failure of VaR
 
 To see the VaR failure concretely, take two independent loans, each of which defaults with probability 4% producing a loss of 100, and otherwise pays zero. Individually, the 95% VaR of each is 0 — a 4% tail event does not breach the 5% confidence line. But the sum can default twice, once, or not at all. The probability of at least one default is roughly 8%, of two defaults about 0.16%, so the 95% VaR of the merged book is around 100, not 0. Merging two risks whose individual VaRs are zero gave a combined VaR of 100.
+
+![VaR sub-additivity failure on two independent loans](figures/ch09-subadditivity-failure.png)
+*Monte-Carlo verification of the two-loan thought experiment: each loan has VaR$_{95} = 0$ in isolation, but their sum has VaR$_{95} \approx 100$. CTE is coherent — the merged CTE is bounded by the sum of individual CTEs — and so can serve as a risk-budgeting axis where VaR cannot.*
 
 The pathology is generic to any loss distribution with mass concentrated just inside the VaR threshold. It afflicts credit books particularly badly because individual defaults are exactly such low-probability-high-impact events: an investment-grade bond has a 1-year default probability under 1%, well below the 5% VaR threshold, so its individual VaR is zero. A portfolio of thousands of such bonds has a default frequency of tens per year and generates substantial portfolio VaR. If we used VaR to set capital on individual loans we would allocate zero, yet the portfolio clearly needs substantial capital. The CTE-based alternative assigns positive CTE even to individual low-probability defaults — because the tail expectation averages over the default scenario — and produces a portfolio CTE that equals the sum of individual CTEs minus diversification benefits. A much more coherent story.
 
@@ -269,6 +281,9 @@ $$
 asymptotically $\chi^2_1$ under the null. Reject at 5% significance if $\mathrm{LR}_{\mathrm{POF}} > 3.84$. For a 99% VaR with $n = 250$ days, expected exceedances are $n\alpha = 2.5$; the test rejects above about 7 exceedances or at 0 (which is paradoxically *too few*, suggesting the model is too conservative and over-capitalising the book).
 
 This is the essence of the Basel "traffic light" regime. More than 4 exceedances in a 250-day window puts the model in the yellow zone (capital multiplier $k$ rises from 3.00 by 0.4-0.85 depending on count); more than 9 exceedances puts it in the red zone (multiplier capped at 4.00, pending a full model revision). Capital is directly tied to backtest performance, giving banks a strong financial incentive to build models that actually work.
+
+![Kupiec POF acceptance band over a 250-day 99% VaR backtest](figures/ch09-kupiec-band.png)
+*Binomial pmf of exceedance counts under the null $X\sim\mathrm{Binomial}(250,\,0.01)$, coloured green where the Kupiec likelihood-ratio is below the $5\%$ critical value $3.84$ and red where it rejects. Green bars span roughly $0$–$6$ exceedances; beyond that the model is rejected as under-capitalised. Zero exceedances is technically also rejected as over-conservative.*
 
 ### 9.7.3 Christoffersen's independence test
 

@@ -88,6 +88,9 @@ Two small but important points about (10.5). First, the inner bracket is the unb
 
 The $M^{-1/2}$ convergence rate is universal for i.i.d. Monte Carlo with finite variance. Its immediate operational consequence: *halving the error bar costs four times as many paths*. A trader who wants to move an MC estimate from three significant figures to four needs $100\times$ more paths; from four to five, $10{,}000\times$ more. The law of diminishing returns is brutal, which is exactly why variance reduction matters so much (§10.8).
 
+![Monte-Carlo standard error vs sample size](figures/ch10-mc-sqrt-rate.png)
+*Empirical verification of the $M^{-1/2}$ rate. The standard deviation of the sample-mean estimator across 200 replications of an ATM European-call MC price, plotted against path count $M$ on log-log axes, tracks the $1/\sqrt{M}$ reference line over five decades. Variance reduction (§10.8) changes the constant, not the slope.*
+
 Let us work through a concrete error budget to build intuition. Suppose we are pricing a one-year ATM European call with Black–Scholes parameters $S_0 = K = 100$, $r = 5\%$, $\sigma = 20\%$, $T = 1$. The closed-form Black–Scholes value (Chapter 6) is $V_0^{\mathrm{BS}}\approx 10.45$. The payoff $X = e^{-rT}(A_T-K)_+$ has standard deviation roughly $\mathrm{sd}(X)\approx 14$ at these parameters — one can read this from direct moment calculation or from the empirical standard deviation of a pilot MC run. A Monte-Carlo estimate with $M = 10{,}000$ paths therefore has a standard error of $14/\sqrt{10{,}000} = 0.14$, so the 95% confidence interval is approximately
 
 $$
@@ -109,6 +112,9 @@ The standard error is not a guarantee — it is an estimate of an estimate. The 
 ## 10.4 The Lognormal GBM Path Generator
 
 With the SLLN in hand and the standard-error formula (10.5) at our disposal, the remaining ingredient for a Monte-Carlo pricer is a path generator — a procedure that, on demand, produces sample paths $\{S_{t_n}\}_{n=0}^N$ from the risk-neutral law of the asset. For GBM the generator is *exact*, not approximate; this is one of the two or three SDEs whose discretisation introduces no bias at the grid points. The reason is that Chapter 6 has already solved the GBM SDE in closed form.
+
+![GBM sample paths under Q](figures/ch10-gbm-paths.png)
+*Thirty risk-neutral GBM paths for $S_0 = 100$, $r = 5\%$, $\sigma = 20\%$, $T = 1\text{y}$. The red curve is $\mathbb{E}^{\mathbb{Q}}[S_t] = S_0 e^{rt}$, the risk-neutral expected trajectory. Monte-Carlo pricing averages discounted payoffs over such paths; each path contributes one term of the sample mean (10.3).*
 
 ### 10.4.1 Exact lognormal increment
 
@@ -408,7 +414,7 @@ V^{\text{up-and-in call}} \;+\; V^{\text{up-and-out call}} \;=\; V^{\text{vanill
 \tag{10.27}
 $$
 
-since exactly one of the two triggers for every path. In-out parity lets us price one member of the pair in terms of the other; it also serves as a primary source of variance reduction in barrier MC, because the vanilla call price is available in closed form and subtracting a known quantity reduces simulation noise (§10.8).
+since exactly one of the two triggers for every path. In-out parity lets us price one member of the pair in terms of the other; it also serves as a primary source of variance reduction in barrier MC, because the vanilla call price is available in closed form and subtracting a known quantity reduces simulation noise (§10.8). (Implicit assumption: the knock-in and knock-out contracts pay the same — typically zero — rebate on the knock event. If the knock-out pays a cash rebate $R$ at the first-passage time $\tau_B$ while the knock-in pays nothing on that event, (10.27) picks up an additional rebate-PV term $\mathbb{E}^{\mathbb{Q}}[e^{-r\tau_B} R\,\mathbf 1_{\{\tau_B \le T\}}]$ on the right-hand side; the rebate-free version is the one priced throughout this section.)
 
 Barrier options are strictly cheaper than the corresponding vanillas (for knock-out barriers that cancel the contract) or equal-or-cheaper (for knock-ins, which have a chance of never activating and paying zero). They are used extensively in structured products: a "twin-win" note pays the magnitude of index returns unless a down-barrier is breached; a "reverse convertible" pays a coupon unless a down-barrier is breached, in which case the investor is put the stock at a fixed strike. The barrier adds path-dependence to the payoff, preventing closed-form lognormal pricing in general — though the classical Merton reflection-principle formulas *do* give closed forms under continuous monitoring of geometric Brownian motion with constant parameters.
 
@@ -526,6 +532,9 @@ $$
 where $\rho := \operatorname{Corr}(X(Z), X(-Z))$. If $\rho < 0$, the variance is strictly less than $\mathbb{V}[X]/2$, and antithetic sampling outperforms independent sampling even at equal cost.
 
 When does antithetic sampling work? It works best when the payoff $X(Z)$ is *monotone* in $Z$ — calls are, puts are (after sign flip), digitals are, lookbacks almost are. For a monotone increasing $X$, $X(Z)$ and $X(-Z)$ have correlation close to $-1$ in the Gaussian tails, and the variance reduction factor can be substantial. For a European call at typical ATM parameters, antithetic sampling at $M$ pairs typically achieves a variance reduction of about $2$ relative to independent sampling at $M$ pairs (i.e., $2M$ independent draws) — equivalent to halving the standard error for the same number of payoff evaluations.
+
+![Antithetic vs plain MC standard error at equal compute](figures/ch10-antithetic-vs-plain.png)
+*At equal payoff-evaluation cost, antithetic sampling lowers the MC standard error below plain sampling across every sample size. Both schemes retain the $1/\sqrt{M}$ slope — variance reduction moves the intercept, not the rate — and the empirical gap matches the theoretical factor of $\sqrt{2}$ for monotone payoffs near ATM.*
 
 Antithetic sampling fails when the payoff is *symmetric in $Z$* — for example, a straddle $X(Z) = |S_T - K|$ has $X(Z) = X(-Z)$ at strike $K = S_0 e^{rT}$, and the antithetic pair is perfectly positively correlated, giving $\rho = +1$ and *no* variance reduction (actually an increase relative to a single draw, though not relative to two independent draws). A diagnostic: if antithetic sampling does not improve things, try a pilot run with $M = 1000$ independent vs $M = 500$ antithetic pairs and compare the empirical variances. This takes fifteen minutes and can save a day of debugging.
 
