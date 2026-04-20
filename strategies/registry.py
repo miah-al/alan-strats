@@ -1148,6 +1148,28 @@ STRATEGY_METADATA: dict[str, dict] = {
         "required_data": ["price", "options", "vix"],
         "has_screener": True,
     },
+    "dealer_gamma_regime": {
+        "display_name": "Dealer Gamma Regime",
+        "type": "rule",
+        "status": "active",
+        "icon": "🧲",
+        "description": (
+            "Trades the actual dealer gamma mechanic with three regime-specific options structures. "
+            "Negative GEX (spot < flip) → long straddle, capturing trend amplification. "
+            "Positive GEX (spot > flip) → iron condor anchored on detected call/put walls, capturing pin. "
+            "Near-flip → long straddle on regime inflection. "
+            "GEX computed from options chain; sized by distance-to-flip, not by VIX bands."
+        ),
+        "asset_class": "equities_options",
+        "typical_holding_days": 18,
+        "target_sharpe": 1.5,
+        "class_path": "alan_trader.strategies.dealer_gamma_regime.DealerGammaRegimeStrategy",
+        "requires_training": False,
+        "uses_ml": False,
+        "requires_ticker": True,
+        "required_data": ["price", "options_chain", "vix"],
+        "has_screener": True,
+    },
 
     # ── New AI strategies (2026-04-06) ──────────────────────────────────────
     "momentum_regime_spread": {

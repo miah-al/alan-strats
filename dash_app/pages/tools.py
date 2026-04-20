@@ -86,10 +86,11 @@ def _data_manager_tab() -> html.Div:
                 dbc.Input(
                     id="tools-dm-ticker",
                     placeholder="SPY, TLT, AAPL…",
+                    value="SPY",
                     style={"backgroundColor": T.BG_ELEVATED, "color": T.TEXT_PRIMARY,
                            "border": f"1px solid {T.BORDER}", "fontSize": "13px",
                            "width": "180px"},
-                    debounce=True,
+                    debounce=False,
                 ),
             ], style={"flex": "0 0 auto"}),
             html.Div([
@@ -124,6 +125,9 @@ def _data_manager_tab() -> html.Div:
             ], style={"flex": "0 0 auto", "alignSelf": "flex-end", "paddingBottom": "4px"}),
         ], style={"display": "flex", "gap": "16px", "marginBottom": "20px",
                   "flexWrap": "wrap", "alignItems": "flex-start"}),
+
+        # ── Sync All progress state (drives the progressive callback) ────────
+        dcc.Store(id="tools-dm-sync-all-state", data=None),
 
         # ── Sync cards ────────────────────────────────────────────────────────
         dbc.Row([
@@ -698,8 +702,37 @@ def _polygon_explorer_tab() -> html.Div:
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# Embedded pages — Models and Quant Course re-use their own layout() functions.
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def _models_tab() -> html.Div:
+    from dash_app.pages.models import layout as _models_layout
+    return html.Div(_models_layout(), style={"padding": "16px 0"})
+
+
+def _course_tab() -> html.Div:
+    from dash_app.pages.course import layout as _course_layout
+    return html.Div(_course_layout(), style={"padding": "16px 0"})
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
 # Main layout
 # ═══════════════════════════════════════════════════════════════════════════════
+
+def _get_tab_builder(tab_id: str):
+    # Lazy lookup — some *_tab functions are defined below layout() in this
+    # file, so resolve by name at call time rather than at module-import time.
+    return {
+        "data-manager":     _data_manager_tab,
+        "iv-metrics":       _iv_metrics_tab,
+        "risk":             _risk_tab,
+        "registry":         _registry_tab,
+        "models":           _models_tab,
+        "course":           _course_tab,
+        "guide":            _guide_tab,
+        "polygon-explorer": _polygon_explorer_tab,
+    }.get(tab_id)
+
 
 def layout() -> html.Div:
     return html.Div([
@@ -709,22 +742,41 @@ def layout() -> html.Div:
         }),
         dbc.Tabs(
             [
-                dbc.Tab(_data_manager_tab(),     label="Data Manager",
+                dbc.Tab(label="Data Manager",     tab_id="data-manager",
                         tab_style=_TAB_STYLE, active_tab_style=_TAB_ACT_STYLE),
-                dbc.Tab(_iv_metrics_tab(),       label="IV Metrics",
+                dbc.Tab(label="IV Metrics",       tab_id="iv-metrics",
                         tab_style=_TAB_STYLE, active_tab_style=_TAB_ACT_STYLE),
-                dbc.Tab(_risk_tab(),             label="Risk",
+                dbc.Tab(label="Risk",             tab_id="risk",
                         tab_style=_TAB_STYLE, active_tab_style=_TAB_ACT_STYLE),
-                dbc.Tab(_registry_tab(),         label="Registry",
+                dbc.Tab(label="Registry",         tab_id="registry",
                         tab_style=_TAB_STYLE, active_tab_style=_TAB_ACT_STYLE),
-                dbc.Tab(_guide_tab(),            label="Guide",
+                dbc.Tab(label="Models",           tab_id="models",
                         tab_style=_TAB_STYLE, active_tab_style=_TAB_ACT_STYLE),
-                dbc.Tab(_polygon_explorer_tab(), label="Polygon Explorer",
+                dbc.Tab(label="Quant Course",     tab_id="course",
+                        tab_style=_TAB_STYLE, active_tab_style=_TAB_ACT_STYLE),
+                dbc.Tab(label="Guide",            tab_id="guide",
+                        tab_style=_TAB_STYLE, active_tab_style=_TAB_ACT_STYLE),
+                dbc.Tab(label="Polygon Explorer", tab_id="polygon-explorer",
                         tab_style=_TAB_STYLE, active_tab_style=_TAB_ACT_STYLE),
             ],
+            id="tools-tabs",
+            active_tab="data-manager",
             style={"marginBottom": "0"},
         ),
+        # Pre-render the first tab so it shows instantly; other tabs lazy-load
+        # via the callback below on first click.
+        html.Div(_data_manager_tab(), id="tools-tab-content"),
     ], style=T.STYLE_PAGE)
+
+
+@callback(
+    Output("tools-tab-content", "children"),
+    Input("tools-tabs", "active_tab"),
+    prevent_initial_call=True,
+)
+def _render_tools_tab(active):
+    builder = _get_tab_builder(active)
+    return builder() if builder else no_update
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -1062,6 +1114,25 @@ for _btn, _st, _cap, _dt in _SYNC_BUTTONS:
     _register_sync_callback(_btn, _st, _cap, _dt)
 
 
+_SYNC_ALL_STEPS = ("price", "news", "divs", "earnings",
+                   "treasury", "vix", "macro", "cpi", "fomc")
+# Map step name → index in the output tuple (order matches outputs below).
+_SYNC_ALL_IDX = {name: i for i, name in enumerate(_SYNC_ALL_STEPS)}
+
+
+def _running_badge() -> html.Span:
+    return html.Span(
+        [
+            html.Span(className="app-busy-dot",
+                      style={"display": "inline-block", "width": "8px", "height": "8px",
+                             "borderRadius": "50%", "backgroundColor": "#a78bfa",
+                             "marginRight": "6px", "verticalAlign": "middle"}),
+            html.Span("Running…"),
+        ],
+        style={"color": "#a78bfa", "fontWeight": "600"},
+    )
+
+
 @callback(
     Output("tools-dm-st-price",    "children", allow_duplicate=True),
     Output("tools-dm-st-news",     "children", allow_duplicate=True),
@@ -1072,24 +1143,65 @@ for _btn, _st, _cap, _dt in _SYNC_BUTTONS:
     Output("tools-dm-st-macro",    "children", allow_duplicate=True),
     Output("tools-dm-st-cpi",      "children", allow_duplicate=True),
     Output("tools-dm-st-fomc",     "children", allow_duplicate=True),
-    Input("tools-dm-sync-all", "n_clicks"),
-    State("tools-dm-ticker",    "value"),
-    State("tools-dm-from-date", "value"),
-    State("tools-dm-force-full","value"),
+    Output("tools-dm-sync-all-state", "data"),
+    Input("tools-dm-sync-all",        "n_clicks"),
+    Input("tools-dm-sync-all-state",  "data"),
+    State("tools-dm-ticker",          "value"),
+    State("tools-dm-from-date",       "value"),
+    State("tools-dm-force-full",      "value"),
     prevent_initial_call=True,
 )
-def _sync_all(n, ticker, from_date, force):
-    if not n:
-        return [no_update] * 9
-    t  = (ticker or "").strip().upper()
-    fd = from_date or "2020-01-01"
-    fr = force or []
-    results = []
-    for dt in ("price", "news", "divs", "earnings",
-               "treasury", "vix", "macro", "cpi", "fomc"):
-        s, _ = _run_sync(dt, t, fd, fr)
-        results.append(s)
-    return results
+def _sync_all_progressive(n, state, ticker, from_date, force):
+    """Runs Sync All one step at a time so the UI shows progress.
+
+    Two triggers:
+      * Button click → seed state, show step 0 as "Running…", others as "Queued".
+      * Store change → execute state["idx"], mark it Done, advance to next.
+    """
+    from dash import ctx
+    trig = ctx.triggered_id
+
+    n_out = len(_SYNC_ALL_STEPS)
+
+    # ── Phase 1: button click — seed state & show queued/running banners ──
+    if trig == "tools-dm-sync-all":
+        if not n:
+            return [no_update] * n_out + [no_update]
+        t  = (ticker or "").strip().upper()
+        fd = from_date or "2020-01-01"
+        fr = force or []
+        if not t:
+            # Ticker required for price/news/divs/earnings; free sources OK.
+            # Seed anyway — the per-step runner will surface the warning per step.
+            pass
+        out = [html.Span("Queued", style={"color": T.TEXT_MUTED})
+               for _ in range(n_out)]
+        out[0] = _running_badge()
+        new_state = {"idx": 0, "ticker": t, "fd": fd, "fr": fr}
+        return out + [new_state]
+
+    # ── Phase 2: state change — execute the current step and advance ──
+    if not isinstance(state, dict) or "idx" not in state:
+        return [no_update] * n_out + [no_update]
+
+    idx = int(state["idx"])
+    if idx >= n_out:
+        return [no_update] * n_out + [None]     # finished — clear state
+
+    step_name = _SYNC_ALL_STEPS[idx]
+    status, _ = _run_sync(step_name, state.get("ticker", ""),
+                          state.get("fd", "2020-01-01"),
+                          state.get("fr", []))
+
+    out = [no_update] * n_out
+    out[idx] = status    # mark current step Done
+    next_idx = idx + 1
+    if next_idx < n_out:
+        out[next_idx] = _running_badge()
+        new_state = {**state, "idx": next_idx}
+    else:
+        new_state = None   # chain complete → stop re-triggering
+    return out + [new_state]
 
 
 @callback(

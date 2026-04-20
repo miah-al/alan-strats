@@ -1,0 +1,9 @@
+# Source material (large binary PDFs/PNGs) — not committed
+/unlocked/
+/pages/
+/new docs/
+/*.pdf
+
+# Build artifacts
+guide/_combined.md
+guide/_debug.tex

@@ -38,6 +38,7 @@ _STRATEGIES_RULES = [
     {"label": "IVR Credit Spread",     "value": "ivr_credit_spread"},
     {"label": "Vol Arbitrage",         "value": "vol_arbitrage"},
     {"label": "GEX Positioning",       "value": "gex_positioning"},
+    {"label": "Dealer Gamma Regime",   "value": "dealer_gamma_regime"},
     {"label": "Broken Wing Butterfly", "value": "broken_wing_butterfly"},
     {"label": "Calendar Spread",       "value": "calendar_spread"},
     {"label": "Earnings Straddle",     "value": "earnings_straddle"},
@@ -1261,6 +1262,7 @@ _TEST_SUITES = {
     "iron_condor_ai":        [{"id": "icai",  "label": "IC AI Tests",                 "module": "test_iron_condor_ai"}],
     "ivr_credit_spread":     [{"id": "ivr",   "label": "IVR Credit Spread Tests",     "module": "test_ivr_credit_spread"}],
     "gex_positioning":       [{"id": "gex",   "label": "GEX Positioning Tests",       "module": "test_gex_positioning"}],
+    "dealer_gamma_regime":   [{"id": "dgr",   "label": "Dealer Gamma Regime Tests",   "module": "test_dealer_gamma_regime"}],
     "broken_wing_butterfly": [{"id": "bwb",   "label": "BWB Strategy Tests",          "module": "test_broken_wing_butterfly"}],
     "calendar_spread":       [{"id": "cal",   "label": "Calendar Spread Tests",       "module": "test_calendar_spread"}],
     "earnings_straddle":     [{"id": "earn",  "label": "Earnings Short Condor Tests", "module": "test_earnings_straddle"}],
@@ -1534,9 +1536,10 @@ def layout() -> html.Div:
                             labelStyle={
                                 "color": T.TEXT_PRIMARY, "fontSize": "13px",
                                 "marginRight": "18px", "cursor": "pointer",
+                                "whiteSpace": "nowrap",
                             },
                         ),
-                    ], style={"flex": "1", "minWidth": "0"}),
+                    ], style={"flex": "1 1 500px", "minWidth": "320px"}),
 
                     # ── Divider ───────────────────────────────────────────────
                     html.Div(style={
@@ -1562,12 +1565,13 @@ def layout() -> html.Div:
                             labelStyle={
                                 "color": T.TEXT_PRIMARY, "fontSize": "13px",
                                 "marginRight": "18px", "cursor": "pointer",
+                                "whiteSpace": "nowrap",
                             },
                         ),
-                    ], style={"flex": "0 0 auto"}),
+                    ], style={"flex": "1 1 500px", "minWidth": "320px"}),
 
                 ], style={"display": "flex", "alignItems": "flex-start",
-                          "flexWrap": "wrap", "gap": "4px"}),
+                          "flexWrap": "wrap", "gap": "12px", "rowGap": "16px"}),
 
                 # Hidden combined store consumed by update_outer_tabs
                 dcc.Store(id="str-strategy-select"),
@@ -2572,7 +2576,8 @@ _STRATEGY_CLASSES_BT = {
     "vix_spike_fade":        ("strategies.vix_spike_fade",        "VixSpikeFadeStrategy"),
     "ivr_credit_spread":     ("strategies.ivr_credit_spread",     "IVRCreditSpreadStrategy"),
     "vol_arbitrage":         ("strategies.vol_arbitrage",         "VolArbitrageStrategy"),
-    "gex_positioning":       ("strategies.gex_positioning",       "GEXPositioningStrategy"),
+    "gex_positioning":       ("strategies.gex_positioning",       "GexPositioningStrategy"),
+    "dealer_gamma_regime":   ("strategies.dealer_gamma_regime",   "DealerGammaRegimeStrategy"),
     "broken_wing_butterfly": ("strategies.broken_wing_butterfly", "BrokenWingButterflyStrategy"),
     "calendar_spread":       ("strategies.calendar_spread",       "CalendarSpreadStrategy"),
     "earnings_straddle":     ("strategies.earnings_straddle",     "EarningsStraddleStrategy"),
@@ -2949,6 +2954,47 @@ def _make_backtest_callback(slug: str):
             rate_df.index = _pd.to_datetime(rate_df.index)
 
         auxiliary_data = {"vix": vix_df, "rate10y": rate_df, "ticker": ticker}
+
+        # ── Options-chain strategies: load OptionSnapshot rows from DB ─────────
+        if slug in ("dealer_gamma_regime", "gamma_flip_breakout",
+                    "oi_imbalance_put_fade", "short_squeeze_vol_expansion",
+                    "iv_skew_momentum", "vol_term_structure_regime"):
+            try:
+                from db.client import get_ticker_id
+                from sqlalchemy import text as _sql_text
+                _tid = get_ticker_id(engine, ticker)
+                if _tid:
+                    with engine.connect() as _c:
+                        _rows = _c.execute(_sql_text("""
+                            SELECT s.SnapshotDate, s.Strike AS StrikePrice,
+                                   s.ContractType AS OptionType, s.ImpliedVol AS iv,
+                                   s.OpenInterest, s.Delta, s.Gamma, s.Bid, s.Ask,
+                                   DATEDIFF(day, s.SnapshotDate, s.ExpirationDate) AS DTE,
+                                   s.ExpirationDate
+                            FROM mkt.OptionSnapshot s
+                            WHERE s.TickerId = :tid
+                              AND s.SnapshotDate BETWEEN :f AND :t
+                            ORDER BY s.SnapshotDate, s.ExpirationDate, s.Strike
+                        """), {"tid": _tid, "f": fd, "t": td}).fetchall()
+                    _cols = ["SnapshotDate", "StrikePrice", "OptionType", "iv",
+                             "OpenInterest", "Delta", "Gamma", "Bid", "Ask",
+                             "DTE", "ExpirationDate"]
+                    auxiliary_data["option_snapshots"] = _pd.DataFrame(_rows, columns=_cols)
+                else:
+                    auxiliary_data["option_snapshots"] = _pd.DataFrame()
+            except Exception as exc:
+                logger.warning(f"{slug}: option_snapshots load failed: {exc}")
+                auxiliary_data["option_snapshots"] = _pd.DataFrame()
+
+            _snaps = auxiliary_data.get("option_snapshots")
+            if _snaps is None or (isinstance(_snaps, _pd.DataFrame) and _snaps.empty):
+                return dbc.Alert([
+                    html.Strong(f"{slug} requires options chain data. "),
+                    html.Br(),
+                    f"No OptionSnapshot rows found for {ticker!r} in "
+                    f"{from_date} → {to_date}. ",
+                    "Sync options data first via Tools → Data Manager → Options.",
+                ], color="warning")
 
         # ── RS Credit Spread: load all 11 sector ETF price series ─────────────
         if slug == "rs_credit_spread":

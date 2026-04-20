@@ -451,6 +451,42 @@ blockquote {
     color: #9ca3af !important;
 }
 
+/* ── Markdown tables (shared: guides + quant course) ─────────────────────── */
+/* Matches the dbc.Table bordered=False, hover=True look used on strategy pages:
+   just a header underline, no cell borders, hover-row highlight. */
+.guide-md table {
+    border-collapse: collapse !important;
+    margin: 14px 0 !important;
+    width: auto;
+    background-color: transparent !important;
+}
+.guide-md th {
+    border: none !important;
+    border-bottom: 1px solid #374151 !important;
+    padding: 10px 16px 10px 0 !important;
+    padding-right: 24px !important;
+    text-align: left;
+    color: #9ca3af !important;
+    font-size: 12px !important;
+    font-weight: 700 !important;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+}
+.guide-md td {
+    border: none !important;
+    padding: 7px 16px 7px 0 !important;
+    padding-right: 24px !important;
+    text-align: left;
+    color: #f9fafb !important;
+    font-size: 13px !important;
+    font-family: 'JetBrains Mono', 'Fira Code', Consolas, monospace !important;
+    vertical-align: top;
+}
+.guide-md tbody tr:hover td {
+    background-color: #1a2235 !important;
+}
+
+
 /* ── dcc.Dropdown group headers (disabled options used as section labels) ─── */
 [class*="-option"][class*="disabled"],
 [class*="-option--is-disabled"] {
@@ -493,5 +529,87 @@ blockquote {
 .js-plotly-plot .plotly .g-xtitle text,
 .js-plotly-plot .plotly .g-ytitle text {
     fill: #9ca3af !important;
+}
+
+/* ── Global busy indicator (toggled by assets/busy_indicator.js) ─────────── */
+#app-busy-indicator {
+    position: fixed;
+    top: 12px;
+    right: 16px;
+    z-index: 10000;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 12px;
+    border-radius: 999px;
+    background: rgba(99, 102, 241, 0.12);
+    border: 1px solid rgba(99, 102, 241, 0.35);
+    color: #a78bfa;
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    opacity: 0;
+    transform: translateY(-6px);
+    pointer-events: none;
+    transition: opacity 120ms ease, transform 120ms ease;
+}
+#app-busy-indicator.busy {
+    opacity: 1;
+    transform: translateY(0);
+}
+#app-busy-indicator .app-busy-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: #a78bfa;
+    box-shadow: 0 0 0 0 rgba(167, 139, 250, 0.7);
+    animation: app-busy-pulse 1s ease-out infinite;
+}
+@keyframes app-busy-pulse {
+    0%   { box-shadow: 0 0 0 0 rgba(167, 139, 250, 0.7); }
+    70%  { box-shadow: 0 0 0 8px rgba(167, 139, 250, 0);  }
+    100% { box-shadow: 0 0 0 0 rgba(167, 139, 250, 0);    }
+}
+
+/* ── Course-chapter list (sidebar) ─────────────────────────────────────── */
+.course-chapter-list .form-check {
+    padding-left: 0 !important;
+    margin: 0;
+}
+.course-chapter-list .form-check-label {
+    width: 100%;
+    transition: background-color 100ms ease;
+}
+.course-chapter-list .form-check-label:hover {
+    background-color: rgba(99, 102, 241, 0.10);
+    color: #a78bfa !important;
+}
+.course-chapter-list input[type="radio"]:checked + label {
+    background-color: rgba(99, 102, 241, 0.20) !important;
+    color: #a78bfa !important;
+    font-weight: 600;
+    border-left: 3px solid #6366f1;
+    padding-left: 7px !important;
+}
+
+/* Disable interactive controls while a Dash callback is in flight. */
+body.app-busy button,
+body.app-busy .btn,
+body.app-busy input[type="checkbox"],
+body.app-busy input[type="radio"],
+body.app-busy input[type="submit"],
+body.app-busy input[type="button"],
+body.app-busy select,
+body.app-busy a.nav-link,
+body.app-busy .form-check-input,
+body.app-busy .dbc-checklist label {
+    pointer-events: none !important;
+    opacity: 0.55 !important;
+    cursor: wait !important;
+}
+/* The busy indicator itself must stay clickable-agnostic (it's pointer-events:none already). */
+body.app-busy {
+    cursor: progress;
 }
 

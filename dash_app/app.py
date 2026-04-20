@@ -52,6 +52,14 @@ app.layout = html.Div(
         dcc.Location(id="url", refresh=False),
         build_sidebar(),
         build_broker_panel(),
+        # Global busy indicator — shown by assets/busy_indicator.js during callbacks.
+        html.Div(
+            [
+                html.Div(className="app-busy-dot"),
+                html.Span("Working", className="app-busy-text"),
+            ],
+            id="app-busy-indicator",
+        ),
         html.Div(
             id="page-content",
             style={
@@ -71,6 +79,8 @@ import dash_app.pages.paper_trading
 import dash_app.pages.market
 import dash_app.pages.strategies
 import dash_app.pages.tools
+import dash_app.pages.models
+import dash_app.pages.course
 import dash_app.pages.broker  # registers broker panel callbacks
 
 # ── Routing ───────────────────────────────────────────────────────────────────
@@ -88,6 +98,12 @@ def render_page(pathname: str):
             return layout()
         if pathname == "/tools":
             from dash_app.pages.tools import layout
+            return layout()
+        if pathname == "/models":
+            from dash_app.pages.models import layout
+            return layout()
+        if pathname == "/course":
+            from dash_app.pages.course import layout
             return layout()
         return html.Div(
             [
