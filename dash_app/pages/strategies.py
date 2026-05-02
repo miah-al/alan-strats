@@ -44,6 +44,8 @@ _STRATEGIES_RULES = [
     {"label": "Earnings Straddle",     "value": "earnings_straddle"},
     {"label": "Wheel Strategy",        "value": "wheel_strategy"},
     {"label": "Bull Put Spread",       "value": "bull_put_spread"},
+    {"label": "OpEx Max Pain Pin",     "value": "expiry_max_pain"},
+    {"label": "Tail Risk Put Spread",  "value": "tail_risk_put_spread"},
 ]
 
 _STRATEGIES_AI = [
@@ -54,6 +56,9 @@ _STRATEGIES_AI = [
     {"label": "Covered Call Optimizer AI",    "value": "covered_call_ai"},
     {"label": "RS Credit Spread AI",          "value": "rs_credit_spread"},
     {"label": "Put Steal — Interest Arb AI",  "value": "put_steal"},
+    {"label": "HMM Regime Classifier",        "value": "hmm_regime"},
+    {"label": "Short Squeeze Detector",       "value": "short_squeeze_detector"},
+    {"label": "News Sentiment NLP",           "value": "news_sentiment_nlp"},
 ]
 
 # flat list kept for label lookup and scan-callback registration

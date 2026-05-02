@@ -411,12 +411,23 @@ STRATEGY_METADATA: dict[str, dict] = {
     "tail_risk_put_spread": {
         "display_name": "Tail Risk Put Spread",
         "type": "rule",
-        "status": "stub",
-        "description": "Buy 5% OTM put, sell 10% OTM put. Cheaper hedge with defined payoff.",
+        "status": "active",
+        "icon": "🛡️",
+        "description": (
+            "Systematic SPY put-spread hedge. Buy 7% OTM put, sell 18% OTM put on a "
+            "60-90 DTE rolling cadence. Caps payout in exchange for ~50% lower premium "
+            "vs naked long puts (Israelov & Nielsen 2015). Hard 1% annual cost cap, "
+            "100%-gain harvest, DTE-30 roll, deep-ITM-delta roll. Negative-EV insurance."
+        ),
         "asset_class": "equities_options",
-        "typical_holding_days": 30,
-        "target_sharpe": -0.3,
-        "class_path": "",
+        "typical_holding_days": 75,
+        "target_sharpe": 0.7,
+        "class_path": "alan_trader.strategies.tail_risk_put_spread.TailRiskPutSpreadStrategy",
+        "requires_training": False,
+        "uses_ml": False,
+        "requires_ticker": False,
+        "required_data": ["price", "vix"],
+        "has_screener": False,
     },
 
     # ── Cross-asset ─────────────────────────────────────────────────────────
@@ -628,20 +639,23 @@ STRATEGY_METADATA: dict[str, dict] = {
     "expiry_max_pain": {
         "display_name": "OpEx Max Pain Pin",
         "type": "rule",
-        "status": "stub",
+        "status": "active",
         "icon": "📌",
         "description": (
-            "On expiration Fridays, calculate the max-pain strike (where total option value is minimized). "
-            "Enter ATM butterfly centered on max-pain when spot is within 0.5% of the pin. "
-            "Market makers' delta hedging tends to pin prices near this level into close."
+            "Monthly OpEx pin trade. On Mon/Tue of OpEx week, compute max-pain strike from the "
+            "Friday-expiring option chain. When |spot − maxpain|/spot is in [0.5%, 3.5%], net "
+            "GEX is positive (dealers long gamma), and VIX ≤ 25, sell defined-risk iron butterfly "
+            "anchored at max pain. Hold to Friday close. Cites Stoll/Whaley 1991, Ni/Pearson/Poteshman 2005."
         ),
         "asset_class": "equities_options",
-        "typical_holding_days": 1,
-        "target_sharpe": 0.9,
-        "class_path": "",
+        "typical_holding_days": 4,
+        "target_sharpe": 1.3,
+        "class_path": "alan_trader.strategies.expiry_max_pain.ExpiryMaxPainStrategy",
         "requires_training": False,
         "uses_ml": False,
-        "required_data": ["price", "options_chain"],
+        "requires_ticker": True,
+        "required_data": ["price", "options_chain", "vix"],
+        "has_screener": True,
     },
     "turn_of_month": {
         "display_name": "Turn-of-Month Effect",
@@ -684,20 +698,24 @@ STRATEGY_METADATA: dict[str, dict] = {
     "news_sentiment_nlp": {
         "display_name": "News Sentiment NLP",
         "type": "ai",
-        "status": "stub",
+        "status": "active",
         "icon": "📰",
         "description": (
-            "Fine-tuned FinBERT model scores real-time news articles and earnings call transcripts. "
-            "Aggregate daily sentiment score across top stories. Enter bull/bear spreads when sentiment "
-            "diverges sharply from recent price action (sentiment leads price by 1–3 days)."
+            "Consumes a per-ticker daily sentiment table (FinBERT/LLM upstream — strategy is "
+            "NLP-agnostic). Computes 30d sentiment z-score; trades defined-risk debit spreads "
+            "(bull-call when z ≥ +2.0, bear-put when z ≤ −2.0) confirmed by a 3-class GBM "
+            "trained walk-forward on price+sentiment features. Reversal-exit when z reverses "
+            "through ±1. Cites Tetlock 2007, Loughran/McDonald 2011, Araci 2019."
         ),
         "asset_class": "equities_options",
-        "typical_holding_days": 3,
-        "target_sharpe": 1.0,
-        "class_path": "",
+        "typical_holding_days": 4,
+        "target_sharpe": 1.4,
+        "class_path": "alan_trader.strategies.news_sentiment_nlp.NewsSentimentNLPStrategy",
         "requires_training": True,
         "uses_ml": True,
-        "required_data": ["price", "news"],
+        "requires_ticker": True,
+        "required_data": ["price", "vix", "news_sentiment"],
+        "has_screener": True,
     },
     "gex_positioning": {
         "display_name": "Dealer Gamma Exposure",
@@ -721,20 +739,25 @@ STRATEGY_METADATA: dict[str, dict] = {
     "short_squeeze_detector": {
         "display_name": "Short Squeeze Detector",
         "type": "ai",
-        "status": "stub",
+        "status": "active",
         "icon": "🚀",
         "description": (
-            "Screen for stocks with short interest > 20% of float, high borrow cost, and a positive "
-            "catalyst trigger (beat + raise, breakout on volume). ML model scores squeeze potential. "
-            "Enter OTM bull call spreads sized for asymmetric payoff on explosive moves."
+            "GBM classifier predicts forward 5d ≥+15% squeezes from FINRA short-interest "
+            "(SI%, days-to-cover, utilization) + options-chain features (call OI concentration, "
+            "OTM call vol surge, ATM IV, volume ratio, VIX). Falls back to options-only feature "
+            "set when SI data absent. Trades long calls (uncapped lottery profile) — distinct from "
+            "short_squeeze_vol_expansion's bull-call-spread structure. "
+            "Cites D'Avolio 2002, Diamond/Verrecchia 1987, Boehmer/Jones/Zhang 2008."
         ),
         "asset_class": "equities_options",
-        "typical_holding_days": 5,
-        "target_sharpe": 1.3,
-        "class_path": "",
+        "typical_holding_days": 10,
+        "target_sharpe": 1.6,
+        "class_path": "alan_trader.strategies.short_squeeze_detector.ShortSqueezeDetectorStrategy",
         "requires_training": True,
         "uses_ml": True,
-        "required_data": ["price", "short_interest", "options_chain", "news"],
+        "requires_ticker": True,
+        "required_data": ["price", "options_chain", "vix", "short_interest"],
+        "has_screener": True,
     },
 
     # ── Technical / systematic trend ─────────────────────────────────────────
@@ -794,23 +817,27 @@ STRATEGY_METADATA: dict[str, dict] = {
     },
 
     # ── Regime-aware ML ──────────────────────────────────────────────────────
-    "regime_hmm": {
+    "hmm_regime": {
         "display_name": "HMM Regime Classifier",
         "type": "ai",
-        "status": "stub",
+        "status": "active",
         "icon": "🔮",
         "description": (
-            "Hidden Markov Model on daily returns, realized vol, and VIX detects market regime: "
-            "bull (low vol, trending), bear (high vol, trending), or choppy (high vol, mean-reverting). "
-            "Acts as a master filter — routes signals from other strategies through regime gating."
+            "3-state Gaussian HMM on (log return, VIX, 20d realized vol) recovers low-vol bull / "
+            "chop / high-vol bear regimes (Hamilton 1989, Ang/Bekaert 2002). Walk-forward EM with "
+            "state-relabel by ascending vol mean (kills label-switching). Trades regime-conditional "
+            "defined-risk options structures: bull put credit spread (state 0), iron condor (state 1), "
+            "long put debit spread (state 2). Falls back to GaussianMixture if hmmlearn missing."
         ),
-        "asset_class": "equities",
-        "typical_holding_days": 0,   # meta-strategy, no direct positions
-        "target_sharpe": 0.0,
-        "class_path": "",
+        "asset_class": "equities_options",
+        "typical_holding_days": 21,
+        "target_sharpe": 1.4,
+        "class_path": "alan_trader.strategies.hmm_regime.HMMRegimeStrategy",
         "requires_training": True,
         "uses_ml": True,
+        "requires_ticker": True,
         "required_data": ["price", "vix"],
+        "has_screener": True,
     },
     "reinforcement_agent": {
         "display_name": "RL Execution Agent",
