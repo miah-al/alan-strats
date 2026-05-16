@@ -175,3 +175,63 @@ Stop loss             −20%                       −25%                       
 Profit ladder         33% at +50%, 33% at +100%  50% at +50%                        25% at +50%, 50% at +100%
 Max position size     1% of portfolio            2%                                 3%
 ```
+
+---
+
+## Data Wiring
+
+The dashboard backtest path supplies four auxiliary feeds:
+
+```
+Key                 Source                     Required?  Loader
+------------------  -------------------------  ---------  ----------------------------------------
+option_snapshots    mkt.OptionSnapshot         REQUIRED   inline SELECT in dash_app/pages/strategies.py
+vix                 mkt.VixBar                 REQUIRED   db.client.get_vix_bars
+short_interest      mkt.ShortInterest          OPTIONAL   db.client.get_short_interest
+spy_price           mkt.PriceBar (SPY)         OPTIONAL   db.client.get_price_bars (skipped when ticker == SPY)
+```
+
+### Two-tier feature set
+
+The strategy chooses its feature set based on whether SI data is present:
+
+- **Full set (11 features)** — adds `short_interest_pct_float`, `days_to_cover`,
+  `utilization` to the options/price/VIX features. Used when
+  `auxiliary_data["short_interest"]` is non-empty.
+- **Fallback set (7 features)** — drops the three SI features. Used automatically when
+  SI is missing — no crash, just a less-informed model. The strategy logs which set is
+  in use and surfaces it in the backtest result `extra["feature_set"]`.
+
+The split is decided ONCE before training; the same feature space is used for both
+training and inference, so there's no train/serve skew.
+
+### How to populate `mkt.ShortInterest`
+
+The repo ships the schema and loader but **not yet a sync job** — populating SI is a
+one-time decision about your data source:
+
+- **Polygon** `/v3/reference/short-interest` — paid endpoint, daily granularity
+- **FINRA TXT files** (free) — bi-monthly snapshots, requires parsing
+- **Quiver Quant** — paid, daily, includes utilization
+
+Whichever source you pick, write rows into `mkt.ShortInterest` with columns
+`(TickerId, SettlementDate, ShortInterestPctFloat, DaysToCover, Utilization, Source)`
+and the loader will surface them automatically. Until SI is populated, every backtest
+of this strategy runs in fallback (7-feature) mode.
+
+---
+
+## Audit notes — leakage check
+
+A senior-quant audit was performed on the label and feature paths. Findings:
+
+- **Label construction is clean.** `_build_labels` looks at `highs[idx+1 : idx+horizon+1]`
+  (strictly forward) and masks the last `horizon` bars with `-1`. Masked labels are
+  excluded from training. No look-ahead.
+- **Fallback feature space is internally consistent.** `self._feature_cols` is set once
+  before training based on `has_si` and reused for both `_train_model` and inference.
+  No train/serve feature mismatch.
+- **The headline target Sharpe (1.6) is structurally optimistic.** Long-call lottery
+  payoffs distort the Sharpe denominator — a few large winners inflate the ratio. The
+  backtest period (2020–2024) over-represents positive labels (GME, AMC, BBBY, meme
+  rotation). Live performance on a forward sample will likely be materially below 1.6.

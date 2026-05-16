@@ -504,3 +504,27 @@ Jobless claims       BLS / Macro                       Labor market health filte
 10-year Treasury     Polygon `DGS10`                   Risk-free rate for Black-Scholes
 S&P 500 RSI breadth  Computed from index constituents  Breadth exhaustion check
 ```
+
+---
+
+## Audit notes — leakage and Sharpe-optimism check
+
+A senior-quant audit was performed on the entry / exit logic. Findings:
+
+- **No look-ahead.** Rolling indicators are backward-looking by default
+  (`vix.rolling(20).mean()`, `close.rolling(200).mean()`). Both training and live
+  decision use today's close — a realistic EOD setup.
+- **Headline target Sharpe (1.8) is structurally optimistic** for three reasons that
+  are NOT bugs but ARE modeling assumptions worth knowing:
+  1. **Frictionless EOD fills.** The simulator fills the bull call spread at
+     Black-Scholes mid on the close — no bid/ask spread, no slippage, no market impact.
+     Real retail round-trip friction on a 2-leg vertical is ~$0.05–$0.10 per spread.
+  2. **VIX-as-IV proxy.** `iv_now = vix_val / 100.0` is used to price the spread on
+     the trading instrument. For SPY this is reasonable; for QQQ/IWM/individual names
+     VIX systematically underprices the spread by 10–30%, inflating the modeled debit.
+  3. **Backtest period bias.** 2020–2024 contained multiple historic VIX-revert events
+     (March 2020 COVID, August 2024 yen-carry unwind, regional-bank scares) that
+     over-represent successful spike-fade outcomes.
+
+  Combined effect: live performance will likely be 30-50% below the headline Sharpe
+  even with the rules executed exactly. The strategy is not broken — it's optimistic.

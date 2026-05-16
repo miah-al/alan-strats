@@ -628,12 +628,26 @@ Data                                          Source             Usage
 --------------------------------------------  -----------------  ---------------------------------------
 Individual stock OHLCV (with opening prices)  Polygon            Entry price, gap calculation, daily MTM
 VIX daily close                               Polygon `VIXIND`   IV proxy for Black-Scholes pricing
-Earnings calendar (eps_actual, eps_estimate)  DB earnings table  Signal generation
+Earnings calendar (eps_actual, eps_estimate)  mkt.Earnings (DB)  Signal generation (surprise > threshold)
 10-year Treasury rate                         Polygon `DGS10`    Risk-free rate for Black-Scholes
 ```
 
-The earnings table must contain: date, ticker, eps_actual, eps_estimate.
-Opening prices are required for accurate gap and entry computation.
+### How the data is wired
+
+The dashboard loads earnings rows via `db.client.get_earnings_calendar()` and passes them as
+`auxiliary_data["earnings"]` — a DataFrame with `[ticker, release_date, date, eps_actual,
+eps_estimate, eps_surprise, ...]`. The strategy keys on `date` (alias of `release_date`),
+`eps_actual`, and `eps_estimate`.
+
+Two sync jobs are required (Tools → Data Manager):
+
+1. **Earnings (Polygon)** — fills financials + EPS actuals
+2. **EPS Estimates (Alpha Vantage)** — fills `AnnouncementDate` (the field used for trade
+   timing) + consensus EPS estimates required for the surprise calc
+
+Without the second sync, the surprise filter `(eps_actual − eps_estimate) / eps_estimate`
+cannot be computed and no trades will fire. Without the announcement date, entries land
+on the SEC `FiledDate` instead — typically 2-6 weeks late, missing the PEAD window entirely.
 
 ---
 

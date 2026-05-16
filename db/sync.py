@@ -834,7 +834,8 @@ def sync_eps_estimates(
 
     engine = get_engine()
 
-    # Ensure EpsEstimate column exists (idempotent)
+    # Ensure EpsEstimate / AnnouncementDate columns exist (idempotent — also handled
+    # by schema.sql migrations, but kept here so this function works on stale schemas).
     with engine.begin() as conn:
         conn.execute(_t("""
             IF NOT EXISTS (
@@ -843,6 +844,14 @@ def sync_eps_estimates(
                   AND COLUMN_NAME = 'EpsEstimate'
             )
             ALTER TABLE mkt.Earnings ADD EpsEstimate FLOAT NULL
+        """))
+        conn.execute(_t("""
+            IF NOT EXISTS (
+                SELECT 1 FROM INFORMATION_SCHEMA.COLUMNS
+                WHERE TABLE_SCHEMA = 'mkt' AND TABLE_NAME = 'Earnings'
+                  AND COLUMN_NAME = 'AnnouncementDate'
+            )
+            ALTER TABLE mkt.Earnings ADD AnnouncementDate DATE NULL
         """))
 
     if progress_cb:
@@ -889,25 +898,38 @@ def sync_eps_estimates(
             except (TypeError, ValueError):
                 act = None
 
-            # Try UPDATE first — most periods already exist from Polygon sync
+            # Alpha Vantage's `reportedDate` IS the actual earnings announcement
+            # date — what strategies need for trade timing. Polygon's `filing_date`
+            # is the SEC filing date, often weeks later. Always populate
+            # AnnouncementDate from reportedDate when available.
+            announce_str = row.get("reportedDate") or None
+
+            # Try UPDATE first — most periods already exist from Polygon sync.
+            # Only overwrite AnnouncementDate when we have a non-null value to
+            # avoid wiping a previously-set date with NULL.
             res = conn.execute(_t("""
                 UPDATE mkt.Earnings
-                SET EpsEstimate = :est
+                SET EpsEstimate     = :est,
+                    AnnouncementDate = COALESCE(:announce, AnnouncementDate)
                 WHERE TickerId = :tid AND PeriodOfReport = :period
-            """), {"est": est, "tid": tid, "period": period_str})
+            """), {"est": est, "announce": announce_str,
+                   "tid": tid, "period": period_str})
 
             if res.rowcount > 0:
                 updated += res.rowcount
             else:
-                # Row not in DB yet — insert with minimal fields
-                filed_str = row.get("reportedDate")
+                # Row not in DB yet — insert with minimal fields. Set both
+                # AnnouncementDate and FiledDate to reportedDate as a best-effort
+                # fallback (Polygon sync, when it lands later, will overwrite
+                # FiledDate with the SEC filing date but leave AnnouncementDate alone).
                 conn.execute(_t("""
                     INSERT INTO mkt.Earnings
-                        (TickerId, PeriodOfReport, EpsBasic, EpsEstimate, FiledDate)
-                    VALUES (:tid, :period, :eps, :est, :filed)
+                        (TickerId, PeriodOfReport, EpsBasic, EpsEstimate,
+                         FiledDate, AnnouncementDate)
+                    VALUES (:tid, :period, :eps, :est, :announce, :announce)
                 """), {"tid": tid, "period": period_str,
                        "eps": act, "est": est,
-                       "filed": filed_str})
+                       "announce": announce_str})
                 inserted += 1
 
     total = updated + inserted

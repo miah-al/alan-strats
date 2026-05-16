@@ -877,12 +877,23 @@ class VolArbitrageStrategy(BaseStrategy):
 
     def _open_trade(self, v: ParityViolation, S: float,
                     capital: float, today, chain=None) -> Optional[dict]:
-        # Max loss per contract = the wider of put spread width or hedge spread width × 100
-        # This is the actual defined-risk per contract set, not a 20% notional approximation
+        # Max loss per contract.
+        # The structure has three independent loss sources at expiry:
+        #   (a) Bull put spread: max-loss = put_sw × 100 (when stock < long put strike)
+        #   (b) Bear call spread (hedge): max-loss = hedge_sw × 100 (when stock > hedge long)
+        #   (c) Long ATM call (cap leg): max-loss = call_price_entry × 100 (when stock ≤ call strike)
+        # (a) and (b) are mutually exclusive at expiry — only one fires — so
+        # max(put_sw, hedge_sw) covers the spreads. But (c) ALWAYS loses its
+        # full debit on downside scenarios where (a) is firing, so the
+        # downside-case max-loss is put_sw + call_price_entry. Take the
+        # conservative bound across all scenarios.
         use_hedge = v.trade_type == "skew_arb" and self.delta_hedge
         put_sw    = getattr(self, "_tmp_put_spread_width",  self.put_spread_width)
         hedge_sw  = getattr(self, "_tmp_hedge_spread_width", self.hedge_spread_width)
-        max_loss_per_contract = max(put_sw, hedge_sw if use_hedge else put_sw) * 100
+        cap_leg   = float(v.call_price or 0.0) if v.trade_type == "skew_arb" else 0.0
+        downside_loss = put_sw + cap_leg
+        upside_loss   = (hedge_sw - cap_leg) if use_hedge else 0.0
+        max_loss_per_contract = max(downside_loss, upside_loss, put_sw) * 100
 
         budget       = capital * self.pos_size_pct
         n_contracts  = max(1, int(budget / max_loss_per_contract))

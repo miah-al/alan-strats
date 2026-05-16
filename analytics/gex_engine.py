@@ -143,6 +143,15 @@ class GEXSnapshot:
     sign_convention:   str = "index_retail_call_long"
     warnings:          list = field(default_factory=list)
 
+    @property
+    def net_gex_billions(self) -> float:
+        """`net_gex` rescaled to $B (per 1% move). Use this when comparing
+        against $B-magnitude thresholds (e.g. SPX dealer GEX of ±1.5B).
+        Audit (2026-05) caught a unit-mismatch in `gex_positioning._classify_gex`
+        that compared a raw `net_gex` value against $B thresholds — surface
+        this property so consumers cannot make that mistake."""
+        return self.net_gex / 1e9
+
 
 # ── Core calculator ─────────────────────────────────────────────────────────
 
@@ -447,3 +456,69 @@ def expected_move_pct(iv_atm: float, dte: int) -> float:
     if iv_atm <= 0 or dte <= 0:
         return 0.01
     return float(iv_atm * math.sqrt(max(dte, 1) / 365.0))
+
+
+# ── Max-pain ─────────────────────────────────────────────────────────────────
+
+def compute_max_pain(chain: pd.DataFrame, spot: float,
+                     expiry_filter: Optional[pd.Timestamp] = None) -> float:
+    """Compute the max-pain strike from an option chain.
+
+    Max pain = strike K* that minimises total option-holder payout at expiry:
+
+        pain(K) = sum_i [ call_OI_i × max(K - strike_i, 0) ]
+                + sum_i [ put_OI_i  × max(strike_i - K, 0) ]
+
+    Returns the K* in `chain["strike"]` that minimises this. Robust to
+    column-name variants (StrikePrice, OptionType vs type) and missing
+    open-interest values (treats missing as 0).
+
+    If `expiry_filter` is given, only rows with that ExpirationDate are used.
+
+    Returns `spot` (a no-op default) if the chain is empty or malformed —
+    callers should treat this as "no max-pain signal" rather than as a
+    valid prediction.
+    """
+    if chain is None or (hasattr(chain, "empty") and chain.empty):
+        return float(spot)
+    df = chain.copy()
+    cols = _normalize_chain(df)
+
+    strike_col = cols.get("strike") or _first_col(df, ("strike", "StrikePrice", "Strike"))
+    oi_col     = cols.get("oi")     or _first_col(df, ("open_interest", "OpenInterest", "oi"))
+    type_col   = cols.get("type")   or _first_col(df, ("type", "OptionType", "ContractType"))
+    if not (strike_col and oi_col and type_col):
+        return float(spot)
+
+    if expiry_filter is not None:
+        exp_col = _first_col(df, ("ExpirationDate", "expiration", "expiry"))
+        if exp_col is not None:
+            df = df[pd.to_datetime(df[exp_col]) == pd.to_datetime(expiry_filter)]
+            if df.empty:
+                return float(spot)
+
+    df = df.dropna(subset=[strike_col])
+    df[oi_col] = pd.to_numeric(df[oi_col], errors="coerce").fillna(0.0)
+
+    type_lower = df[type_col].astype(str).str.lower()
+    is_call = type_lower.str.startswith("c")
+    is_put  = type_lower.str.startswith("p")
+
+    strikes = pd.to_numeric(df[strike_col], errors="coerce").dropna().unique()
+    if len(strikes) == 0:
+        return float(spot)
+    strikes = np.sort(strikes)
+
+    K_arr     = strikes[None, :]                          # (1, n_strikes_test)
+    s_call    = pd.to_numeric(df.loc[is_call, strike_col]).values[:, None]
+    oi_call   = df.loc[is_call, oi_col].values[:, None]
+    s_put     = pd.to_numeric(df.loc[is_put,  strike_col]).values[:, None]
+    oi_put    = df.loc[is_put,  oi_col].values[:, None]
+
+    pain_call = (np.maximum(K_arr - s_call, 0) * oi_call).sum(axis=0) if len(s_call) else np.zeros_like(strikes)
+    pain_put  = (np.maximum(s_put - K_arr, 0) * oi_put ).sum(axis=0) if len(s_put)  else np.zeros_like(strikes)
+    pain_total = pain_call + pain_put
+
+    if pain_total.size == 0 or not np.isfinite(pain_total).any():
+        return float(spot)
+    return float(strikes[int(np.argmin(pain_total))])

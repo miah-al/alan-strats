@@ -160,7 +160,20 @@ In backtest mode, the strategy detects earnings events using a gap threshold:
 earnings_gap = (daily_return.abs() > 0.03) and (prior_day_return.abs() < 0.015)
 ```
 
-In live mode, use Polygon.io's earnings calendar endpoint for precise announcement dates. Real earnings dates eliminate false positives from non-earnings gaps (macro events, index reconstitution, etc.).
+The dashboard backtest path also passes the real earnings calendar from
+`mkt.Earnings` via `auxiliary_data["earnings"]` (loaded by `db.client.get_earnings_calendar`).
+The strategy's gap detector takes precedence at signal time, but the calendar is the
+ground truth — populating it eliminates false positives from non-earnings gaps (macro
+events, index reconstitution, M&A speculation).
+
+**Required sync jobs** (Tools → Data Manager):
+
+1. **Earnings (Polygon)** — financials + filing dates
+2. **EPS Estimates (Alpha Vantage)** — `AnnouncementDate` (the actual release date)
+
+In live mode, the announcement date is what determines whether *today's* gap is from
+earnings vs an unrelated catalyst. Without step 2, only the SEC filing date is recorded
+(typically 2-6 weeks late) and the gap detector cannot align signals to real events.
 
 ---
 

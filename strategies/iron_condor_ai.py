@@ -67,8 +67,13 @@ logger = logging.getLogger(__name__)
 
 # ── Constants ──────────────────────────────────────────────────────────────────
 _RISK_FREE_RATE  = 0.045
-_WARMUP_BARS     = 90       # bars before first ML prediction (was 180 — 4 months is enough)
-_RETRAIN_EVERY   = 15       # bars between model retraining (was 30 — more frequent for small datasets)
+_WARMUP_BARS     = 180      # bars before first ML prediction. Audit (2026-05) flagged
+                            # the prior value of 90 as too small relative to the 14-feature
+                            # space + n_forward purge gap; minimum 180 (~9 months) restores
+                            # a reasonable bias-variance tradeoff post-leakage-fix.
+_RETRAIN_EVERY   = 30       # bars between model retraining. Frequent retrains over a
+                            # small training set were over-fitting noise; 30-bar cadence
+                            # halves that.
 _SAVED_MODELS_DIR = Path(__file__).parent.parent / "saved_models"
 
 
@@ -188,7 +193,9 @@ def _build_feature_matrix(
         ),
         "close_price":       close,             # label construction only, not in FEATURE_COLS
     })
-    return features.ffill().bfill()
+    # ffill only — never bfill. bfill pulls future values backward into early
+    # rows, which is silent look-ahead leakage in walk-forward training.
+    return features.ffill()
 
 
 def _build_labels(close: pd.Series, realized_vol: pd.Series,
@@ -263,11 +270,14 @@ class IronCondorAIStrategy(BaseStrategy):
     target_sharpe        = 1.8
 
     FEATURE_COLS = [
-        "ivr", "adx", "put_call_skew", "iv_term_slope", "realized_vol_20d",
+        "ivr", "adx", "put_call_skew", "iv_term_slope",
         "vrp", "atr_pct", "ret_5d", "ret_20d", "dist_from_ma50",
         "vix_level", "vix_5d_change", "vix_ma_ratio",
         "yield_curve_2y10y", "days_to_month_end",
-    ]  # 15 clean features (removed atm_iv=vix/100 dupe, oi_put_call_proxy=put_call_skew dupe)
+    ]  # 14 features. CRITICAL: realized_vol_20d REMOVED — it was both a feature
+    #  and the label-band normalizer, leaking the supervised target into training.
+    #  Audit (2026-05) found this drove the headline 1.8 Sharpe; honest estimate
+    #  post-fix is ~0.5-0.9. See _build_labels at line 194 for the band formula.
 
     _FEATURE_DEFAULTS = {
         "ivr":               0.50,
@@ -591,9 +601,17 @@ class IronCondorAIStrategy(BaseStrategy):
             margin_curve.append(unrealized_pnl)
 
             # ── 2. Retrain model if due ────────────────────────────────────
+            # CRITICAL: purge gap of `dte_tgt` rows — the label at row j is
+            # constructed from forward prices in (j, j + dte_tgt]. Including
+            # rows j ∈ [i - dte_tgt, i) in the training set means y_j was
+            # observable strictly before bar i, but the FORWARD WINDOW for y_j
+            # overlaps with prices we're using to construct features for the
+            # current prediction. Slice off the last `dte_tgt` training rows
+            # to enforce a temporal gap between training and inference data.
             if i >= _WARMUP_BARS and (i - last_retrain) >= _RETRAIN_EVERY:
-                X_train = feat_df[self.FEATURE_COLS].iloc[:i].values
-                y_train = labels.iloc[:i].values
+                purge_end = max(0, i - dte_tgt)
+                X_train = feat_df[self.FEATURE_COLS].iloc[:purge_end].values
+                y_train = labels.iloc[:purge_end].values
                 mask    = ~np.isnan(X_train).any(axis=1) & ~np.isnan(y_train)
                 X_tr, y_tr = X_train[mask], y_train[mask]
 

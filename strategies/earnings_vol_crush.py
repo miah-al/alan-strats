@@ -300,7 +300,7 @@ class EarningsVolCrushStrategy(BaseStrategy):
             "ret_20d":          ret20,
             "dist_from_ma50":   d_ma50,
             "days_to_month_end": month_end_days,
-        }).ffill().bfill()
+        }).ffill()  # ffill only — bfill leaks future values into early NaNs (walk-forward look-ahead)
 
         # Build labels: did the stock stay contained over h_days after gap?
         labels = pd.Series(np.nan, index=close.index)

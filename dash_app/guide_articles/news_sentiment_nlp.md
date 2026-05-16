@@ -176,3 +176,46 @@ Entry timing           Within 10 min of signal                 Within 30 min  Wi
 Stop loss              −2% from entry                          −3%            −5%
 Max position size      2% of portfolio                         4%             6%
 ```
+
+---
+
+## Data Wiring
+
+The dashboard backtest path provides two auxiliary feeds for this strategy:
+
+### 1. `auxiliary_data["news_sentiment"]` — daily aggregated sentiment
+
+Loaded by `db.client.get_news_sentiment_daily()` from the `mkt.News` table. Schema:
+
+```
+index           pd.DatetimeIndex (one row per published date with ≥1 scored article)
+ticker          uppercase symbol
+sentiment_score mean of mkt.News.Sentiment for the day, NaN-rows ignored
+article_count   number of scored articles that day
+source_weight   1.0 (mkt.News does not yet track provider quality)
+```
+
+`mkt.News.Sentiment` is **VADER-scored** at sync time — a generic English sentiment
+lexicon. It's a usable baseline but **not finance-tuned**. The strategy guide above
+recommends FinBERT (`ProsusAI/finbert`) for production-grade scoring; upgrading the
+sync pipeline to FinBERT is a `db/sync.py`-level change, not a strategy-level one.
+
+`source_weight` is hardcoded to 1.0 because `mkt.News` doesn't yet track provider.
+When a `Source` column is added to the table, the loader can surface per-row weights
+(SEC=1.5, WSJ=1.0, blog=0.3) without touching the strategy.
+
+### 2. `auxiliary_data["earnings_calendar"]` — Series of release dates
+
+Loaded by `db.client.get_earnings_calendar()` and converted to a Series indexed by
+`release_date`. Used to compute the `days_to_next_earnings` feature.
+
+Run these sync jobs (Tools → Data Manager) before backtesting:
+1. **News (Polygon)** — articles + VADER sentiment
+2. **Earnings (Polygon)** + **EPS Estimates (Alpha Vantage)** — release dates
+
+### Degraded-fallback behaviour
+
+If `news_sentiment` is missing or empty, the strategy still completes the backtest but
+collapses to a degenerate no-signal mode (sentiment fixed at 0). The dashboard does not
+abort — it surfaces a warning instead. This is by design: a sentiment strategy without
+sentiment is an honest no-signal degenerate case, not a crash.

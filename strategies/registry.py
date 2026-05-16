@@ -96,8 +96,11 @@ STRATEGY_METADATA: dict[str, dict] = {
         "status": "active",
         "icon": "📊",
         "description": (
-            "Harvests structural put IV overpricing via a fully defined-risk, RH-compliant spread. "
-            "Bull put spread at skew strike + long call + bear call spread hedge. 5 legs, max loss defined at entry."
+            "5-leg defined-risk structure harvesting structural put-IV overpricing: "
+            "bull put spread at skew strike + long ATM call + bear call spread hedge. "
+            "Atomic on IBKR / Schwab; on Robinhood / Webull / Tastytrade requires two "
+            "sequential tickets (4-leg combo cap), so leg-risk applies. Modeled per-trade "
+            "friction is ~3× lower than realistic RH friction on a $1k position."
         ),
         "asset_class": "equities_options",
         "typical_holding_days": 3,
@@ -108,6 +111,15 @@ STRATEGY_METADATA: dict[str, dict] = {
         "requires_ticker": True,
         "required_data": ["price", "options_chain"],
         "has_screener": True,
+        "requires_combo_orders": True,
+        "max_atomic_legs": 5,
+        "broker_compatibility": {
+            "ibkr":       "atomic",
+            "schwab":     "atomic",
+            "robinhood":  "sequential_2_tickets",
+            "webull":     "sequential_2_tickets",
+            "tastytrade": "sequential_2_tickets",
+        },
     },
 
     # ── VIX strategies ─────────────────────────────────────────────────────
@@ -241,12 +253,22 @@ STRATEGY_METADATA: dict[str, dict] = {
     "calendar_spread_vix": {
         "display_name": "Calendar Spread (VIX)",
         "type": "rule",
-        "status": "stub",
-        "description": "Buy back-month VIX call, sell front-month. Profit from term structure collapse.",
+        "status": "active",
+        "icon": "📅",
+        "description": (
+            "Long back-month VIX call, short front-month VIX call (same OTM strike). Captures VIX "
+            "term-structure premium when contango steepens. Hard panic-close when VIX > 35 (calendar "
+            "collapses in vol spikes). Cites Whaley 2009, Eraker/Wu 2017, Cheng 2018."
+        ),
         "asset_class": "volatility",
-        "typical_holding_days": 14,
-        "target_sharpe": 0.9,
-        "class_path": "",
+        "typical_holding_days": 18,
+        "target_sharpe": 1.2,
+        "class_path": "alan_trader.strategies.calendar_spread_vix.VIXCalendarSpreadStrategy",
+        "requires_training": False,
+        "uses_ml": False,
+        "requires_ticker": False,
+        "required_data": ["vix", "vix_term"],
+        "has_screener": True,
     },
     "butterfly_atm": {
         "display_name": "ATM Butterfly",
@@ -294,24 +316,46 @@ STRATEGY_METADATA: dict[str, dict] = {
     "earnings_pin_risk": {
         "display_name": "Earnings Pin Risk",
         "type": "ai",
-        "status": "stub",
-        "description": "Predict pinning to round strikes at expiry after earnings. ML-based.",
+        "status": "active",
+        "icon": "📊",
+        "description": (
+            "GBM classifier predicts P(pin) for upcoming earnings releases (forward |move| ≤ 0.5× "
+            "implied move). When P(pin) ≥ 0.60, sells defined-risk iron butterfly into the event. "
+            "7 features: IVR, RV60, 3Q-rolling earnings move, implied move, size premium, momentum, VIX. "
+            "Requires earnings_calendar. Cites Patell/Wolfson 1979, Dubinsky/Johannes 2006, Barth/So 2014."
+        ),
         "asset_class": "equities_options",
-        "typical_holding_days": 1,
-        "target_sharpe": 1.0,
-        "class_path": "",
+        "typical_holding_days": 3,
+        "target_sharpe": 1.5,
+        "class_path": "alan_trader.strategies.earnings_pin_risk.EarningsPinRiskStrategy",
+        "requires_training": True,
+        "uses_ml": True,
+        "requires_ticker": True,
+        "required_data": ["price", "vix", "earnings_calendar"],
+        "has_screener": True,
     },
 
     # ── Macro ──────────────────────────────────────────────────────────────
-    "macro_yield_curve": {
+    "yield_curve_regime": {
         "display_name": "Yield Curve Regime",
         "type": "ai",
-        "status": "stub",
-        "description": "LSTM on yield curve shape (2s10s, 3m10y) predicts SPY regime for positioning.",
-        "asset_class": "equities",
-        "typical_holding_days": 20,
-        "target_sharpe": 0.9,
-        "class_path": "",
+        "status": "active",
+        "icon": "🧮",
+        "description": (
+            "3-class GBM on 8 yield-curve features (2y10y, 2y10y z-score, 30d slope momentum, "
+            "3m10y, 5y-10y concavity, TED proxy, VIX, VIX MA ratio) predicts forward 60d equity "
+            "regime. Trades regime-conditional defined-risk SPY spreads: bull put credit (bull), "
+            "iron condor (chop), bear put debit (bear). Cites Estrella/Mishkin 1998, Ang/Piazzesi/Wei 2006."
+        ),
+        "asset_class": "equities_options",
+        "typical_holding_days": 21,
+        "target_sharpe": 1.2,
+        "class_path": "alan_trader.strategies.yield_curve_regime.YieldCurveRegimeStrategy",
+        "requires_training": True,
+        "uses_ml": True,
+        "requires_ticker": False,
+        "required_data": ["price", "vix", "macro"],
+        "has_screener": True,
     },
     "macro_fed_cycle": {
         "display_name": "Fed Cycle Play",
@@ -402,11 +446,23 @@ STRATEGY_METADATA: dict[str, dict] = {
     "tail_risk_long_put": {
         "display_name": "Tail Risk Long Put",
         "type": "rule",
-        "status": "stub",
-        "description": "Hold 1–5% OTM SPY puts as portfolio insurance. Roll monthly.",
+        "status": "active",
+        "icon": "🛡️",
+        "description": (
+            "Naked SPY long-put insurance program. 15% OTM puts, 60-90 DTE, monthly cadence, "
+            "1.5% annual cost cap, 100%-gain harvest, DTE-30 / deep-ITM-delta roll. Uncapped "
+            "convexity in tail crashes (vs sibling tail_risk_put_spread which caps payout for "
+            "lower cost). Cites Bhansali 2008, Israelov/Nielsen 2015, Cole 2013."
+        ),
         "asset_class": "equities_options",
-        "typical_holding_days": 30,
-        "target_sharpe": -0.5,
+        "typical_holding_days": 75,
+        "target_sharpe": 0.4,
+        "class_path": "alan_trader.strategies.tail_risk_long_put.TailRiskLongPutStrategy",
+        "requires_training": False,
+        "uses_ml": False,
+        "requires_ticker": False,
+        "required_data": ["price", "vix"],
+        "has_screener": False,
     },
     "tail_risk_put_spread": {
         "display_name": "Tail Risk Put Spread",
@@ -603,20 +659,23 @@ STRATEGY_METADATA: dict[str, dict] = {
     "fomc_event_straddle": {
         "display_name": "FOMC Event Straddle",
         "type": "rule",
-        "status": "stub",
+        "status": "active",
         "icon": "🏦",
         "description": (
-            "Buy ATM SPY straddle 3 days before scheduled FOMC meeting. "
-            "Sell one leg immediately after the announcement, hold survivor for follow-through. "
-            "Captures the IV expansion into the event and the directional move after."
+            "Long ATM SPY straddle entered T-2 before FOMC, exited T+1 post-announcement. "
+            "Captures realized intraday move in excess of implied. Hardcoded Fed schedule "
+            "2020-2026. Skips when VIX > 28 (overpriced) or IVR > 0.7 or debit > 2.5% spot. "
+            "Cites Lucca/Moench 2015, Savor/Wilson 2013, Ai/Bansal 2018."
         ),
         "asset_class": "equities_options",
-        "typical_holding_days": 5,
-        "target_sharpe": 0.9,
-        "class_path": "",
+        "typical_holding_days": 3,
+        "target_sharpe": 1.1,
+        "class_path": "alan_trader.strategies.fomc_event_straddle.FOMCEventStraddleStrategy",
         "requires_training": False,
         "uses_ml": False,
-        "required_data": ["price", "options_chain", "vix", "fomc_calendar"],
+        "requires_ticker": False,
+        "required_data": ["price", "vix"],
+        "has_screener": True,
     },
     "earnings_drift": {
         "display_name": "Post-Earnings Drift",
@@ -1264,16 +1323,19 @@ STRATEGY_METADATA: dict[str, dict] = {
 
     # ── Put Steal ──────────────────────────────────────────────────────────────
     "put_steal": {
-        "display_name": "Put Steal — Interest Arb AI",
+        "display_name": "Put Steal — NII-Gated Bull Put",
         "type": "ai",
         "status": "active",
         "icon": "🪤",
         "description": (
-            "Exploits retail put holders who fail to exercise deep ITM American puts early "
-            "(Barraclough-Whaley 2011). NII = X(1-e^{-rT}) - call(S,X,T): when NII > 0, "
-            "the long forfeits interest income to the short. "
-            "Sells bull put spreads when NII > threshold and GBM classifier confirms low crash risk. "
-            "Works best in high-rate, low-vol environments. Walk-forward: 90-bar warmup, retrains every 20 bars."
+            "Defined-risk bull put credit spread (short OTM put + long further-OTM "
+            "put) gated by Net Interest Income computed at a hypothetical ITM strike "
+            "(Barraclough-Whaley 2011 NII = X(1-e^{-rT}) - call(S,X,T)). NII is used "
+            "as a regime signal — high NII coincides with high-rate, low-vol, "
+            "stable-stock conditions that favor OTM-put-spread survival. The trade is "
+            "NOT the literature put-steal capture (sell ITM put); it's a bull put credit "
+            "spread that uses the NII statistic as a covariate. GBM confirms P(stock "
+            "stays above short strike). Walk-forward: 90-bar warmup, retrains every 20 bars."
         ),
         "asset_class": "equities_options",
         "typical_holding_days": 21,

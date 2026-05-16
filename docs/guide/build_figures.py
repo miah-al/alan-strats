@@ -33,6 +33,215 @@ def save(name: str):
 
 
 # ────────────────────────────────────────────────────────────
+# Cover page (used by _make_pandoc_pdf.py as the first page)
+# ────────────────────────────────────────────────────────────
+def cover():
+    print("COVER:")
+    import matplotlib.patches as mpatches
+    from matplotlib.colors import LinearSegmentedColormap
+
+    # Full-page canvas (8.5 x 11 inches — US letter, portrait)
+    fig = plt.figure(figsize=(8.5, 11), facecolor="#0a0a2e")
+    ax = fig.add_axes((0, 0, 1, 1))
+    ax.set_xlim(0, 1); ax.set_ylim(0, 1); ax.axis("off")
+    ax.grid(False)
+
+    # FULL-PAGE diagonal gradient: deep midnight → electric purple → hot magenta → amber glow
+    nx, ny = 600, 800
+    X, Y = np.meshgrid(np.linspace(0, 1, nx), np.linspace(0, 1, ny))
+    # Diagonal from top-left to bottom-right with a radial warm spot at lower-right
+    diag = (X + (1 - Y)) / 2
+    radial = np.sqrt((X - 0.75)**2 + (Y - 0.15)**2)
+    field = 0.70 * diag + 0.30 * (1 - radial)
+    field = (field - field.min()) / (field.max() - field.min())
+    grad_cmap = LinearSegmentedColormap.from_list(
+        "spicy", ["#1e3a8a", "#4338ca", "#6366f1", "#818cf8", "#c7d2fe"]
+    )
+    ax.imshow(field, aspect="auto", extent=(0, 1, 0, 1),
+              cmap=grad_cmap, zorder=1, origin="lower")
+
+    # Subtle equation watermark across the page
+    eqns = [
+        r"$\mathrm{d}S_t = \mu S_t\,\mathrm{d}t + \sigma S_t\,\mathrm{d}W_t$",
+        r"$\partial_t g + \frac{1}{2}\sigma^2 S^2 \partial_{SS} g + rS\partial_S g = rg$",
+        r"$\mathrm{d}r_t = \kappa(\theta - r_t)\,\mathrm{d}t + \sigma\,\mathrm{d}W_t$",
+        r"$[W,W]_t = t$",
+        r"$\mathbb{E}^{\mathbb{Q}}[X]$",
+        r"$\int_0^t g_s\,\mathrm{d}W_s$",
+        r"$\mathrm{d}v_t = \kappa(\theta - v_t)\,\mathrm{d}t + \xi\sqrt{v_t}\,\mathrm{d}W_t$",
+        r"$\varphi(u) = \mathbb{E}[e^{iuX}]$",
+    ]
+    rng = np.random.default_rng(7)
+    for _ in range(28):
+        eq = eqns[rng.integers(len(eqns))]
+        x, y = rng.uniform(0.02, 0.98), rng.uniform(0.02, 0.98)
+        s = rng.uniform(10, 22)
+        a = rng.uniform(0.07, 0.18)
+        rot = rng.uniform(-8, 8)
+        ax.text(x, y, eq, fontsize=s, color="white", alpha=a,
+                ha="center", va="center", rotation=rot, zorder=2)
+
+    # Gold accent bar above title
+    ax.add_patch(mpatches.Rectangle((0.20, 0.842), 0.60, 0.004,
+                                     facecolor="#fbbf24", zorder=3))
+
+    # Title card (semi-transparent overlay panel for readability)
+    ax.add_patch(mpatches.FancyBboxPatch(
+        (0.08, 0.54), 0.84, 0.28, boxstyle="round,pad=0.015,rounding_size=0.02",
+        facecolor="#000000", alpha=0.35, edgecolor="#fbbf24", lw=1.5, zorder=3))
+
+    # Title
+    ax.text(0.5, 0.77, "QUANT COURSE", color="#fbbf24",
+            fontsize=14, fontweight="bold", ha="center", va="center",
+            family="sans-serif", zorder=4)
+    ax.text(0.5, 0.70, "Arbitrage Pricing", color="white",
+            fontsize=54, fontweight="bold", ha="center", va="center",
+            family="serif", zorder=4)
+    ax.text(0.5, 0.635, "& Derivatives", color="white",
+            fontsize=54, fontweight="bold", ha="center", va="center",
+            family="serif", zorder=4)
+    ax.text(0.5, 0.575, "A fifteen-chapter study guide",
+            color="#fde68a", fontsize=17, ha="center", va="center",
+            style="italic", family="serif", zorder=4)
+
+    # Parts list — inside a dark card
+    ax.add_patch(mpatches.FancyBboxPatch(
+        (0.08, 0.16), 0.84, 0.32, boxstyle="round,pad=0.015,rounding_size=0.02",
+        facecolor="#000000", alpha=0.45, edgecolor="#f472b6", lw=1.2, zorder=3))
+
+    parts = [
+        ("I",   "Discrete-Time Models",                 "CH 1–2",   "#60a5fa"),
+        ("II",  "Continuous-Time Models",               "CH 3–5",   "#a78bfa"),
+        ("III", "Equity Derivatives",                   "CH 6–10",  "#f472b6"),
+        ("IV",  "Interest-Rate Models",                 "CH 11–13", "#fb923c"),
+        ("V",   "Stochastic Vol & Rate Derivatives",    "CH 14–15", "#fbbf24"),
+    ]
+    y0 = 0.445
+    dy = 0.053
+    for i, (num, name, rng_str, col) in enumerate(parts):
+        y = y0 - i * dy
+        ax.add_patch(mpatches.Rectangle((0.13, y - 0.018), 0.007, 0.036,
+                                         facecolor=col, zorder=4))
+        ax.text(0.16, y, f"PART {num}", fontsize=12, color=col,
+                fontweight="bold", va="center", family="sans-serif",
+                zorder=4)
+        ax.text(0.30, y, name, fontsize=15, color="white",
+                va="center", family="serif", zorder=4)
+        ax.text(0.88, y, rng_str, fontsize=11, color="#fde68a",
+                va="center", ha="right", family="sans-serif",
+                style="italic", zorder=4)
+
+    # Footer
+    ax.text(0.5, 0.075, "~215,000 WORDS   ·   ~100 FIGURES   ·   FOUNDATIONS-FIRST",
+            fontsize=11, color="#fbbf24", ha="center", va="center",
+            family="sans-serif", fontweight="bold", zorder=4)
+    ax.text(0.5, 0.038, "A self-study companion for the graduate derivatives canon",
+            fontsize=10, color="white", ha="center", va="center",
+            family="sans-serif", style="italic", alpha=0.85, zorder=4)
+
+    save("cover.png")
+
+
+# ────────────────────────────────────────────────────────────
+# Strategy-guides cover page
+# ────────────────────────────────────────────────────────────
+def strategy_cover():
+    print("STRATEGY COVER:")
+    import matplotlib.patches as mpatches
+    from matplotlib.colors import LinearSegmentedColormap
+
+    fig = plt.figure(figsize=(8.5, 11), facecolor="#052e16")
+    ax = fig.add_axes((0, 0, 1, 1))
+    ax.set_xlim(0, 1); ax.set_ylim(0, 1); ax.axis("off"); ax.grid(False)
+
+    nx, ny = 600, 800
+    X, Y = np.meshgrid(np.linspace(0, 1, nx), np.linspace(0, 1, ny))
+    diag = (X + (1 - Y)) / 2
+    radial = np.sqrt((X - 0.2) ** 2 + (Y - 0.8) ** 2)
+    field = 0.7 * diag + 0.3 * (1 - radial)
+    field = (field - field.min()) / (field.max() - field.min())
+    grad_cmap = LinearSegmentedColormap.from_list(
+        "strat", ["#064e3b", "#065f46", "#047857", "#059669", "#34d399"]
+    )
+    ax.imshow(field, aspect="auto", extent=(0, 1, 0, 1),
+              cmap=grad_cmap, zorder=1, origin="lower")
+
+    # Light watermark tickers
+    tickers = ["SPY", "QQQ", "IWM", "VIX", "TLT", "GLD",
+               "0DTE", "IC", "CREDIT", "Δ", "Γ", "ν", "Θ", "ρ"]
+    rng = np.random.default_rng(11)
+    for _ in range(36):
+        t = tickers[rng.integers(len(tickers))]
+        x, y = rng.uniform(0.02, 0.98), rng.uniform(0.02, 0.98)
+        ax.text(x, y, t, fontsize=rng.uniform(10, 22), color="white",
+                alpha=rng.uniform(0.06, 0.15),
+                ha="center", va="center", rotation=rng.uniform(-8, 8),
+                zorder=2, family="sans-serif", fontweight="bold")
+
+    # Gold accent bar
+    ax.add_patch(mpatches.Rectangle((0.20, 0.842), 0.60, 0.004,
+                                     facecolor="#fbbf24", zorder=3))
+
+    # Title card
+    ax.add_patch(mpatches.FancyBboxPatch(
+        (0.08, 0.55), 0.84, 0.27,
+        boxstyle="round,pad=0.015,rounding_size=0.02",
+        facecolor="#000000", alpha=0.35,
+        edgecolor="#fbbf24", lw=1.5, zorder=3))
+
+    ax.text(0.5, 0.77, "STRATEGY PLAYBOOK", color="#fbbf24",
+            fontsize=13, fontweight="bold", ha="center", va="center",
+            family="sans-serif", zorder=4)
+    ax.text(0.5, 0.70, "Options & Trading", color="white",
+            fontsize=50, fontweight="bold", ha="center", va="center",
+            family="serif", zorder=4)
+    ax.text(0.5, 0.638, "Strategies", color="white",
+            fontsize=50, fontweight="bold", ha="center", va="center",
+            family="serif", zorder=4)
+    ax.text(0.5, 0.58, "A practitioner's field manual",
+            color="#d1fae5", fontsize=16, ha="center", va="center",
+            style="italic", family="serif", zorder=4)
+
+    # Subject blocks
+    ax.add_patch(mpatches.FancyBboxPatch(
+        (0.08, 0.18), 0.84, 0.30,
+        boxstyle="round,pad=0.015,rounding_size=0.02",
+        facecolor="#000000", alpha=0.40, edgecolor="#34d399", lw=1.2, zorder=3))
+
+    subjects = [
+        ("A", "Defined-Risk Credit Spreads",   "IC · IC-AI · Condors · Butterflies",    "#34d399"),
+        ("B", "Directional & Event-Driven",    "Bull/Bear · Earnings · FOMC · VIX",     "#fbbf24"),
+        ("C", "Volatility & Calendar",          "IV-Rank · Cliquet · Term · Variance",  "#fb923c"),
+        ("D", "Regime / Macro / Dealer-GEX",   "GEX · Gamma Regime · Rates · Crypto",   "#f472b6"),
+        ("E", "ML & Systematic",                "Ensemble · Transformer · RL · Online", "#60a5fa"),
+    ]
+    y0 = 0.455
+    dy = 0.053
+    for i, (tag, name, cats, col) in enumerate(subjects):
+        y = y0 - i * dy
+        ax.add_patch(mpatches.Rectangle((0.13, y - 0.019), 0.008, 0.038,
+                                         facecolor=col, zorder=4))
+        ax.text(0.16, y + 0.008, f"Section {tag}",
+                fontsize=11, color=col, fontweight="bold",
+                va="center", family="sans-serif", zorder=4)
+        ax.text(0.16, y - 0.012, cats, fontsize=9, color="#d1fae5",
+                va="center", family="sans-serif",
+                style="italic", zorder=4)
+        ax.text(0.88, y, name, fontsize=13, color="white",
+                va="center", ha="right", family="serif", zorder=4)
+
+    # Footer
+    ax.text(0.5, 0.075, "89 STRATEGIES   ·   ENTRY / EXIT / RISK   ·   BACKTESTS",
+            fontsize=11, color="#fbbf24", ha="center", va="center",
+            family="sans-serif", fontweight="bold", zorder=4)
+    ax.text(0.5, 0.038, "Companion to the quant course — theory first, execution second",
+            fontsize=10, color="white", ha="center", va="center",
+            family="sans-serif", style="italic", alpha=0.85, zorder=4)
+
+    save("strategy_cover.png")
+
+
+# ────────────────────────────────────────────────────────────
 # CH01 — One-Period Binomial
 # ────────────────────────────────────────────────────────────
 def ch01():
@@ -1434,9 +1643,757 @@ def ch12():
     save("ch12-caplet-payoff.png")
 
 
+# ────────────────────────────────────────────────────────────
+# CH07 — Greek Visual Atlas (§7.7)
+# A second pass at Greek visualisation: theta / rho / vanna / volga /
+# charm / speed / colour / dollar-gamma / strike ladder / pin risk /
+# vega-vs-skew / gamma-scalping decomposition. All figures share the
+# baseline BS world  S0=100, K=100, r=4%, q=0%, sigma=25%.
+# ────────────────────────────────────────────────────────────
+def ch07_atlas():
+    print("CH07 ATLAS:")
+    from scipy.stats import norm
+
+    S0, K0 = 100.0, 100.0
+    r, q = 0.04, 0.0
+    sig = 0.25
+
+    def d1d2(S, K, T, r=r, q=q, sig=sig):
+        T = np.maximum(T, 1e-12)
+        d1 = (np.log(S / K) + (r - q + 0.5 * sig**2) * T) / (sig * np.sqrt(T))
+        d2 = d1 - sig * np.sqrt(T)
+        return d1, d2
+
+    def bs_call(S, K, T, r=r, q=q, sig=sig):
+        d1, d2 = d1d2(S, K, T, r, q, sig)
+        return S * np.exp(-q * T) * norm.cdf(d1) - K * np.exp(-r * T) * norm.cdf(d2)
+
+    def bs_put(S, K, T, r=r, q=q, sig=sig):
+        d1, d2 = d1d2(S, K, T, r, q, sig)
+        return K * np.exp(-r * T) * norm.cdf(-d2) - S * np.exp(-q * T) * norm.cdf(-d1)
+
+    def call_delta(S, K, T, r=r, q=q, sig=sig):
+        d1, _ = d1d2(S, K, T, r, q, sig)
+        return np.exp(-q * T) * norm.cdf(d1)
+
+    def put_delta(S, K, T, r=r, q=q, sig=sig):
+        d1, _ = d1d2(S, K, T, r, q, sig)
+        return np.exp(-q * T) * (norm.cdf(d1) - 1.0)
+
+    def gamma(S, K, T, r=r, q=q, sig=sig):
+        T = np.maximum(T, 1e-12)
+        d1, _ = d1d2(S, K, T, r, q, sig)
+        return np.exp(-q * T) * norm.pdf(d1) / (S * sig * np.sqrt(T))
+
+    def vega(S, K, T, r=r, q=q, sig=sig):
+        T = np.maximum(T, 1e-12)
+        d1, _ = d1d2(S, K, T, r, q, sig)
+        return S * np.exp(-q * T) * np.sqrt(T) * norm.pdf(d1)  # per 1.00 vol move
+
+    def call_theta(S, K, T, r=r, q=q, sig=sig):
+        T = np.maximum(T, 1e-12)
+        d1, d2 = d1d2(S, K, T, r, q, sig)
+        term1 = -S * np.exp(-q * T) * norm.pdf(d1) * sig / (2.0 * np.sqrt(T))
+        term2 = -r * K * np.exp(-r * T) * norm.cdf(d2)
+        term3 = +q * S * np.exp(-q * T) * norm.cdf(d1)
+        return term1 + term2 + term3
+
+    def put_theta(S, K, T, r=r, q=q, sig=sig):
+        T = np.maximum(T, 1e-12)
+        d1, d2 = d1d2(S, K, T, r, q, sig)
+        term1 = -S * np.exp(-q * T) * norm.pdf(d1) * sig / (2.0 * np.sqrt(T))
+        term2 = +r * K * np.exp(-r * T) * norm.cdf(-d2)
+        term3 = -q * S * np.exp(-q * T) * norm.cdf(-d1)
+        return term1 + term2 + term3
+
+    def call_rho(S, K, T, r=r, q=q, sig=sig):
+        _, d2 = d1d2(S, K, T, r, q, sig)
+        return K * T * np.exp(-r * T) * norm.cdf(d2)
+
+    def put_rho(S, K, T, r=r, q=q, sig=sig):
+        _, d2 = d1d2(S, K, T, r, q, sig)
+        return -K * T * np.exp(-r * T) * norm.cdf(-d2)
+
+    def vanna(S, K, T, r=r, q=q, sig=sig):
+        # ∂Vega/∂S = -e^{-qT} φ(d1) d2 / σ
+        T = np.maximum(T, 1e-12)
+        d1, d2 = d1d2(S, K, T, r, q, sig)
+        return -np.exp(-q * T) * norm.pdf(d1) * d2 / sig
+
+    def volga(S, K, T, r=r, q=q, sig=sig):
+        # Vega · d1·d2 / σ
+        return vega(S, K, T, r, q, sig) * (d1d2(S, K, T, r, q, sig)[0]
+                                            * d1d2(S, K, T, r, q, sig)[1]) / sig
+
+    def call_charm(S, K, T, r=r, q=q, sig=sig):
+        # ∂Δ/∂t  (note: d/dt = -d/dτ).  Garman closed form:
+        # charm_call = -e^{-qT}[ φ(d1)(2(r-q)T - d2 σ√T)/(2 T σ√T) + q N(d1) ]·(-1)
+        # We want d Delta / d t  (calendar time).  τ = T - t, so dτ/dt = -1.
+        T = np.maximum(T, 1e-12)
+        d1, d2 = d1d2(S, K, T, r, q, sig)
+        sT = sig * np.sqrt(T)
+        body = (2.0 * (r - q) * T - d2 * sT) / (2.0 * T * sT)
+        # ∂Δ/∂τ = e^{-qT}[ -φ(d1) · body  -  q N(d1) ]
+        ddtau = np.exp(-q * T) * (-norm.pdf(d1) * body - q * norm.cdf(d1))
+        return -ddtau  # dΔ/dt = -dΔ/dτ
+
+    def put_charm(S, K, T, r=r, q=q, sig=sig):
+        T = np.maximum(T, 1e-12)
+        d1, d2 = d1d2(S, K, T, r, q, sig)
+        sT = sig * np.sqrt(T)
+        body = (2.0 * (r - q) * T - d2 * sT) / (2.0 * T * sT)
+        ddtau = np.exp(-q * T) * (-norm.pdf(d1) * body + q * norm.cdf(-d1))
+        return -ddtau
+
+    def speed(S, K, T, r=r, q=q, sig=sig):
+        # ∂Γ/∂S = -Γ/S · (d1/(σ√T) + 1)
+        T = np.maximum(T, 1e-12)
+        d1, _ = d1d2(S, K, T, r, q, sig)
+        g = gamma(S, K, T, r, q, sig)
+        return -g / S * (d1 / (sig * np.sqrt(T)) + 1.0)
+
+    def color(S, K, T, r=r, q=q, sig=sig):
+        # ∂Γ/∂t.  Closed form (Espen Haug):
+        # color = -e^{-qT} φ(d1) / (2 S T σ√T) · [2qT + 1 + (2(r-q)T - d2 σ√T)·d1/(σ√T)]
+        # then we want dΓ/dt = -dΓ/dτ
+        T = np.maximum(T, 1e-12)
+        d1, d2 = d1d2(S, K, T, r, q, sig)
+        sT = sig * np.sqrt(T)
+        bracket = 2.0 * q * T + 1.0 + (2.0 * (r - q) * T - d2 * sT) * d1 / sT
+        dgdtau = -np.exp(-q * T) * norm.pdf(d1) / (2.0 * S * T * sT) * bracket
+        return -dgdtau
+
+    # ────────────────────────────────
+    # (a) Theta vs Spot — call & put — three TTMs
+    # ────────────────────────────────
+    S_grid = np.linspace(60, 140, 240)
+    ttms = [(1/12, "1m", "#a62a2a"), (3/12, "3m", "#e07a2a"), (1.0, "12m", "#2a62a6")]
+    fig, axes = plt.subplots(1, 2, figsize=(11, 4.2), sharey=True)
+    for T_v, lab, col in ttms:
+        axes[0].plot(S_grid, call_theta(S_grid, K0, T_v), lw=2, color=col, label=f"T={lab}")
+        axes[1].plot(S_grid, put_theta(S_grid, K0, T_v),  lw=2, color=col, label=f"T={lab}")
+    for ax, ttl in zip(axes, ["Call $\\Theta$", "Put $\\Theta$"]):
+        ax.axvline(K0, ls=":", color="black", alpha=0.5)
+        ax.axhline(0, color="black", lw=0.5)
+        ax.set_xlabel("Spot $S$"); ax.set_title(ttl)
+        ax.legend(fontsize=9, loc="lower right")
+    axes[0].set_ylabel(r"$\Theta$  (per year)")
+    fig.suptitle(r"Theta vs spot — most negative ATM, asymmetric for puts at low $S$")
+    plt.tight_layout()
+    save("ch07-theta-vs-spot.png")
+
+    # ────────────────────────────────
+    # (b) Rho — call & put — vs spot at fixed T, plus T-scaling sub-panel
+    # ────────────────────────────────
+    fig, axes = plt.subplots(1, 2, figsize=(11, 4.2))
+    for T_v, lab, col in ttms:
+        axes[0].plot(S_grid, call_rho(S_grid, K0, T_v), lw=2, color=col, label=f"call, T={lab}")
+        axes[0].plot(S_grid, put_rho(S_grid,  K0, T_v), lw=2, color=col, ls="--",
+                      label=f"put,  T={lab}")
+    axes[0].axvline(K0, ls=":", color="black", alpha=0.5)
+    axes[0].axhline(0, color="black", lw=0.5)
+    axes[0].set_xlabel("Spot $S$"); axes[0].set_ylabel(r"$\rho$  (per 1.00 rate move)")
+    axes[0].set_title("Rho vs spot — call positive, put negative")
+    axes[0].legend(fontsize=8, ncol=2)
+
+    T_grid = np.linspace(0.02, 3.0, 120)
+    axes[1].plot(T_grid, call_rho(K0, K0, T_grid), lw=2.4, color="#1f7a1f", label="ATM call")
+    axes[1].plot(T_grid, put_rho(K0, K0, T_grid),  lw=2.4, color="#a62a2a", label="ATM put")
+    axes[1].axhline(0, color="black", lw=0.5)
+    axes[1].set_xlabel("Time to expiry $T$ (y)")
+    axes[1].set_ylabel(r"$\rho_{\text{ATM}}$")
+    axes[1].set_title("Rho scales roughly linearly with $T$")
+    axes[1].legend(fontsize=9)
+    plt.tight_layout()
+    save("ch07-rho-call-put.png")
+
+    # ────────────────────────────────
+    # (c) Vanna — heatmap over (S, σ) at fixed T, K
+    # ────────────────────────────────
+    S_grid_v = np.linspace(60, 140, 160)
+    sig_grid = np.linspace(0.05, 0.80, 140)
+    SS, VV = np.meshgrid(S_grid_v, sig_grid)
+    T_v = 0.5
+    d1g = (np.log(SS / K0) + (r - q + 0.5 * VV**2) * T_v) / (VV * np.sqrt(T_v))
+    d2g = d1g - VV * np.sqrt(T_v)
+    vanna_grid = -np.exp(-q * T_v) * norm.pdf(d1g) * d2g / VV
+    fig, ax = plt.subplots(figsize=(8.5, 4.5))
+    vmax = float(np.nanmax(np.abs(vanna_grid)))
+    im = ax.pcolormesh(SS, VV * 100, vanna_grid, cmap="RdBu_r",
+                        vmin=-vmax, vmax=vmax, shading="auto")
+    ax.contour(SS, VV * 100, vanna_grid, levels=[0.0],
+                colors="black", linewidths=1.2, linestyles="--")
+    ax.axvline(K0, ls=":", color="white", alpha=0.7)
+    cbar = plt.colorbar(im, ax=ax)
+    cbar.set_label(r"Vanna $\partial^2 V/\partial S\,\partial\sigma$")
+    ax.set_xlabel("Spot $S$"); ax.set_ylabel(r"Volatility $\sigma$ (%)")
+    ax.set_title(fr"Vanna heatmap (K={K0:.0f}, T={T_v:.2f}y) — sign change crosses ATM")
+    ax.grid(False)
+    save("ch07-vanna.png")
+
+    # ────────────────────────────────
+    # (d) Volga (vomma) vs spot — bimodal
+    # ────────────────────────────────
+    fig, ax = plt.subplots(figsize=(8.5, 4.2))
+    for T_v, lab, col in [(1/12, "1m", "#a62a2a"), (1.0, "12m", "#2a62a6")]:
+        d1, d2 = d1d2(S_grid, K0, T_v)
+        v = vega(S_grid, K0, T_v) * d1 * d2 / sig
+        ax.plot(S_grid, v, lw=2.4, color=col, label=f"T={lab}")
+    ax.axhline(0, color="black", lw=0.5)
+    ax.axvline(K0, ls=":", color="black", alpha=0.5)
+    ax.set_xlabel("Spot $S$")
+    ax.set_ylabel(r"Volga $\partial^2 V/\partial \sigma^2$")
+    ax.set_title("Volga (vomma) — twin peaks straddle the ATM zero")
+    ax.legend(fontsize=9)
+    save("ch07-volga.png")
+
+    # ────────────────────────────────
+    # (e) Charm — call & put at TTMs 1w, 1m, 3m
+    # ────────────────────────────────
+    charm_ttms = [(1/52, "1w", "#a62a2a"), (1/12, "1m", "#e07a2a"),
+                   (3/12, "3m", "#2a62a6")]
+    fig, axes = plt.subplots(1, 2, figsize=(11, 4.2), sharey=True)
+    for T_v, lab, col in charm_ttms:
+        axes[0].plot(S_grid, call_charm(S_grid, K0, T_v), lw=2, color=col, label=f"T={lab}")
+        axes[1].plot(S_grid, put_charm(S_grid, K0, T_v),  lw=2, color=col, label=f"T={lab}")
+    for ax, ttl in zip(axes, ["Call charm $\\partial\\Delta^C/\\partial t$",
+                               "Put charm  $\\partial\\Delta^P/\\partial t$"]):
+        ax.axvline(K0, ls=":", color="black", alpha=0.5)
+        ax.axhline(0, color="black", lw=0.5)
+        ax.set_xlabel("Spot $S$"); ax.set_title(ttl)
+        ax.legend(fontsize=9, loc="upper right")
+    axes[0].set_ylabel("charm  (Δ-units per year)")
+    fig.suptitle("Charm — most extreme ATM, blows up as expiry nears")
+    plt.tight_layout()
+    save("ch07-charm.png")
+
+    # ────────────────────────────────
+    # (f) Speed — vs spot at one TTM
+    # ────────────────────────────────
+    fig, ax = plt.subplots(figsize=(8.5, 4.2))
+    for T_v, lab, col in [(1/12, "1m", "#a62a2a"), (3/12, "3m", "#e07a2a"),
+                           (1.0, "12m", "#2a62a6")]:
+        ax.plot(S_grid, speed(S_grid, K0, T_v), lw=2, color=col, label=f"T={lab}")
+    ax.axhline(0, color="black", lw=0.5)
+    ax.axvline(K0, ls=":", color="black", alpha=0.5)
+    ax.set_xlabel("Spot $S$"); ax.set_ylabel(r"Speed $\partial\Gamma/\partial S$")
+    ax.set_title("Speed — sign flips just above ATM, where the gamma hump rolls over")
+    ax.legend(fontsize=9)
+    save("ch07-speed.png")
+
+    # ────────────────────────────────
+    # (g) Color — ∂Γ/∂t — vs spot, three TTMs
+    # ────────────────────────────────
+    fig, ax = plt.subplots(figsize=(8.5, 4.2))
+    for T_v, lab, col in [(1/52, "1w", "#a62a2a"), (1/12, "1m", "#e07a2a"),
+                           (3/12, "3m", "#2a62a6")]:
+        ax.plot(S_grid, color(S_grid, K0, T_v), lw=2, color=col, label=f"T={lab}")
+    ax.axhline(0, color="black", lw=0.5)
+    ax.axvline(K0, ls=":", color="black", alpha=0.5)
+    ax.set_xlabel("Spot $S$"); ax.set_ylabel(r"Color $\partial\Gamma/\partial t$")
+    ax.set_title("Color — ATM gamma decays (negative); OTM wings can grow gamma")
+    ax.legend(fontsize=9)
+    save("ch07-color.png")
+
+    # ────────────────────────────────
+    # (h) BS price surface — call C(S, T)
+    # ────────────────────────────────
+    S_surf = np.linspace(60, 140, 80)
+    T_surf = np.linspace(0.02, 2.0, 70)
+    SSs, TTs = np.meshgrid(S_surf, T_surf)
+    Csurf = bs_call(SSs, K0, TTs)
+    fig = plt.figure(figsize=(8.5, 5.2))
+    ax = fig.add_subplot(111, projection="3d")
+    ax.plot_surface(SSs, TTs, Csurf, cmap="viridis", alpha=0.9, edgecolor="none")
+    ax.set_xlabel("Spot $S$"); ax.set_ylabel("TTM $T$ (y)")
+    ax.set_zlabel("Call price $C$")
+    ax.set_title("Black-Scholes call price surface — convexity grows with $T$")
+    ax.view_init(elev=22, azim=-58)
+    save("ch07-bs-price-surface.png")
+
+    # ────────────────────────────────
+    # (i) Dollar-gamma  $Γ = S²·Γ  vs spot, three TTMs
+    # ────────────────────────────────
+    fig, ax = plt.subplots(figsize=(8.5, 4.2))
+    for T_v, lab, col in ttms:
+        dg = S_grid**2 * gamma(S_grid, K0, T_v)
+        ax.plot(S_grid, dg, lw=2.4, color=col, label=f"T={lab}")
+    ax.axvline(K0, ls=":", color="black", alpha=0.5)
+    ax.set_xlabel("Spot $S$")
+    ax.set_ylabel(r"Dollar-gamma  $\$\Gamma = S^2\,\Gamma$")
+    ax.set_title(r"Dollar-gamma — the broker's variance-exposure measure")
+    ax.legend(fontsize=9)
+    save("ch07-dollar-gamma-vs-spot.png")
+
+    # ────────────────────────────────
+    # (j) Strike ladder — table of all Greeks for calls & puts
+    # ────────────────────────────────
+    strikes = np.array([85, 90, 95, 100, 105, 110, 115], dtype=float)
+    T_lad = 0.25
+    rows = []
+    for K_v in strikes:
+        cD = call_delta(S0, K_v, T_lad); pD = put_delta(S0, K_v, T_lad)
+        gG = gamma(S0, K_v, T_lad)
+        cT = call_theta(S0, K_v, T_lad) / 365.0   # per day
+        pT = put_theta(S0, K_v, T_lad) / 365.0
+        Vg = vega(S0, K_v, T_lad) / 100.0          # per 1 vol-pt move
+        cR = call_rho(S0, K_v, T_lad) / 100.0      # per 1 bp -> per 1% rate
+        pR = put_rho(S0, K_v, T_lad) / 100.0
+        rows.append([
+            f"{K_v:.0f}",
+            f"{cD:+.3f}", f"{pD:+.3f}",
+            f"{gG:.4f}",
+            f"{cT:+.3f}", f"{pT:+.3f}",
+            f"{Vg:+.3f}",
+            f"{cR:+.3f}", f"{pR:+.3f}",
+        ])
+    col_labels = ["K", r"$\Delta$ call", r"$\Delta$ put", r"$\Gamma$",
+                   r"$\Theta$ call /d", r"$\Theta$ put /d",
+                   "Vega /vol-pt",
+                   r"$\rho$ call /pp", r"$\rho$ put /pp"]
+    fig, ax = plt.subplots(figsize=(10.5, 4.5))
+    ax.axis("off")
+    tbl = ax.table(cellText=rows, colLabels=col_labels, loc="center",
+                    cellLoc="center", colLoc="center")
+    tbl.auto_set_font_size(False); tbl.set_fontsize(10); tbl.scale(1.0, 1.55)
+    # Bold header
+    for j in range(len(col_labels)):
+        tbl[(0, j)].set_facecolor("#1f3a68")
+        tbl[(0, j)].set_text_props(color="white", weight="bold")
+    # Highlight ATM row
+    atm_row = int(np.argmin(np.abs(strikes - S0))) + 1
+    for j in range(len(col_labels)):
+        tbl[(atm_row, j)].set_facecolor("#fef3c7")
+    ax.set_title(f"Strike ladder — Greeks at S={S0:.0f}, T={T_lad:.2f}y, "
+                  fr"$\sigma$={sig*100:.0f}%, r={r*100:.0f}%",
+                  pad=14)
+    save("ch07-greek-table-strike-ladder.png")
+
+    # ────────────────────────────────
+    # (k) Pin risk — digital call delta as t → T, S = K
+    # ────────────────────────────────
+    # Digital call price: e^{-rT} N(d2).  Δ = e^{-rT} φ(d2) / (S σ√T).
+    # At S=K with q=0:  d2 = (r - 0.5σ²)√T / σ.
+    T_grid_pin = np.linspace(1/365, 0.5, 600)
+    d2_pin = (r - q - 0.5 * sig**2) * np.sqrt(T_grid_pin) / sig
+    digital_delta = np.exp(-r * T_grid_pin) * norm.pdf(d2_pin) / (S0 * sig * np.sqrt(T_grid_pin))
+    fig, ax = plt.subplots(figsize=(8.5, 4.2))
+    days_left = T_grid_pin * 365
+    ax.plot(days_left, digital_delta, lw=2.4, color="#a62a2a")
+    ax.set_xlabel("Days to expiry $\\tau$ (calendar)")
+    ax.set_ylabel(r"Digital call $\Delta$  (at $S=K$)")
+    ax.set_title(r"Digital call delta blows up like $1/\sqrt{\tau}$ at the strike — pin risk")
+    ax.invert_xaxis()
+    ax.set_yscale("log")
+    save("ch07-pin-risk-digital-delta.png")
+
+    # ────────────────────────────────
+    # (l) Vega vs strike across an implied-vol smile
+    # ────────────────────────────────
+    K_grid = np.linspace(70, 130, 200)
+    T_v = 0.25
+    log_m = np.log(K_grid / S0)
+    # Asymmetric SVI-ish smile:  σ(K) = σ_atm + a·log_m  + b·log_m²  with negative skew
+    sig_atm = 0.22
+    a, b = -0.35, 1.10
+    iv_smile = sig_atm + a * log_m + b * log_m**2
+    iv_smile = np.maximum(iv_smile, 0.05)
+    iv_flat  = np.full_like(K_grid, sig_atm)
+
+    def vega_K(K, sig_local):
+        d1 = (np.log(S0 / K) + (r - q + 0.5 * sig_local**2) * T_v) / (sig_local * np.sqrt(T_v))
+        return S0 * np.exp(-q * T_v) * np.sqrt(T_v) * norm.pdf(d1)
+
+    vega_smile = vega_K(K_grid, iv_smile)
+    vega_flat  = vega_K(K_grid, iv_flat)
+
+    fig, axes = plt.subplots(1, 2, figsize=(11, 4.2))
+    axes[0].plot(K_grid, iv_smile * 100, lw=2.4, color="#a62a2a", label="IV smile (skewed)")
+    axes[0].plot(K_grid, iv_flat * 100,  lw=2.0, color="#2a62a6", ls="--",
+                  label=f"flat IV = {sig_atm*100:.0f}%")
+    axes[0].axvline(S0, ls=":", color="black", alpha=0.5)
+    axes[0].set_xlabel("Strike $K$"); axes[0].set_ylabel("IV (%)")
+    axes[0].set_title("Implied-vol smile"); axes[0].legend(fontsize=9)
+
+    axes[1].plot(K_grid, vega_smile, lw=2.4, color="#a62a2a", label="Vega(K) under smile")
+    axes[1].plot(K_grid, vega_flat,  lw=2.0, color="#2a62a6", ls="--",
+                  label="Vega(K) under flat IV")
+    axes[1].axvline(S0, ls=":", color="black", alpha=0.5)
+    axes[1].set_xlabel("Strike $K$"); axes[1].set_ylabel("Vega (per 1.00 vol move)")
+    axes[1].set_title("Vega across the smile — wing kink moves the bucket")
+    axes[1].legend(fontsize=9)
+    plt.tight_layout()
+    save("ch07-skew-vs-vega.png")
+
+    # ────────────────────────────────
+    # (m) Gamma-scalping P&L decomposition over a Monte Carlo path
+    # ────────────────────────────────
+    rng = np.random.default_rng(2026)
+    T_path = 0.25
+    n_steps = 250
+    dt = T_path / n_steps
+    sig_real = 0.30   # realised vol > implied
+    sig_imp  = 0.22   # what we priced/hedged at
+    mu_drift = r - 0.5 * sig_real**2
+    z = rng.standard_normal(n_steps)
+    log_S = np.zeros(n_steps + 1)
+    log_S[0] = np.log(S0)
+    for i in range(n_steps):
+        log_S[i + 1] = log_S[i] + mu_drift * dt + sig_real * np.sqrt(dt) * z[i]
+    S_path = np.exp(log_S)
+    t_grid = np.linspace(0.0, T_path, n_steps + 1)
+    tau    = T_path - t_grid                         # τ left
+
+    # Long call hedged with -Δ stock; we track theta-bleed & gamma-rebalance
+    theta_bleed = np.zeros(n_steps)
+    gamma_pnl   = np.zeros(n_steps)
+    for i in range(n_steps):
+        S_i = S_path[i]; tau_i = max(tau[i], 1e-9)
+        d1_i = (np.log(S_i / K0) + (r - q + 0.5 * sig_imp**2) * tau_i) / (sig_imp * np.sqrt(tau_i))
+        gamma_i = np.exp(-q * tau_i) * norm.pdf(d1_i) / (S_i * sig_imp * np.sqrt(tau_i))
+        # theta priced from implied vol:
+        theta_i = (-S_i * np.exp(-q * tau_i) * norm.pdf(d1_i) * sig_imp / (2.0 * np.sqrt(tau_i))
+                    - r * K0 * np.exp(-r * tau_i) * norm.cdf(d1_i - sig_imp * np.sqrt(tau_i))
+                    + q * S_i * np.exp(-q * tau_i) * norm.cdf(d1_i))
+        dS = S_path[i + 1] - S_i
+        gamma_pnl[i]   = 0.5 * gamma_i * dS**2
+        theta_bleed[i] = theta_i * dt          # negative
+
+    cum_gamma = np.cumsum(gamma_pnl)
+    cum_theta = np.cumsum(theta_bleed)
+    cum_total = cum_gamma + cum_theta
+
+    fig, axes = plt.subplots(2, 1, figsize=(8.5, 6.2),
+                              gridspec_kw=dict(height_ratios=[1, 1.4]))
+    axes[0].plot(t_grid, S_path, lw=1.6, color="#2a62a6")
+    axes[0].axhline(K0, ls=":", color="black", alpha=0.5, label=f"K={K0:.0f}")
+    axes[0].set_ylabel("$S_t$"); axes[0].set_title(
+        fr"GBM path — $\sigma_{{\rm real}}$={sig_real*100:.0f}% vs "
+        fr"$\sigma_{{\rm imp}}$={sig_imp*100:.0f}%")
+    axes[0].legend(fontsize=9)
+
+    axes[1].plot(t_grid[1:], cum_gamma, lw=2.0, color="#1f7a1f",
+                  label="cum. gamma rebalance gains")
+    axes[1].plot(t_grid[1:], cum_theta, lw=2.0, color="#a62a2a",
+                  label="cum. theta bleed")
+    axes[1].plot(t_grid[1:], cum_total, lw=2.4, color="black",
+                  label="cum. delta-hedged P&L")
+    axes[1].axhline(0, color="black", lw=0.5)
+    axes[1].set_xlabel("$t$ (y)"); axes[1].set_ylabel("Cumulative P&L")
+    axes[1].set_title(r"Gamma-scalping decomposition: $\frac{1}{2} S^2\Gamma\,(\sigma_r^2-\sigma_i^2)\,dt$ in expectation")
+    axes[1].legend(fontsize=9)
+    plt.tight_layout()
+    save("ch07-gamma-scalping-pnl.png")
+
+
+# ────────────────────────────────────────────────────────────
+# CH01 — supplemental tree / number-line diagrams
+# ────────────────────────────────────────────────────────────
+def _draw_two_state_tree(ax, x0, root_label, up_label, dn_label,
+                         color="#2a62a6", up_color="#1f7a1f", dn_color="#a62a2a",
+                         span=1.0, half_height=1.0,
+                         root_offset=(-0.18, 0.0), up_offset=(0.06, 0.05),
+                         dn_offset=(0.06, -0.05),
+                         q_label=None, q_color="#1f7a1f", title=None,
+                         label_fontsize=13, root_fontsize=13):
+    """Draw a single one-period two-state tree on `ax` rooted at (x0, 0)."""
+    x_leaf = x0 + span
+    # branches
+    ax.plot([x0, x_leaf], [0, +half_height], "-", color=color, lw=2.0, zorder=2)
+    ax.plot([x0, x_leaf], [0, -half_height], "-", color=color, lw=2.0, zorder=2)
+    # nodes
+    ax.plot([x0], [0], "o", color="black", ms=7, zorder=3)
+    ax.plot([x_leaf], [+half_height], "o", color=up_color, ms=7, zorder=3)
+    ax.plot([x_leaf], [-half_height], "o", color=dn_color, ms=7, zorder=3)
+    # labels
+    ax.annotate(root_label, (x0, 0),
+                xytext=(x0 + root_offset[0], root_offset[1]),
+                fontsize=root_fontsize, ha="right", va="center")
+    ax.annotate(up_label, (x_leaf, +half_height),
+                xytext=(x_leaf + up_offset[0], +half_height + up_offset[1]),
+                fontsize=label_fontsize, color=up_color, ha="left", va="center")
+    ax.annotate(dn_label, (x_leaf, -half_height),
+                xytext=(x_leaf + dn_offset[0], -half_height + dn_offset[1]),
+                fontsize=label_fontsize, color=dn_color, ha="left", va="center")
+    if q_label is not None:
+        ax.text(x0 + 0.45 * span, 0.55 * half_height, q_label,
+                fontsize=12, color=q_color, ha="center")
+    if title is not None:
+        ax.text(x0 + 0.5 * span, -1.55 * half_height, title,
+                fontsize=11, ha="center", style="italic", color="#444")
+
+
+def ch01_two_asset_tree():
+    """Two parallel one-period trees for risky A and numeraire B."""
+    fig, axes = plt.subplots(1, 2, figsize=(8.5, 3.8))
+    for ax in axes:
+        ax.set_xlim(-0.5, 1.9); ax.set_ylim(-1.7, 1.7)
+        ax.set_xticks([]); ax.set_yticks([])
+        ax.grid(False)
+        for s in ("top", "right", "bottom", "left"):
+            ax.spines[s].set_visible(False)
+
+    _draw_two_state_tree(
+        axes[0], x0=0.0,
+        root_label=r"$A_0$", up_label=r"$A_u$", dn_label=r"$A_d$",
+        q_label=r"same coin $x_1$",
+        title=r"risky $A$",
+    )
+    _draw_two_state_tree(
+        axes[1], x0=0.0,
+        root_label=r"$B_0$", up_label=r"$B_u$", dn_label=r"$B_d$",
+        color="#6b4ea6", up_color="#1f7a1f", dn_color="#a62a2a",
+        q_label=r"same coin $x_1$", q_color="#444",
+        title=r"numeraire $B$ (bond: $B_u=B_d=B_0(1+r)$)",
+    )
+
+    fig.suptitle(r"Two-asset one-period tree — driven by the same Bernoulli coin $x_1$",
+                 fontsize=12)
+    plt.tight_layout()
+    save("ch01-two-asset-tree.png")
+
+
+def ch01_no_arb_sandwich():
+    """Number line showing A_d < A_0(1+r) < A_u (no-arb sandwich)."""
+    fig, ax = plt.subplots(figsize=(7.5, 2.6))
+    ax.set_xlim(0, 10); ax.set_ylim(-1.0, 1.4)
+    ax.set_xticks([]); ax.set_yticks([])
+    ax.grid(False)
+    for s in ("top", "right", "bottom", "left"):
+        ax.spines[s].set_visible(False)
+
+    # axis line with arrow
+    ax.annotate("", xy=(9.6, 0), xytext=(0.4, 0),
+                arrowprops=dict(arrowstyle="->", color="black", lw=1.5))
+    ax.text(9.7, 0.05, r"future value", fontsize=10, ha="left", va="bottom")
+
+    # three points
+    xs = [2.0, 5.0, 8.0]
+    labels = [r"$A_d$", r"$A_0(1+r)$", r"$A_u$"]
+    colors = ["#a62a2a", "#2a62a6", "#1f7a1f"]
+    for x, lab, c in zip(xs, labels, colors):
+        ax.plot([x], [0], "o", color=c, ms=10, zorder=3)
+        ax.text(x, -0.30, lab, fontsize=13, ha="center", va="top", color=c)
+
+    # shaded no-arb interval
+    ax.axvspan(2.0, 8.0, ymin=0.42, ymax=0.58, color="#2a62a6", alpha=0.10)
+
+    # inequality annotation above
+    ax.text(5.0, 0.95,
+            r"$A_d \;<\; A_0(1+r) \;<\; A_u$",
+            fontsize=14, ha="center", va="center",
+            bbox=dict(boxstyle="round,pad=0.35", facecolor="#fef9e7",
+                      edgecolor="#caa84d", lw=1.0))
+    # bracket arrows
+    ax.annotate("", xy=(2.05, 0.55), xytext=(4.95, 0.55),
+                arrowprops=dict(arrowstyle="<->", color="#444", lw=1.0))
+    ax.annotate("", xy=(5.05, 0.55), xytext=(7.95, 0.55),
+                arrowprops=dict(arrowstyle="<->", color="#444", lw=1.0))
+
+    ax.set_title(r"No-arbitrage sandwich: forward $A_0(1+r)$ lies strictly inside $[A_d,\,A_u]$",
+                 fontsize=11)
+    plt.tight_layout()
+    save("ch01-no-arb-sandwich.png")
+
+
+def ch01_three_asset_tree():
+    """Three side-by-side one-period trees for A (underlying), B (numeraire), C (claim)."""
+    fig, axes = plt.subplots(1, 3, figsize=(9.0, 3.8))
+    for ax in axes:
+        ax.set_xlim(-0.5, 1.9); ax.set_ylim(-1.7, 1.7)
+        ax.set_xticks([]); ax.set_yticks([])
+        ax.grid(False)
+        for s in ("top", "right", "bottom", "left"):
+            ax.spines[s].set_visible(False)
+
+    _draw_two_state_tree(
+        axes[0], x0=0.0,
+        root_label=r"$A_0$", up_label=r"$A_u$", dn_label=r"$A_d$",
+        title=r"underlying $A$",
+    )
+    _draw_two_state_tree(
+        axes[1], x0=0.0,
+        root_label=r"$B_0$", up_label=r"$B_u$", dn_label=r"$B_d$",
+        color="#6b4ea6",
+        title=r"numeraire $B$",
+    )
+    _draw_two_state_tree(
+        axes[2], x0=0.0,
+        root_label=r"$C_0$", up_label=r"$C_u$", dn_label=r"$C_d$",
+        color="#caa84d",
+        title=r"contingent claim $C$",
+    )
+
+    fig.suptitle(r"Three assets driven by the same coin — consistency requires $q^{BA}=q^{BC}$",
+                 fontsize=12)
+    plt.tight_layout()
+    save("ch01-three-asset-tree.png")
+
+
+def ch01_three_asset_numerical():
+    """Three-asset tree with numerical leaves showing inconsistent q^{BA} vs q^{BC}."""
+    fig, axes = plt.subplots(1, 3, figsize=(9.5, 4.2))
+    for ax in axes:
+        ax.set_xlim(-0.5, 2.0); ax.set_ylim(-1.9, 1.7)
+        ax.set_xticks([]); ax.set_yticks([])
+        ax.grid(False)
+        for s in ("top", "right", "bottom", "left"):
+            ax.spines[s].set_visible(False)
+
+    _draw_two_state_tree(
+        axes[0], x0=0.0,
+        root_label=r"$A_0=10$", up_label=r"$A_u=20$", dn_label=r"$A_d=5$",
+        title=r"(A) underlying",
+    )
+    _draw_two_state_tree(
+        axes[1], x0=0.0,
+        root_label=r"$B_0=1$", up_label=r"$B_u=1$", dn_label=r"$B_d=1$",
+        color="#6b4ea6",
+        title=r"(B) numeraire",
+    )
+    _draw_two_state_tree(
+        axes[2], x0=0.0,
+        root_label=r"$C_0=110$", up_label=r"$C_u=120$", dn_label=r"$C_d=100$",
+        color="#caa84d",
+        title=r"(C, short position)",
+    )
+
+    # implied risk-neutral weights below
+    axes[0].text(0.55, -1.55, r"$q^{BA} = \frac{10-5}{20-5} = \frac{1}{3}$",
+                 fontsize=12, ha="center",
+                 bbox=dict(boxstyle="round,pad=0.30", facecolor="#eef5ee",
+                           edgecolor="#1f7a1f", lw=0.8))
+    axes[2].text(0.55, -1.55, r"$q^{BC} = \frac{110-100}{120-100} = \frac{1}{2}$",
+                 fontsize=12, ha="center",
+                 bbox=dict(boxstyle="round,pad=0.30", facecolor="#fdecec",
+                           edgecolor="#a62a2a", lw=0.8))
+
+    fig.suptitle(r"Numerical example — $q^{BA}=\frac{1}{3}\neq q^{BC}=\frac{1}{2}$ signals arbitrage",
+                 fontsize=12)
+    plt.tight_layout()
+    save("ch01-three-asset-numerical.png")
+
+
+def ch01_mispricing_arb():
+    """Three-asset tree (A=100→{120,90}, B≡1, C=6→{20,0}) with arbitrage portfolio annotation."""
+    fig, axes = plt.subplots(1, 3, figsize=(9.5, 4.6))
+    for ax in axes:
+        ax.set_xlim(-0.5, 2.0); ax.set_ylim(-2.1, 1.7)
+        ax.set_xticks([]); ax.set_yticks([])
+        ax.grid(False)
+        for s in ("top", "right", "bottom", "left"):
+            ax.spines[s].set_visible(False)
+
+    _draw_two_state_tree(
+        axes[0], x0=0.0,
+        root_label=r"$A_0=100$", up_label=r"$A_u=120$", dn_label=r"$A_d=90$",
+        title=r"(A) underlying",
+    )
+    _draw_two_state_tree(
+        axes[1], x0=0.0,
+        root_label=r"$B_0=1$", up_label=r"$B_u=1$", dn_label=r"$B_d=1$",
+        color="#6b4ea6",
+        title=r"(B) numeraire",
+    )
+    _draw_two_state_tree(
+        axes[2], x0=0.0,
+        root_label=r"$C_0=6$", up_label=r"$C_u=20$", dn_label=r"$C_d=0$",
+        color="#caa84d",
+        title=r"(C, mispriced; fair $=6\frac{2}{3}$)",
+    )
+
+    # portfolio annotations
+    portfolio = (r"Arbitrage portfolio:  "
+                 r"short $\frac{2}{3}A$, long $60\,B$, long $1\,C$"
+                 + "\n"
+                 + r"$V_0 = -\frac{2}{3}\!\cdot\!100 + 60 + 6 = -\frac{2}{3}$  "
+                 r"(receive $+\frac{2}{3}$ today)")
+    fig.text(0.5, -0.02, portfolio, fontsize=11, ha="center", va="top",
+             bbox=dict(boxstyle="round,pad=0.40", facecolor="#fef9e7",
+                       edgecolor="#caa84d", lw=1.0))
+
+    # terminal P&L per state
+    axes[0].text(0.55, -1.75, r"up: $-\frac{2}{3}(120)+60+20 = 0$",
+                 fontsize=10, ha="center", color="#1f7a1f")
+    axes[2].text(0.55, -1.75, r"down: $-\frac{2}{3}(90)+60+0 = 0$",
+                 fontsize=10, ha="center", color="#a62a2a")
+
+    fig.suptitle(r"Mispriced $C_0=6$ — exploit via short $\frac{2}{3}A$, long $60B$, long $1C$",
+                 fontsize=12)
+    plt.tight_layout(rect=(0, 0.05, 1, 1))
+    save("ch01-mispricing-arb.png")
+
+
+def ch01_multi_period_tree():
+    """Recombining 2-step binomial tree A_0 -> {A_u, A_d} -> {A_uu, A_ud, A_dd}."""
+    fig, ax = plt.subplots(figsize=(7.5, 4.5))
+    ax.set_xlim(-0.4, 2.6); ax.set_ylim(-2.4, 2.4)
+    ax.set_xticks([]); ax.set_yticks([])
+    ax.grid(False)
+    for s in ("top", "right", "bottom", "left"):
+        ax.spines[s].set_visible(False)
+
+    # node coordinates
+    nodes = {
+        "A0":  (0.0,  0.0),
+        "Au":  (1.0,  1.0),
+        "Ad":  (1.0, -1.0),
+        "Auu": (2.0,  2.0),
+        "Aud": (2.0,  0.0),
+        "Add": (2.0, -2.0),
+    }
+
+    # branches (parent → child)
+    branches = [
+        ("A0", "Au", "#1f7a1f"),
+        ("A0", "Ad", "#a62a2a"),
+        ("Au", "Auu", "#1f7a1f"),
+        ("Au", "Aud", "#a62a2a"),
+        ("Ad", "Aud", "#1f7a1f"),
+        ("Ad", "Add", "#a62a2a"),
+    ]
+    for p, c, col in branches:
+        x0, y0 = nodes[p]; x1, y1 = nodes[c]
+        ax.plot([x0, x1], [y0, y1], "-", color=col, lw=1.8, zorder=2)
+
+    # node markers
+    node_color = {
+        "A0":  "black",
+        "Au":  "#1f7a1f", "Ad":  "#a62a2a",
+        "Auu": "#1f7a1f", "Aud": "#444",  "Add": "#a62a2a",
+    }
+    for name, (x, y) in nodes.items():
+        ax.plot([x], [y], "o", color=node_color[name], ms=8, zorder=3)
+
+    # labels
+    label_offsets = {
+        "A0":  (-0.18,  0.00, "right", "center", r"$A_0$"),
+        "Au":  ( 0.00,  0.20, "center", "bottom", r"$A_u$"),
+        "Ad":  ( 0.00, -0.22, "center", "top",    r"$A_d$"),
+        "Auu": ( 0.10,  0.00, "left",  "center",  r"$A_{uu}$"),
+        "Aud": ( 0.10,  0.00, "left",  "center",  r"$A_{ud}=A_{du}$"),
+        "Add": ( 0.10,  0.00, "left",  "center",  r"$A_{dd}$"),
+    }
+    for name, (dx, dy, ha, va, lab) in label_offsets.items():
+        x, y = nodes[name]
+        ax.text(x + dx, y + dy, lab, fontsize=12, ha=ha, va=va,
+                color=node_color[name])
+
+    # time axis labels
+    for x, t_lab in [(0.0, r"$t=0$"), (1.0, r"$t=1$"), (2.0, r"$t=2$")]:
+        ax.text(x, -2.30, t_lab, fontsize=11, ha="center", style="italic", color="#444")
+
+    ax.set_title(r"Multi-period recombining binomial tree — $A_{ud}=A_{du}$",
+                 fontsize=12)
+    plt.tight_layout()
+    save("ch01-multi-period-tree.png")
+
+
 # Drive
 if __name__ == "__main__":
-    for fn in (ch01, ch02, ch03, ch04, ch05, ch06, ch07, ch08, ch09, ch10, ch10_mc, ch11, ch11_cal, ch12):
+    for fn in (ch01, ch02, ch03, ch04, ch05, ch06, ch07, ch07_atlas, ch08, ch09, ch10, ch10_mc, ch11, ch11_cal, ch12,
+               ch01_two_asset_tree, ch01_no_arb_sandwich, ch01_three_asset_tree,
+               ch01_three_asset_numerical, ch01_mispricing_arb, ch01_multi_period_tree):
         try:
             fn()
         except Exception as e:

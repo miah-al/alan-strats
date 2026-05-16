@@ -575,14 +575,52 @@ Data                                   Source                                Usa
 -------------------------------------  ------------------------------------  ---------------------------------------
 SPY/individual OHLCV with open prices  Polygon                               Spot, exit price calculation
 VIX daily close                        Polygon `VIXIND`                      IV proxy for option pricing
-Earnings calendar                      DB earnings table                     Event dates, EPS actuals, EPS estimates
+Earnings calendar                      mkt.Earnings (DB)                     Event dates, EPS actuals, EPS estimates
 Implied move estimates                 Earnings table or BS approximation    iv_ratio filter computation
 10-year Treasury rate                  Polygon (`DGS10`)                     Risk-free rate for Black-Scholes
-Historical earnings returns            Computed from earnings table + OHLCV  Historical avg move for iv_ratio
+Historical earnings returns            Computed from earnings + OHLCV        Historical avg move for iv_ratio
 ```
 
-The earnings table must contain at minimum: date, ticker, and optionally `implied_move_pct`.
-If `implied_move_pct` is absent, the strategy approximates it from Black-Scholes pricing.
+### How the data is wired
+
+The dashboard backtest path loads earnings rows via `db.client.get_earnings_calendar()` and
+hands them to the strategy as `auxiliary_data["earnings"]` (a date-indexed DataFrame with
+`[ticker, release_date, date, eps_actual, eps_estimate, eps_surprise, ...]`). The strategy
+uses the `date` column as the announcement date.
+
+Date precedence inside the loader: **`AnnouncementDate` ▸ `FiledDate` ▸ `PeriodOfReport`**.
+
+- `AnnouncementDate` = Alpha Vantage `reportedDate` (the actual earnings-release date —
+  what trade timing depends on). Populated by `sync_eps_estimates`.
+- `FiledDate` = Polygon `filing_date` (SEC filing — typically days-to-weeks AFTER the
+  announcement). Populated by `sync_earnings`.
+- `PeriodOfReport` = fiscal period end (e.g. 2025-09-30). Last-resort fallback.
+
+**You should run BOTH sync jobs** in Tools → Data Manager before backtesting:
+
+1. **Earnings (Polygon)** — fills financials + filing dates
+2. **EPS Estimates (Alpha Vantage)** — fills `AnnouncementDate` (the field used for trade
+   timing) + EPS estimates
+
+Without step 2, `AnnouncementDate` is NULL, the loader falls back to `FiledDate`, and trade
+entries land 2-6 weeks late. The backtest will run, but signals fire at the wrong times.
+
+### Modeling assumptions that flatter the backtest
+
+The published target Sharpe (~1.7) assumes:
+
+- **Deterministic IV crush** (`iv_crush_assumed = 40%`) realised in ~half a session post-open.
+  Reality: crush varies 10%–80%, with a long right tail of "no-crush" mega-moves.
+- **VIX as the per-stock IV proxy.** VIX is for SPX. Single-name IVs run 1.5–2.5× VIX with
+  ticker-specific term structure. Pricing the iron condor with `vix/100` underprices the
+  short strangle on volatile names and inflates the modeled credit.
+- **Black-Scholes mid-fills with no slippage** on a 4-leg structure. Real retail round-trip
+  friction on a 4-leg condor is ~$0.10–$0.20 per spread × 4 legs.
+- **No assignment risk** on AMC reporters — early assignment on deep ITM short legs is
+  ignored in simulation.
+
+Combined, these add ~30–50% optimism to the backtested Sharpe. Live performance will be
+materially below the headline number even with the model perfectly correct.
 
 ---
 

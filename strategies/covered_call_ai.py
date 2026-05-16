@@ -142,7 +142,7 @@ def _build_features(close, high, low, vix):
         "vix_ma_ratio":         vix_rat,
         "atr_pct":              atr_pct,
         "days_since_earnings":  days_since_earnings,
-    }).ffill().bfill()
+    }).ffill()  # ffill only — bfill leaks future values into early NaNs (walk-forward look-ahead)
 
 
 def _build_labels(close: pd.Series, vix: pd.Series,

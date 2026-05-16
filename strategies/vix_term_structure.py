@@ -141,7 +141,8 @@ def _build_features(
         "dist_from_ma200": dist_ma200,
         "atr_pct":         atr_pct,
     })
-    return df.ffill().bfill()
+    # ffill only — bfill leaks future values into early NaNs (walk-forward look-ahead)
+    return df.ffill()
 
 
 def _build_labels(close: pd.Series, vix: pd.Series, n_forward: int = 14) -> pd.Series:

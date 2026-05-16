@@ -162,7 +162,7 @@ def _build_sector_features(
         "vix_level":            vix,
         "vix_ma_ratio":         vix_rat,
         "days_to_month_end":    month_end,
-    }).ffill().bfill()
+    }).ffill()  # ffill only — bfill leaks future values into early NaNs (walk-forward look-ahead)
 
 
 def _build_rs_labels(close: pd.Series, buffer_pct: float = 0.04,
@@ -369,7 +369,10 @@ class RSCreditSpreadStrategy(BaseStrategy):
             else:
                 s = df_or_s
             s.index = pd.to_datetime(s.index)
-            sector_closes[ticker] = s.reindex(spy_close.index).ffill().bfill()
+            # ffill only — bfill on a sector close series propagates future
+            # sector returns backward into early dates → silent leakage in
+            # any feature derived from these series.
+            sector_closes[ticker] = s.reindex(spy_close.index).ffill()
 
         if len(sector_closes) < 3:
             # Not enough sectors for meaningful RS — run like a simple VIX strategy

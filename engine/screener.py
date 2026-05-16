@@ -83,6 +83,24 @@ _DEFAULT_PARAMS = {
     "put_steal": {
         "nii_threshold": 0.01, "itm_pct": 0.10, "vix_max": 40.0, "iv_max": 0.60,
     },
+    "hmm_regime": {
+        "vix_ceiling": 40.0, "regime_confidence_min": 0.55,
+    },
+    "expiry_max_pain": {
+        "vix_ceiling": 25.0, "min_dist_pct": 0.005, "max_dist_pct": 0.035,
+    },
+    "short_squeeze_detector": {
+        "max_vix": 32.0, "volume_ratio_min": 2.5, "short_int_min": 0.20,
+        "signal_threshold": 0.55,
+    },
+    "tail_risk_put_spread": {
+        "vix_max_at_entry": 35.0, "long_otm_pct": 0.07, "short_otm_pct": 0.18,
+        "dte_target": 75,
+    },
+    "news_sentiment_nlp": {
+        "vix_max": 35.0, "sentiment_z_threshold": 2.0, "min_article_count": 5,
+        "signal_threshold": 0.55,
+    },
 }
 
 # ── Indicator helpers (price-only, no options needed) ─────────────────────────
@@ -1472,6 +1490,438 @@ def _score_put_steal(
         }
     except Exception as e:
         logger.warning(f"PutSteal score error for {ticker}: {e}")
+        return None
+
+
+# ── New strategy screener functions (2026-05-01) ──────────────────────────────
+
+def _score_hmm_regime(
+    ticker: str,
+    price_df: pd.DataFrame,
+    vix_series: pd.Series,
+    iv_metrics: dict,
+    params: Optional[dict] = None,
+) -> Optional[dict]:
+    """Heuristic-fallback HMM regime classifier (no model loaded).
+
+    Mirrors HMMRegimeStrategy._heuristic_signal: VIX-bucket → state →
+    {SELL bull put, SELL iron condor, BUY long put}. Cheap (< 5 ms).
+    """
+    if price_df.empty or len(price_df) < 20:
+        return None
+    try:
+        p = {**_DEFAULT_PARAMS.get("hmm_regime", {}), **(params or {})}
+        close = price_df["close"].astype(float)
+        spot  = float(close.iloc[-1])
+        vix   = float(vix_series.iloc[-1]) if not vix_series.empty else 20.0
+
+        atm_iv = iv_metrics.get("atm_iv") or vix / 100.0
+        ivr    = iv_metrics.get("ivr")
+        if ivr is None:
+            ivr = _vix_ivr(vix_series)
+
+        vix_ceiling = float(p.get("vix_ceiling", 40.0))
+        conf_min    = float(p.get("regime_confidence_min", 0.55))
+
+        ret_5d  = float(close.pct_change(5).iloc[-1])  if len(close) >= 6  else 0.0
+        ret_20d = float(close.pct_change(20).iloc[-1]) if len(close) >= 21 else 0.0
+        rv20    = float(close.pct_change().rolling(20, min_periods=10).std().iloc[-1]
+                        * (252 ** 0.5)) if len(close) >= 10 else 0.0
+
+        if vix > vix_ceiling:
+            return {
+                "Ticker": ticker, "Price": spot, "VIX": vix, "IVR": ivr,
+                "Regime": "—", "P(state)": 0.0,
+                "Trade": "HOLD", "Signal": "HOLD",
+                "5d Ret": ret_5d, "20d Ret": ret_20d, "RV20": rv20,
+                "ATM IV": atm_iv,
+                "Status": f"VIX {vix:.1f} > ceiling {vix_ceiling:.0f}",
+                "vix_ok": False, "conf_ok": False,
+                "n_pass": 0, "all_pass": False, "score": 0.0,
+                "Mode": "heuristic",
+            }
+
+        # Heuristic bucket — same as strategy.HMMRegime._heuristic_signal
+        if vix < 15.0:
+            state, regime, trade, signal = 0, "Low-Vol Bull", "Bull Put Credit Spread", "SELL"
+        elif vix < 22.0:
+            state, regime, trade, signal = 1, "Chop / Mean-Rev", "Iron Condor", "SELL"
+        else:
+            state, regime, trade, signal = 2, "High-Vol Bear", "Long Put Debit Spread", "BUY"
+
+        # Heuristic confidence — fixed 0.55 to match strategy fallback
+        p_state = 0.55
+        conf_ok = p_state >= conf_min
+        vix_ok  = vix <= vix_ceiling
+        n_pass  = sum([vix_ok, conf_ok])
+
+        # Score: regime conviction × IVR / VIX context
+        score = min(100.0, p_state * 60 + (ivr or 0) * 30 + (10 if vix_ok else 0))
+
+        return {
+            "Ticker":   ticker,
+            "Price":    spot,
+            "VIX":      vix,
+            "IVR":      ivr,
+            "ATM IV":   atm_iv,
+            "Regime":   regime,
+            "State":    state,
+            "P(state)": p_state,
+            "Trade":    trade,
+            "Signal":   signal,
+            "5d Ret":   ret_5d,
+            "20d Ret":  ret_20d,
+            "RV20":     rv20,
+            "Status":   "Heuristic — train HMM for full posterior",
+            "Mode":     "heuristic",
+            "vix_ok":   vix_ok,
+            "conf_ok":  conf_ok,
+            "n_pass":   n_pass,
+            "all_pass": n_pass == 2,
+            "score":    score,
+        }
+    except Exception as e:
+        logger.warning(f"HMMRegime score error for {ticker}: {e}")
+        return None
+
+
+def _score_expiry_max_pain(
+    ticker: str,
+    price_df: pd.DataFrame,
+    vix_series: pd.Series,
+    iv_metrics: dict,
+    params: Optional[dict] = None,
+) -> Optional[dict]:
+    """OpEx Max-Pain Pin screener — calendar + VIX gating only.
+
+    Real signal requires options chain (max-pain strike + GEX), so this surfaces
+    the calendar/VIX preconditions and tells the user to open the Backtest tab
+    for a full analysis.
+    """
+    if price_df.empty or len(price_df) < 10:
+        return None
+    try:
+        p = {**_DEFAULT_PARAMS.get("expiry_max_pain", {}), **(params or {})}
+        close = price_df["close"].astype(float)
+        spot  = float(close.iloc[-1])
+        vix   = float(vix_series.iloc[-1]) if not vix_series.empty else 20.0
+
+        atm_iv = iv_metrics.get("atm_iv") or vix / 100.0
+        ivr    = iv_metrics.get("ivr")
+        if ivr is None:
+            ivr = _vix_ivr(vix_series)
+
+        vix_ceiling = float(p.get("vix_ceiling", 25.0))
+        ts          = pd.Timestamp.today().normalize()
+
+        # Inline OpEx-week helpers (avoid importing strategy module which uses
+        # absolute `alan_trader.*` imports incompatible with this layout)
+        def _third_friday(year: int, month: int) -> pd.Timestamp:
+            first  = pd.Timestamp(year=year, month=month, day=1)
+            offset = (4 - first.weekday()) % 7
+            return pd.Timestamp(year=year, month=month, day=1 + offset + 14)
+
+        tf_this        = _third_friday(ts.year, ts.month).normalize()
+        monday_of_opex = tf_this - pd.Timedelta(days=tf_this.weekday())
+        friday_of_opex = monday_of_opex + pd.Timedelta(days=4)
+        opex_week      = bool(monday_of_opex <= ts <= friday_of_opex)
+        if ts <= tf_this:
+            dte_to_opex = int((tf_this - ts).days)
+        else:
+            if ts.month == 12:
+                nxt = _third_friday(ts.year + 1, 1).normalize()
+            else:
+                nxt = _third_friday(ts.year, ts.month + 1).normalize()
+            dte_to_opex = int((nxt - ts).days)
+
+        vix_ok    = vix <= vix_ceiling
+        opex_ok   = opex_week and (2 <= dte_to_opex <= 5)
+        n_pass    = sum([vix_ok, opex_ok])
+
+        # Score: OpEx-window proximity + low-vol bonus
+        if opex_ok:
+            window_score = max(0.0, 1.0 - abs(dte_to_opex - 3) / 3.0) * 60
+        else:
+            window_score = 0.0
+        vol_score = max(0.0, 1.0 - vix / 30.0) * 30 if vix_ok else 0.0
+        ivr_score = (1.0 - min(ivr or 0, 1.0)) * 10  # prefer LOW IVR (pin works in chop)
+        score = min(100.0, window_score + vol_score + ivr_score)
+
+        if not opex_week:
+            status = f"Not OpEx week (next OpEx in {dte_to_opex}d)"
+        elif not opex_ok:
+            status = f"OpEx wk but DTE {dte_to_opex} outside [2,5]"
+        elif not vix_ok:
+            status = f"VIX {vix:.1f} > ceiling {vix_ceiling:.0f}"
+        else:
+            status = "Calendar OK — open Backtest for chain"
+
+        return {
+            "Ticker":      ticker,
+            "Price":       spot,
+            "VIX":         vix,
+            "ATM IV":      atm_iv,
+            "IVR":         ivr,
+            "OpEx Week":   "Yes" if opex_week else "No",
+            "DTE to OpEx": dte_to_opex,
+            "Structure":   "Iron Butterfly (short)",
+            "Status":      status,
+            "Mode":        "needs_chain",
+            "vix_ok":      vix_ok,
+            "opex_ok":     opex_ok,
+            "n_pass":      n_pass,
+            "all_pass":    n_pass == 2,
+            "score":       score,
+        }
+    except Exception as e:
+        logger.warning(f"ExpiryMaxPain score error for {ticker}: {e}")
+        return None
+
+
+def _score_short_squeeze_detector(
+    ticker: str,
+    price_df: pd.DataFrame,
+    vix_series: pd.Series,
+    iv_metrics: dict,
+    params: Optional[dict] = None,
+) -> Optional[dict]:
+    """Short-squeeze ML detector — heuristic-fallback (no .pkl loaded).
+
+    Without short-interest / utilization data we cannot fire the GBM model,
+    so we surface the cheap proxies: VIX ceiling, recent volume spike,
+    20-day return momentum. Tells user to open Backtest for full features.
+    """
+    if price_df.empty or len(price_df) < 25:
+        return None
+    try:
+        p = {**_DEFAULT_PARAMS.get("short_squeeze_detector", {}), **(params or {})}
+        close = price_df["close"].astype(float)
+        vol   = price_df.get("volume", pd.Series(dtype=float)).astype(float)
+
+        spot    = float(close.iloc[-1])
+        vix     = float(vix_series.iloc[-1]) if not vix_series.empty else 20.0
+        ret_5d  = float(close.pct_change(5).iloc[-1])  if len(close) >= 6  else 0.0
+        ret_20d = float(close.pct_change(20).iloc[-1]) if len(close) >= 21 else 0.0
+
+        # Volume ratio — today's volume / 20-day average
+        if len(vol) >= 20 and vol.iloc[-21:-1].mean() > 0:
+            vol_ratio = float(vol.iloc[-1] / vol.iloc[-21:-1].mean())
+        else:
+            vol_ratio = 1.0
+
+        atm_iv = iv_metrics.get("atm_iv") or vix / 100.0
+        ivr    = iv_metrics.get("ivr")
+        if ivr is None:
+            ivr = _vix_ivr(vix_series)
+
+        max_vix      = float(p.get("max_vix", 32.0))
+        vol_min      = float(p.get("volume_ratio_min", 2.5))
+        signal_thr   = float(p.get("signal_threshold", 0.55))
+
+        vix_ok = vix < max_vix
+        vol_ok = vol_ratio >= vol_min
+        # No SI data in screener → can't actually fire BUY; report heuristic confidence
+        # similar to strategy._heuristic mode (0.4..0.7 range)
+        if not vix_ok:
+            heur_conf = 0.0
+            status    = f"VIX {vix:.1f} ≥ max {max_vix:.0f}"
+        elif not vol_ok:
+            heur_conf = 0.0
+            status    = f"Vol ratio {vol_ratio:.1f}× < min {vol_min:.1f}×"
+        else:
+            # Volume spike + positive momentum → modest squeeze prior
+            momentum_bonus = max(0.0, min(ret_20d, 0.30)) * 1.5
+            heur_conf = min(0.65, 0.40 + (vol_ratio - vol_min) * 0.05 + momentum_bonus)
+            status    = "Volume spike — needs SI/chain (Backtest)"
+
+        n_pass = sum([vix_ok, vol_ok])
+        score  = min(100.0, heur_conf * 60 + (vol_ratio / 5.0) * 25 + max(0, ret_20d) * 50)
+
+        return {
+            "Ticker":     ticker,
+            "Price":      spot,
+            "VIX":        vix,
+            "ATM IV":     atm_iv,
+            "IVR":        ivr,
+            "Vol Ratio":  vol_ratio,
+            "5d Ret":     ret_5d,
+            "20d Ret":    ret_20d,
+            "P(squeeze)": heur_conf,
+            "Signal Thr": signal_thr,
+            "Structure":  "Long OTM Call",
+            "Status":     status,
+            "Mode":       "heuristic_no_model",
+            "vix_ok":     vix_ok,
+            "vol_ok":     vol_ok,
+            "n_pass":     n_pass,
+            "all_pass":   n_pass == 2,
+            "score":      score,
+        }
+    except Exception as e:
+        logger.warning(f"ShortSqueezeDetector score error for {ticker}: {e}")
+        return None
+
+
+def _score_tail_risk_put_spread(
+    ticker: str,
+    price_df: pd.DataFrame,
+    vix_series: pd.Series,
+    iv_metrics: dict,
+    params: Optional[dict] = None,
+) -> Optional[dict]:
+    """Tail Risk Put Spread (SPY only) — calendar/VIX gates + indicative
+    spread strikes & cost.
+
+    Strategy is a mechanical scheduled buyer, so live screener simply confirms
+    the VIX gate is open and shows what the next purchase would look like.
+    """
+    if price_df.empty or len(price_df) < 10:
+        return None
+    try:
+        p = {**_DEFAULT_PARAMS.get("tail_risk_put_spread", {}), **(params or {})}
+        close = price_df["close"].astype(float)
+        spot  = float(close.iloc[-1])
+        vix   = float(vix_series.iloc[-1]) if not vix_series.empty else 20.0
+
+        atm_iv = iv_metrics.get("atm_iv") or max(0.05, vix / 100.0)
+        ivr    = iv_metrics.get("ivr")
+        if ivr is None:
+            ivr = _vix_ivr(vix_series)
+
+        vix_max  = float(p.get("vix_max_at_entry", 35.0))
+        long_pct = float(p.get("long_otm_pct", 0.07))
+        short_pct= float(p.get("short_otm_pct", 0.18))
+        dte_tgt  = int(p.get("dte_target", 75))
+
+        long_K   = round(spot * (1.0 - long_pct),  2)
+        short_K  = round(spot * (1.0 - short_pct), 2)
+        width    = round(long_K - short_K, 2)
+
+        # Rough debit estimate: scaled BS-ish proxy using VIX as IV
+        T          = dte_tgt / 365.0
+        iv_long    = atm_iv * 1.20
+        iv_short   = atm_iv * 1.10
+        # crude OTM put price ≈ spot × IV × √T × delta_proxy
+        long_prem  = spot * iv_long  * (T ** 0.5) * 0.18
+        short_prem = spot * iv_short * (T ** 0.5) * 0.06
+        debit      = max(0.05, long_prem - short_prem)
+
+        vix_ok   = vix <= vix_max
+        n_pass   = 1 if vix_ok else 0
+        status   = ("Gate OPEN — calendar may trigger entry"
+                    if vix_ok else f"VIX {vix:.1f} > {vix_max:.0f} (skip dislocated)")
+
+        # Score: low-VIX bonus (cheap hedge) + spread economics
+        vix_score   = max(0.0, 1.0 - vix / vix_max) * 60 if vix_ok else 0.0
+        debit_score = max(0.0, 1.0 - debit / max(spot * 0.01, 0.5)) * 25
+        ivr_score   = (1.0 - min(ivr or 0, 1.0)) * 15  # prefer LOW IVR for cheap hedge
+        score = min(100.0, vix_score + debit_score + ivr_score)
+
+        return {
+            "Ticker":      ticker,
+            "Price":       spot,
+            "VIX":         vix,
+            "ATM IV":      atm_iv,
+            "IVR":         ivr,
+            "Long Strike": long_K,
+            "Short Strike": short_K,
+            "Width":       width,
+            "DTE":         dte_tgt,
+            "~Debit":      round(debit, 3),
+            "Max Payout":  round(width - debit, 2),
+            "Structure":   "Bear Put Debit Spread",
+            "Status":      status,
+            "vix_ok":      vix_ok,
+            "n_pass":      n_pass,
+            "all_pass":    n_pass == 1,
+            "score":       score,
+        }
+    except Exception as e:
+        logger.warning(f"TailRiskPutSpread score error for {ticker}: {e}")
+        return None
+
+
+def _score_news_sentiment_nlp(
+    ticker: str,
+    price_df: pd.DataFrame,
+    vix_series: pd.Series,
+    iv_metrics: dict,
+    params: Optional[dict] = None,
+) -> Optional[dict]:
+    """News-Sentiment NLP — heuristic-fallback (no model + no live news feed).
+
+    Without sentiment_z + article_count from a news feed, we cannot fire BUY
+    or SELL. We surface the cheap macro gate (VIX) and 5-day price drift as
+    a sentiment proxy, and tell the user to open Backtest for full sentiment.
+    """
+    if price_df.empty or len(price_df) < 10:
+        return None
+    try:
+        p = {**_DEFAULT_PARAMS.get("news_sentiment_nlp", {}), **(params or {})}
+        close = price_df["close"].astype(float)
+        spot  = float(close.iloc[-1])
+        vix   = float(vix_series.iloc[-1]) if not vix_series.empty else 20.0
+
+        atm_iv = iv_metrics.get("atm_iv") or vix / 100.0
+        ivr    = iv_metrics.get("ivr")
+        if ivr is None:
+            ivr = _vix_ivr(vix_series)
+
+        ret_1d  = float(close.pct_change(1).iloc[-1])  if len(close) >= 2  else 0.0
+        ret_5d  = float(close.pct_change(5).iloc[-1])  if len(close) >= 6  else 0.0
+        ret_20d = float(close.pct_change(20).iloc[-1]) if len(close) >= 21 else 0.0
+
+        vix_max     = float(p.get("vix_max", 35.0))
+        z_threshold = float(p.get("sentiment_z_threshold", 2.0))
+        signal_thr  = float(p.get("signal_threshold", 0.55))
+
+        vix_ok = vix <= vix_max
+        # Price-drift proxy for sentiment z (gap normalized by 20-day vol)
+        rv20   = float(close.pct_change().rolling(20, min_periods=10).std().iloc[-1]) \
+                 if len(close) >= 10 else 0.01
+        sentiment_proxy = ret_1d / max(rv20, 0.005)  # crude z-score
+
+        if not vix_ok:
+            status = f"VIX {vix:.1f} > max {vix_max:.0f} (macro override)"
+            signal = "HOLD"
+        elif abs(sentiment_proxy) >= z_threshold:
+            status = "Price-proxy z >= threshold — needs news feed"
+            signal = "BUY (proxy)" if sentiment_proxy > 0 else "SELL (proxy)"
+        else:
+            status = "Insufficient drift — needs news feed (Backtest)"
+            signal = "HOLD"
+
+        n_pass = sum([vix_ok, abs(sentiment_proxy) >= z_threshold])
+
+        # Score: combine drift strength + low-VIX bonus
+        z_score    = min(abs(sentiment_proxy) / max(z_threshold, 0.1), 2.0) * 40
+        vix_bonus  = max(0.0, 1.0 - vix / vix_max) * 30 if vix_ok else 0.0
+        ivr_bonus  = (ivr or 0) * 30  # higher IVR → richer spread
+        score      = min(100.0, z_score + vix_bonus + ivr_bonus)
+
+        return {
+            "Ticker":     ticker,
+            "Price":      spot,
+            "VIX":        vix,
+            "ATM IV":     atm_iv,
+            "IVR":        ivr,
+            "1d Ret":     ret_1d,
+            "5d Ret":     ret_5d,
+            "20d Ret":    ret_20d,
+            "z (proxy)":  sentiment_proxy,
+            "z thresh":   z_threshold,
+            "Signal":     signal,
+            "Structure":  "Debit Spread",
+            "Status":     status,
+            "Mode":       "heuristic_no_model",
+            "vix_ok":     vix_ok,
+            "z_ok":       abs(sentiment_proxy) >= z_threshold,
+            "n_pass":     n_pass,
+            "all_pass":   n_pass == 2,
+            "score":      score,
+        }
+    except Exception as e:
+        logger.warning(f"NewsSentimentNLP score error for {ticker}: {e}")
         return None
 
 

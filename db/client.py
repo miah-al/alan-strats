@@ -247,6 +247,113 @@ def get_dividends(engine: Engine, symbol: str,
     return df
 
 
+# ── Earnings calendar ─────────────────────────────────────────────────────────
+
+def get_earnings_calendar(engine: Engine, symbol: str,
+                          from_date: date, to_date: date) -> pd.DataFrame:
+    """Return earnings announcements for `symbol` between dates.
+
+    Date precedence: AnnouncementDate (Alpha Vantage reportedDate — the actual
+    release date) ▸ FiledDate (SEC filing — often weeks later) ▸ PeriodOfReport
+    (fiscal period end — least accurate). Strategies should treat
+    `release_date` as the trading-day timestamp of the announcement.
+
+    Returned columns:
+        ticker          uppercase symbol
+        release_date    pd.Timestamp — announcement / best-available date
+        date            alias of release_date (for legacy strategies)
+        eps_actual      reported EPS (nullable)
+        eps_estimate    consensus EPS estimate (nullable)
+        eps_surprise    eps_actual - eps_estimate (nullable)
+        revenue_usd     quarterly revenue (nullable)
+        net_income_usd  quarterly net income (nullable)
+
+    Returns an empty DataFrame if the ticker is unknown or no rows match.
+    """
+    tid = get_ticker_id(engine, symbol)
+    if tid is None:
+        return pd.DataFrame()
+    query = text("""
+        SELECT
+            COALESCE(AnnouncementDate, FiledDate, PeriodOfReport) AS release_date,
+            EpsBasic        AS eps_actual,
+            EpsEstimate     AS eps_estimate,
+            RevenueUSD      AS revenue_usd,
+            NetIncomeUSD    AS net_income_usd
+        FROM   mkt.Earnings
+        WHERE  TickerId = :tid
+          AND  COALESCE(AnnouncementDate, FiledDate, PeriodOfReport)
+                 BETWEEN :from_d AND :to_d
+        ORDER  BY release_date
+    """)
+    with get_conn(engine) as conn:
+        result = conn.execute(query, {"tid": tid, "from_d": from_date, "to_d": to_date})
+        df = pd.DataFrame(result.fetchall(), columns=result.keys())
+    if df.empty:
+        return pd.DataFrame()
+    df.columns       = [c.lower() for c in df.columns]
+    df["ticker"]     = symbol.upper()
+    df["release_date"] = pd.to_datetime(df["release_date"])
+    df["date"]       = df["release_date"]
+    for c in ("eps_actual", "eps_estimate", "revenue_usd", "net_income_usd"):
+        if c in df.columns:
+            df[c] = pd.to_numeric(df[c], errors="coerce")
+    df["eps_surprise"] = df["eps_actual"] - df["eps_estimate"]
+    return df[["ticker", "release_date", "date",
+               "eps_actual", "eps_estimate", "eps_surprise",
+               "revenue_usd", "net_income_usd"]]
+
+
+# ── Short interest ────────────────────────────────────────────────────────────
+
+def get_short_interest(engine: Engine, symbol: str,
+                       from_date: date, to_date: date) -> pd.DataFrame:
+    """Return bi-monthly (or daily, depending on feed) short-interest snapshots.
+
+    Output is shaped for direct use as `auxiliary_data["short_interest"]` by
+    the short_squeeze_detector strategy:
+
+        index                       pd.DatetimeIndex (SettlementDate)
+        short_interest_pct_float    short interest / public float (0..1+)
+        days_to_cover               short interest / avg daily volume
+        utilization                 borrowed shares / lendable supply (0..1)
+
+    Returns an empty DataFrame if the ticker is unknown or no rows match —
+    the strategy then runs in its 7-feature fallback mode without crashing.
+    """
+    tid = get_ticker_id(engine, symbol)
+    if tid is None:
+        return pd.DataFrame()
+    query = text("""
+        SELECT  SettlementDate,
+                ShortInterestPctFloat AS short_interest_pct_float,
+                DaysToCover           AS days_to_cover,
+                Utilization           AS utilization
+        FROM    mkt.ShortInterest
+        WHERE   TickerId = :tid
+          AND   SettlementDate BETWEEN :from_d AND :to_d
+        ORDER   BY SettlementDate
+    """)
+    try:
+        with get_conn(engine) as conn:
+            result = conn.execute(query, {"tid": tid, "from_d": from_date, "to_d": to_date})
+            df = pd.DataFrame(result.fetchall(), columns=result.keys())
+    except Exception as exc:
+        # Table may not exist on stale schemas — treat as "no data" rather than crash.
+        logger.debug(f"get_short_interest: query failed ({exc}); returning empty")
+        return pd.DataFrame()
+    if df.empty:
+        return df
+    df.columns = [c.lower() for c in df.columns]
+    df = df.rename(columns={"settlementdate": "date"})
+    df["date"] = pd.to_datetime(df["date"])
+    df = df.set_index("date")
+    for c in ("short_interest_pct_float", "days_to_cover", "utilization"):
+        if c in df.columns:
+            df[c] = pd.to_numeric(df[c], errors="coerce")
+    return df
+
+
 # ── OptionSnapshot ────────────────────────────────────────────────────────────
 
 def get_option_snapshots(engine: Engine, symbol: str,
@@ -526,6 +633,41 @@ def get_news(engine: Engine, symbol: str,
         if "sentiment" in df.columns:
             df["sentiment"] = pd.to_numeric(df["sentiment"], errors="coerce")
     return df
+
+
+def get_news_sentiment_daily(engine: Engine, symbol: str,
+                              from_date: date, to_date: date) -> pd.DataFrame:
+    """Return per-day aggregated sentiment for `symbol` between dates.
+
+    Aggregates raw `mkt.News` rows into the shape the news_sentiment_nlp
+    strategy expects via ``auxiliary_data["news_sentiment"]``:
+
+        index           pd.DatetimeIndex (one row per published date)
+        ticker          uppercase symbol
+        sentiment_score mean of mkt.News.Sentiment (VADER, [-1, +1])
+                        for the day; NaN-rows ignored
+        article_count   number of scored articles that day
+        source_weight   1.0 (mkt.News does not yet track provider quality;
+                        upgrade this loader when source-weighting is added)
+
+    Returns an empty DataFrame if the ticker is unknown, no rows match,
+    or every article in range has NULL sentiment.
+    """
+    raw = get_news(engine, symbol, from_date, to_date)
+    if raw.empty or "sentiment" not in raw.columns:
+        return pd.DataFrame()
+    scored = raw.dropna(subset=["sentiment"]).copy()
+    if scored.empty:
+        return pd.DataFrame()
+    scored["date"] = pd.to_datetime(scored["date"])
+    daily = scored.groupby("date").agg(
+        sentiment_score=("sentiment", "mean"),
+        article_count=("sentiment", "size"),
+    )
+    daily["source_weight"] = 1.0
+    daily["ticker"]        = symbol.upper()
+    daily.index.name       = "date"
+    return daily[["ticker", "sentiment_score", "article_count", "source_weight"]]
 
 
 # ── VixBar ────────────────────────────────────────────────────────────────────

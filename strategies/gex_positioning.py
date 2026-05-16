@@ -76,15 +76,26 @@ def _classify_vix(vix: float, vix_low: float, vix_mid_low: float,
         return "DeepNegative"
 
 
-def _classify_gex(net_gex: float, pos_thr: float, neg_thr: float) -> str:
-    """Classify regime from live net GEX ($B)."""
-    if net_gex > pos_thr * 2:
+def _classify_gex(net_gex_billions: float, pos_thr: float, neg_thr: float) -> str:
+    """Classify regime from live dealer net GEX, in BILLIONS of dollars.
+
+    The thresholds (`pos_thr`, `neg_thr`, defaults +1.5 / -1.5) are calibrated
+    against SPX dealer-GEX magnitudes which sit in the 10^9 range. The input
+    must therefore be pre-scaled to $B before reaching this function — pass
+    `GEXSnapshot.net_gex_billions` from `analytics.gex_engine`, NOT the raw
+    `net_gex` field.
+
+    Audit (2026-05) caught this contract violation: callers were passing the
+    raw $/1% value (~10^8–10^9) directly, which always classified into
+    DeepNegative (15% SPY allocation forever).
+    """
+    if net_gex_billions > pos_thr * 2:
         return "HighPositive"
-    elif net_gex > pos_thr:
+    elif net_gex_billions > pos_thr:
         return "MildPositive"
-    elif net_gex > neg_thr:
+    elif net_gex_billions > neg_thr:
         return "Neutral"
-    elif net_gex > neg_thr * 2:
+    elif net_gex_billions > neg_thr * 2:
         return "Negative"
     else:
         return "DeepNegative"
@@ -131,11 +142,17 @@ class GexPositioningStrategy(BaseStrategy):
     # ── Live signal ──────────────────────────────────────────────────────────
 
     def generate_signal(self, market_snapshot: dict) -> SignalResult:
-        net_gex = market_snapshot.get("net_gex")
+        # `net_gex` from market_snapshot may arrive in either form:
+        #   - "net_gex_billions": already pre-scaled to $B (preferred)
+        #   - "net_gex":          raw $/1% from compute_dealer_gex; auto-scale here
+        net_gex_b = market_snapshot.get("net_gex_billions")
+        if net_gex_b is None:
+            raw_gex = market_snapshot.get("net_gex")
+            net_gex_b = float(raw_gex) / 1e9 if raw_gex is not None else None
         vix     = market_snapshot.get("vix", 20.0)
 
-        if net_gex is not None:
-            regime = _classify_gex(float(net_gex), self.gex_pos_thr, self.gex_neg_thr)
+        if net_gex_b is not None:
+            regime = _classify_gex(float(net_gex_b), self.gex_pos_thr, self.gex_neg_thr)
             source = "live_gex"
         else:
             regime = _classify_vix(float(vix), self.vix_low, self.vix_mid_low,
@@ -155,7 +172,7 @@ class GexPositioningStrategy(BaseStrategy):
                 "regime_label":_REGIME_LABEL[regime],
                 "spy_weight":  spy_weight,
                 "source":      source,
-                "net_gex":     net_gex,
+                "net_gex_billions": net_gex_b,
                 "vix":         vix,
             },
         )

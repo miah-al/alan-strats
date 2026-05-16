@@ -126,7 +126,7 @@ def _build_features(close, high, low, vix):
         "dist_from_ma50":   d_ma50,
         "dist_from_ma200":  d_ma200,
         "days_to_month_end": month_end,
-    }).ffill().bfill()
+    }).ffill()  # ffill only — bfill leaks future values into early NaNs (walk-forward look-ahead)
 
 
 def _build_labels(close: pd.Series, n_forward: int = 10,

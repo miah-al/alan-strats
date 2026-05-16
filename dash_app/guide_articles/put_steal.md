@@ -1,5 +1,18 @@
 # Put Steal — Short Stock Interest Arbitrage AI
 
+> **Naming caveat (read first).** The strategy is *named* after the
+> put-steal arbitrage of Barraclough & Whaley (2011), but it does not
+> directly capture the put-steal flow. The literature trade requires
+> selling **ITM** American puts (strike *above* spot); this strategy
+> instead sells a defined-risk **OTM** bull put credit spread (strike
+> *below* spot) gated by an NII regime signal computed at a hypothetical
+> ITM strike. High NII at the hypothetical ITM strike correlates with
+> high-rate, low-vol, stable-stock conditions that favor OTM-put-spread
+> survival; the NII is therefore used as a covariate, not a source of
+> harvested premium. A literal put-steal capture trade — selling deep-ITM
+> American puts and waiting for forfeited NII — is a separate, more
+> aggressive trade not implemented in this repo.
+
 ## What The Paper Found
 
 **Barraclough & Whaley (2011), "Early Exercise of Put Options on Stocks"**

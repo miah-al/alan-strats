@@ -1,33 +1,56 @@
 """
-Put Steal (Short Stock Interest Arbitrage) AI Strategy.
+Put Steal — Bull Put Credit Spread with NII-as-Regime-Signal.
 
-THESIS
-------
-Barraclough & Whaley (2011) document that retail put option holders
-systematically fail to exercise deep in-the-money American puts early —
-even when early exercise is clearly optimal. The criterion for immediate
-exercise is:
+NAMING CAVEAT (READ FIRST)
+--------------------------
+This strategy is named after the put-steal arbitrage of Barraclough & Whaley
+(2011), but it does NOT directly capture put-steal. A true put-steal trade
+would sell deep-ITM American puts (strike above spot), where retail's failure
+to early-exercise forfeits the Net Interest Income (NII) to the short.
+
+What this strategy actually does is sell a defined-risk bull put credit
+spread on an OTM strike (strike below spot), gated by NII computed at a
+hypothetical ITM strike. The NII feature is used as a REGIME SIGNAL — high
+NII at a hypothetical 5% ITM strike correlates with high rates plus a low
+call value, which empirically coincides with stable, mean-reverting stock
+regimes that favor OTM-put-spread survival. The trade is not the literature
+trade; the NII is a covariate, not the source of edge.
+
+If you want the literal put-steal capture trade (sell ITM put, hold to
+expiry, harvest forfeited NII), this strategy is the wrong implementation.
+Build a separate strategy for that.
+
+LITERATURE CONTEXT (for the NII covariate)
+------------------------------------------
+Barraclough & Whaley (2011) document that retail put-option holders
+systematically fail to exercise deep ITM American puts early. The
+optimality criterion for immediate exercise is:
 
     NII = X(1 - e^{-rT}) - c(S, X, T, r, σ) > 0         [Eq. 3, paper]
 
 where:
-  X  = put strike
+  X  = put strike (taken at S * (1 + itm_pct), an ITM hypothetical)
   r  = risk-free rate
   T  = time to expiry (years)
   c  = Black-Scholes call price with same S, X, T (the "caput")
 
-When NII > 0 the interest income earned by exercising immediately exceeds
-the call-option value of waiting. Retail longs don't exercise, forfeiting
-NII to the short put holder. Over Jan 1996–Sep 2008 this mis-exercise
-cost put holders $1.9 billion.
+Over Jan 1996 – Sep 2008 this mis-exercise cost put-holders $1.9bn. We
+borrow the NII statistic as a regime signal — its empirical link to
+stable-stock conditions — without trying to harvest the underlying flow.
 
-TRADING EDGE
-------------
-We sell bull put spreads on stocks where NII > threshold:
-  - Short put: slightly ITM (itm_pct below spot) — captures forfeited premium
-  - Long put:  wing_pct further below short         — defines max loss
-The AI layer predicts whether the stock will stay above the short strike
-over the spread's life, filtering out high-crash-risk entries.
+TRADING STRUCTURE
+-----------------
+Sells a bull put credit spread on each candidate name:
+  - Short put: OTM, strike S * (1 - itm_pct)
+  - Long put:  further OTM, strike short_strike * (1 - wing_pct)
+  - Max loss   = (wing_width − credit) × 100, defined by wing
+  - Max profit = credit × 100
+
+Entry gate (must all hold):
+  - NII at hypothetical ITM strike > nii_threshold (regime signal)
+  - VIX <= vix_max, ticker IV proxy <= iv_max
+  - GBM classifier P(stock stays above short_strike over n_forward days)
+    >= confidence_thresh
 
 WALK-FORWARD TRAINING
 ---------------------
@@ -37,17 +60,17 @@ WALK-FORWARD TRAINING
 
 FEATURE SET (12 features)
 --------------------------
-  Interest arb: nii_level, nii_to_credit_ratio, call_to_put_ratio
-  Rate:         risk_free_rate (proxy: 3m T-bill)
-  Stock:        ret_5d, ret_20d, dist_from_ma50, atr_pct
-  Vol:          iv_level, ivr_20d, iv_5d_change
-  Market:       vix_level
+  Regime / NII proxy:  nii_level, nii_to_cred, call_to_put
+  Rate:                risk_free_rate (proxy: 3m T-bill)
+  Stock:               ret_5d, ret_20d, dist_from_ma50, atr_pct
+  Vol:                 iv_level, ivr_20d, iv_5d_change
+  Market:              vix_level
 
 LABEL CONSTRUCTION
 ------------------
-  1 if spot > short_strike (= spot × (1 - itm_pct)) over n_forward days
+  1 if spot > short_strike (= spot × (1 - itm_pct)) for ALL n_forward days
   i.e., the bull put spread expires fully profitable.
-  Positive rate: ~65-70% (bull put survives when stock stays stable / recovers).
+  Positive rate observed in backtest: ~65-70%.
 """
 
 from __future__ import annotations
@@ -133,8 +156,10 @@ def _build_features(
         sigma = float(iv_rv.iloc[i]) if not np.isnan(float(iv_rv.iloc[i])) else 0.20
         if S <= 0 or sigma <= 0:
             continue
-        X = S * (1.0 + itm_pct)       # strike is itm_pct above current spot
-                                        # (a put at this strike is itm_pct ITM)
+        # Hypothetical ITM strike (itm_pct ABOVE spot) — used purely as a
+        # regime-signal lens. The actual trade entered at line 597 uses an
+        # OTM strike (itm_pct BELOW spot). See module docstring NAMING CAVEAT.
+        X = S * (1.0 + itm_pct)
         nii_series.iloc[i] = _compute_nii(S, X, T, r, sigma)
         call_vals.iloc[i]  = _bs_price(S, X, T, r, sigma, "call")
         put_vals.iloc[i]   = _bs_price(S, X, T, r, sigma, "put")
@@ -182,7 +207,9 @@ def _build_features(
         "vix_level":        vix,
     }, index=close.index)
 
-    return df.ffill().bfill()
+    # ffill only — never bfill. bfill pulls future values backward into early
+    # rows, which is silent look-ahead leakage in walk-forward training.
+    return df.ffill()
 
 
 def _build_labels(
@@ -457,20 +484,23 @@ class PutStealStrategy(BaseStrategy):
             )
 
         # ── VIX series ─────────────────────────────────────────────────────────
+        # ffill only — bfill on early-NaN VIX would borrow future regime values
+        # back into warmup bars, biasing early features.
         vix_data = auxiliary_data.get("vix", {})
         if isinstance(vix_data, pd.DataFrame) and "close" in vix_data.columns:
-            vix_raw = vix_data["close"].reindex(close.index).ffill().bfill()
+            vix_raw = vix_data["close"].reindex(close.index).ffill().fillna(18.0)
         elif isinstance(vix_data, pd.Series):
-            vix_raw = vix_data.reindex(close.index).ffill().bfill()
+            vix_raw = vix_data.reindex(close.index).ffill().fillna(18.0)
         else:
             vix_raw = pd.Series(18.0, index=close.index)
 
         # ── Risk-free rate series ──────────────────────────────────────────────
+        # ffill only — same reasoning as VIX above.
         rates_data = auxiliary_data.get("rates") or auxiliary_data.get("rate10y", {})
         if isinstance(rates_data, pd.DataFrame) and "close" in rates_data.columns:
-            rfr = (rates_data["close"] / 100.0).reindex(close.index).ffill().bfill()
+            rfr = (rates_data["close"] / 100.0).reindex(close.index).ffill().fillna(_RISK_FREE_RATE)
         elif isinstance(rates_data, pd.Series):
-            rfr = (rates_data / 100.0).reindex(close.index).ffill().bfill()
+            rfr = (rates_data / 100.0).reindex(close.index).ffill().fillna(_RISK_FREE_RATE)
         else:
             rfr = pd.Series(_RISK_FREE_RATE, index=close.index)
 
@@ -661,8 +691,9 @@ class PutStealStrategy(BaseStrategy):
             params        = {
                 "nii_threshold":      self.nii_threshold,
                 "itm_pct":            self.itm_pct,
-                "dte":                self.dte,
-                "ai_confidence_min":  self.ai_confidence_min,
+                "dte_target":         self.dte_target,
+                "dte_exit":           self.dte_exit,
+                "confidence_thresh":  self.confidence_thresh,
                 "vix_max":            self.vix_max,
                 "iv_max":             self.iv_max,
             },

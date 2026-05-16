@@ -220,7 +220,10 @@ class GammaFlipBreakoutStrategy(BaseStrategy):
         snap[strike_col] = pd.to_numeric(snap[strike_col], errors="coerce").fillna(0.0)
 
         # -- Per-option GEX contribution ------------------------------------
-        gex_contrib = snap[gamma_col] * snap[oi_col] * 100 * spot
+        # Standard dealer-GEX formula: gamma × OI × 100 × spot²
+        # (Audit 2026-05 found a missing factor of `spot` here that disagreed
+        #  with analytics.gex_engine's canonical impl — fixed by squaring spot.)
+        gex_contrib = snap[gamma_col] * snap[oi_col] * 100 * (spot ** 2)
 
         is_call = snap[type_col].str.lower().str.startswith("c")
 
@@ -233,7 +236,9 @@ class GammaFlipBreakoutStrategy(BaseStrategy):
 
         gex_ratio = float(call_gex / (call_gex + put_gex + 1e-12))
 
-        # Normalise net GEX by spot²
+        # Normalise net GEX by spot² so the ML feature is comparable across
+        # tickers / regimes — the ABSOLUTE GEX scales with spot² so dividing
+        # back out yields a unit-less density.
         net_gex_norm = net_gex / (spot ** 2 + 1e-12)
 
         # -- GEX flip level (strike where cumulative GEX changes sign) -------
@@ -246,7 +251,8 @@ class GammaFlipBreakoutStrategy(BaseStrategy):
             strike_gex = {}
             for _, row in snap.iterrows():
                 k     = float(row[strike_col])
-                g     = float(row[gamma_col]) * float(row[oi_col]) * 100 * spot
+                # gamma × OI × 100 × spot² — same formula as gex_contrib above.
+                g     = float(row[gamma_col]) * float(row[oi_col]) * 100 * (spot ** 2)
                 if str(row[type_col]).lower().startswith("p"):
                     g = -g
                 strike_gex[k] = strike_gex.get(k, 0.0) + g

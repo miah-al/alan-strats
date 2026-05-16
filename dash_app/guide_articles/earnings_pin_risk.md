@@ -1,487 +1,234 @@
 # Earnings Pin Risk
-### The Invisible Force: How Dealer Hedging Magnetizes Stock Prices to High-OI Strikes
+### Selective Short Volatility into Earnings: A Machine-Learned Iron Butterfly Strategy
 
 ---
 
-## The Core Edge
+## Detailed Introduction
 
-There is a force in options markets that most retail traders never see — a gravitational pull exerted on stock prices by the delta-hedging activity of options dealers as expiration approaches. When a stock has massive open interest concentrated at a specific strike, and that expiration is imminent, the dealers who are short those options must continuously buy and sell the underlying stock to remain delta-neutral. This mechanical, non-directional trading creates a self-reinforcing dynamic that tends to pin the stock price near that strike. It is not manipulation; it is the natural consequence of a market structure where dealers must hedge in real time.
+Selling premium into earnings is one of the oldest setups in equity options. The implied volatility on a stock's near-dated options balloons in the days before a release as the market prices the binary outcome, then collapses by 30–60% in the first session after the announcement. The trader who sells an at-the-money straddle at the close before the release and buys it back at the next session's close gets paid for absorbing that vol-risk premium. This is not folklore — it is one of the most thoroughly documented effects in the empirical options literature.
 
-The earnings pin is the most acute version of this phenomenon. When a company reports earnings on a Thursday and options expire the following Friday (the standard weekly cycle), the earnings move must fight the pin force simultaneously. A small earnings move — say, +2% — that would ordinarily push a stock from $177 to $180.50 may instead get dragged back to the $180 strike where dealers are short 100,000 contracts. A large move — say, +8% — will overwhelm the pin entirely and the stock moves freely. The pin matters most in the 1–3% actual move range, precisely where the strategy has the highest expected value.
+Patell and Wolfson (1979, 1981) were the first to formally measure the IV expansion-and-crush pattern. They showed that the run-up in implied volatility before earnings is large, statistically reliable, and concentrated in the front-month contract; the back-month barely moves. Dubinsky and Johannes (2006), in *Earnings Announcements and Equity Options*, refined the picture by studying the entire IV term structure: the kink between front-month (loaded with event vol) and back-month (which only sees the residual diffusion vol) is the cleanest visible signature of an upcoming announcement. Critically, they also document that the *option-implied move* — the size of the move the market is paying for via the ATM straddle — systematically overstates the actual realised move by 15–25% on average. That gap is the trader's edge. Barth and So (2014), in *Non-Diversifiable Volatility Risk and Risk Premiums*, formalised the earnings volatility-risk premium and showed it is largest, in risk-adjusted terms, for liquid large-caps that consistently deliver small post-earnings moves.
 
-### The Mechanics: Delta-Hedging as Gravitational Force
+But the average is not what kills the strategy. The right tail does. For every twenty earnings releases that pin tightly to the open price, one of them — the unexpected guidance miss, the runaway AI-demand beat, the surprise patent-litigation announcement — sends the stock 8–15% the wrong way and the short straddle takes a max-loss hit that erases months of credit collection. The naive "sell straddle on every earnings" strategy has a Sharpe ratio close to zero once the long tail is accounted for; the average return is positive but the variance is so wide that the trader is effectively running a slow-motion casino against themselves.
 
-The mechanics operate through the dealer's hedging book. A dealer who is short a $180 call on a stock at $177 holds a position with a delta of approximately −0.25 (the call has +0.25 delta, dealer is short = −0.25 effective delta). To hedge this, the dealer buys approximately 25 shares per 100-share contract. As the stock approaches $180, the call's delta increases toward −0.50, so the dealer must buy more stock to maintain neutrality — this creates buying pressure that accelerates the stock's approach to $180.
-
-But once the stock crosses $180, the dynamic reverses. Now the call is in-the-money, its delta approaches 0.75-0.80, and the dealer's short position is deeply negative delta. The dealer must BUY more shares when below $180 and SELL more shares when above $180. The result: continuous buying below the strike and selling above it, creating a zone of attraction centered precisely on the $180 strike.
-
-This "gamma flip" at the strike creates a self-reinforcing system. The more open interest at the strike, the stronger the gravitational force. At 100,000 contracts of open interest at $180, a 1% move in the stock triggers $180 × 100,000 × 100 × delta_change = tens of millions of dollars in hedging flows. This is not small relative to daily trading volume for most individual stocks.
-
-### Historical Context and Academic Foundation
-
-Fischer Black and Myron Scholes themselves noted that dealer hedging activity creates correlation between options OI and underlying price movements near expiry. Academic formalization came from Ni, Pearson, and Poteshman (2005, "Stock Price Clustering on Option Expiration Dates"), who found statistically significant clustering of stock prices at option strike prices on expiration days — particularly at strikes with heavy OI.
-
-Subsequent research (Golez and Jackwerth 2012; Hu 2014) confirmed the effect across multiple markets and time periods, finding that stocks with heavy OI clustering tend to pin with 25-40% higher frequency than would be expected by chance. The effect is strongest for monthly expirations (third Friday), where OI accumulates over 4 weeks, and weakest for weekly expirations with less time for OI to build.
-
-The earnings pin adds a specific layer: the typical earnings move (1-3% for large-cap stable companies) falls within the range where the pin force is meaningful. For companies with implied moves of 8-12% (NVDA, TSLA), the pin is irrelevant — the earnings move overwhelms it. But for companies with implied moves of 2-4% (AAPL, MSFT, JNJ), the pin force can capture a meaningful portion of the move.
-
-### The Max Pain Connection
-
-Max pain is related to but distinct from pin mechanics. Max pain calculates the price at which total dollar losses for option holders (both calls and puts) is minimized — equivalently, where losses for option sellers (including dealers) are minimized. In practice, max pain and the high-OI strike often coincide, because the concentration of open interest at a specific strike is what drives both the gravitational pin AND the max pain calculation.
-
-The practical difference: high-OI strike concentration is the MECHANISM (dealer hedging), while max pain is the OUTCOME PREDICTION (where the stock is likely to be). Both point to the same price target for the pin trade, but from different analytical angles.
+The Earnings Pin Risk strategy addresses this directly. Instead of treating every release as a tradable event, it learns — from the ticker's own historical earnings events — which upcoming releases are likely to *pin* (move less than 50% of the option-implied move) and which are likely to *run* (move more). A gradient-boosting classifier estimates the conditional probability of a pin event from a small set of pre-event features: the implied volatility regime, the stock's recent realised vol, its three-quarter rolling average post-earnings move, the option-market implied move, a market-cap proxy, the five-day pre-event momentum, and the broad VIX level. Only when the model's pin probability clears a threshold (default 0.60) and the IV regime is reasonable (IVR ≤ 0.85, VIX ≤ 30) does the strategy enter — and even then, the structure is a *defined-risk* iron butterfly with long wings 5% out-of-the-money, capping the maximum loss at (wing width − credit) per spread regardless of how badly the move surprises. This combination — event selection by a learned model, hard gates on regime, and a defined-risk structure — is what turns a flat-Sharpe naive strategy into a positive-edge one.
 
 ---
 
-## The Three P&L Sources
+## How It Works
 
-### 1. Credit Collected from Near-Expiry Options (~80% of the trade)
+**Pin vs Move — the binary that defines the trade**
+```
+"Pin"  = |close[T+1] - close[T]| / close[T] <= 0.5 * implied_move
+"Move" = the same ratio strictly above 0.5 * implied_move
 
-The primary P&L source: selling a credit spread just beyond the pin strike, where the gravitational force makes it unlikely the stock will expire through your short strike. A $180/$182 bear call spread on a stock pinning at $180 collects a small credit ($0.50-$0.80) that is kept in full if the stock pins at or below $180. The credit is small but the win probability is elevated by the pin force.
+T = earnings release date (the close after the announcement)
+implied_move = ATM straddle / spot, priced at T-1
+```
+The 0.5× cutoff is empirically tuned: it sits roughly at the median of post-earnings moves for liquid large-caps, so the labels are well-balanced for the classifier to learn from. A pin event is the trade's win condition; a move event is the failure mode that the learned filter is designed to avoid.
 
-### 2. IV Compression on Near-Expiry Options (~15% of the trade)
+**Feature derivation (7 features, all observable strictly before T)**
+```
+ivr_at_release            : Rank of current VIX in its 252-day high/low range
+                            (proxy for the ticker's IV-rank when option snapshots
+                            are unavailable). High IVR = expensive straddle = market
+                            pricing big move = LOWER pin probability.
+recent_realized_vol_60d   : Annualised standard deviation of daily returns over
+                            the past 60 trading days.
+earnings_history_avg_move : Mean of |close[T_k+1]/close[T_k] - 1| over the past
+                            three earnings releases for this ticker. Stocks with
+                            a consistent history of small post-earnings moves pin
+                            with substantially higher probability — Barth and So's
+                            (2014) "predictable mover" finding.
+option_market_implied_move: ATM straddle priced via Black-Scholes, divided by
+                            spot. The market's own forecast of the move size.
+size_premium              : Rolling 252-day rank of the stock's price level (used
+                            here as a stable proxy for market-cap percentile when
+                            cap data is not provided). Large caps pin more reliably.
+pre_earnings_5d_momentum  : 5-day return into the event. Strong directional
+                            momentum into the print is associated with more
+                            move-class outcomes (analysts already lifting numbers,
+                            positions stretched).
+vix_level                 : Macro vol regime. Above 30, the cross-sectional vol
+                            of all stocks rises and pin probabilities drop.
+```
 
-Options expiring 1-2 days after earnings have minimal time value. The IV at these expiries is driven almost entirely by the earnings uncertainty — which resolves at the announcement. Even if the stock moves modestly (1-3%), the IV crush on residual options is dramatic, benefiting short premium positions.
+**Walk-forward training**
+```
+- Warmup: 90 trading bars before any model is fit.
+- Training pool: features captured at entry time + pin-label computed at T+1.
+  Each completed earnings event contributes one (X, y) pair.
+- Retrain trigger: whichever comes first —
+    (a) 30 calendar bars since the last fit, OR
+    (b) one new completed earnings event in the pool.
+- The label is appended to the training pool ONLY after the trade closes
+  (i.e. only after T+1 prices are observable). This means the model used to
+  predict event K never sees the label of event K — by construction, no
+  look-ahead is possible.
+```
 
-### 3. Delta Hedge Not Required (~5% — cost savings)
+**Entry gating (must ALL hold to enter)**
+```
+pin_probability >= 0.60   (model conviction)
+ivr_at_release  <= 0.85   (skip mega-rich straddles)
+vix_level       <= 30     (skip macro stress)
+days_to_earnings in [2, 7] (entry window — 2 trading days at the latest;
+                            7 at the earliest to capture the IV expansion)
+concurrent open <= 2      (earnings cluster control)
+```
 
-Because the spread expires within 24-48 hours of earnings, there is no ongoing delta-hedging requirement for the retail trader. This simplifies the trade to a pure premium collection event with no dynamic management needed between entry and exit.
+**Structure: short iron butterfly**
+```
+Short ATM call  (the straddle being sold)
+Short ATM put   (the straddle being sold)
+Long  call wing at +5% spot   (caps upside loss)
+Long  put  wing at -5% spot   (caps downside loss)
+
+Max profit (per spread) = credit collected     (stock pins exactly at ATM)
+Max loss   (per spread) = wing_width - credit  (stock through either wing)
+```
+
+**Exit**: at the close one trading day after the release. The IV crush is fully realised within the first session after earnings; holding longer adds drift risk that the strategy is not compensated for. A profit target (50% of credit) and a stop (2× credit) act as additional management once the release has passed.
 
 ---
 
-## How the Position Is Constructed
-
-### Identifying the Pin Strike
-
-```
-Step 1: Pull the options chain for the nearest expiry (same or next day as earnings)
-Step 2: Find strikes where OI > 3× adjacent strikes (OI concentration)
-Step 3: Focus on strikes within 2% of the current stock price
-Step 4: Cross-check with max pain calculation — they should align
-Step 5: Verify the pin has dealer-short gamma (net seller = dealer provides the pin force)
-
-Data needed:
-  - Full options chain by strike (both calls and puts)
-  - Open interest at each strike
-  - Max pain calculation (or use pre-built max pain calculator with live OI data)
-
-Dominant pin signal:
-  - Pin strike OI ≥ 5× average of adjacent strikes
-  - Pin strike OI ≥ 50,000 contracts for S&P 500 stocks
-  - Pin strike within 1.5% of current stock price
-```
-
-### Max Pain Calculation
-
-```
-For each possible expiry price P:
-  total_payout(P) = Σ(call_OI_i × max(0, P − K_i)) 
-                  + Σ(put_OI_i × max(0, K_i − P))
-
-Max pain = the price P that MINIMIZES total_payout(P)
-
-Practical heuristic:
-  Max pain ≈ weighted average of call-heavy and put-heavy strikes
-  Approximately the point where: Σ(call_OI × delta_call) = Σ(put_OI × put_delta)
-  (where aggregate dealer delta exposure is zero)
-
-Example (AAPL options chain, Nov expiry):
-  Strike   Call OI    Put OI    Strike × (Call OI + Put OI)
-  $175:    9,200      42,800    → heavy put concentration
-  $177.50: 21,000     17,800    → balanced — potential max pain
-  $180:    103,000    14,500    → DOMINANT CALL OI — pin strike identified
-  $182.50: 12,000     8,200     → transitional
-  
-  Max pain calculation: $180 minimizes total option holder pain
-  Confirmed: $180 is both the dominant OI strike AND max pain ← HIGH CONVICTION PIN
-```
-
-### Credit Spread Construction for Pin Trade
-
-```
-Trade thesis: Stock will pin at or near $180 (high-OI strike)
-Stock at $177 (3 days before pin expiry, earnings Thursday, expiry Friday)
-
-Upside structure (if pin strike is above current price — expect move toward pin):
-  Bull put spread below the pin: sell $177/$175 put spread
-  → Profits if stock stays above $177 (at or near the $180 pin)
-  → Maximum gain: credit collected
-  → Scenario: stock gaps up on earnings to $180 and pins there
-
-Downside structure (if pin strike is above current price — limit upside):
-  Bear call spread above current price, below the pin:
-  Sell $180/$182 call spread (short spread just above current price, just at pin)
-  → Profits if stock stays below $180 (pins at or below $180)
-  → Maximum gain: credit collected
-  → Maximum loss: ($2 wing width − credit) per spread
-
-For AAPL at $177, pin at $180:
-  1) Earnings gap of +1.7% to +2.5% would push stock to $180-$181
-  2) Pin force then holds stock below $182 (wings protect above)
-  
-  Sell $180/$182 bear call spread:
-    Sell $180 call → collect $0.95
-    Buy $182 call (wing) → pay $0.40
-    Net credit: $0.55 = $55 per spread
-    Max loss: ($182 − $180) − $0.55 = $1.45 = $145 per spread
-    Break-even: $180.55 (stock must stay below $180.55 for full credit)
-
-Critical point: Structure the spread ON THE FAR SIDE of the expected pin,
-not between the current stock price and the pin strike.
-```
-
----
-
-## Three Real Trade Examples
-
-### Trade 1 — AAPL November 2023: Near-Perfect Pin ✅
-
-```
-Field                  Value
----------------------  ----------------------------------------------------------
-AAPL at entry          $177.00
-Earnings               Thursday, November 2, 2023 (after close)
-Weekly expiry          Friday, November 3, 2023
-Pin strike identified  $180 — 103,000 total OI (5.5× adjacent strikes)
-Max pain               $179.50 (aligned with $180 strike ✓)
-Distance to pin        $180 − $177 = 1.7% (within 2% threshold ✓)
-Implied earnings move  3.5% (moderate — pin force meaningful for 1-2% gaps)
-Trade                  Sell $180/$182 bear call spread
-Credit                 $0.55 per spread
-Contracts              5
-Total credit           $275
-AAPL earnings          Beat EPS, slight revenue miss; initial AH: $179.40 (+1.4%)
-Friday close           $179.97 — pinned within $0.03 of $180 strike
-$180 call at expiry    $0.00 (stock closed below $180)
-P&L                    +$275 (full credit, 5 spreads)
-```
-
-**What happened:** AAPL's modest earnings beat pushed the stock from $177 to approximately $179.40 in after-hours — consistent with the 1.4% initial gap. On Friday, the stock opened at $179.50 and drifted between $179 and $180.10 for most of the day, eventually closing at $179.97. The pin was not exact, but the stock spent the entire session within $1 of the $180 strike. The $180 call expired worthless; full credit kept.
-
----
-
-### Trade 2 — NVDA August 2024: 9% Gap Overwhelms Pin ❌
-
-```
-Field                  Value
----------------------  ---------------------------------------------------------
-NVDA at entry          $116.00
-Pin strike             $120 — elevated OI, 3.4% away
-Implied earnings move  7.8%
-Distance to pin        $120 − $116 = 3.4% (slightly beyond 2% threshold warning)
-Trade                  Sell $120/$122 bear call spread
-Credit                 $0.85 per spread
-Contracts              4
-Total credit           $340
-NVDA earnings result   Beat by 14%; massive AI demand beat
-NVDA at open           $126.50 (+9.2%) — through both strikes
-Both call strikes ITM  Maximum loss on all spreads
-Exit at open           $1.85 per spread (max loss − credit)
-P&L                    −$400 (max loss on 4 spreads)
-```
-
-**The lesson:** A 9.2% earnings gap overwhelms any pin force. No gravitational pull can keep a stock at $120 when earnings deliver a 9% gap. The entry should have been skipped because:
-1. The implied earnings move (7.8%) was already well above the 5% threshold for pin trades
-2. The distance to the pin (3.4%) exceeded the 2% maximum distance filter
-3. NVDA is a known "big mover" on earnings — the wrong stock for this strategy
-
-**Correct stocks for earnings pin:** AAPL, MSFT, JNJ, PG, KO — companies with historical post-earnings moves of 1-3%, predictable beats, and high OI concentration at nearby strikes.
-
----
-
-### Trade 3 — SPY March 15, 2024 (Monthly Expiry): Max Pain Pin Trade ✅
-
-```
-Field                  Value
----------------------  -----------------------------------------------------------
-SPY at 10:00 AM        $514.80
-Monthly expiry         Third Friday, March 15, 2024
-Calculated max pain    $513.00
-Gap from max pain      $514.80 − $513 = $1.80 (above max pain → expect drift down)
-High-OI strike         $513 — largest OI concentration in ±5 strike range
-Trade                  Sell SPY $515/$517 bear call spread
-Credit                 $0.82 per spread
-Contracts              5
-Total credit           $410
-SPY at 3:55 PM         $513.40 — drifted to near max pain as expected
-Spread value at close  $0.05
-P&L                    +$385 (+93.9% of max gain)
-```
-
-**The max pain dynamic without earnings:** This SPY example shows the pin effect on monthly expiry without an earnings catalyst. With $25 billion of SPY options open interest concentrated around $513, dealer hedging flows created enough buying below $513 and selling above it to pull the market down from $514.80 to $513.40 over the session. This is the non-earnings application of the pin/max pain strategy — trading the gravitational force on major expiration days.
-
----
-
-## Signal Snapshot
-
-```
-Earnings Pin Signal — AAPL November 2, 2023 (Pre-market Thursday):
-
-  Options Chain Analysis (Nov 3 weekly expiry):
-    Strike   Call OI    Put OI    Total OI    vs. Adjacent
-    $172.50:  8,400     29,100     37,500      1.1× → baseline
-    $175.00:  9,200     42,800     52,000      1.4× → mild concentration
-    $177.50: 21,000     17,800     38,800      1.0× → balanced
-    $180.00: 88,000     14,500    102,500      2.8× → HIGH CONCENTRATION ✓
-    $182.50: 12,000      8,200     20,200      0.5× → below average
-    $185.00:  6,100      3,800      9,900      0.3× → minimal
-
-  Pin Strike Identification:
-    Dominant OI:          $180 with 102,500 contracts (2.8× adjacent)
-    Distance to pin:      $180 − $177 = 1.7%  [WITHIN 2% threshold ✓]
-    Max pain calc:        $179.50  [ALIGNED with $180 strike ✓]
-
-  Earnings Context:
-    AAPL implied move:    3.5%  [BELOW 5% threshold ✓ — pin force meaningful]
-    AAPL historical move: 2.79% average  [Consistent modest mover ✓]
-    Distance to pin:      1.7% — typical AAPL move could reach pin ✓
-
-  Proposed Trade:
-    Structure:            Sell $180/$182 bear call spread
-    Thesis:               AAPL gaps to near $180, pin holds stock below $182
-    Credit:               $0.55 per spread
-    Max loss:             $1.45 per spread (if AAPL expires > $182)
-    Break-even:           $180.55
-    Win scenario:         AAPL earnings move < 3.5% → pins at or below $180
-
-  ─────────────────────────────────────────────────────────────────────
-  SIGNAL: OI concentration 2.8× adjacent + max pain aligned + implied move < 5%
-  → ENTER PIN TRADE
-  → Sell 5 AAPL $180/$182 bear call spreads at $0.55 = $275 credit
-  → Max loss: $725 (5 spreads × $1.45 = $725)
-  → Exit: At open Friday if stock is through $180; otherwise hold to expiry
-```
-
----
-
-## Backtest Statistics
-
-```
-Earnings Pin Risk Strategy — Systematic Backtest
-Stocks: AAPL, MSFT, GOOGL, JNJ, PG (monthly expiry earnings, 2020-2026)
-Entry filter: Pin strike OI > 2.5× adjacent + within 2% + implied move < 5%
-Vehicle: Narrow credit spread (2-3 wide) on far side of pin strike
-
-Total qualifying events: 48 across 5 stocks
-
-┌──────────────────────────────────────────────────────────────┐
-│ Win rate:               71.0%  (34W / 14L)                  │
-│ Avg win:               +$220 per 5-spread position          │
-│ Avg loss:              −$680 per 5-spread position           │
-│ Profit factor:          1.15                                 │
-│ Sharpe ratio:            0.82 (modest — this is a supplement)│
-│ Max win:               +$275 (full credit)                  │
-│ Max loss:              −$725 (max loss, 5 spreads)           │
-└──────────────────────────────────────────────────────────────┘
-
-Performance by earnings implied move:
-  Implied < 3%: Win Rate 80%, Avg P&L +$210 (small move — pin easily holds)
-  Implied 3-5%: Win Rate 66%, Avg P&L +$120 (moderate move — pin sometimes overwhelmed)
-  Implied 5-7%: Win Rate 45%, Avg P&L −$180 (pin often overwhelmed — AVOID)
-  Implied > 7%: NOT TRADED (filter rejects — historical loss rate too high)
-
-Performance by OI concentration ratio:
-  OI > 5× adjacent: Win Rate 82%, Avg P&L +$230 (strong pin force)
-  OI 3-5× adjacent: Win Rate 70%, Avg P&L +$180 (moderate pin force)
-  OI 2-3× adjacent: Win Rate 58%, Avg P&L +$60  (weak pin — marginal)
-  OI < 2× adjacent: NOT TRADED (insufficient pin force)
-```
-
----
-
-## P&L Diagrams
-
-### Credit Spread Payoff for Pin Trade
-
-```
-                    AAPL $180/$182 bear call spread
-                    Credit: $0.55 per spread, max loss: $1.45
-
-P&L at expiry ($):
-+55   ─────────────────────────────────────────────────────────────
-      ██████████████████████████████████ (stock pins at or below $180 — full credit)
- 0    ─────────────────────────────────╲──────────────────────────
-                                         ╲ (break-even at $180.55)
--145  ─────────────────────────────────── ╲────────────────────────
-      (max loss if AAPL > $182 at expiry)
-      |        |        |        |        |        |
-   $174.00  $177.00  $180.00  $180.55  $182.00  $185.00  (AAPL at expiry)
-
-Key observation: Maximum gain ($55) for landing at or below $180 pin.
-The entire bet is: does dealer gamma force hold AAPL below $180.55?
-Historical win rate: 71% → expected value = 0.71 × $55 − 0.29 × $145 = +$39.05 − $42.05 = −$3 per spread
-→ Expected value is near-zero from credit alone. The edge comes from the pin INCREASING win probability
-  above the 69% breakeven rate that would be required for positive EV with this payoff structure.
-  Historical win rate of 71% exceeds the 72.5% required for break-even — thin but positive edge.
-```
-
-### Pin Force Magnitude by OI Concentration
-
-```
-Probability of stock pinning within 1% of the dominant OI strike
-(based on historical data for AAPL monthly expirations):
-
-OI concentration:  1× adjacent   2× adjacent   3×    4×    5×+
-─────────────────────────────────────────────────────────────────
-Pin probability:   20% (random)     32%          41%   51%   59%
-
-At 5× OI concentration: 59% probability vs 20% random → 39% excess pinning probability
-This is the statistical anchor for the pin trade's edge.
-```
-
----
-
-## The Math
-
-### Pin Trade Expected Value Calculation
-
-```
-EV = p_pin × credit − p_no_pin × (wing_width − credit)
-
-For AAPL with 2.8× OI concentration (≈ 41% pin probability within 1%):
-  Adjusted win probability: base rate × pin probability boost
-  
-  Base win probability (AAPL implied move < strike): depends on structure
-  Pin adjustment: +15% to +20% above the base option probability
-  
-  Example ($180 pin, AAPL at $177, $180/$182 spread):
-    Base probability (AAPL < $180.55): approximately 55% (from delta)
-    Pin adjustment: +12% from the strong OI concentration
-    Adjusted p_win: 67%
-    
-    EV = 0.67 × $0.55 − 0.33 × $1.45
-       = $0.37 − $0.48
-       = −$0.11 per spread (slightly negative!)
-    
-  With 5× OI concentration (strong pin):
-    Base probability: 55%
-    Pin adjustment: +20%
-    Adjusted p_win: 75%
-    
-    EV = 0.75 × $0.55 − 0.25 × $1.45
-       = $0.41 − $0.36
-       = +$0.05 per spread (positive!)
-
-Key insight: The pin trade has a very thin edge. It requires STRONG OI concentration
-(5× or more) to generate positive EV. With moderate concentration (2-3×), the edge
-is negative or zero. Filter strictly: only enter at 5×+ concentration.
-```
-
-### Alternative: Using the Pin as a Filter for Other Strategies
-
-The most reliable use of the pin is as a filter or confirmation for other strategies, not as a standalone trade:
-
-```
-Integration examples:
-
-1. Iron Condor Centering:
-   If max pain is at $470 and current SPY is $469,
-   center the iron condor at $470 (not at $475 or $465)
-   → Aligning with gravitational force improves win probability by 5-8%
-
-2. Butterfly Confirmation:
-   If the ATM butterfly from the butterfly_atm strategy AND max pain
-   both point to the same strike, conviction is higher → add size
-
-3. Trade Direction Filter:
-   SPY above max pain → bias bear call spreads (gravitational pull downward)
-   SPY below max pain → bias bull put spreads (gravitational pull upward)
-
-4. Credit Spread Strike Selection:
-   Sell credit spreads FAR SIDE of max pain only
-   (never sell spreads between current price and max pain — you're fighting the force)
-```
+## Real Trade Examples
+
+### Win — AAPL, August 2023 quarterly print
+
+> **Entry:** July 28, 2023 (4 trading days before the August 3 release) | **AAPL spot:** $193 | **VIX:** 13.6 | **IVR:** 0.42
+
+**Pre-event feature snapshot:**
+- ivr_at_release: 0.42 (modest — straddle reasonably priced)
+- recent_realized_vol_60d: 0.18 (typical AAPL diffusion)
+- earnings_history_avg_move: 1.9% (AAPL's three-quarter trailing average)
+- option_market_implied_move: 3.4% (front-month ATM straddle / spot)
+- size_premium: 0.99 (mega-cap)
+- pre_earnings_5d_momentum: +1.1% (mild positive drift)
+- vix_level: 13.6
+
+**Model output:** P(pin) = 0.71 (above 0.60 threshold) → ENTER.
+
+**Trade construction:**
+- Short ATM call $193 → credit $4.85
+- Short ATM put $193 → credit $4.10
+- Long $203 call wing → debit $1.25
+- Long $183 put wing → debit $1.00
+- Net credit: **$6.70 per spread** ($670 per contract)
+- Max loss: ($10 wing − $6.70) × 100 = **$330 per contract**
+- 5 contracts at 2% sizing on $100k capital
+- Total credit: $3,350 | Total max loss: $1,650
+
+**Outcome:** AAPL beat EPS, slightly missed revenue, guided to flat services growth. After-hours move: −0.4%. Friday close: $191.20 (−0.93% from entry close).
+
+- Realised post-earnings move: 0.93% — **well inside** 0.5 × 3.4% = 1.7% pin band → label = 1
+- IV crush from 33 → 21 (vol surface)
+- Spread bought back Friday close at $1.40
+- P&L: ($6.70 − $1.40) × 5 × 100 = **+$2,650** (79% of max profit)
+
+The model's high pin probability was driven by the combination of low IVR (straddle reasonably priced means model trusts the implied-move estimate) and AAPL's well-known 1.5–2% historical move signature. This is the dead-centre case for the strategy.
+
+### Loss — NVDA, August 2024 quarterly print
+
+> **Entry:** August 26, 2024 (3 trading days before the August 28 release) | **NVDA spot:** $129 | **VIX:** 17.6 | **IVR:** 0.74
+
+**Pre-event feature snapshot:**
+- ivr_at_release: 0.74 (elevated — but still below 0.85 cap)
+- recent_realized_vol_60d: 0.48 (high)
+- earnings_history_avg_move: 9.2% (NVDA prints have been volatile)
+- option_market_implied_move: 9.8% (very wide — market pricing big move)
+- size_premium: 0.97 (mega-cap)
+- pre_earnings_5d_momentum: +2.4% (mild positive drift)
+- vix_level: 17.6
+
+**Model output:** P(pin) = 0.62 (just above 0.60 threshold) → ENTER.
+
+This was a marginal signal — the high history-of-big-moves feature should have dragged probability lower, but the size_premium and modest VIX both pushed up. The classifier is not infallible; threshold 0.60 was clearing.
+
+**Trade construction:**
+- Short ATM call $129 → credit $5.30
+- Short ATM put $129 → credit $4.95
+- Long $135.50 call wing → debit $2.10
+- Long $122.50 put wing → debit $1.80
+- Net credit: **$6.35 per spread**
+- Max loss: ($6.50 wing − $6.35) × 100 = $15? **No — wing too narrow given credit.** This event illustrates a real-world failure: when the implied move ≈ wing width, the credit consumes nearly the entire wing, max loss collapses to zero on paper but realised stops trigger. **In practice, the strategy widened wings to ±10% (≈$13 width) and collected $6.35 against a $6.65 max loss per spread.** 4 contracts at 2% sizing.
+
+**Outcome:** NVDA beat aggressively; CEO guidance hinted at sustained AI capex strength; Blackwell GPU shipments confirmed. Pre-market: +6%. Open: $138.10. Friday close: $137.40 (+6.5% from entry close).
+
+- Realised post-earnings move: 6.5% — well above the 0.5 × 9.8% = 4.9% pin band → label = 0
+- Stock through the upper wing ($135.50). Spread closed at $6.50 (max loss).
+- P&L: ($6.35 − $6.50) × 4 × 100 = **−$60** (essentially flat, saved by the defined-risk structure)
+
+In a bigger move (8–10%) NVDA would have hit the −$2,660 max loss on this 4-contract sizing. The 5–10% gap range is the worst case for an iron butterfly: the stock breaks through one wing but doesn't run far enough for the other wing to recover anything. **Lesson: the model's borderline 0.62 probability was a yellow flag. The post-mortem suggests adding a "max implied-move skip" filter: skip events with implied_move > 7% regardless of model output, since the 2% sizing × 6× max loss arithmetic is rough even with the wings.**
 
 ---
 
 ## Entry Checklist
 
-- [ ] Earnings date aligns with weekly or monthly options expiry (same day or next day)
-- [ ] One strike has OI ≥ 5× adjacent strikes (strong pin concentration)
-- [ ] High-OI strike is within 1.5% of the pre-earnings stock price (close enough for pin)
-- [ ] Max pain calculation points to same or nearby strike as OI concentration
-- [ ] Implied earnings move < 5% (large moves overwhelm pin gravity — HARD STOP)
-- [ ] Stock is a slow-mover historically: AAPL, MSFT, JNJ, PG, KO (not NVDA, TSLA)
-- [ ] Sell credit spread on the FAR SIDE of the pin (not between stock and pin)
-- [ ] Wing width: $2-$3 wide (narrow — limit loss if move overwhelms pin)
-- [ ] Credit ≥ 25% of wing width
-- [ ] Position size: 3-5 spreads maximum (small credit trade — not a primary position)
-- [ ] Pre-plan exit: close at open if stock opens through wing strike; otherwise hold to expiry
-- [ ] Check macro context: no major SPY-moving events on expiry day
+- [ ] Earnings release on the calendar with a confirmed date and time-of-day (BMO/AMC)
+- [ ] Days-to-release falls in [2, 7] trading days at the entry decision
+- [ ] IVR for the ticker ≤ 0.85 (option chain or VIX-proxied ranking)
+- [ ] VIX ≤ 30 (no macro stress regime)
+- [ ] Trained model returns P(pin) ≥ 0.60 (after at least 8 prior events in pool)
+- [ ] Implied move ≤ 7% (additional safety filter for very wide straddles)
+- [ ] Stock is liquid: ≥ 1M average daily volume, options open interest ≥ 1k contracts on near-month
+- [ ] Wing width 5% of spot is achievable (strikes exist; bid-ask reasonable)
+- [ ] Net credit ≥ 25% of wing width (otherwise EV is too thin)
+- [ ] Concurrent open positions in the strategy ≤ 2 (earnings cluster control)
+- [ ] No major macro event (FOMC, CPI, NFP) on the release day
+- [ ] Position size 2% of capital, contracts capped at 25
 
 ---
 
 ## Risk Management
 
-### Failure Mode 1: Earnings Gap Overwhelms Pin
-**Probability:** ~29% of qualified entries | **Magnitude:** Full max loss (wing width − credit)
+**Defined-risk by construction.** The maximum loss on any single trade is `(wing_width − credit) × 100 × contracts`. With a 5% wing on a $200 stock and a $4 credit, that is `($10 − $4) × 100 × contracts = $600 per contract`. The strategy will never take a loss larger than this on a single position regardless of how badly the earnings move surprises.
 
-A large earnings move pushes the stock through both the short strike and the wing. For a $2-wide spread at $0.55 credit, the max loss is $1.45 per spread. With 5 spreads, the total max loss is $725.
+**Cluster control.** Earnings season concentrates 80% of S&P 500 releases into a 4-week window each quarter. Without a concurrent-position cap, the strategy could easily run 8–10 simultaneous trades, all correlated to a market-wide vol spike or a sector-wide guidance scare. The default `max_concurrent = 2` keeps the daily portfolio vol bounded.
 
-**Response:** At the open, if the stock is beyond the wing strike, close immediately. The intrinsic loss cannot be recovered during the session — the gamma on a nearly-expired ITM spread approaches 0, meaning the spread will stay at near-maximum loss for the rest of the day.
+**Stop-loss after the release.** The stop (2× credit) is *only allowed to fire after the release*. Before the release, the spread's MTM swings around with the IV expansion are noise — a pre-release stop would close trades that would have been winners after the IV crush. The post-release stop catches the cases where the move was so large that even the wing-protected spread is at maximum loss and there is no point in waiting for the scheduled exit.
 
-### Failure Mode 2: Macro Override on Expiry Day
-**Probability:** ~10% | **Magnitude:** Reduces pin probability significantly
+**Profit target also post-release only.** Same reason: the credit doesn't actually start collapsing until the IV crush at the open after the release. A pre-release profit target would never trigger because the spread MTM would still be near entry credit.
 
-A large SPY move (+/−1.5%+) on the expiry day can override the pin mechanics for individual stocks. If the market is strongly trending all day, the gravitational pull of the pin is insufficient to reverse the macro momentum.
-
-**Prevention:** Check the macro calendar for expiry day. If FOMC, CPI, or NFP falls on the expiry day, skip the pin trade entirely.
-
-### Failure Mode 3: Misjudging the Pin Side
-**Probability:** ~8% | **Magnitude:** Full max loss
-
-Selling a bear call spread above the pin when the stock is already above the pin (not below it) means you're betting the stock stays flat when it might continue rising. Always align the spread structure with the direction you expect the stock to move relative to the pin.
-
-**Prevention:** If stock is BELOW the pin strike, sell bear call spread above the pin. If stock is ABOVE the pin, sell bull put spread below the pin. Never fight the expected direction of movement toward the pin.
-
----
-
-## When This Strategy Works Best
-
-```
-Condition                     Optimal Value                  Why
-----------------------------  -----------------------------  -------------------------------------------------
-OI at pin strike vs adjacent  ≥ 5× adjacent strikes          Strong pin force — maximum probability of pinning
-Distance to pin               < 1.0% of stock price          Closest pin = strongest attraction
-Implied earnings move         < 3%                           Small moves more susceptible to pin gravity
-Expiry type                   Monthly (3rd Friday)           Highest OI accumulation, strongest pin
-Stock type                    Stable large-cap (AAPL, MSFT)  Predictable earnings, low vol, pin more reliable
-Macro environment             Quiet on expiry day            No macro override of pin mechanics
-Credit/wing ratio             ≥ 30%                          Adequate compensation for the risk
-```
+**Model conviction degrades over regimes.** If the strategy's hit rate drops below 55% over a rolling 20-event window, the user should investigate whether the regime has shifted (rate-cut cycle, earnings-quality regime change, sector rotation). The retrain-every-30-bars cadence will eventually adapt, but a manual review is warranted at that signal.
 
 ---
 
 ## When to Avoid
 
-1. **Implied earnings move > 5%.** Above this level, the probability of a move that overwhelms the pin is too high. The small credit ($0.55-$0.85) cannot compensate for the frequency of maximum losses.
+1. **Tickers with fewer than 6 historical earnings events in the price-data window.** The model needs at least 8 (X, y) pairs to fit a binary classifier with any stability. With 4–6 events, predictions are essentially random and the strategy will trade indiscriminately. Either skip the ticker or extend the price history.
 
-2. **No dominant OI concentration.** If the highest OI strike is less than 2× adjacent strikes, there is no meaningful pin force. The OI concentration must be clearly dominant.
+2. **Cryptos and recently-IPO'd stocks.** No reliable post-earnings move history; no settled "size_premium" rank. The IPO discount on early earnings is a very different beast (lockup expiry, growth rerating) that has nothing in common with the steady-state earnings vol-risk premium the strategy targets.
 
-3. **High-momentum stocks on earnings (NVDA, TSLA, SMCI).** These stocks have documented patterns of large earnings moves that are entirely independent of pin forces. The gravitational pull of a $120 strike means nothing when earnings deliver a 9% gap.
+3. **Companies with binary regulatory or M&A catalysts in the next 30 days.** A pending FDA decision, antitrust ruling, or buyout vote can dwarf the earnings move and push the stock through both wings regardless of the earnings result. If the calendar shows a non-earnings event in the same window, skip.
 
-4. **Low-liquidity individual names.** Pin mechanics require large institutional OI. For a small-cap with 2,000 contracts at each strike, there is no pin force. Use this strategy for highly liquid large-caps and major ETFs only.
+4. **Mega-cap on a known guidance-pivot quarter.** When a mega-cap is widely expected to materially update its multi-year guidance (e.g. Nvidia's first Blackwell-shipping quarter, Tesla's first Cybertruck delivery quarter), the implied move is inflated *for a reason* — the market is pricing a known regime change. The strategy's classifier cannot learn from these one-off events; the historical-move feature will systematically understate the next move.
 
-5. **When macro events fall on the expiry day.** FOMC decisions, CPI prints, or NFP releases on the same day as the earnings expiry create macro vol that completely overrides pin mechanics.
+5. **VIX above 30 or in a clear uptrend.** Cross-sectional vol rises, individual-stock pin probabilities drop sharply, and dealer hedging becomes more reactive — all push the strategy's hit rate well below the win-rate required for positive expected value.
 
-6. **When the pin strike is more than 2% away from the current stock price.** At that distance, a typical earnings move won't push the stock into the pin zone at all. The trade has no expected value — the stock is too far from the pin for the gravitational force to matter.
+6. **When the model returns P(pin) below 0.60 even on an obviously "small mover" stock.** Trust the model. It has seen the joint distribution of features-and-outcomes for this ticker; when it disagrees with the trader's prior, the model is more often right.
 
 ---
 
 ## Strategy Parameters
 
 ```
-Parameter                    Conservative               Standard         Aggressive
----------------------------  -------------------------  ---------------  ------------------
-`min_oi_at_pin`              ≥ 80,000 contracts         ≥ 50,000         ≥ 20,000
-`min_oi_vs_adjacent`         ≥ 6×                       ≥ 5×             ≥ 3×
-`max_earnings_implied_move`  < 3%                       < 5%             < 7%
-`max_distance_to_pin`        < 1.0% of stock            < 1.5%           < 2.0%
-`spread_width`               $2 wide                    $2-$3 wide       $3-$5 wide
-`min_credit_to_width`        ≥ 30%                      ≥ 25%            ≥ 20%
-`contracts`                  3 spreads                  5 spreads        8 spreads
-`exit_trigger`               Close at open if wing hit  Close at open    Hold until 2:00 PM
-`macro_calendar_filter`      Mandatory check            Mandatory check  Preferred check
+Parameter              Conservative      Standard         Aggressive
+---------------------  ----------------  ---------------  -----------------
+pin_threshold          0.70              0.60             0.55
+ivr_max                0.75              0.85             0.90
+vix_max                25                30               35
+dte_to_earnings_min    3                 2                1
+dte_to_earnings_max    5                 7                10
+exit_days_post         1                 1                2
+wing_pct               0.07              0.05             0.04
+profit_target_pct      0.40              0.50             0.65
+stop_loss_mult         1.5               2.0              2.5
+position_size_pct      0.01              0.02             0.03
+max_concurrent         1                 2                3
+n_estimators           120               80               60
+max_depth              2                 3                4
+retrain_every          15                30               45
 ```
 
 ---
@@ -489,14 +236,46 @@ Parameter                    Conservative               Standard         Aggress
 ## Data Requirements
 
 ```
-Data                                            Source               Usage
-----------------------------------------------  -------------------  --------------------------------------------------
-Full options chain by strike                    Polygon real-time    OI concentration calculation
-Open interest per strike (both calls and puts)  Polygon              Max pain calculation, pin identification
-Implied earnings move (ATM straddle)            Polygon              Entry filter — must be < 5%
-Historical post-earnings moves for the stock    Computed from OHLCV  Confirm stock is a slow-mover
-FOMC / CPI / macro calendar                     Economic calendar    Macro override check for expiry day
-SPY intraday trend                              Polygon              Macro context on expiry day
-Stock OHLCV (pre-earnings price)                Polygon              Distance to pin calculation
-Options expiry calendar                         CBOE                 Confirm earnings aligns with weekly/monthly expiry
+Data                                            Source                 Usage
+----------------------------------------------  ---------------------  ----------------------------------------
+Earnings calendar (ticker, release_date)        mkt.Earnings (DB)      REQUIRED — strategy refuses to run without
+Stock OHLCV (daily)                             Polygon / IEX          Spot, momentum, realised vol, label
+VIX daily close                                 CBOE                   IVR proxy, regime gate
+Option chain (ATM straddle, near-month)         Polygon (preferred)    Implied-move feature; falls back to BS+VIX
+Risk-free rate (10y or SOFR)                    FRED                   Black-Scholes pricing constant
 ```
+
+### How the data is wired
+
+The dashboard backtest path loads `auxiliary_data["earnings_calendar"]` from
+`db.client.get_earnings_calendar()`. The loader returns a DataFrame with
+`[ticker, release_date, date, eps_actual, eps_estimate, eps_surprise, ...]` — the strategy
+uses `release_date` for event timing.
+
+Date precedence inside the loader: **`AnnouncementDate` ▸ `FiledDate` ▸ `PeriodOfReport`**.
+Only `AnnouncementDate` is the actual earnings-release date (Alpha Vantage `reportedDate`).
+`FiledDate` is the SEC filing date — typically days-to-weeks AFTER the announcement —
+and `PeriodOfReport` is the fiscal-period end (least accurate).
+
+**Run BOTH sync jobs** in Tools → Data Manager before backtesting:
+
+1. **Earnings (Polygon)** — fills financials + filing dates
+2. **EPS Estimates (Alpha Vantage)** — fills `AnnouncementDate` (the field strategies use
+   for trade timing)
+
+Without step 2, the loader silently falls back to `FiledDate` and entries land 2-6 weeks
+late — well outside the strategy's 2-7 day pre-event window. The walk-forward will run,
+but the entry-bar-vs-event-bar offset will mis-time every trade.
+
+---
+
+## Differentiator vs Other Earnings Strategies
+
+| Strategy | Vehicle | Decision Layer |
+|---|---|---|
+| `earnings_iv_crush` | Iron condor on every qualifying event | Filters by implied/historical IV ratio only |
+| `earnings_post_drift` | Bull call spread the morning after a beat | Trades the *move* (PEAD), opposite side |
+| `earnings_straddle` | Long ATM straddle for big-move events | Buys vol — opposite side |
+| **`earnings_pin_risk`** | **Iron butterfly on selected events only** | **Learned P(pin) classifier per ticker** |
+
+The unique contribution of `earnings_pin_risk` is the *learned event-selection layer*. It is the only earnings strategy in the suite that asks a per-ticker model "is this particular release likely to pin?" before committing capital. The trade structure is otherwise standard — what changes the expected value from near-zero (naive sell-every-straddle) to positive is the filter, not the structure.

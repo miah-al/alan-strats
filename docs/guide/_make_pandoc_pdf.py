@@ -20,7 +20,12 @@ def main() -> None:
         print("Install: pip install pypandoc_binary", file=sys.stderr)
         sys.exit(1)
 
-    chapters = [GUIDE / "README.md"] + sorted(GUIDE.glob("CH*.md"))
+    def chapter_num(p: Path) -> int:
+        # "Chapter-7-Greeks.md" -> 7; falls back to large number if no match
+        m = re.match(r"Chapter-(\d+)-", p.name)
+        return int(m.group(1)) if m else 999
+
+    chapters = [GUIDE / "README.md"] + sorted(GUIDE.glob("Chapter-*.md"), key=chapter_num)
     print(f"Merging {len(chapters)} files...")
 
     parts = []
@@ -49,7 +54,11 @@ def main() -> None:
             outputfile=str(OUT),
             extra_args=[
                 "--pdf-engine=xelatex",
+                "-f", "markdown+raw_tex+tex_math_dollars",
                 "-H", str(GUIDE / "_preamble.tex"),
+                "-B", str(GUIDE / "_cover.tex"),
+                "--variable", "title:",
+                "--variable", "date:",
                 "-V", "geometry:margin=0.75in",
                 "-V", "fontsize=10pt",
                 "-V", "colorlinks=true",

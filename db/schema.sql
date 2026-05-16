@@ -268,6 +268,82 @@ GO
 
 
 -- ============================================================
+-- mkt.Earnings
+-- Quarterly earnings: financials (Polygon) + announcement dates / EPS estimates (Alpha Vantage)
+-- ============================================================
+
+IF OBJECT_ID('mkt.Earnings', 'U') IS NULL
+BEGIN
+    CREATE TABLE mkt.Earnings (
+        EarningsId        INT             NOT NULL IDENTITY(1,1),
+        TickerId          SMALLINT        NOT NULL,
+        PeriodOfReport    DATE            NOT NULL,    -- fiscal period end (e.g. 2025-09-30)
+        FiscalYear        SMALLINT        NULL,
+        FiscalPeriod      VARCHAR(10)     NULL,        -- e.g. 'Q3'
+        RevenueUSD        DECIMAL(20,2)   NULL,
+        NetIncomeUSD      DECIMAL(20,2)   NULL,
+        EpsBasic          DECIMAL(10,4)   NULL,        -- reported EPS (actual)
+        EpsEstimate       DECIMAL(10,4)   NULL,        -- consensus estimate (Alpha Vantage)
+        FiledDate         DATE            NULL,        -- SEC filing date (Polygon) — often weeks AFTER announcement
+        AnnouncementDate  DATE            NULL,        -- REAL earnings release date (Alpha Vantage reportedDate). Use this for trade timing.
+        CreatedAt         DATETIME2(0)    NOT NULL DEFAULT SYSUTCDATETIME(),
+
+        CONSTRAINT PK_Earnings        PRIMARY KEY (EarningsId),
+        CONSTRAINT UQ_Earnings_Period UNIQUE      (TickerId, PeriodOfReport),
+        CONSTRAINT FK_Earnings_Ticker FOREIGN KEY (TickerId) REFERENCES mkt.Ticker(TickerId)
+    );
+
+    CREATE INDEX IX_Earnings_Announcement ON mkt.Earnings (TickerId, AnnouncementDate)
+        WHERE AnnouncementDate IS NOT NULL;
+END
+GO
+
+-- Idempotent migrations for existing installs (sync_eps_estimates also adds EpsEstimate at runtime)
+IF NOT EXISTS (
+    SELECT 1 FROM INFORMATION_SCHEMA.COLUMNS
+    WHERE TABLE_SCHEMA = 'mkt' AND TABLE_NAME = 'Earnings' AND COLUMN_NAME = 'EpsEstimate'
+)
+    ALTER TABLE mkt.Earnings ADD EpsEstimate DECIMAL(10,4) NULL
+GO
+
+IF NOT EXISTS (
+    SELECT 1 FROM INFORMATION_SCHEMA.COLUMNS
+    WHERE TABLE_SCHEMA = 'mkt' AND TABLE_NAME = 'Earnings' AND COLUMN_NAME = 'AnnouncementDate'
+)
+    ALTER TABLE mkt.Earnings ADD AnnouncementDate DATE NULL
+GO
+
+
+-- ============================================================
+-- mkt.ShortInterest
+-- Bi-monthly FINRA short-interest snapshots (or daily if a paid feed is used).
+-- Consumed by the short_squeeze_detector AI strategy.
+-- ============================================================
+
+IF OBJECT_ID('mkt.ShortInterest', 'U') IS NULL
+BEGIN
+    CREATE TABLE mkt.ShortInterest (
+        ShortInterestId        INT             NOT NULL IDENTITY(1,1),
+        TickerId               SMALLINT        NOT NULL,
+        SettlementDate         DATE            NOT NULL,    -- as-of date of the snapshot
+        ShortInterestPctFloat  DECIMAL(7,4)    NULL,        -- short interest / public float (0..1+)
+        DaysToCover            DECIMAL(8,2)    NULL,        -- short interest / avg daily volume
+        Utilization            DECIMAL(7,4)    NULL,        -- borrowed shares / lendable supply (0..1)
+        ShortSharesOutstanding BIGINT          NULL,        -- raw share count (optional)
+        Source                 VARCHAR(20)     NULL,        -- 'FINRA' / 'Polygon' / 'Quiver' / etc.
+        CreatedAt              DATETIME2(0)    NOT NULL DEFAULT SYSUTCDATETIME(),
+
+        CONSTRAINT PK_ShortInterest        PRIMARY KEY (ShortInterestId),
+        CONSTRAINT UQ_ShortInterest_Snap   UNIQUE      (TickerId, SettlementDate),
+        CONSTRAINT FK_ShortInterest_Ticker FOREIGN KEY (TickerId) REFERENCES mkt.Ticker(TickerId)
+    );
+
+    CREATE INDEX IX_ShortInterest_Lookup ON mkt.ShortInterest (TickerId, SettlementDate DESC);
+END
+GO
+
+
+-- ============================================================
 -- mkt.SyncLog
 -- Last successful sync per ticker + data type
 -- ============================================================
