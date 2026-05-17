@@ -37,12 +37,16 @@ $$
 
 The biconditional carries both directions. **PDE $\Rightarrow$ expectation:** a classical solution of $(4.1)$ admits the expectation representation $(4.2)$. **Expectation $\Rightarrow$ PDE:** conversely, the function $x \mapsto \mathbb{E}_{t,x}[\varphi(X_T)]$ automatically satisfies $(4.1)$. In practice one direction or the other is the easier computation, and Feynman-Kac lets us freely pick.
 
+![Feynman-Kac duality: the same option price can be computed as the solution of a backward parabolic PDE (left, finite differences) or as a discounted risk-neutral expectation (right, Monte Carlo). Most production vol desks run both — PDE for vanillas, MC for path-dependents — and use one as a sanity check on the other](figures/ch04-pde-vs-expectation.png)
+
 ### 4.2.1 What the PDE is
 
 The PDE in $(4.1)$ is the reverse heat equation — the Kolmogorov backward equation for BM. The terminal payoff plays the role of initial heat distribution; the PDE smooths it backward from $T$ to $t$. Every qualitative feature of diffusion — smoothing of discontinuities, exponential decay of modes — translates directly into option-price behaviour.
 
 ![Heat-equation analogy](figures/ch04-heat-analogy.png)
 *As $t$ moves backward from $T$ toward $0$, the terminal payoff $\varphi$ diffuses and smooths: kinks (vanilla calls) round off, step functions (digitals) bloom into Gaussian-shaped bumps. Every option price is literally a smoothed payoff, where the smoothing kernel is a Gaussian of width $\sqrt{T-t}$.*
+
+![Heat-kernel evolution of a peaked initial profile under $u_t = \tfrac{1}{2} u_{xx}$ at $t = 0.05, 0.2, 0.5, 1.0, 2.0$. Mass spreads as $\sqrt{t}$ — this *is* the Black-Scholes price evolution after the standard log-transform (Ch. 6), and is why a digital option printed sharply at expiry diffuses into a smooth bump as we step back in time](figures/ch04-heat-kernel.png)
 
 ### 4.2.2 What the expectation is
 
@@ -332,6 +336,8 @@ Terminal: $f(T, x) = e^{ax + 0} = e^{ax}$.
 ![Monte-Carlo sanity check for §§4.5–4.7 closed forms](figures/ch04-fk-mc-check.png)
 *For each of the three worked payoffs (linear $x$, quadratic $x^2$, exponential $e^{ax}$ with $a=0.8$), Monte-Carlo averaging over $N$ Brownian endpoints $X_T \sim \mathcal{N}(x_0, T)$ converges at rate $1/\sqrt{N}$ to the Gaussian-MGF closed form from $(4.13)$–$(4.19)$.*
 
+![FD vs MC error convergence on a 1-D Feynman-Kac benchmark ($\mathbb{E}[X_T^2]$): finite-difference error decays as $N^{-2}$, MC as $M^{-1/2}$. FD dominates in 1-3D; MC's dimension-free constant wins for high-dimensional baskets (the curse-of-dimensionality cliff sits around $d=5$)](figures/ch04-fd-vs-mc.png)
+
 ---
 
 ## 4.8 Feynman-Kac with Drift, Diffusion, and Discounting
@@ -365,6 +371,8 @@ $$
 $$
 
 i.e. $X_s = X_0 + a\,s + b\,W_s$ (arithmetic Brownian motion with drift $a$ and volatility $b$).
+
+![Characteristic curves $x = x_0 + at$ of the pure-transport operator $\partial_t f + a\partial_x f = 0$ (blue) and sample paths of the full SDE with diffusion (orange) around one of them. Feynman-Kac sews the deterministic transport to the stochastic spread — the same factorisation that decomposes a corporate-bond return into "forward roll-down" plus "credit shock"](figures/ch04-characteristics.png)
 
 ### 4.8.2 Proof sketch
 

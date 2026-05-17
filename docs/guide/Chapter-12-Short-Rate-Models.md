@@ -353,6 +353,8 @@ negative, and suddenly Vasicek's ability to accommodate negative rates
 became a *feature*, not a bug. No other equally tractable short-rate
 model handles negative rates so naturally.
 
+![Vasicek (Gaussian, can go negative) versus CIR (square-root diffusion, non-negative) sample paths under matched $\kappa$, $\theta$. The 2014-2022 ECB deposit rate stayed below zero — a regime where Vasicek fit cleanly and CIR could not](figures/ch12-vasicek-vs-cir.png)
+
 ### 12.3.1 The SDE and the explicit solution
 
 Solve (12.9) by the standard OU integrating factor. Set
@@ -488,6 +490,8 @@ statistics.
 *Vasicek paths from three starting points all pull toward $\theta$
 (dashed line), with dispersion widening then stabilising at
 $\sigma/\sqrt{2\kappa}$.*
+
+![Deterministic mean-reversion under Vasicek for three $\kappa$ values: the half-life $\log 2/\kappa$ controls how fast deviations from $\theta$ decay. The Fed-funds rate's reversion toward an evolving long-run "neutral" has empirical $\kappa \sim 0.3$ — half-life about 2.3 years, consistent with typical hiking-cycle horizons](figures/ch12-mean-reversion-speeds.png)
 
 There is a visual intuition worth internalising: draw the $(t, r)$-plane
 with a horizontal line at $r = \theta$. The rate process starts at
@@ -703,6 +707,8 @@ $r$ — is called an affine term structure.
 ![Vasicek bond-price surface](figures/ch12-bond-surface.png)
 *Vasicek bond-price surface $P(t,T)$ as a function of the current short
 rate and maturity.*
+
+![Vasicek zero-coupon bond price $P(r, \tau)$ as a function of $r$ at several tenors. Slope at each $r$ equals the Vasicek duration $-B(\tau)$ — the same quantity the desk reports as DV01 per bp of short-rate shock](figures/ch12-bond-vs-rate.png)
 
 Let us decode (12.20). The bond price is a log-linear function of the
 current short rate: $\ln P_t(T) = A_t(T) - B_t(T) r_t$. The coefficient
@@ -1609,6 +1615,8 @@ market-implied integrated-rate value.
 *$\theta(t)$ sits slightly above the market forward curve because of
 the convexity adjustment $C_T$.*
 
+![Hull-White $\theta(t)$ calibrated to a synthetic market forward curve, with the convexity gap $\sim \sigma^2 t/(2\kappa^2)$ shaded. The same bootstrap runs every morning on every dealer's rates book — it's the algorithmic core that converts a swap-curve fit into an HW-pricer for callables and bermudans](figures/ch12-hw-theta-fit.png)
+
 For a trader using this model, the practical consequence is that the
 calibrated drift schedule $\theta(t)$ should *not* be interpreted as
 "what the market expects the rate to be at time $t$." That would
@@ -1719,6 +1727,8 @@ $r_t$ with a vector state and the scalar ODE for $B$ with a matrix
 Riccati ODE. In every case the bond price remains exponential-affine
 in the state vector, and that is the single structural property that
 makes the entire edifice tractable.
+
+![CIR stationary density (gamma distributed) under three $\sigma$ values: Feller satisfied (bounded at $r=0$) vs violated (divergent but integrable at $r=0$). The same boundary controls how often the variance process in Heston grazes zero — calibrated SPX Hestons routinely violate Feller mildly](figures/ch12-cir-zero-boundary.png)
 
 The affine class has been systematically characterised in a celebrated
 1996 paper by Duffie and Kan. They showed that if one posits an

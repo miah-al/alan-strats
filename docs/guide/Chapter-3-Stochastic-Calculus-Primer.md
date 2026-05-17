@@ -246,6 +246,8 @@ $$
 
 Memorisation trick. $\mathrm{d}W$ lives at scale $\sqrt{\mathrm{d}t}$, $\mathrm{d}t$ at scale $\mathrm{d}t$. A product of $n$ atoms scales as $(\mathrm{d}t)^{n/2}$; keep $n = 2$, drop $n > 2$. Squaring an SDE $\mathrm{d}X = a\,\mathrm{d}t + b\,\mathrm{d}W$ collapses to $b^2\,\mathrm{d}t$ — used in every Itô application below. Every $\tfrac12\sigma^2\partial_{xx}$ in a pricing PDE traces back to (3.20).
 
+![Cumulative sum of squared Brownian increments $\sum(\Delta W_k)^2$ as the mesh refines: each path converges to the deterministic line $[W]_t = t$. The same identity is what makes the SPX variance swap a *deterministic* payoff in continuous monitoring — the realised-variance leg integrates to $\sigma^2 T$ exactly](figures/ch03-ito-multiplication.png)
+
 ### Case study: The "rule of 16" — Brownian scaling in market data
 
 *Every options trader on a US equity desk converts annualised vol to daily vol by dividing by 16. VIX = 16 means "expect $\sim$ 1% S\&P moves." VIX = 32 means "expect $\sim$ 2% moves." This is not a heuristic — it is the QV identity (3.19) evaluated at $t = 1/252$, and it is one of the few places in finance where a continuous-time identity is *directly falsifiable* against tick data on any given day.*
@@ -836,6 +838,8 @@ The integrated rate $\int_0^T r_u\,\mathrm{d}u$, needed for bond pricing in Chap
 ![OU vs GBM sample paths](figures/ch03-ou-vs-gbm.png)
 *Side-by-side comparison of the two workhorse SDEs. **Left:** GBM paths trend exponentially with multiplicative noise; the mean curve $S_0 e^{\mu t}$ grows without bound. **Right:** OU / Vasicek paths wobble around the long-run mean $\theta$; variance saturates at $\sigma^2/(2\kappa)$ so the ensemble never escapes. Mean-reversion is visually unmistakable.*
 
+![Two correlated Brownian motions generated via Cholesky $L=[1,0;\rho,\sqrt{1-\rho^2}]$ at $\rho=-0.6$, with the empirical increment scatter recovering the target correlation. This is the noise structure of Heston, where $\rho^{SPX,\sqrt{v}} \approx -0.7$ since 2010 (Ch. 10's empirical chapter appendix)](figures/ch03-sde-correlated.png)
+
 ### 3.10.3 Constant-coefficient arithmetic BM
 
 The simplest possible SDE — no state-dependence in either drift or diffusion — is
@@ -855,6 +859,48 @@ $$
 The solution is Gaussian with mean $X_0 + a t$ and variance $b^2 t$. This is the "trivially solvable" SDE, and its chief uses are (i) as the reference process after Itô-transforming a more complicated SDE to constant coefficients (e.g. the log-GBM reduction (3.51)), and (ii) as the Bachelier model of asset prices — rarely used for equities but standard in certain rates markets (notably swaption pricing with normal volatilities, which we revisit in Chapter 14).
 
 Arithmetic BM allows $X_t < 0$ (Gaussian support is all of $\mathbb{R}$); GBM keeps $S_t > 0$. Equities use GBM; interest rates (occasionally negative post-2014) use arithmetic-style models.
+
+### 3.10.3b The Brownian Bridge
+
+A Brownian motion conditioned on its two endpoints is called a **Brownian Bridge** and plays a starring role in barrier-option Monte Carlo (Ch. 9), CDS calibration, and any path-conditioned simulation. Fix $T > 0$ and a real number $b$. The Brownian Bridge is the law of $W$ on $[0, T]$ conditional on $W_0 = 0$ and $W_T = b$:
+
+$$
+B_t \;:=\; (W_t \mid W_0 = 0,\, W_T = b), \qquad t \in [0, T].
+\tag{3.57a}
+$$
+
+Two facts pin its distribution. The conditional mean is the deterministic line
+$$
+\mathbb{E}[B_t] \;=\; \frac{t}{T}\,b,
+\tag{3.57b}
+$$
+and the conditional variance is the **bridge envelope**
+$$
+\boxed{\;\mathrm{Var}(B_t) \;=\; \frac{t\,(T - t)}{T}.\;}
+\tag{3.57c}
+$$
+
+The variance vanishes at both endpoints (where the value is pinned) and is maximal in the middle at $t = T/2$, where $\mathrm{Var}(B_{T/2}) = T/4$. *Intuition: at the two pins there is zero uncertainty; the most freedom to wander is exactly halfway between them.*
+
+![Twelve Brownian Bridge sample paths pinned at $B_0=0$ and $B_T=0.5$, with mean $tb/T$ and the $\pm 2\sigma$ envelope $t(T-t)/T$. Same construction as a daily-close path of SPX where the open and close are fixed but the intra-day high-low range is what one is integrating against](figures/ch03-bb-paths.png)
+
+**Direct construction.** A Brownian Bridge can be simulated from a free BM by the simple **bridge transformation**
+$$
+B_t \;=\; W_t \;-\; \frac{t}{T}\,W_T \;+\; \frac{t}{T}\,b.
+\tag{3.57d}
+$$
+Verify: at $t=0$, $B_0 = 0$; at $t = T$, $B_T = W_T - W_T + b = b$. The middle term subtracts off the realised endpoint and the last term substitutes the desired pin — exactly the conditioning operation.
+
+**SDE form.** $B_t$ also solves a linear SDE with a drift that grows singular at $T$:
+$$
+\mathrm{d}B_t \;=\; \frac{b - B_t}{T - t}\,\mathrm{d}t \;+\; \mathrm{d}W_t, \qquad B_0 = 0.
+\tag{3.57e}
+$$
+The mean-reversion to the pin $b$ accelerates as $t \to T$ — a forced landing. As a useful sanity check, the same drift pulls toward $tb/T$ in expectation, which is exactly (3.57b).
+
+![Free Brownian motion endpoints scatter freely (left) versus Brownian Bridge endpoints pinned at $b=0.4$ (right) — the conditioning that drives Monte-Carlo barrier-option corrections in Ch. 9](figures/ch03-bb-vs-bm.png)
+
+**Where it matters.** Beyond the Ch. 9 barrier correction, the bridge controls (i) intra-day volatility of a daily-closed asset (open and close are observed; the conditional max/min has bridge laws), (ii) interpolation of yield-curve nodes between calibrated maturities, and (iii) every "fixed start, fixed end" stochastic model — e.g. central-bank rate paths between meetings where guidance pins the endpoints.
 
 ### 3.10.4 Summary of solved SDEs
 

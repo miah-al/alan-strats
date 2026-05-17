@@ -20,6 +20,8 @@ A $\sigma$-algebra is closed under complement and countable union. *Intuition: $
 
 A **random variable** is an $\mathcal{F}$-measurable map $X : \Omega \to \mathbb{R}$, meaning $\{X \leq x\} \in \mathcal{F}$ for every $x$. Measurability is the formal version of "you can actually look up the value of $X$ given the information in $\mathcal{F}$."
 
+![Filtration $\mathcal{F}_0 \subseteq \mathcal{F}_1 \subseteq \mathcal{F}_2$ shown as nested partition refinements — the same intuition behind a daily P&L roll-up that, mid-session, splinters into hourly cells as more information arrives](figures/ch00-sigma-refinement.png)
+
 *Almost surely* (a.s.) means "with $\mathbb{P}$-probability 1"; any random-variable equation in this guide is implicitly an a.s. statement. *Null sets* — events with $\mathbb{P} = 0$ — are ignorable; modifying $X$ on a null set produces an a.s.-equal random variable that behaves identically in every probabilistic computation.
 
 ### 0.1.2 Conditional expectation
@@ -29,6 +31,8 @@ Let $\mathcal{G} \subseteq \mathcal{F}$ be a sub-$\sigma$-algebra. The **conditi
 $$\int_A \mathbb{E}[X \mid \mathcal{G}]\, d\mathbb{P} = \int_A X\, d\mathbb{P} \quad \text{for every } A \in \mathcal{G}. \tag{0.1}$$
 
 *Intuition: $\mathbb{E}[X \mid \mathcal{G}]$ is the best $L^2$-prediction of $X$ given the information in $\mathcal{G}$.* It is a random variable, not a number, because the prediction depends on which $\mathcal{G}$-event was realised.
+
+![Conditional expectation as orthogonal projection of $X$ onto the $\mathcal{G}$-measurable subspace of $L^2$; the residual $X - \mathbb{E}[X\mid\mathcal{G}]$ is the unhedgeable component — exactly the residual in a regression-based factor hedge](figures/ch00-cond-exp-projection.png)
 
 Three identities are used constantly in the rest of this guide.
 
@@ -82,6 +86,8 @@ $$\mathbb{E}[X^n] = \left.\frac{d^n M_X(t)}{dt^n}\right|_{t=0}, \qquad K_X(t) = 
 
 The Gaussian case is canonical: $X \sim N(\mu, \sigma^2) \Rightarrow M_X(t) = \exp(\mu t + \tfrac{1}{2}\sigma^2 t^2)$. *That $\sigma^2/2$ is the same one that will appear as the Jensen gap in §0.2 — they are the same animal seen from different angles.*
 
+![Normal density of $\log S$ versus the induced lognormal density of $S$; the lognormal mean exceeds its median by exactly the Jensen gap $e^{\sigma^2/2}-1$ — the same multiplier that separates "expected SPX level at T" from "median SPX level at T" in equity quotes](figures/ch00-normal-lognormal.png)
+
 The CGF is more useful than the MGF when you want to read off cumulants directly. For a Gaussian, $K_X(t) = \mu t + \tfrac{1}{2}\sigma^2 t^2$ — a polynomial in $t$ of degree 2, with all higher cumulants vanishing. *That fact (only the first two cumulants are non-zero) is exactly the statement "Gaussians are determined by mean and variance," from a different vantage.* For a Poisson with rate $\lambda$, $K(t) = \lambda(e^t - 1)$, infinitely many non-zero cumulants — Poisson is not even close to Gaussian. CGF additivity $K_{X+Y} = K_X + K_Y$ for independent $X, Y$ is what makes them computationally pleasant.
 
 The **characteristic function** $\varphi_X(t) = \mathbb{E}[e^{itX}]$ always exists (the integrand has modulus 1), unlike the MGF. It is the workhorse of Heston pricing (Ch. 10) and any Lévy-process model: when the MGF blows up, the CF still works.
@@ -97,6 +103,8 @@ Let $X_n, X$ be random variables on a common space.
 | In probability | $\mathbb{P}(|X_n - X| > \varepsilon) \to 0$ for all $\varepsilon > 0$ |
 | In distribution | $F_{X_n}(x) \to F_X(x)$ at all continuity points of $F_X$ |
 
+![PDF, CDF, and quantile function of $\mathcal{N}(0,1)$ side-by-side, with the same $\alpha=5\%$ tail point marked on each — the operational picture behind any 95% VaR calculation](figures/ch00-cdf-pdf-quantile.png)
+
 The implication diagram (no other arrows hold in general):
 
 $$\text{a.s.} \;\Longrightarrow\; \text{in probability} \;\Longrightarrow\; \text{in distribution}$$
@@ -107,7 +115,13 @@ $$L^p \;\Longrightarrow\; \text{in probability} \quad (p \geq 1)$$
 
 **Practitioner consequence.** Monte Carlo (Ch. 9) gives $L^2$ (or even a.s. via the SLLN) convergence of sample means. The CLT gives convergence in distribution of the rescaled error — these are different statements about different things.
 
+![Six independent sample-mean paths $\bar X_N$ of Bernoulli draws all funnel into $\mathbb{E}[X]=0.5$ as $N$ grows — the SLLN in action. Every Monte-Carlo option-pricing run is one of these paths, and the spread at $N=10^4$ is what the standard error bar reports](figures/ch00-lln-paths.png)
+
+![Standardised sums of Bernoulli($1/2$) approach $\mathcal{N}(0,1)$ as $n=1,4,16,64$ — the CLT visualised. The same convergence is why daily-return Z-scores aggregated over a quarter look more Gaussian than the noisy raw daily distribution](figures/ch00-clt-convergence.png)
+
 A canonical separating example. Let $X_n$ be independent with $\mathbb{P}(X_n = n^2) = 1/n$ and $\mathbb{P}(X_n = 0) = 1 - 1/n$. Then $X_n \to 0$ in probability ($\mathbb{P}(X_n > \varepsilon) = 1/n \to 0$) but $\mathbb{E}[X_n] = n \to \infty$, so $X_n$ does *not* converge in $L^1$. *Intuition: a vanishingly rare but explosively large outcome can leave probability convergence intact while breaking expectation convergence.* This is exactly the failure mode of naïve Monte Carlo on heavy-tailed payoffs (deep OTM puts on a jump-prone asset, Ch. 9): sample means look like they converge, until one of the rare extreme draws shows up and erases your average.
+
+![Separating example $\mathbb{P}(X_n=n^2)=1/n$: convergence in probability ($1/n \to 0$, left panel) with simultaneous $L^1$ blow-up ($\mathbb{E}[X_n] = n \to \infty$, right panel) — the textbook fingerprint of a "deep-OTM put on an asset with jump risk" MC estimator that quietly diverges in mean while looking stable in median](figures/ch00-mode-convergence.png)
 
 ### 0.1.6 Borel–Cantelli
 
@@ -159,7 +173,7 @@ Equality holds iff $f$ is affine on the support of $X$, or $X$ is degenerate.
 
 Convexity means: any chord between two points on the graph of $f$ lies *above* the graph between those points. Averaging two values of $f$ is taking a point on a chord; averaging the inputs and then applying $f$ is taking a point on the curve. The chord is above. So $\mathbb{E}[f(X)] \geq f(\mathbb{E}[X])$. Concave is the mirror image.
 
-<!-- figure: ch00-jensen-chord.png — convex parabola y = x^2, two sample points X = 0 and X = 2, the chord midpoint at (1, 2) above the curve point (1, 1); shaded gap labelled "Jensen gap" -->
+![Convex $f(x)=x^2$ with chord between $x_1=0$ and $x_2=2$: the chord midpoint at $(1, 2)$ sits above the curve point $(1, 1)$ — the gap is exactly $\sigma^2$ for symmetric $\pm 1$ noise around $\mathbb{E}[X]=1$ (here $\sigma^2=1$, matching the unit gap)](figures/ch00-jensen-chord.png)
 
 This is not a measure-theoretic fact; it is a statement about chords and curves. The $\mathbb{E}$ does the integration, but the *gap* is geometric — a function of how curvy $f$ is and how spread out $X$ is.
 
@@ -407,6 +421,8 @@ This is the **Cholesky factor**. PSD matrices admit a Cholesky only in a general
 
 In Heston (Ch. 10) and Monte Carlo (Ch. 9), every correlated noise driver passes through a Cholesky. For a 2-D Heston with correlation $\rho$ between asset and variance noise,
 
+![Cholesky $L=[1,0;\rho,\sqrt{1-\rho^2}]$ turns independent draws (left) into a correlated cloud at $\rho=-0.7$ (right) — the exact transform applied to $(W^S, W^v)$ in every Heston simulation, where $\rho \approx -0.7$ is the empirical SPX-VIX correlation since 2010](figures/ch00-cholesky-2d.png)
+
 $$L = \begin{pmatrix} 1 & 0 \\ \rho & \sqrt{1 - \rho^2} \end{pmatrix}. \tag{0.27}$$
 
 The simulation step is then $dW_1 = \sqrt{dt}\, Z_1$, $dW_2 = \sqrt{dt}\, (\rho Z_1 + \sqrt{1-\rho^2}\, Z_2)$ with independent standard normals $Z_1, Z_2$.
@@ -451,6 +467,8 @@ $$\frac{\partial (x' A x)}{\partial x} = 2 A x. \tag{0.30}$$
 
 These two are sufficient for the first-order conditions in mean-variance optimisation, regression, and quadratic hedging. *Intuition: $a'x$ is linear, so its derivative is the constant slope $a$; $x'Ax$ is the quadratic form, and its derivative is "twice $Ax$" by the same logic that $\frac{d}{dx}(ax^2) = 2ax$.*
 
+![Level sets and gradient field of $f(x_1, x_2) = \tfrac{1}{2}x_1^2 + x_2^2$ — the canonical picture for steepest-descent calibration of a Heston or short-rate model, where each level set is an iso-RMSE curve in $(\kappa, \theta)$ space](figures/ch00-grad-levelsets.png)
+
 ### 0.4.5 Condition number
 
 The **condition number** of a non-singular $A$ is
@@ -478,6 +496,8 @@ $$\lambda_1 = 1 + 2 \cdot 0.7 = 2.4, \qquad \lambda_2 = \lambda_3 = 1 - 0.7 = 0.
 *Reading the spectrum:* $\lambda_1 = 2.4$ (out of total trace 3) is the "common factor" — the equally-weighted portfolio carries 80% of the variance. The other 20% lives in 2-D of long-short directions.
 
 Condition number $\kappa = 2.4 / 0.3 = 8$ — well-conditioned. Cholesky is numerically stable and Monte Carlo will work cleanly. Push $\rho$ to $0.99$: $\lambda_1 = 2.98$, $\lambda_2 = \lambda_3 = 0.01$, $\kappa = 298$. The matrix is now nearly singular and Cholesky starts losing 2–3 digits of precision.
+
+![Eigenvalues of the $5\times 5$ equicorrelation matrix and its condition number explode as $\rho \to 1$ — the failure mode of mean-variance optimisation on a portfolio of near-identical bond ETFs (TLT/IEF/SHY all moving together in a rate-rally regime)](figures/ch00-pca-equicorr.png)
 
 ### 0.4.7 Inverses, pseudo-inverses, and least squares
 
@@ -522,6 +542,8 @@ $$f(x + h) = f(x) + (\nabla f)' h + \tfrac{1}{2} h' (\nabla^2 f) h + O(\|h\|^3).
 This is the deterministic counterpart of Itô's lemma (Ch. 3). In ordinary calculus, the second-order term $\tfrac{1}{2} f''(x) h^2$ vanishes as $h \to 0$ because it is $O(h^2)$. *In Itô calculus, $h$ is a Brownian increment with $\mathrm{Var}(h) \sim h$ rather than $h^2$, so the second-order term contributes a $O(dt)$ piece that does not vanish — that is the entire reason Itô differs from the chain rule.*
 
 The same point in option-pricing language: a delta hedge captures the first-order term $f'(x) h$. The remaining error per timestep is the gamma term $\tfrac{1}{2} f''(x) h^2$, and over a hedging interval $dt$, that error has expected size $\tfrac{1}{2} \Gamma \sigma^2 S^2\, dt$. *The $\sigma^2/2$ from §0.2 reappears as the per-unit-time cost of being short gamma — Jensen's gap is the gamma P&L of an unhedged convex position.*
+
+![Taylor truncations of $e^x$ at orders 1-5 against the exact curve. Each added order kills another factor of $h$ in the residual — the same convergence underlying every Itô-Taylor expansion of a smooth payoff used for Greeks, where delta is the order-1 piece and gamma the order-2 piece](figures/ch00-taylor-exp.png)
 
 Sanity check with $f(x) = e^x$ at $x = 0$, $h = 0.1$:
 
@@ -624,7 +646,7 @@ Four PDE archetypes recur throughout the guide. Recognising them on sight saves 
 | Heat / diffusion | $u_t = \tfrac{1}{2}\sigma^2 u_{xx}$ | BS after change of variable (Ch. 5–6) |
 | Drift-diffusion (Kolmogorov backward) | $u_t + \mu u_x + \tfrac{1}{2}\sigma^2 u_{xx} = 0$ | Feynman–Kac (Ch. 4) |
 | Drift-diffusion with discounting | $u_t + \mu u_x + \tfrac{1}{2}\sigma^2 u_{xx} - r u = 0$ | BS PDE (Ch. 6) |
-| Two-factor diffusion | $u_t + \mathcal{L}_S u + \mathcal{L}_v u + \rho \sigma_S \sigma_v u_{Sv} - r u = 0$ | Heston (Ch. 10) |
+| Two-factor diffusion | $u_t + \mathcal{L}_S u + \mathcal{L}_v u + \rho \sigma_S \alpha\,u_{Sv} - r u = 0$ | Heston (Ch. 10): $\alpha$ is vol-of-vol |
 
 *Each is a parabolic PDE; each has a Feynman–Kac stochastic representation; each can be solved by characteristics, Fourier methods, finite differences, or Monte Carlo. The choice of method is a numerical question, not a modelling one.*
 

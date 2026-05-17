@@ -4,8 +4,8 @@ Chapter 1 established risk-neutral pricing for a single-period two-state economy
 
 Themes:
 - *Completeness vs incompleteness.* Binomial trees are exactly one-step complete. Add a third branch (default, jump, stoch-vol state) and uniqueness fails; pricing becomes a *range* and a risk-preference device selects one representative.
-- *Backward induction.* Bellman's dynamic-programming principle handles Americans and any path-dependence captured by finitely many state variables. Monte Carlo is the forward-simulation complement, developed in CH08.
-- *Numéraire freedom.* The FTAP is silent on which asset deflates; the choice will be exploited heavily in CH05 (Girsanov) and beyond.
+- *Backward induction.* Bellman's dynamic-programming principle handles Americans and any path-dependence captured by finitely many state variables. Monte Carlo is the forward-simulation complement, developed in Chapter 9.
+- *Numéraire freedom.* The FTAP is silent on which asset deflates; the choice will be exploited heavily in Chapter 5 (Girsanov) and beyond.
 
 ---
 
@@ -21,7 +21,7 @@ Equivalently, any claim $C$ with terminal values $C_u, C_d$ admits a unique arbi
 
 $$\exists\, \mathbb{Q} \text{ s.t. } C \;=\; \frac{1}{1+r}\,\mathbb{E}^{\mathbb{Q}}[\,C_1\,] \;\iff\; \text{no arb}, \qquad q = \tfrac{A(1+r)-A_d}{A_u-A_d}. \tag{2.2}$$
 
-Together (2.1)–(2.2) form the one-period FTAP, a microcosm of the general FTAP in §2.5. The weights $q,1-q$ are *not* physical probabilities — they are the unique convex combination making the discounted asset a one-step martingale. The Radon–Nikodym derivative $d\mathbb{Q}/d\mathbb{P}$ is the market's discount of optimism and is the engine of Girsanov's theorem (CH05).
+Together (2.1)–(2.2) form the one-period FTAP, a microcosm of the general FTAP in §2.5. The weights $q,1-q$ are *not* physical probabilities — they are the unique convex combination making the discounted asset a one-step martingale. The Radon–Nikodym derivative $d\mathbb{Q}/d\mathbb{P}$ is the market's discount of optimism and is the engine of Girsanov's theorem (Chapter 5).
 
 Worked check. $A=100, r=5\%, A_u=120, A_d=90$: forward $= 105 \in (90,120)$, so $q = (105-90)/30 = 1/2$. ATM call ($K=100$): $C = (1/1.05)(0.5\cdot 20) \approx 9.52$. Replicating: $\alpha = 2/3, \beta \approx -57.14$, giving $2/3\cdot 100 - 57.14 \approx 9.52$ ✓.
 
@@ -29,7 +29,7 @@ Worked check. $A=100, r=5\%, A_u=120, A_d=90$: forward $= 105 \in (90,120)$, so 
 
 The Brazilian oil major Petrobras has two near-identical equity claims trading in different venues: PETR4 (preferred ordinary shares, traded on Brazil's B3 exchange in BRL) and PBR (American Depositary Receipts, traded on NYSE in USD, each ADR representing one ordinary share). By construction, the no-arbitrage relationship is $\text{PBR}_t = \text{PETR4}_t / \text{FX}_t^{\text{BRL/USD}}$, modulo a small ADR depositary fee. Yet over essentially every trading day from 2018 to 2024, the implied FX rate from $(PETR4, PBR)$ has *deviated* from the actual BRL/USD spot — sometimes by 50 to 200 basis points, occasionally more during Brazilian political stress. The pair is tracked daily by Latin-American equity desks at every major bank precisely because the deviations represent a concrete, observable violation of the law of one price.
 
-Read through the FTAP, the trade is the cleanest possible example of why (2.1)–(2.2) matter. We have three "assets": PETR4, PBR, and the BRL/USD currency forward. Two of them span the same claim — a unit of Petrobras equity at time $T$ — so the relative price between them must equal the FX forward, by the same argument that gives (2.1). Mispricings open because the three venues have different trading hours (B3 closes at 17:00 BRT, NYSE closes at 16:00 EST), different settlement cycles (T+2 in Brazil, T+1 in the US post-2024), and different liquidity profiles. Closing the gap requires simultaneous trades in BRL/USD FX, PETR4 on B3, and PBR on NYSE — operationally demanding, capital-intensive, and exposed to overnight gap risk. The risk-neutral measure $\mathbb{Q}$ implied by PETR4 vs the one implied by PBR are slightly different — exactly the "two-$q$ puzzle" from CH01 §7 in real-world form.
+Read through the FTAP, the trade is the cleanest possible example of why (2.1)–(2.2) matter. We have three "assets": PETR4, PBR, and the BRL/USD currency forward. Two of them span the same claim — a unit of Petrobras equity at time $T$ — so the relative price between them must equal the FX forward, by the same argument that gives (2.1). Mispricings open because the three venues have different trading hours (B3 closes at 17:00 BRT, NYSE closes at 16:00 EST), different settlement cycles (T+2 in Brazil, T+1 in the US post-2024), and different liquidity profiles. Closing the gap requires simultaneous trades in BRL/USD FX, PETR4 on B3, and PBR on NYSE — operationally demanding, capital-intensive, and exposed to overnight gap risk. The risk-neutral measure $\mathbb{Q}$ implied by PETR4 vs the one implied by PBR is slightly different — exactly the non-uniqueness of $\mathbb{Q}$ flagged at the end of Chapter 1, now in real-world form.
 
 The practitioner lesson is twofold. First, real markets *do* contain detectable FTAP violations — they are not theoretical curiosities. They survive because of trading frictions (FX swap costs, ADR creation/cancellation fees, time-zone overlap risk) that gate the pure-arbitrage trade. Second, the price an arbitrageur can actually realise is the model price *minus* those frictions. When practitioners say "the spread is too narrow to trade," they mean the FTAP gap is real but smaller than the friction cost of closing it. The frictionless model is the *attractor*; the observed deviations measure the round-trip cost of trading.
 
@@ -41,7 +41,7 @@ The practitioner lesson is twofold. First, real markets *do* contain detectable 
 
 Extend the one-step construction to $N$ steps. Recombination ($A_{ud} = A_{du}$) reduces $2^N$ terminal nodes to $N+1$, giving $O(N^2)$ pricing complexity. At $N=250$ daily steps, that's $\approx 31{,}000$ node evaluations versus $2^{250} \approx 10^{75}$ without recombination. Multiplicative models recombine because multiplication commutes.
 
-<!-- figure placeholder: two side-by-side trees. Left: general non-recombining 2^N tree. Right: recombining N+1 tree with one node highlighted showing the up-down = down-up recombination box. -->
+![Non-recombining $2^N$ tree vs the recombining $(N+1)$-node lattice — the algorithmic collapse that makes a 250-step daily SPX lattice feasible on a laptop rather than on the entire memory of the observable universe](figures/ch02-recombining-tree.png)
 
 At every interior node the claim value is $\tfrac{1}{1+r}\mathbb{E}^{\mathbb{Q}}[\text{next-step payoff}]$ with node-local $q$. In simple CRR, $q$ depends only on $(u, d, 1+r)$ and is global; in state-dependent models (local vol, stochastic rates) each node has its own $q$. The backward-induction algorithm is identical either way.
 
@@ -95,6 +95,8 @@ $$C_0 \;=\; \frac{1}{1 + r_1}\!\left(\,C_{1u}\,q_1 \;+\; C_{1d}\,(1 - q_1)\,\rig
 
 *Intuition.* Backward induction is the lattice manifestation of the tower property $\mathbb{E}[\mathbb{E}[X|\mathcal{F}_s]|\mathcal{F}_t] = \mathbb{E}[X|\mathcal{F}_t]$ for $t \le s$. Computing step by step (vs the one-shot $C_0 = \mathbb{E}^{\mathbb{Q}}[e^{-rT}C_T]$) lets the same sweep handle path-dependent payoffs (Asians, lookbacks), barriers, and American exercise (§2.8), with $O(N^2)$ complexity in the state variables.
 
+![Backward induction on a 3-step CRR tree pricing an ATM call: terminal payoffs roll back through the $q$-weighted discount at each node to the root value $C_0$ — the algorithm Cox-Ross-Rubinstein proved converges to Black-Scholes in 1979 and every option-pricing library still ships today](figures/ch02-backward-induction.png)
+
 ### 2.2.2 Path-weights and the CRR telescoping identity
 
 If $r_1 = r_2 = r_3 = r$ the root price collapses to
@@ -112,8 +114,6 @@ CRR (1979) showed the binomial lattice converges to Black–Scholes as $\Delta t
 $$A_n \;=\; A_{n-1}\, e^{c\, x_n}, \qquad x_n \stackrel{iid}{\sim} \text{Bernoulli}(\pm 1), \;\; \mathbb{P}(x = +1) = p. \tag{2.12}$$
 
 Symmetric Bernoulli $\pm 1$ is the simplest random variable with two states per step (one-step completeness), symmetric placement (recombination), and iid increments. The choice cleanly separates move size ($c$) from directional bias ($p - \tfrac12$).
-
-<!-- figure placeholder: three-branch schematic A_0 $\to$ {A_0 e^c, A_0, A_0 e^{-c}} labelled with p / (1-p) and a timeline 0 — $\Delta$t — T with $\Delta$t = T/N (number of steps). -->
 
 Iterating $N = T/\Delta t$ steps,
 
@@ -191,6 +191,8 @@ $$A_T \;\stackrel{d}{=}\; A_0\, e^{\mu T \;+\; \sigma\sqrt{T}\, Z_{\mathbb{P}}},
 
 $$A_T \;\stackrel{d}{=}\; A_0\, e^{(r - \tfrac{1}{2}\sigma^2)T \;+\; \sigma\sqrt{T}\, Z_{\mathbb{Q}}}, \qquad Z_{\mathbb{Q}} \sim \mathcal{N}(0, 1). \tag{2.30}$$
 
+![Binomial $\mathbb{Q}$-mass on $S_T$ at $N=4,16,64$ steps, with the lognormal limiting density overlaid — the de Moivre-Laplace CLT in action. The same convergence is why a 252-step daily binomial tree is indistinguishable from Black-Scholes to within MC noise](figures/ch02-rn-measure-evolution.png)
+
 In words: asset prices in the limit $N\to\infty$ are lognormal r.v. at a fixed point in time. Verifying the martingale property under $\mathbb{Q}$:
 
 $$\mathbb{E}^{\mathbb{P}}[\,A_T\,] \;=\; A_0\, e^{\mu T}\,\mathbb{E}^{\mathbb{P}}\!\bigl[\,e^{\sigma\sqrt{T}\, Z}\,\bigr] \;=\; A_0\, e^{\mu T}\, e^{\tfrac{1}{2}\sigma^2 T} \;=\; A_0\, e^{(\mu + \tfrac{1}{2}\sigma^2) T}, \tag{2.31}$$
@@ -211,7 +213,7 @@ From $C_0/B_0 = \mathbb{E}^{\mathbb{Q}}[C_T/B_T]$ and (2.30):
 
 $$C_0 \;=\; e^{-rT}\, \mathbb{E}^{\mathbb{Q}}\!\left[\,(A_T - K)_+\,\right], \qquad A_T \;\stackrel{d}{=}\; A_0\, e^{(r - \tfrac{1}{2}\sigma^2)T + \sigma\sqrt{T}\, Z}. \tag{2.34}$$
 
-The integral evaluates to the Black–Scholes formula (sketched in §2.9; derived in CH06).
+The integral evaluates to the Black–Scholes formula (sketched in §2.9; derived in Chapter 6).
 
 ---
 
@@ -285,7 +287,9 @@ $$\tilde{X}_t \;=\; \mathbb{E}^{\mathbb{Q}}\!\left[\,\tilde{X}_s \mid \mathcal{F
 
 The physical measure $\mathbb{P}$ describes how the world evolves; $\mathbb{Q}$ re-weights so all tradable risks have zero expected excess return. Equivalence $\mathbb{Q} \sim \mathbb{P}$ means agreement on null sets — essential, else we could win on a $\mathbb{P}$-non-null event the $\mathbb{Q}$-price ignores.
 
-Two flavours: *First FTAP* (no-arb $\Leftrightarrow$ $\mathcal{M}_e \neq \emptyset$) and *Second FTAP* (completeness $\Leftrightarrow$ $|\mathcal{M}_e| = 1$). Binomial trees satisfy both; trinomial trees (or any market with more states than tradables) satisfy only the first and admit a family of $\mathbb{Q}$. The Delbaen–Schachermayer extension to semimartingales replaces "no arbitrage" by "no free lunch with vanishing risk" (NFLVR). The natural numéraire is the money-market account $B_t = e^{rt}$ but any strictly positive traded asset works; this freedom is exploited in CH05.
+Two flavours: *First FTAP* (no-arb $\Leftrightarrow$ $\mathcal{M}_e \neq \emptyset$) and *Second FTAP* (completeness $\Leftrightarrow$ $|\mathcal{M}_e| = 1$). Binomial trees satisfy both; trinomial trees (or any market with more states than tradables) satisfy only the first and admit a family of $\mathbb{Q}$. The Delbaen–Schachermayer extension to semimartingales replaces "no arbitrage" by "no free lunch with vanishing risk" (NFLVR). The natural numéraire is the money-market account $B_t = e^{rt}$ but any strictly positive traded asset works; this freedom is exploited in Chapter 5.
+
+![Same simulated $\mathbb{Q}$-path of $S_t$: raw price grows on average at rate $r$ (left); divided by the numeraire $B_t = e^{rt}$ the discounted price is a $\mathbb{Q}$-martingale (right). Numeraire freedom underlies forward-measure pricing of caplets and bond options](figures/ch02-numeraire-rebasing.png)
 
 ---
 
@@ -431,7 +435,7 @@ At every interior node there are two candidate values:
 
 The actual American value is $P = \max(P^h, P^x)$.
 
-<!-- figure placeholder: wedge-shaped binomial tree with terminal nodes A_{T,1}, A_{T,2}, A_{T,3}, A_{T,4}, ... on the right and payoffs (K − A_{T,k})_+ next to each. An "optimal exercise boundary" curve is drawn cutting diagonally across the wedge; above the curve the node is labelled P^x (exercise), below it P^h (hold). Root node P_0 is shown at the apex. -->
+![American put early-exercise boundary $S^\star(t)$ computed by CRR backward induction (80 steps, $\sigma=30\%$, $r=4\%$, $T=1$y): below the boundary the holder exercises immediately (red region); above it they hold (green). The same shape appears in mortgage prepayment modelling — homeowners refinance once rates drop far enough below the contract coupon](figures/ch02-american-boundary.png)
 
 ### 2.8.3 Dynamic-programming recursion
 

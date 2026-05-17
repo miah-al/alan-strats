@@ -224,14 +224,14 @@ Vega is the option's sensitivity to implied volatility; near-the-money options h
 
 ### 11.2.5 Global vs Local Minima
 
-The objective function (11.15) is, in general, a non-convex function of the parameters $\Theta$. For the binomial lattice it happens to be quadratic (the moment-matching equations are linear in parameters after log-transformation), but for more general models — stochastic volatility, jump diffusion, multi-factor rates — the landscape has multiple local minima. Which minimum the optimiser finds depends on where it starts. This is a serious practical concern. An equity trader who runs a stochastic-volatility model on Monday morning and gets parameters $(\kappa = 2, \theta = 0.04, \sigma_v = 0.3, \rho = -0.7)$ may rerun the same calibration on Tuesday with yesterday's minimum as a starting point and get $(\kappa = 2.1, \theta = 0.041, \sigma_v = 0.31, \rho = -0.71)$ — a small, economically sensible shift. But if the starting point is reset to a default every day, Tuesday's run might find a completely different local minimum, say $(\kappa = 0.5, \theta = 0.06, \sigma_v = 0.5, \rho = -0.9)$, with similar fit quality but very different economic implications. The two parameter vectors produce nearly identical prices on the calibration basket but very different prices on instruments *outside* the basket. If the bank uses the Monday parameters to price exotics on Tuesday but recalibrates for the blotter, the exotics will be valued one way while the hedging positions use a different calibration — a recipe for P&L surprise.
+The objective function (11.15) is, in general, a non-convex function of the parameters $\Theta$. For the binomial lattice it happens to be quadratic (the moment-matching equations are linear in parameters after log-transformation), but for more general models — stochastic volatility, jump diffusion, multi-factor rates — the landscape has multiple local minima. Which minimum the optimiser finds depends on where it starts. This is a serious practical concern. An equity trader who runs a stochastic-volatility model on Monday morning and gets parameters $(\kappa = 2, \theta = 0.04, \alpha = 0.3, \rho = -0.7)$ may rerun the same calibration on Tuesday with yesterday's minimum as a starting point and get $(\kappa = 2.1, \theta = 0.041, \alpha = 0.31, \rho = -0.71)$ — a small, economically sensible shift. But if the starting point is reset to a default every day, Tuesday's run might find a completely different local minimum, say $(\kappa = 0.5, \theta = 0.06, \alpha = 0.5, \rho = -0.9)$, with similar fit quality but very different economic implications. The two parameter vectors produce nearly identical prices on the calibration basket but very different prices on instruments *outside* the basket. If the bank uses the Monday parameters to price exotics on Tuesday but recalibrates for the blotter, the exotics will be valued one way while the hedging positions use a different calibration — a recipe for P&L surprise.
 
 The standard defenses against this problem are:
 
 1. **Warm starts.** Always initialise today's calibration from yesterday's minimum. This enforces continuity across dates and typically keeps the optimiser in the same local basin even if another basin is marginally deeper. The cost is that the calibration may become "stuck" in a stale minimum if the market has genuinely moved to a new regime; the remedy is to add periodic cold starts to check for regime shifts.
 2. **Multi-start optimisation.** Run the optimiser from several starting points (a small random grid, or structured starts from economically plausible prior values) and take the best. If multiple starts converge to distinct minima of comparable depth, the problem is flagged as non-identifiable and a human operator is consulted.
 3. **Global optimisation methods.** Use algorithms designed to escape local minima — simulated annealing, differential evolution, genetic algorithms, basin-hopping. These are slower than gradient-based local methods but more reliably find global minima.
-4. **Problem reformulation.** Often the landscape can be smoothed by changing variables. Calibrating Heston (Chapter 10) in $(\kappa, \theta, \sigma_v, v_0, \rho)$ is notoriously multimodal; reparameterising in terms of more orthogonal quantities — at-the-money variance, skew, curvature, mean-reversion speed — can make the landscape nearly convex. This is sometimes called "calibrating in the right coordinates".
+4. **Problem reformulation.** Often the landscape can be smoothed by changing variables. Calibrating Heston (Chapter 10) in $(\kappa, \theta, \alpha, v_0, \rho)$ is notoriously multimodal; reparameterising in terms of more orthogonal quantities — at-the-money variance, skew, curvature, mean-reversion speed — can make the landscape nearly convex. This is sometimes called "calibrating in the right coordinates".
 
 ### 11.2.6 Numerical Methods
 
@@ -345,7 +345,7 @@ The applications of those continuous-time short-rate models — interest-rate sw
 
 Two themes thread through the rest of the course. The first is that *calibration is a thin wrapper around pricing*: once the forward pricing function $\Theta \mapsto C^{\text{model}}(\Theta)$ is known, the calibration optimisation (11.15)–(11.19) is a generic numerical procedure. Chapter 12 and Chapter 13 contribute the forward pricing functions for the rates products; Chapter 11 has contributed the optimisation and regularisation machinery. The second theme is that *the lattice is the right mental model even when the production code is continuous-time*. When a Vasicek calibration misbehaves in Chapter 12, the diagnostic question is always "what does this failure look like on a coarsened trinomial lattice?" The tree makes the arbitrage conditions visible; the SDE hides them inside an Itô calculus. A calibration engineer who can translate freely between the two representations has both the rigour of the continuous-time machinery and the intuition of the lattice.
 
-Chapter 14 (Heston stochastic volatility) and Chapter 15 (caps, floors, swaptions) will use every piece of the calibration machinery developed here: market-consistent objectives, vega weighting, regularisation, warm starts, non-identifiability diagnostics. The Heston calibration in particular is a notoriously ill-posed problem — the parameters $(\kappa, \theta, \sigma_v, v_0, \rho)$ have strong pairwise correlations in the likelihood surface, the objective is multimodal, and naive optimisers wander between local minima. Every remedy we have described here (reparameterisation in orthogonal coordinates, multi-start optimisation, regularisation toward a historical prior, cross-validation on held-out strikes) is used in practice. By the time the reader reaches Chapter 14, the calibration apparatus should feel routine; only the Heston-specific pricing machinery (Fourier inversion of the characteristic function, Riccati ODEs for the transform) will be new.
+Chapter 10 (Heston stochastic volatility) and Chapter 14 (caps, floors, swaptions) will use every piece of the calibration machinery developed here: market-consistent objectives, vega weighting, regularisation, warm starts, non-identifiability diagnostics. The Heston calibration in particular is a notoriously ill-posed problem — the parameters $(\kappa, \theta, \alpha, v_0, \rho)$ have strong pairwise correlations in the likelihood surface, the objective is multimodal, and naive optimisers wander between local minima. Every remedy we have described here (reparameterisation in orthogonal coordinates, multi-start optimisation, regularisation toward a historical prior, cross-validation on held-out strikes) is used in practice. By the time the reader reaches Chapter 10, the calibration apparatus should feel routine; only the Heston-specific pricing machinery (Fourier inversion of the characteristic function, Riccati ODEs for the transform) will be new.
 
 ---
 
@@ -355,20 +355,20 @@ Chapter 14 (Heston stochastic volatility) and Chapter 15 (caps, floors, swaption
 
 **Context.** The calibration basket is roughly $20$ strikes (typically $70\%$–$130\%$ of spot in $2\%$ increments, with denser sampling near ATM) times $\sim 10$ maturities ($1$, $2$, $3$, $6$, $9$, $12$, $18$, $24$, $36$, $60$ months) — about $200$ option mids. Each mid is converted to a Black–Scholes implied vol via a one-dimensional bisection on price, with the ATM-vol used to seed neighbouring strikes for fast convergence. Bid-ask varies sharply across the surface: $\sim 0.3$ vol points ATM at the front month, blowing out to $4$–$6$ vol points for $1$y deep-wing strikes. The pre-calibration data hygiene step (the $\Theta$-independent filter sketched in §11.3.3) drops any quote with bid-ask wider than $3\times$ its surface neighbours, any quote whose mid violates put-call parity by more than $0.5\%$, and any quote on a strike with zero open interest the prior day. A typical day after filtering retains $170$–$190$ usable mids.
 
-The optimiser is Levenberg–Marquardt over the five-parameter Heston vector $\Theta = (\kappa, \theta, \sigma_v, v_0, \rho)$, *warm-started* from yesterday's calibrated values $\Theta_{t-1}$. Each iteration costs one Jacobian (built by parallel finite-difference Heston FFT reprices, $\sim 200$ pricer calls) plus one $5\times 5$ normal-equation solve; on a single modern core that is roughly $1$–$2$ seconds per iteration, with $8$–$15$ iterations to converge for a typical day — total wall-clock around $20$–$30$ seconds. The objective is vega-weighted IV-RMSE per (11.17) plus a small Tikhonov term $\lambda\|\Theta - \Theta_{t-1}\|^2$ at $\lambda \approx 10^{-3}$ to suppress identifiability-driven overnight drift in the $(\kappa, \sigma_v)$ direction. On a calm day the converged RMS residual is $10$–$20$ bp on IV; on a moderately active day, $20$–$30$ bp; anything above $50$ bp is the desk's red flag for a "broken surface" and triggers escalation.
+The optimiser is Levenberg–Marquardt over the five-parameter Heston vector $\Theta = (\kappa, \theta, \alpha, v_0, \rho)$, *warm-started* from yesterday's calibrated values $\Theta_{t-1}$. Each iteration costs one Jacobian (built by parallel finite-difference Heston FFT reprices, $\sim 200$ pricer calls) plus one $5\times 5$ normal-equation solve; on a single modern core that is roughly $1$–$2$ seconds per iteration, with $8$–$15$ iterations to converge for a typical day — total wall-clock around $20$–$30$ seconds. The objective is vega-weighted IV-RMSE per (11.17) plus a small Tikhonov term $\lambda\|\Theta - \Theta_{t-1}\|^2$ at $\lambda \approx 10^{-3}$ to suppress identifiability-driven overnight drift in the $(\kappa, \alpha)$ direction. On a calm day the converged RMS residual is $10$–$20$ bp on IV; on a moderately active day, $20$–$30$ bp; anything above $50$ bp is the desk's red flag for a "broken surface" and triggers escalation.
 
-**Reading it through the chapter's math.** The whole pipeline is one instance of the FTAP-driven inverse problem of §11.1 wrapped in the optimisation machinery of §11.2. Vega weighting (11.17) is exactly the right choice when the calibration target is "the model marks should agree with the market in the units the trader cares about" — vega-units, not price-units. The warm-start Tikhonov regularisation is the §11.2.7 remedy for the well-known Heston identifiability pathology: $(\kappa, \sigma_v)$ traces a long, shallow valley in the likelihood surface (mean-reversion speed and vol-of-vol trade off against each other to produce nearly identical short-dated smiles), and without the regulariser the optimiser walks along that valley overnight and reports $30\%$ parameter changes between two indistinguishable surfaces. The $\Theta_{t-1}$ anchor pins the optimiser to the same basin, so the day-to-day report is the *informative* component of the parameter change rather than a numerical artefact. Day-to-day stability under this regime is empirically: $\rho$ moves by less than $\pm 0.05$ in $90\%$ of days (it is the most stable parameter, since the smile-skew slope is nearly orthogonal to all the other directions); $v_0$ moves with realised overnight vol (it is essentially "where the front-month ATM vol started this morning"); $\theta$ drifts slowly, often unchanged at the third decimal for days at a time; $\kappa$ is the regime indicator — a $\kappa$ jump from $1.8$ to $3.5$ on a single day is the model telling you the term-structure shape changed materially, and is itself a tradable signal.
+**Reading it through the chapter's math.** The whole pipeline is one instance of the FTAP-driven inverse problem of §11.1 wrapped in the optimisation machinery of §11.2. Vega weighting (11.17) is exactly the right choice when the calibration target is "the model marks should agree with the market in the units the trader cares about" — vega-units, not price-units. The warm-start Tikhonov regularisation is the §11.2.7 remedy for the well-known Heston identifiability pathology: $(\kappa, \alpha)$ traces a long, shallow valley in the likelihood surface (mean-reversion speed and vol-of-vol trade off against each other to produce nearly identical short-dated smiles), and without the regulariser the optimiser walks along that valley overnight and reports $30\%$ parameter changes between two indistinguishable surfaces. The $\Theta_{t-1}$ anchor pins the optimiser to the same basin, so the day-to-day report is the *informative* component of the parameter change rather than a numerical artefact. Day-to-day stability under this regime is empirically: $\rho$ moves by less than $\pm 0.05$ in $90\%$ of days (it is the most stable parameter, since the smile-skew slope is nearly orthogonal to all the other directions); $v_0$ moves with realised overnight vol (it is essentially "where the front-month ATM vol started this morning"); $\theta$ drifts slowly, often unchanged at the third decimal for days at a time; $\kappa$ is the regime indicator — a $\kappa$ jump from $1.8$ to $3.5$ on a single day is the model telling you the term-structure shape changed materially, and is itself a tradable signal.
 
 **Lesson.** "Calibrate at 8 AM, hedge from 9:30" is the operating discipline that the entire apparatus of this chapter is built to support. The lock-at-8 rule exists because *every* downstream system — risk reports, exotic marks, Greek aggregations, the swap-broker's quote engine — needs a single, frozen surface to compute against; you cannot have the model wobbling under risk while the trader is trying to read the book. That constraint dictates the algorithm choice (Levenberg–Marquardt's superlinear local convergence, not differential evolution's reliability), the regularisation choice (warm-start Tikhonov, not absolute Bayesian prior), the data-hygiene discipline (filter before fit, not iterate during fit), and the residual threshold ($50$ bp = surface broken = escalate). When calibration *does* fail — a Fed surprise, a single-name event affecting an index basket member, a flash crash leaving a discontinuous strike profile — the desk falls back through a hierarchy: first try regularised SVI on the implied-vol surface directly (a model-free smile fit, no dynamics), then if even SVI fails, freeze yesterday's surface and quote bid-only at wide spreads until the chaos passes. The math (Heston, SVI), the optimiser (Levenberg–Marquardt), the regulariser (Tikhonov), and the operational hierarchy (escalate at $50$ bp) are inseparable; remove any one and the production process collapses.
 
-## 11.6 Key Takeaways
+## 11.5 Key Takeaways
 
 1. **FTAP is the calibration engine.** Every model parameter is pinned down by requiring (11.1) to hold at observed prices. Market quotes are equations; parameters are unknowns; calibration is just solving the system.
 2. **Calibration is an inverse problem.** It can be ill-posed in three classic ways: non-existence (no $\Theta$ reproduces the quotes exactly), non-uniqueness (many $\Theta$'s reproduce them), and instability (small price perturbations cause large parameter jumps). Each pathology has a distinct remedy: weighted least squares, regularisation, and warm-start smoothing respectively.
 3. **Binomial scaling.** $c \sim \sigma\sqrt{\Delta t}$ and $p \sim \tfrac12(1 + (\hat\mu/\sigma)\sqrt{\Delta t})$ — moment matching on the lattice. This recovers the Black–Scholes limit because matching mean and variance per step is exactly what the CLT needs to produce Brownian motion. Chapter 3 proved the corresponding continuous-time construction; Chapter 6 uses it to derive the BS PDE.
 4. **Change of numeraire on a lattice.** $d\mathbb{Q}^B/d\mathbb{Q}^A = (B/B_0)/(A/A_0)$. The same payoff can be priced under any consistent (measure, numeraire) pair — pick the numeraire that simplifies the expectation. Chapter 5 developed the continuous-time canonical derivation.
 5. **Bond-price ratios recover $(q, r_0)$.** $r_0 = 1/P_0(1) - 1$ and the two-period relation (11.22) recovers the next tree layer given a volatility input. Sequential bootstrapping builds the full tree. Chapter 12 develops the continuous-time Vasicek / Ho–Lee / Hull–White models whose lattice discretisation this construction is.
-6. **Identifiability matters.** Some parameter directions are stiff (well-pinned by the data), others are sloppy (nearly flat likelihood). For single-factor Vasicek the long yield identifies the ratio $\sigma^2/\kappa^2$ alone — the individual values of $\sigma$ and $\kappa$ are not pinned by bond quotes and require additional vol-instrument calibration (caplets, swaptions; see Chapter 13) to break the degeneracy.
+6. **Identifiability matters.** Some parameter directions are stiff (well-pinned by the data), others are sloppy (nearly flat likelihood). For single-factor Vasicek the long yield identifies the ratio $\sigma^2/\kappa^2$ alone — the individual values of $\sigma$ and $\kappa$ are not pinned by bond quotes and require additional vol-instrument calibration (caplets, swaptions; see Chapter 14) to break the degeneracy.
 7. **Bid-ask and stale quotes set the precision floor.** Never calibrate tighter than the market's own resolution. Overfitting inside the bid-ask band produces spurious parameter instability. A disciplined pipeline filters out stale quotes and outliers before calibration runs.
 8. **Interpolation vs extrapolation.** A calibrated model reproduces its inputs by construction; that does not make its outputs trustworthy outside the calibration range. Always distinguish between "what the market told us" and "what the model guesses".
 9. **Calibration objective design is load-bearing.** The choice between unweighted, spread-weighted, vega-weighted, and regularised objectives is not cosmetic — different choices lead to different parameter estimates, different stability properties, and different out-of-sample behaviours. Make the choice explicitly and revisit it when market conditions change.
@@ -380,9 +380,9 @@ The optimiser is Levenberg–Marquardt over the five-parameter Heston vector $\T
 
 ---
 
-## 11.7 Reference Formulas
+## 11.6 Reference Formulas
 
-### 11.7.1 Binomial lattice
+### 11.6.1 Binomial lattice
 
 $$A_n = A_{n-1}e^{c\,x_n},\quad x_n\stackrel{\text{iid}}{\sim}\text{Bernoulli}(\pm 1)$$
 
@@ -390,7 +390,7 @@ $$c \;\approx\; \sigma\sqrt{\Delta t},\qquad p \;\approx\; \tfrac{1}{2}\!\left(1
 
 Risk-neutral version: replace $\hat\mu \to r - \tfrac12\sigma^2$ for a lognormal asset.
 
-### 11.7.2 Change of measure on a lattice
+### 11.6.2 Change of measure on a lattice
 
 $$
 q^B = q^A\,\frac{B_u/A_u}{B_0/A_0}, \qquad
@@ -401,7 +401,7 @@ $$
 \frac{d\mathbb{Q}^B}{d\mathbb{Q}^A}(\omega) \;=\; \frac{B(\omega)/B_0}{A(\omega)/A_0}
 $$
 
-### 11.7.3 Zero-coupon bonds on a lattice
+### 11.6.3 Zero-coupon bonds on a lattice
 
 $$
 P_t(T) \;=\; \frac{1}{1+r_t}\,\mathbb{E}_t^{\mathbb{Q}}\!\left[P_{t+\Delta t}(T)\right]
@@ -418,7 +418,7 @@ $$
 P_t(T) \;=\; \mathbb{E}^{\mathbb{Q}}_t\!\left[\exp\!\left(-\int_t^T r_u\,du\right)\right]
 $$
 
-### 11.7.4 Calibration objective functions
+### 11.6.4 Calibration objective functions
 
 Unweighted least squares:
 $$\Theta^\star \;=\; \arg\min_\Theta \sum_i \bigl(C_i^{\text{model}} - C_i^{\text{mkt}}\bigr)^2$$
@@ -432,7 +432,7 @@ $$\Theta^\star \;=\; \arg\min_\Theta \sum_i \bigl(\sigma_i^{\text{model}} - \sig
 Regularised:
 $$\Theta^\star \;=\; \arg\min_\Theta \left[\sum_i w_i\bigl(C_i^{\text{model}} - C_i^{\text{mkt}}\bigr)^2 + \lambda\,\|\Theta - \Theta_{\text{prior}}\|^2\right]$$
 
-### 11.7.5 Identifiability diagnostics
+### 11.6.5 Identifiability diagnostics
 
 Hessian condition number:
 $$\kappa(H) \;=\; \sigma_{\max}(H)/\sigma_{\min}(H)$$
@@ -441,7 +441,7 @@ $$\kappa(H) \;=\; \sigma_{\max}(H)/\sigma_{\min}(H)$$
 - $\kappa(H) \sim 10^3$: marginal; consider regularisation
 - $\kappa(H) \sim 10^6$: ill-posed; restructure problem
 
-### 11.7.6 Stepwise calibration checklist
+### 11.6.6 Stepwise calibration checklist
 
 1. Load and filter market quotes; drop stale and outlier observations.
 2. Convert to calibration targets (yields for bonds, implied vols for options).
@@ -455,13 +455,13 @@ $$\kappa(H) \;=\; \sigma_{\max}(H)/\sigma_{\min}(H)$$
 
 ---
 
-**Cross-references.** Chapter 2 (FTAP on the multi-period binomial) is the direct predecessor of §11.1; Chapter 5 (Radon–Nikodym, Girsanov, density process) is the canonical treatment of the measure-change machinery whose discrete-lattice instance is §11.2. Chapter 12 develops the continuous-time Vasicek / Ho–Lee / Hull–White short-rate models whose lattice discretisation this chapter has been calibrating. Chapter 13 deploys those continuous-time models in applications (IRS, CDS, bond options, callable bonds, $T$-forward measure). Chapter 14 (Heston) applies the ill-posed-calibration remedies surveyed in §11.2 to a stochastic-volatility setting with notoriously correlated parameter directions.
+**Cross-references.** Chapter 2 (FTAP on the multi-period binomial) is the direct predecessor of §11.1; Chapter 5 (Radon–Nikodym, Girsanov, density process) is the canonical treatment of the measure-change machinery whose discrete-lattice instance is §11.2. Chapter 12 develops the continuous-time Vasicek / Ho–Lee / Hull–White short-rate models whose lattice discretisation this chapter has been calibrating. Chapter 13 deploys those continuous-time models in applications (IRS, CDS, bond options, callable bonds, $T$-forward measure). Chapter 10 (Heston) applies the ill-posed-calibration remedies surveyed in §11.2 to a stochastic-volatility setting with notoriously correlated parameter directions.
 
 ---
 
 ## Appendix A. Calibration Governance and Sociology
 
-*(Demoted from former §11.5 in V5: technical chapters now end with takeaways and reference formulas; this material covers institutional context useful to practitioners.)*
+<!-- footnote-only; superseded by V5 renumber, kept for historical context -->
 
 ### A.1 The Sociology of Calibration
 
@@ -496,7 +496,7 @@ A value-oriented investor or discretionary trader who has an independent view ab
 
 ### A.6 Connections to Machine Learning
 
-In recent years, there has been growing interest in using machine-learning techniques for calibration. The motivation: neural networks can learn the model pricing function (the map from parameters to prices) once, and then calibration reduces to inverting this learned function — which can be orders of magnitude faster than re-solving the pricing problem at every optimiser step. A typical setup: generate a large training dataset of (parameters, prices) pairs by running the model forward on randomly sampled parameters, train a neural network to approximate the pricing function, and at calibration time solve an inverse problem over the network using gradient-based methods that backpropagate through it. This approach has been applied successfully to Heston calibration (Chapter 14), Bermudan options, and rough-vol models. The downsides: the network has to be retrained when the model specification changes; accuracy in extreme parameter regions is limited by training-set coverage; and the system inherits the stability issues of neural networks including adversarial sensitivity and out-of-distribution failures. For stable well-studied models, the learning-accelerated calibration is often worth the complexity; for experimental or custom models, a traditional iterative calibration is often simpler.
+In recent years, there has been growing interest in using machine-learning techniques for calibration. The motivation: neural networks can learn the model pricing function (the map from parameters to prices) once, and then calibration reduces to inverting this learned function — which can be orders of magnitude faster than re-solving the pricing problem at every optimiser step. A typical setup: generate a large training dataset of (parameters, prices) pairs by running the model forward on randomly sampled parameters, train a neural network to approximate the pricing function, and at calibration time solve an inverse problem over the network using gradient-based methods that backpropagate through it. This approach has been applied successfully to Heston calibration (Chapter 10), Bermudan options, and rough-vol models. The downsides: the network has to be retrained when the model specification changes; accuracy in extreme parameter regions is limited by training-set coverage; and the system inherits the stability issues of neural networks including adversarial sensitivity and out-of-distribution failures. For stable well-studied models, the learning-accelerated calibration is often worth the complexity; for experimental or custom models, a traditional iterative calibration is often simpler.
 
 ### A.7 Benchmarking Calibration Performance
 

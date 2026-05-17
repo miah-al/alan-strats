@@ -43,9 +43,9 @@ payoff for Parts II and III.*
    expectation under $\mathbb{Q}$.
 9. **§10.9 Worked example** — a numerical Heston vs. Black–Scholes
    comparison.
-10. **§10.10–§10.10C Limitations, comparisons, extensions, and summary.**
-11. **§10.11 Key takeaways** and **Appendix A** (reference formulas) plus
-    **Appendix B** (intuition checklist).
+10. **§10.10–§10.10B Limitations, comparisons, and extensions.**
+11. **§10.11 Key takeaways**, **Appendix A** (reference formulas), and
+    **Appendix B** (VIX vs SPX historical correlation study).
 
 ---
 
@@ -467,6 +467,8 @@ smiles.
 
 ---
 
+![CIR variance paths under three different $\kappa$ values (same $\theta=0.04$): small $\kappa$ wanders, large $\kappa$ pins paths tightly to $\sqrt{\theta}$. Empirical SPX $\kappa^{\mathbb{Q}}$ since 2010 sits near 2-4/year, giving vol-shock half-lives of 2-4 months — consistent with how a VIX spike from 30 back to 15 typically resolves over a quarter](figures/ch10-variance-paths-kappa.png)
+
 ## 10.2 Feller condition
 
 The variance process (10.7) can hit zero. For $v_t$ to be strictly
@@ -487,7 +489,7 @@ full-truncation (take $v^+ = \max(v,0)$ in the diffusion coefficient)
 or reflection. Closed-form pricing is unaffected — the characteristic
 function is analytic in the parameters regardless of Feller.
 
-**Boundary classification.** For the CIR variance, the origin is an *entrance* boundary (reachable from outside but not from inside) when $2\kappa\theta \ge \alpha^2$, and *regular* (reachable, requires a boundary rule) otherwise. The stationary density of $v_t$ is gamma-distributed with shape $2\kappa\theta/\alpha^2$ — bounded at the origin if Feller holds, divergent (but integrable) like $v^{2\kappa\theta/\alpha^2 - 1}$ if violated.
+**Boundary classification.** For the CIR variance, the origin is *inaccessible* — Feller-classified as an entrance-natural boundary in the strict-inequality case, sometimes loosely called "entrance" — when $2\kappa\theta \ge \alpha^2$, and *regular* (reachable, requires a boundary rule) otherwise. The stationary density of $v_t$ is gamma-distributed with shape $2\kappa\theta/\alpha^2$ — bounded at the origin if Feller holds, divergent (but integrable) like $v^{2\kappa\theta/\alpha^2 - 1}$ if violated.
 
 **Calibrated Heston typically violates Feller mildly.** The market demands more wing richness than a Feller-compliant calibration can deliver, so the calibrator cranks $\alpha$ across the boundary. Closed-form pricing is unaffected; Monte Carlo simulation needs careful handling.
 
@@ -501,6 +503,8 @@ For vanillas, the Fourier closed form skips MC entirely.
 
 ![Feller boundary in (kappa, alpha) plane](figures/ch10-heston-feller-boundary.png)
 *Feller boundary $\alpha = \sqrt{2\kappa\theta}$ for four long-run variance levels. SPX-like calibrations sit slightly above — a textbook mild violation.*
+
+![Feller phase diagram with a typical SPX calibration point ($\kappa\approx 2$, $\alpha\approx 0.5$) annotated. The point sits *above* the $\theta=0.04$ boundary — i.e. Feller is mildly violated, exactly as quant-vol desks routinely observe in calibrated production parameters](figures/ch10-feller-phase.png)
 
 ---
 
@@ -527,8 +531,8 @@ $$
 \mathrm{d}v_t = \Big(\kappa^{\mathbb{P}}(\theta^{\mathbb{P}} - v_t) \;-\; \alpha\,\lambda_t^{v}\sqrt{v_t}\Big)\mathrm{d}t \;+\; \alpha\sqrt{v_t}\,\mathrm{d}W_t^{v},
 \tag{10.12}
 $$
-with $\lambda_t^{v}$ the market price of variance (vol) risk. Note that
-the two-dimensional Girsanov we are using is the vector-valued version:
+with $\lambda_t^{v}$ the market price of variance (vol) risk. The
+two-dimensional Girsanov we are using is the vector-valued version:
 we apply independent density processes to two correlated Brownian
 motions by first rotating into an independent pair via Cholesky,
 shifting each, and rotating back. The net effect on the correlated
@@ -771,6 +775,8 @@ to those tails.
 ![Heston-implied IV smile](figures/ch10-heston-smile.png)
 *Heston-implied IV smile*
 
+![Heston ATM implied vol vs maturity for three spot-variance starts: convergence to $\sqrt{\theta}$ as $T\to\infty$ at rate $\kappa$. Same mean-reversion that VIX-futures term structure prints — short-end contango in calm, backwardation when spot vol spikes above the long-run level](figures/ch10-atm-term-structure.png)
+
 ### Case study (a): 1987 crash and the birth of vol skew
 
 *Pre-1987 BS-implied vols were essentially flat across strikes.*
@@ -892,9 +898,9 @@ tradeoff that should be benchmarked against the closed-form Heston
 price before committing to a production scheme.
 
 A related practical note: use antithetic variates to reduce MC
-variance. The key insight is that Heston's dynamics are symmetric in
+variance. Heston's dynamics are symmetric in
 $(Z_1, Z_2) \to (-Z_1, -Z_2)$ — flipping the signs of both
-innovations produces an equally-probable path. Pricing the option on
+innovations produces an equally probable path. Pricing the option on
 both the original and the flipped path and averaging the two gives a
 zero-bias variance reduction that typically cuts MC standard error
 by a factor of 1.5–2$\times$ at no extra computational cost (since the
@@ -981,6 +987,8 @@ of the form $\mathbb{E}[f(X_T)]$ can be computed by Fourier inversion,
 provided $f$ has a well-defined Fourier transform. European option
 prices are linear functionals of the density, so the Fourier route is
 not only convenient — it is the natural one.
+
+![Real and imaginary parts of the Heston characteristic function $\varphi_{X_T}(\phi)$ alongside its modulus (right) at $T=1$. The density of $\log S_T$ is hopeless to write down; this is the closed-form replacement that Carr-Madan FFT inverts to produce vanilla prices in milliseconds for every $(K, T)$ on a vol-surface grid](figures/ch10-charfunc-realimag.png)
 
 The philosophical shift from density-first to
 characteristic-function-first thinking is one of the most important
@@ -1725,6 +1733,7 @@ $\kappa(t), \theta(t), \alpha(t), \rho(t)$ as "parameter functions"
 — this maintains Markov consistency while adding flexibility.
 
 ![Heston smile vs rho](figures/ch10-heston-skew-vs-rho.png)
+![Carr-Madan-FFT pricing of vanillas at varying $\rho$ inverted to BS implied vols: more negative $\rho$ steepens the left wing. Empirically SPX prints $\rho \approx -0.7$ from VIX-SPX joint dynamics — exactly the slope of the index-option skew that index funds pay for tail protection](figures/ch10-smile-vs-rho.png)
 *Heston smile for $\rho \in \{-0.9, -0.5, 0, +0.5\}$, holding
 $(\kappa, \theta, \alpha, v_0)$ fixed. Negative $\rho$ tilts the
 smile down-right (equity left-skew); positive $\rho$ tilts it
@@ -1768,6 +1777,7 @@ underappreciated advantage of stochastic vol over local vol for
 forward-smile modelling.
 
 ![Heston smile vs alpha](figures/ch10-heston-wings-vs-volvol.png)
+![Vol-of-vol $\alpha$ controls smile curvature/wing thickness at fixed $\rho$. Increasing $\alpha$ raises both wings symmetrically while $\rho$ tilts them — the two parameters carry near-orthogonal smile information, which is exactly why production Heston calibration uses both ATM and wing strikes](figures/ch10-smile-vs-volvol.png)
 *Smile curvature grows with $\alpha$. Small $\alpha$ (weak
 vol-of-vol) flattens the smile toward the BS line; large $\alpha$
 lifts both wings — deep puts and deep calls both gain, symmetrically
@@ -2243,7 +2253,9 @@ maturities.
 
 ---
 
-## 10.10 Heston's blind spots
+## 10.10 Limits, alternatives, and extensions
+
+### 10.10.1 Structural limitations
 
 Three structural limitations every practitioner should know.
 
@@ -2259,7 +2271,7 @@ Despite these limits, Heston remains the workhorse: closed-form CF, fast Fourier
 
 ---
 
-## 10.10A Heston vs. SABR vs. local volatility
+### 10.10.2 Heston vs. SABR vs. local volatility
 
 Three smile-fitting frameworks dominate vanilla pricing.
 
@@ -2271,7 +2283,7 @@ Production desks typically run multi-model pricing (Heston + Bates + LSV) and re
 
 ---
 
-## 10.10B Extensions and successors
+### 10.10.3 Extensions and successors
 
 - **Bates (1996):** Heston + Poisson jumps in spot. Three extra parameters; the characteristic function gets an additive $\lambda\tau(\phi_J - 1)$ term. Fixes too-flat short-dated smiles.
 - **SVJJ (Duffie–Pan–Singleton 2000):** simultaneous spot + variance jumps. Captures crash dynamics beyond diffusive $\rho$.
@@ -2281,6 +2293,50 @@ Production desks typically run multi-model pricing (Heston + Bates + LSV) and re
 - **LSV:** $\mathrm{d}S/S = L(S,t)\sqrt{v}\,\mathrm{d}W^S + \cdots$. Local-vol leverage on top of stochastic vol. Exact surface fit + realistic dynamics, but MC/PDE-only pricing. Gold standard for exotics.
 
 Each extension addresses one Heston limitation; the practitioner's craft is knowing which is worth the added complexity.
+
+### 10.10.4 Case study — February 2018 "Volmageddon"
+
+The XIV liquidation of February 5, 2018 is the cleanest stress test
+the post-2008 era has produced for constant-parameter Heston, and
+the model fails it almost surgically. Going into the day, the SPX
+had drifted down about 4% over the prior week; intraday on the 5th
+the index closed down 4.1%. That alone is a routine move — the
+month before had seen comparable single-day declines without
+incident. What was not routine was VIX: it opened near 17, traded
+through 30 by mid-afternoon, and printed 50 in late-session
+illiquid markets as the short-volatility exchange-traded products
+(XIV and SVXY together held roughly $3.0bn) were forced to buy
+$200mm of VIX futures vega in the last 90 minutes. XIV terminated
+the next morning at a 96% loss.
+
+Read this through Heston's lens. A 5-parameter constant-coefficient
+model is asked to reconcile two facts: spot moved $-4\%$ (a
+moderate $-1.5\sigma$ event under the prevailing $v_0$), and the
+short-end implied vol roughly tripled. Pure-diffusion Heston with a
+typical $\rho \approx -0.75$ and the day's $\alpha \approx 1.5$
+predicts a vol move of order $\rho\alpha\sqrt{v_0}\cdot|\Delta
+S/S|$ — call it 3 vol points for a $-4\%$ tape. The realised
+30-day IV move was closer to 15 points. The model is short by a
+factor of five on the day, and the source of the shortfall is not
+$\rho$ (which is already strongly negative) but $\alpha$: vol-of-vol
+had effectively doubled overnight, driven by the forced ETP rebalance
+flow rather than fundamentals. Constant $\alpha$ cannot represent a
+flow-induced regime shift.
+
+Three lessons land cleanly. **First**, the asymmetric tail observed
+in Appendix B is not a smooth function of spot return — it loads
+heavily on episodes where dealer/ETP positioning amplifies vol
+moves out of proportion to spot moves. **Second**, the Volmageddon
+trace in our rolling-$\rho$ history (Appendix B, $-0.79$ on
+2018-02-28) is *less* negative than mean, not more: when vol moves
+independently of spot, instantaneous correlation falls in absolute
+value even as realised tail correlation rises. **Third**, a
+short-vol book hedged under static Heston systematically
+underestimates the relevant stress P&L because the dominant move
+in stress is in $\alpha$, not $\rho$. The pragmatic responses are
+piecewise/term-dependent $\alpha$, jump-diffusion overlays (Bates /
+SVJJ), or — increasingly — rough-vol models whose driver has built-in
+non-stationarity in its vol-of-vol.
 
 ---
 
@@ -2446,6 +2502,350 @@ $$
 $$
 v_{n} = v_{n-1} + \kappa(\theta - v^+_{n-1})\Delta t + \alpha\sqrt{v^+_{n-1}\,\Delta t}\,(\rho Z_1 + \sqrt{1-\rho^2}\,Z_2).
 $$
+
+---
+
+## Appendix B — VIX vs SPX: Historical Correlation Study
+
+The single most informative parameter in an equity-index Heston
+calibration is the spot-vol correlation $\rho$. It controls the slope
+of the smile, the sign and magnitude of the equity skew, the
+delta-vega cross-Greeks, and — through those — almost every
+risk-management decision a vol desk makes. The model defines $\rho$ as
+the instantaneous correlation between the two Brownians driving spot
+and variance; the trader's anchor for choosing it is the realised,
+empirically measurable correlation between SPX returns and VIX
+changes. This appendix collects the historical record from 1990 to
+2026, lays out the daily-changes regression, the rolling-correlation
+behaviour, and the asymmetric tail response, and then sketches the
+bridge from observable daily quantities to the model's $\rho$.
+
+Three orienting facts before we begin. First, the joint SPX–VIX
+correlation has been strongly and persistently negative for the entire
+post-1990 sample: the daily correlation is $-0.787$, the 252-day
+rolling correlation has a mean of $-0.770$ and never crosses zero.
+Second, the relationship is highly nonlinear in the tails: a 3%
+selloff produces a substantially larger VIX move than a 3% rally, and
+no pure-diffusion model can match this asymmetry without help from
+jumps or rough vol. Third, the bridge from realised daily correlation
+to instantaneous Heston $\rho$ is loose — daily-changes correlation
+typically understates the instantaneous value, which is why
+calibrated equity-index $\rho$ values cluster slightly above (in
+magnitude) the empirical $-0.79$.
+
+### B.1 Definitions
+
+**SPX** is the S&P 500 cash index, a capitalisation-weighted price
+index of 500 large-cap US equities maintained by S&P Dow Jones
+Indices. We use daily closes on `^GSPC` from Yahoo Finance for the
+1990–2026 sample. Returns are computed as either simple percent
+returns $r_t = S_t/S_{t-1} - 1$ or log returns
+$\Delta \log S_t = \ln(S_t / S_{t-1})$; for the daily horizons used
+here the two are interchangeable to within $10^{-4}$ on typical days
+and within $10^{-3}$ on the largest tail days, and we report both
+where it matters.
+
+**VIX** is the CBOE Volatility Index, a model-free 30-calendar-day
+implied volatility computed from the prices of the listed SPX option
+strip via the variance-swap replication formula. Conceptually, VIX² is
+(up to a small discretisation error) the fair strike of a
+30-day variance swap on SPX:
+$$
+\operatorname{VIX}_t^{2}\;\approx\;\frac{2}{T}\int_{0}^{\infty}\frac{Q_t(K,T)}{K^{2}}\,\mathrm{d}K
+\qquad (T = 30/365),
+$$
+where $Q_t(K,T)$ is the out-of-the-money option price at strike $K$
+and the integral is computed as a weighted sum over the listed
+strip. This is exactly the integrand whose Heston closed form we
+derived in §10.8; the connection to the model is therefore direct.
+
+VIX changes are reported in **VIX points** — VIX trades at levels
+around 12 in calm regimes and above 80 in the worst crises, so a
+$\Delta \text{VIX}$ of $+5$ means the index moved up five whole
+points (e.g. from 18 to 23). All correlations below are between
+$\Delta \log \text{SPX}$ (or simple SPX percent returns) and
+$\Delta \text{VIX}$ in points; neither side is rescaled.
+
+**Why $\rho$ matters.** Inside Heston, the spot SDE and the variance
+SDE share a single correlation parameter:
+$$
+\mathrm{d}\log F_t = -\tfrac{1}{2} v_t\,\mathrm{d}t + \sqrt{v_t}\,\mathrm{d}W^F_t,\qquad
+\mathrm{d}v_t = \kappa(\theta - v_t)\,\mathrm{d}t + \alpha\sqrt{v_t}\,\mathrm{d}W^v_t,\qquad
+\mathrm{d}W^F\,\mathrm{d}W^v = \rho\,\mathrm{d}t.
+$$
+The risk-neutral skew of $\ln F_T$ inherits its sign from $\rho$ —
+negative $\rho$ pushes weight into the joint event "low $F_T$, high
+integrated variance," fattening the left tail relative to the
+lognormal. As we showed in §10.4, the equity left skew is essentially
+unrecoverable without $\rho < 0$. So when we go to fit Heston to
+market data, the question is never "is $\rho$ negative?" but rather
+"how negative?" — and the empirical record we describe below is what
+disciplines that answer.
+
+### B.2 Historical record
+
+VIX in its current methodology has been published by CBOE since 22
+September 2003, but CBOE publishes a back-cast (originally called
+"VXO" before the 2003 methodology revision, then back-recomputed
+under the modern formula) that runs daily from 2 January 1990. SPX
+itself extends back to 1928, but the joint sample is necessarily
+limited by VIX availability. Our sample is **9,159 trading days from
+1990-01-03 to 2026-05-15**.
+
+A few episodes are worth flagging because they reappear in the
+rolling-correlation series below. The 1997 Asian-currency crisis and
+the 1998 LTCM episode produced sustained VIX prints in the high
+30s/low 40s; the dot-com unwind (2000–2002) kept VIX elevated for two
+years; the 2008 GFC pushed VIX above 80 intraday on
+24 October 2008 (intraday high near 89.5) and to its closing high of 80.86 on 20 November 2008; the August 2015 China devaluation produced a
+sharp single-week spike (VIX from 13 to 41 in five sessions); the
+February 2018 "Volmageddon" episode took VIX from 14 to 50 in two
+days as inverse-VIX ETPs unwound; and the March 2020 COVID crash
+delivered both the highest VIX print of the sample (82.69 on
+2020-03-16) and the most negative rolling correlation
+($-0.9626$, also on 2020-03-16). The 2022 Fed hiking cycle was the
+counter-example: VIX traded a persistent regime in the high 20s
+without ever spiking — a low-volatility-of-volatility, term-structure-
+driven repricing rather than a crisis.
+
+### B.3 The daily-changes regression
+
+The fundamental empirical observation is the strong negative daily
+correlation between SPX returns and VIX changes. Across the full
+sample,
+$$
+\operatorname{corr}(\Delta \log \text{SPX}_t,\;\Delta \text{VIX}_t) \;=\; -0.7868,\qquad n = 9\,159.
+$$
+Using simple percent returns rather than log returns gives a nearly
+identical $-0.7848$; the choice of return convention does not matter
+at the daily horizon. An ordinary-least-squares regression
+$$
+\Delta \text{VIX}_t \;=\; \beta\,\Delta \log \text{SPX}_t + \alpha + \varepsilon_t
+$$
+yields $\hat{\beta} = -115.45$ and $\hat{\alpha} = +0.0383$. The
+slope's units are VIX-points per unit log-return; converting to the
+more readable form, **a 1% drop in SPX corresponds on average to a
+$+1.15$-point move in VIX, and a 1% rally to a $-1.15$-point move**.
+The tiny positive intercept reflects the very slight upward drift in
+VIX over the sample (the index has trended up modestly as the
+listed-options ecosystem grew and as 30-day vol-of-vol has been bid
+through structured-product hedging flows), but it is economically
+negligible.
+
+![Daily Δlog SPX vs Δ VIX scatter, 1990–2026](figures/ch10-vix-spx-scatter.png)
+*Daily Δlog SPX vs Δ VIX scatter, full sample (n = 9,159).*
+
+The scatter shows the linear relationship cleanly in the centre of
+the distribution. Two features are visible in the tails: a sparse
+cluster of points in the lower-right (large negative SPX moves
+producing very large positive VIX moves) and a noticeably *thinner*
+cluster in the upper-left (large positive SPX moves producing more
+muted negative VIX moves). That asymmetry is the subject of §B.5.
+
+### B.4 Rolling correlation
+
+The full-sample correlation hides substantial time variation. We
+compute the 252-day rolling correlation between $\Delta \log$ SPX and
+$\Delta$ VIX and report the summary statistics:
+
+| Statistic | Value | Date |
+|---|---:|---|
+| Mean | $-0.770$ | — |
+| Median | $-0.804$ | — |
+| Minimum (most negative) | $-0.9626$ | 2020-03-16 |
+| Maximum (least negative) | $-0.4220$ | 1995-12-13 |
+| 2008 GFC peak negative | $-0.868$ | 2008-10-31 |
+| Feb 2018 Volmageddon | $-0.791$ | 2018-02-28 |
+| March 2020 COVID | $-0.829$ | 2020-03-31 |
+
+![252-day rolling correlation, SPX vs VIX, 1990–2026](figures/ch10-vix-spx-rolling-corr.png)
+*252-day rolling correlation of Δlog SPX and Δ VIX. Annotations
+mark the major crises; the series never crosses zero.*
+
+The series has three regimes. The early 1990s — a low-volatility,
+relatively shallow listed-option ecosystem — show the weakest
+correlations, with the all-time maximum of $-0.4220$ in December
+1995. Through the 2000s and into the GFC, the correlation tightens
+dramatically as index-option volumes grow, dealer hedging deepens,
+and the SPX/VIX joint dynamic stabilises into the modern regime. The
+2008 crisis pulls the rolling correlation toward $-0.87$. The
+post-2010 regime is essentially flat around $-0.80$ with sharp
+deepening into crises: $-0.96$ in March 2020 is the most negative
+print of the sample.
+
+Why does the correlation occasionally weaken? Three mechanisms are at
+work. First, in extreme rallies — particularly post-crisis bounces —
+forced de-grossing of short-vol positions pushes VIX up *and* SPX up
+together (cross-hedged unwinds), briefly reversing the usual sign of
+the relationship and dragging the rolling correlation toward zero.
+Second, vol-of-vol blowups (Aug 2015, Feb 2018) produce idiosyncratic
+moves in VIX that are not fully explained by contemporaneous SPX
+moves — VIX has its own term-structure dynamics that decouple
+temporarily. Third, structural breaks in dealer positioning (the
+post-Volmageddon ETP unwind, the post-COVID dealer rebalancing) shift
+the gamma/vega flow profile of the market and can change the local
+slope of the regression for months at a time. The takeaway: the
+correlation is robustly negative on average, but the daily slope is
+state-dependent in a way that no constant-$\rho$ model can capture.
+
+### B.5 Asymmetric response
+
+The headline summary correlation conceals a sharply asymmetric
+relationship in the tails. Bucketing daily observations by the SPX
+percent return and reporting the mean $\Delta$ VIX in each bucket:
+
+| SPX bucket | n | mean $\Delta$ VIX |
+|---|---:|---:|
+| $< -3\%$ | 107 | $+6.44$ |
+| $-3\%$ to $-2\%$ | 218 | $+2.93$ |
+| $-2\%$ to $-1\%$ | 792 | $+1.62$ |
+| $-1\%$ to $-0.5\%$ | 1014 | $+0.74$ |
+| $-0.5\%$ to $+0.5\%$ | 4476 | $-0.07$ |
+| $+0.5\%$ to $+1\%$ | 1326 | $-0.70$ |
+| $+1\%$ to $+2\%$ | 946 | $-1.36$ |
+| $+2\%$ to $+3\%$ | 187 | $-2.28$ |
+| $> +3\%$ | 93 | $-4.62$ |
+
+![Bucketed mean Δ VIX by SPX return decile](figures/ch10-vix-spx-asymmetry.png)
+*Bucketed mean Δ VIX by SPX-return decile, 1990–2026. The
+asymmetry between the two tails is the empirical fingerprint of
+jumps and dealer-gamma dynamics that a pure-diffusion Heston cannot
+reproduce.*
+
+The inner buckets are nearly symmetric. SPX moves in $[-1.5\%,
+-0.5\%]$ (n=1519) produce mean $\Delta$ VIX of $+0.943$; SPX moves
+in $[+0.5\%, +1.5\%]$ (n=1992) produce mean $\Delta$ VIX of
+$-0.882$. The ratio of magnitudes is $0.943 / 0.882 = 1.07$ — within
+sampling error of perfect symmetry. The OLS regression of §B.3 is
+calibrated mainly to these inner buckets and it does a good job
+there.
+
+The tail buckets are not symmetric. SPX moves below $-3\%$ (n=107)
+produce mean $\Delta$ VIX of $+6.44$ (median $+5.73$); SPX moves
+above $+3\%$ (n=93) produce mean $\Delta$ VIX of $-4.62$. The ratio
+of magnitudes — $6.44 / 4.62 = 1.39$ — is well outside any plausible
+sampling-error band; the tail-down move generates roughly 40% more
+VIX response than the tail-up move of equal magnitude. This is the
+empirical leverage effect made unambiguous.
+
+Two mechanisms drive it. The implied distribution embedded in the
+listed SPX option strip is left-skewed; a $-3\%$ move is a deeper
+quantile of the risk-neutral density than a $+3\%$ move, so it
+pushes the at-the-money vol up by a larger multiple. And dealer
+positioning is asymmetric: short-gamma dealer books hedge dynamically
+as SPX falls (selling more vol-sensitive instruments and pushing
+implied vol up), whereas in a rally the same books simply unwind
+existing hedges, producing a more muted vol response. The
+asymmetry is structural and persistent; it is visible in every
+post-1990 sub-sample we examined.
+
+### B.6 From daily correlation to Heston $\rho$
+
+VIX is a 30-day model-free implied volatility, not an instantaneous
+variance. Heston $\rho$ is the instantaneous correlation of the two
+Brownians $W^F$ and $W^v$. The bridge between the two is not
+algebraic but conceptual.
+
+Take Itô differentials of the Heston spot-log and of $\text{VIX}^2$ —
+the latter is, by the variance-swap representation, a linear
+functional of the *forward variance curve* $m_T(t) =
+\mathbb{E}_t[v_{t+T}]$, and the forward variance curve under Heston
+is itself linear in $v_t$ (see §10.8). It follows that $\Delta
+\text{VIX}^2_t$ is approximately proportional to $\Delta v_t$, with
+a proportionality constant that depends on $(\kappa, T)$ but not on
+the realisation of $v_t$. Hence
+$$
+\operatorname{corr}\!\big(\mathrm{d}\log F,\;\mathrm{d}\text{VIX}^2\big)
+\;\approx\;
+\operatorname{corr}\!\big(\mathrm{d}\log F,\;\mathrm{d}v\big)
+\;=\;\rho.
+$$
+To a first approximation, the observed daily correlation between
+$\Delta \log$ SPX and $\Delta \text{VIX}^2$ equals $\rho$. There is
+a Jensen-style nonlinearity because we actually observe $\Delta$ VIX
+(not $\Delta \text{VIX}^2$), but for the typical VIX level of 15–25
+the linearisation $\Delta \text{VIX}^2 \approx 2\,\text{VIX}\,\Delta\text{VIX}$
+preserves the sign and approximate magnitude of the correlation.
+
+Empirically, this means the observed daily $-0.787$ implies a
+Heston $\rho$ in roughly $[-0.85,\,-0.70]$. Calibrated SPX
+Heston $\rho$ on listed-option surfaces typically lands in
+$[-0.85,\,-0.65]$, varying with maturity (longer-dated tenors prefer
+the less negative end as the smile decays) and with regime
+(post-crisis surfaces calibrate to more negative $\rho$ than
+pre-crisis surfaces). Weekly Euro Stoxx (SX5E) surfaces calibrate
+to comparable $\rho$ values — the leverage effect is a general
+equity-index phenomenon. Single-name equity surfaces calibrate to
+flatter $\rho$, typically $[-0.5,\,-0.3]$, because individual
+company stocks lack the index-level joint-crash dynamic.
+
+One final caveat about time aggregation. Daily-changes correlation
+*understates* instantaneous correlation. Over a day, both $\log F_t$
+and $v_t$ integrate many independent infinitesimal innovations whose
+correlation is $\rho$, but the realised daily covariance also picks
+up cross-time-aggregation noise that biases the correlation toward
+zero. The bias is small for $|\rho|$ close to 1 (where the bound is
+tight) and larger for $|\rho|$ near zero; for the equity-index range
+of $\rho \approx -0.8$ the bias is roughly 0.05–0.10. This is one
+reason calibrated $\rho$ tends to be slightly more negative than the
+realised daily correlation suggests.
+
+### B.7 Caveats
+
+A few things every practitioner should keep in mind when reading the
+historical record.
+
+The 30-day VIX horizon is not the instantaneous-vol object of the
+Heston model. VIX prices a strip of options 23 to 37 calendar days
+out; the model's $v_t$ is the instantaneous variance at time $t$. The
+mapping is one-to-one (under Heston) but with a transformation
+involving $\kappa$ and the term structure, and any inference about
+$\rho$ from VIX must thread through that mapping.
+
+VIX is a nontrivial functional of the entire option surface. When
+SPX moves, the surface re-shapes — strikes that were OTM are now
+ITM, the at-the-money point moves, and the discrete weighting of the
+strike grid changes. So $\partial \text{VIX} / \partial \text{SPX}$
+is not just $\partial$(ATM vol)$/\partial$ SPX; it includes
+sensitivity to the entire surface's response to spot moves, and that
+sensitivity is itself $\rho$-dependent in a model-consistent
+calculation. The realised regression slope $\hat\beta = -115$ is
+therefore a reduced-form estimate that bundles together the model
+$\rho$ and the surface's spot-response geometry; it is not a pure
+$\rho$ estimator.
+
+Heston $\rho$ in a calibration also absorbs effects that, strictly
+speaking, are not correlations. The presence of unmodelled jumps in
+the spot process biases the calibrated $\rho$ toward more negative
+values, because the model has no other parameter to fit the
+short-dated steep skew that jumps would naturally produce. Bates
+(stochastic vol + jumps) and rough vol models separate these
+contributions cleanly; in pure-diffusion Heston they are mixed.
+
+The asymmetric tail response of §B.5 is the most striking feature
+that no pure-diffusion Heston can reproduce. A symmetric
+diffusion-driven correlation must produce a symmetric mean-response
+function around zero return (up to lognormal curvature, which is a
+much smaller effect than the observed asymmetry). The factor-of-1.4
+asymmetry in the $>|3\%|$ tail is a clean signature of jumps
+(Bates), rough volatility (Bergomi-style rough Heston), or
+structural dealer-gamma effects that lie outside the
+pure-diffusion-Heston modelling space. A practitioner who fits
+Heston to a quiet surface and then runs it through a crisis will
+find that the model under-predicts VIX spikes precisely because of
+this missing tail asymmetry — a fact worth knowing before sizing
+positions on the strength of a Heston-implied risk number.
+
+### B.8 Key takeaways
+
+- **Daily SPX-VIX correlation is strongly and persistently negative.** $\operatorname{corr}(\Delta \log \text{SPX},\,\Delta \text{VIX}) = -0.787$ across 9,159 trading days from 1990 to 2026, and the 252-day rolling correlation has never been positive.
+- **The OLS slope is a useful trader's heuristic.** A 1% drop in SPX corresponds on average to a $+1.15$-point move in VIX, and conversely for rallies. The intercept is economically negligible.
+- **The relationship deepens in crises.** Rolling correlation reaches $-0.96$ in March 2020, $-0.87$ in October 2008, $-0.83$ in 2020 generally; it weakens to $-0.42$ in the quiet mid-1990s and during forced-unwind episodes.
+- **The central response is symmetric, but the tails are not.** Inner-bucket asymmetry is $\sim 7\%$; tail-bucket asymmetry exceeds $\sim 40\%$. Down-3% moves generate $\sim 40\%$ larger VIX responses than up-3% moves of equal magnitude.
+- **Daily correlation $\approx -0.79$ implies Heston $\rho \approx -0.7$ to $-0.85$,** consistent with calibrated SPX-Heston values in the $[-0.85,\,-0.65]$ range. Daily-changes correlation slightly under-estimates instantaneous correlation due to time-aggregation bias.
+- **Single-name equities have flatter $\rho$,** typically $[-0.5,\,-0.3]$, because individual stocks lack the index-level joint-crash dynamic.
+- **Pure-diffusion Heston cannot reproduce the tail asymmetry.** Capturing the $>|3\%|$ asymmetric response requires jumps (Bates), rough vol, or explicit dealer-gamma modelling.
+- **$\rho$ is the most information-dense parameter in equity-index Heston calibration.** It controls skew, joint-tail loadings, delta-vega cross-Greeks, and almost every risk-management decision a vol desk makes. The empirical record described here is what disciplines a sensible prior for it.
 
 ---
 

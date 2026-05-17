@@ -14,6 +14,8 @@ The pricing integral $V_0 = e^{-rT}\,\mathbb{E}^{\mathbb{Q}}[\varphi(\cdot)]$ ca
 
 Monte Carlo's sample-mean error scales as $M^{-1/2}$ *regardless of dimension*. Total cost $O(Md)$ vs $O(N^d)$ for quadrature. Break-even is $d \approx 4$–$6$; everything realistic lives above that.
 
+![Empirical standard deviation of an MC estimator (here $\mathbb{E}[Z^2]=1$) versus theoretical $\sqrt{2}/\sqrt{N}$ across four decades of sample size. The 1/$\sqrt{N}$ slope is dimension-free — every desk's overnight risk-run reports confidence intervals that respect this rate](figures/ch09-sqrt-n-error.png)
+
 The flip side: MC is statistical. Always report the standard error; deterministic methods give bounds, MC gives confidence intervals.
 
 A production pricer has four sub-problems:
@@ -416,7 +418,11 @@ $$
 
 for $U > \max(S_{t_{n-1}}, S_{t_n})$; the probability is $1$ when the barrier is already at or below either endpoint. Formula (9.32) is the continuous-time analogue of "interpolate between grid points and check if the interpolant crossed": it gives the exact conditional crossing probability under Brownian-bridge dynamics, which is the correct interpolation given the two endpoints.
 
-The Brownian-bridge correction uses (9.32) as follows. For each simulated path that was *not* flagged as knock-in by the grid-point check, compute the per-interval bridge probability (9.31), draw a uniform random number $U_{\text{unif}}^{(m,n)}$ on $[0,1]$, and flag the path as knock-in if $U_{\text{unif}}^{(m,n)} < p_{\text{bridge}}^{(m,n)}$ in any interval. Equivalently (and more numerically stable), compute the product of non-crossing probabilities over all intervals and subtract from one to get the corrected knock-in probability for the path; use this as the indicator weight. This reduces the bias from $O(\sqrt{\Delta t})$ to $O(\Delta t^{3/2})$ for typical barrier structures — a dramatic improvement.
+The Brownian-bridge correction uses (9.32) as follows. For each simulated path that was *not* flagged as knock-in by the grid-point check, compute the per-interval bridge probability (9.32), draw a uniform random number $U_{\text{unif}}^{(m,n)}$ on $[0,1]$, and flag the path as knock-in if $U_{\text{unif}}^{(m,n)} < p_{\text{bridge}}^{(m,n)}$ in any interval. Equivalently (and more numerically stable), compute the product of non-crossing probabilities over all intervals and subtract from one to get the corrected knock-in probability for the path; use this as the indicator weight. This reduces the bias from $O(\sqrt{\Delta t})$ to $O(\Delta t^{3/2})$ for typical barrier structures — a dramatic improvement.
+
+![Daily-close path (blue dots) that survives a discrete barrier check vs the underlying continuous path (grey) that did briefly breach. SPX knock-out options where intraday touches of 4500 do *not* show in EOD closes are the standard case; the Brownian-Bridge correction is the production-standard continuity fix](figures/ch09-bb-barrier.png)
+
+![Conditional bridge survival probability $\mathbb{P}(\max_{[t_i, t_{i+1}]} S < H \mid S_i, S_{i+1})$ as a heat map over the two endpoint values. Survival drops sharply as $\max(S_i, S_{i+1}) \to H$ — the bump that the bridge correction adds back to the discrete-grid MC estimate](figures/ch09-bb-survival.png)
 
 Concrete numbers. For the up-and-in call with $S_0 = 100$, $K = 100$, $U = 110$, $\sigma = 20\%$, $r = 5\%$, $T = 1$ at $N = 50$: raw MC gives $\approx 5.8$; bridge-corrected gives $\approx 6.12$, within $0.5\%$ of the true $6.15$. The bridge at $N=50$ matches brute-force $N\approx 500$ — a factor-of-$10$ saving.
 
@@ -473,6 +479,8 @@ When does antithetic sampling work? It works best when the payoff $X(Z)$ is *mon
 
 Antithetic sampling fails when the payoff is *symmetric in $Z$* — e.g. a straddle $|S_T - K|$ at $K = S_0 e^{rT}$ gives $\rho = +1$ and no reduction. The technique extends naturally to path simulation by negating the entire Gaussian vector $(Z_1,\dots,Z_N) \to (-Z_1,\dots,-Z_N)$, and yields similar factor-of-$2$–$3$ reductions on barriers and Asians.
 
+![Antithetic versus plain MC on an ATM call across sample sizes: roughly half the standard error at equal compute. Same trick every Heston Monte-Carlo overnight risk run uses to keep 99%-CTE confidence intervals under desk tolerances](figures/ch09-antithetic.png)
+
 ### 9.8.2 Control variates
 
 The control-variate trick is more flexible and often more powerful than antithetic sampling. The idea: find an auxiliary variable $Y$ that is strongly correlated with the payoff $X$ and whose expectation $\mathbb{E}[Y]$ is known in closed form. Form the control-variate estimator
@@ -514,6 +522,8 @@ Choosing a good control. The essential question is what auxiliary $Y$ is known i
 
 Estimating $\beta^\star$. The optimal $\beta^\star$ depends on the unknown covariance structure. In practice one runs a pilot batch of $M_{\text{pilot}} = 1000$ or so paths, estimates $\widehat{\beta} = \widehat{\mathbb{C}}[X,Y]/\widehat{\mathbb{V}}[Y]$ from the pilot, and then runs the full $M$ batch with that $\widehat{\beta}$ plugged into (9.35). The plug-in estimator is no longer strictly unbiased (because $\widehat{\beta}$ and $\widehat{m}_X$, $\widehat{m}_Y$ are all correlated through the data), but the bias is $O(1/M)$ and negligible relative to the statistical error. More sophisticated implementations use a two-sample scheme: estimate $\widehat{\beta}$ from paths $1,\dots,M_1$, use those paths only for the second-stage estimator on paths $M_1+1,\dots,M$, and aggregate.
 
+![Geometric-Asian control variate cuts the MC standard error for arithmetic-Asian pricing by an order of magnitude at equal cost. This is the Vorst (1992) trick that makes jet-fuel quarterly Asian options tradeable inside airline desk bid-ask spreads](figures/ch09-control-variate.png)
+
 ### 9.8.3 Combining techniques
 
 Antithetic and control variates compose. Apply antithetic sampling to generate the path pairs, evaluate both the target payoff $X$ and the control payoff $Y$ on each antithetic pair, take the antithetic average of each, and then apply the control-variate correction (9.35) to the antithetic averages. The variance reductions multiply roughly (not exactly, because the correlations interact), and for a European call with a stock-price control and antithetic draws one routinely achieves total variance reduction factors of $30$–$50$ at essentially no added compute cost.
@@ -529,6 +539,8 @@ Beyond antithetic and control variates, the standard next-layer techniques are:
 - **Stratified sampling.** Partition the Gaussian space into $k$ equal-probability strata and sample $M/k$ per stratum. Unbiased, never worse than plain MC, but scales poorly with dimension — typically used on the dominant direction only.
 - **Importance sampling.** Reweight by a Radon–Nikodym derivative (Chapter 5) to concentrate mass on regions where the payoff is large. Variance reductions of $10$–$1000\times$ on rare-event payoffs; the technique of choice for deep-OTM options and tail-risk.
 - **Quasi-Monte-Carlo (Sobol, Halton).** Deterministic low-discrepancy sequences in place of i.i.d. Gaussians; error scales as $O((\log M)^d/M)$ for smooth integrands. Pairs well with scrambling.
+
+![Pseudo-random vs Sobol low-discrepancy points in the unit square ($N=256$). Sobol fills the space far more uniformly — fewer voids and clusters — which is why production pricers route observation-date Gaussians for autocallables through Sobol rather than `np.random.randn`](figures/ch09-sobol-vs-pseudo.png)
 - **Multilevel Monte Carlo.** Telescoping decomposition across grid resolutions; reduces total cost for an $\epsilon$-accurate estimate from $O(\epsilon^{-3})$ to $\sim O(\epsilon^{-2})$ on SDE-discretisation-limited problems.
 - **Longstaff–Schwartz regression.** Polynomial regression of continuation values for American/Bermudan exercise; produces a lower bound on the true price.
 

@@ -888,7 +888,7 @@ def ch07():
               + (1.0 / 6.0) * (z_a**2 - 1) * skew_grid
               + (1.0 / 24.0) * (z_a**3 - 3 * z_a) * kurt_ex
               - (1.0 / 36.0) * (2 * z_a**3 - 5 * z_a) * skew_grid**2)
-    fig, ax = plt.subplots(figsize=(7, 4))
+    fig, ax = plt.subplots(figsize=(8, 4.2))
     ax.plot(skew_grid, normal_var_line, lw=2, ls="--", color="#2a62a6",
             label=r"Normal quantile $z_{99\%}\approx 2.33$")
     ax.plot(skew_grid, cf_var, lw=2.4, color="#a62a2a",
@@ -896,7 +896,8 @@ def ch07():
     ax.axvline(0, ls=":", color="black", alpha=0.5)
     ax.set_xlabel("skewness $s$")
     ax.set_ylabel(r"quantile multiplier $q_{99\%}$")
-    ax.set_title("Cornish-Fisher VaR vs Normal: skew & kurt adjust the multiplier")
+    # Shorten title so it fits inside the figure width at 6.25" print size.
+    ax.set_title("Cornish-Fisher VaR: skew & kurt adjust the Normal multiplier", fontsize=11)
     ax.legend()
     save("ch09-cornish-fisher.png")
 
@@ -1465,9 +1466,16 @@ def ch11_cal():
     ax.set_ylabel("state probability")
     ax.set_title("Radon-Nikodym density from a five-state multinomial calibration")
     ax.legend(loc="upper right", fontsize=9)
-    # Show RN values as text annotations
-    for xi, rni in zip(x, rn):
-        ax.text(xi + w/2 + 0.05, 0.01, f"RN={rni:.2f}", fontsize=8.5, color="#6a3a8a")
+    # Show RN values as text annotations. Place them just above the height
+    # of the larger bar (q_rn) so the labels don't collide with the x-axis
+    # tick text below, and use a bold weight + small white halo so they read
+    # clearly over either bar colour.
+    import matplotlib.patheffects as pe
+    for xi, rni, q in zip(x, rn, q_rn):
+        ax.text(xi, q + 0.012, f"RN={rni:.2f}", fontsize=9,
+                color="#6a3a8a", ha="center", weight="semibold",
+                path_effects=[pe.withStroke(linewidth=2.2, foreground="white")])
+    ax.set_ylim(0, max(q_rn.max(), p_phys.max()) * 1.18)
     save("ch11-rn-multinomial.png")
 
     # (a2) Calibration frequency trade-off — stability vs responsiveness
@@ -1544,9 +1552,11 @@ def ch11_cal():
         (2, 0): 0.060, (2, 1): 0.042, (2, 2): 0.028,
         (3, 0): 0.068, (3, 1): 0.052, (3, 2): 0.038, (3, 3): 0.028,
     }
-    fig, ax = plt.subplots(figsize=(8.5, 5))
-    x_of = lambda k: k * 1.1
-    y_of = lambda k, j: (k - 2 * j) * 0.9
+    # Wider canvas + larger node "pills" so the two-line labels fit cleanly
+    # without the r and P text colliding inside a small circle.
+    fig, ax = plt.subplots(figsize=(9.5, 5.6))
+    x_of = lambda k: k * 1.4
+    y_of = lambda k, j: (k - 2 * j) * 0.95
     # Edges
     for k in range(3):
         for j in range(k + 1):
@@ -1555,17 +1565,24 @@ def ch11_cal():
             x2, y2 = x_of(k + 1), y_of(k + 1, j + 1)
             ax.plot([x0, x1], [y0, y1], color="#2a62a6", lw=1.1, alpha=0.55)
             ax.plot([x0, x2], [y0, y2], color="#a62a2a", lw=1.1, alpha=0.55)
-    # Nodes with r and P
+    # Nodes with r and P. Use a wider rounded rectangle so the labels fit;
+    # stack the two lines with enough vertical separation that they no longer
+    # overlap.
+    from matplotlib.patches import FancyBboxPatch
+    pill_w, pill_h = 0.62, 0.42
     for (k, j), r_val in rates_bl.items():
         xn, yn = x_of(k), y_of(k, j)
         P_val = 1.0 / (1.0 + r_val * dt_bl)
-        ax.add_patch(plt.Circle((xn, yn), 0.23, facecolor="#fef3c7",
-                                 edgecolor="#8a6508", lw=1.2, zorder=3))
-        ax.text(xn, yn + 0.05, f"$r$={r_val*100:.2f}%", ha="center", va="center",
-                fontsize=8.5, zorder=4)
-        ax.text(xn, yn - 0.08, f"$P$={P_val:.4f}", ha="center", va="center",
-                fontsize=8.0, color="#444", zorder=4)
-    ax.set_xlim(-0.4, 3.9); ax.set_ylim(-3.5, 3.5)
+        ax.add_patch(FancyBboxPatch(
+            (xn - pill_w / 2, yn - pill_h / 2), pill_w, pill_h,
+            boxstyle="round,pad=0.02,rounding_size=0.10",
+            facecolor="#fef3c7", edgecolor="#8a6508", lw=1.2, zorder=3,
+        ))
+        ax.text(xn, yn + 0.10, f"$r$={r_val*100:.2f}%", ha="center", va="center",
+                fontsize=9, zorder=4)
+        ax.text(xn, yn - 0.10, f"$P$={P_val:.4f}", ha="center", va="center",
+                fontsize=9.5, color="#444", zorder=4)
+    ax.set_xlim(-0.6, x_of(3) + 0.6); ax.set_ylim(-3.5, 3.5)
     ax.set_xticks([x_of(k) for k in range(4)]); ax.set_xticklabels([f"$k={k}$" for k in range(4)])
     ax.set_yticks([])
     ax.set_title("Calibrated short-rate tree with one-period bond values $P=1/(1+r\\,\\Delta t)$")
@@ -1794,7 +1811,7 @@ def ch07_atlas():
     axes[0].axhline(0, color="black", lw=0.5)
     axes[0].set_xlabel("Spot $S$"); axes[0].set_ylabel(r"$\rho$  (per 1.00 rate move)")
     axes[0].set_title("Rho vs spot — call positive, put negative")
-    axes[0].legend(fontsize=8, ncol=2)
+    axes[0].legend(fontsize=9, ncol=2)
 
     T_grid = np.linspace(0.02, 3.0, 120)
     axes[1].plot(T_grid, call_rho(K0, K0, T_grid), lw=2.4, color="#1f7a1f", label="ATM call")
@@ -1949,12 +1966,15 @@ def ch07_atlas():
         ])
     col_labels = ["K", r"$\Delta$ call", r"$\Delta$ put", r"$\Gamma$",
                    r"$\Theta$ call /d", r"$\Theta$ put /d",
-                   "Vega /vol-pt",
+                   r"Vega/vol-pt",
                    r"$\rho$ call /pp", r"$\rho$ put /pp"]
-    fig, ax = plt.subplots(figsize=(10.5, 4.5))
+    # Slightly wider figure plus explicit colWidths so the "Vega/vol-pt" header
+    # (the widest text in the row) is not clipped.
+    fig, ax = plt.subplots(figsize=(11.5, 4.5))
     ax.axis("off")
+    col_widths = [0.07, 0.10, 0.10, 0.10, 0.12, 0.12, 0.14, 0.12, 0.12]
     tbl = ax.table(cellText=rows, colLabels=col_labels, loc="center",
-                    cellLoc="center", colLoc="center")
+                    cellLoc="center", colLoc="center", colWidths=col_widths)
     tbl.auto_set_font_size(False); tbl.set_fontsize(10); tbl.scale(1.0, 1.55)
     # Bold header
     for j in range(len(col_labels)):

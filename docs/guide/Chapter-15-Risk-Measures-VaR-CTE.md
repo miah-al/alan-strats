@@ -1,6 +1,6 @@
 # Chapter 15 — Risk Measures: VaR, CTE, and Hedged Tail Risk
 
-This chapter develops the machinery quantitative risk managers use to summarize the loss distribution of a trading book: Value-at-Risk (VaR), Conditional Tail Expectation (CTE, also called Expected Shortfall), their estimation under historical, parametric, and Monte Carlo paradigms, and the way these measures behave when applied to option books that have been delta- or delta-gamma-hedged. The material is organized so that a reader can move from scalar summary statistics of P&L (§§15.1-9.4), into regulatory and axiomatic context (§§15.5-9.6), into backtesting and stress discipline (§§15.7-9.8), into attribution and liquidity overlays (§§15.9-9.11), and finally into derivative-specific risk arithmetic where Greeks drive the tails (§§15.12-9.14). Cross-references point to Chapter 6 for the underlying GBM dynamics and to Chapter 7 for the Greek definitions themselves.
+This chapter develops the machinery quantitative risk managers use to summarise the loss distribution of a trading book: Value-at-Risk (VaR), Conditional Tail Expectation (CTE, also called Expected Shortfall), their estimation under historical, parametric, and Monte Carlo paradigms, and the way these measures behave when applied to option books that have been delta- or delta-gamma-hedged. The material is organised so that a reader can move from scalar summary statistics of P&L (§§15.1–15.4), into regulatory and axiomatic context (§§15.5–15.6), into backtesting and stress discipline (§§15.7–15.8), into attribution and liquidity overlays (§§15.9–15.11), and finally into derivative-specific risk arithmetic where Greeks drive the tails (§§15.12–15.14). Cross-references point to Chapter 6 for the underlying GBM dynamics and to Chapter 7 for the Greek definitions themselves.
 
 ## 15.1 Why Risk Measures Matter
 
@@ -62,6 +62,8 @@ A sample-size calculation is instructive. The standard error of a quantile estim
 ![Three routes to VaR on a common loss distribution](figures/ch09-var-three-routes.png)
 *Historical, parametric (Gaussian), and Monte-Carlo estimates of 95% VaR on the same skewed, jump-prone loss distribution. The Gaussian fit systematically under-reports tail risk because it ignores the jump component; historical and Monte-Carlo agree once the sample is large enough to see the jump events. Running at least two methods in parallel as cross-checks is standard production practice.*
 
+![Historical, parametric, and MC VaR estimates on the same Student-$t_3$ loss sample: parametric-Normal systematically under-reports the tail. The diagnostic any FRTB-IMA bank runs daily — and a corner of the analytical failure that left LTCM's daily VaR overrun by roughly $40\times$ on the worst August-1998 day (and an order of magnitude more cumulatively)](figures/ch15-three-routes-var.png)
+
 ### 15.2.2 Cornish-Fisher expansion
 
 Between "full Monte Carlo" and "pure Gaussian" sits the *Cornish-Fisher expansion*, a semi-parametric trick that adjusts the Gaussian quantile for skewness and excess kurtosis without a full simulation. Express the true quantile of a non-Gaussian distribution as a series in the standard Gaussian quantile:
@@ -93,6 +95,8 @@ $$
 
 CTE ("conditional tail expectation") and ES ("expected shortfall") refer to the same quantity. Where VaR only marks the threshold, CTE integrates the tail *beyond* it, so the two 5%-tail scenarios from §15.2 — one fat, one thin — earn different CTE scores. CTE is coherent: monotone, positively homogeneous, translation-invariant, and — crucially — sub-additive. The sub-additivity is what we need for any risk axis on which diversification is guaranteed to help.
 
+![ES/CTE as the *average* of losses beyond VaR$_{95}$ on a Student-$t_4$ loss distribution: the gap ES $-$ VaR is exactly the average size of the loss conditional on entering the tail. FRTB's 97.5% ES (in force from 2023) targets this conditional average — the regulatory answer to VaR's well-known blind spot for tail magnitude](figures/ch15-es-tail-average.png)
+
 **Normal versus fat tail.** The thin-tailed Normal has VaR $\approx 1.64$ and CTE $\approx 2.06$ at 95% — a gap of 0.4. For a Student-$t_3$ *rescaled to unit variance* (i.e. the base $t_3$ divided by $\sqrt{\nu/(\nu-2)} = \sqrt{3}$ so both distributions share zero mean and unit variance), the 95% VaR is $\approx 2.35/\sqrt{3} \cdot \sqrt{3} = 2.35$ (retaining the base-$t_3$ quantile $q_{0.05} \approx 2.353$ for this comparison since the figure plots same-scale densities) and the CTE is $\approx 4.19$ — a gap of 1.8, nearly five times larger. (On the unscaled base-$t_3$ convention, VaR $\approx 2.35$ and CTE $\approx 2.34$; the qualitative "CTE exceeds VaR by much more in the fat-tailed case" narrative holds under either convention, but the specific 4.19 number uses the unit-variance rescaling so that the comparison with the unit-variance Normal is apples-to-apples.) The practical point: two books can share the same VaR yet have wildly different CTE, which is precisely the pathology CTE was designed to catch. In closed form for Student-$t$ with $\nu$ degrees of freedom,
 
 $$
@@ -115,6 +119,8 @@ This sensitivity is a blessing and a curse. Blessing: CTE correctly reflects gen
 
 ![VaR vs CTE — thin-tail vs fat-tail](figures/ch09-var-cte-compare.png)
 *VaR and CTE compared across Normal (thin tail) and Student-$t_3$ (fat tail) — same quantile can hide very different tail masses.*
+
+![Densities of Normal vs Student-$t_3$ with VaR$_{95}$ cutoffs marked and 5% tails shaded: the CTE gap is far larger for the fat tail. The 1987 $-20.5\%$ S&P 500 day (the DJIA fell $-22.6\%$) sat well beyond any rolling 95% VaR — exactly the kind of tail mass CTE is built to capture](figures/ch15-var-cte-fat-tail.png)
 
 
 
@@ -192,6 +198,8 @@ To see the VaR failure concretely, take two independent loans, each of which def
 ![VaR sub-additivity failure on two independent loans](figures/ch09-subadditivity-failure.png)
 *Monte-Carlo verification of the two-loan thought experiment: each loan has VaR$_{95} = 0$ in isolation, but their sum has VaR$_{95} \approx 100$. CTE is coherent — the merged CTE is bounded by the sum of individual CTEs — and so can serve as a risk-budgeting axis where VaR cannot.*
 
+![Loss-bucket probability comparison: each single loan's $95\%$-VaR is 0, the merged sum's is 100. Same arithmetic underlay the 2008 senior-CDO regulatory blind spot — individual AAA tranches looked safe by VaR, the portfolio did not](figures/ch15-subadditivity-violation.png)
+
 The pathology is generic to any loss distribution with mass concentrated just inside the VaR threshold. It afflicts credit books particularly badly because individual defaults are exactly such low-probability-high-impact events: an investment-grade bond has a 1-year default probability under 1%, well below the 5% VaR threshold, so its individual VaR is zero. A portfolio of thousands of such bonds has a default frequency of tens per year and generates substantial portfolio VaR. If we used VaR to set capital on individual loans we would allocate zero, yet the portfolio clearly needs substantial capital. The CTE-based alternative assigns positive CTE even to individual low-probability defaults — because the tail expectation averages over the default scenario — and produces a portfolio CTE that equals the sum of individual CTEs minus diversification benefits. A much more coherent story.
 
 A corollary of sub-additivity failure: VaR cannot serve as a direct basis for risk-budget allocation. If desk A has VaR \$1M and desk B has VaR \$1M, the firm's VaR is *not generally* \$2M or anything derivable from the individual VaRs. It could be \$0.5M (perfectly negatively correlated), \$1.4M (independent), \$2M (perfectly correlated), or \$2.2M (the pathological failure). The bank has no way of allocating \$2M of firm-level VaR to desk-level budgets using just the desk VaRs. CTE, being sub-additive, allows clean Euler-style decomposition, and this is part of the technical appeal of using CTE as the desk-level budgeting tool even when VaR is reported to regulators.
@@ -250,6 +258,8 @@ This is the essence of the Basel "traffic light" regime. More than 4 exceedances
 
 ![Kupiec POF acceptance band over a 250-day 99% VaR backtest](figures/ch09-kupiec-band.png)
 *Binomial pmf of exceedance counts under the null $X\sim\mathrm{Binomial}(250,\,0.01)$, coloured green where the Kupiec likelihood-ratio is below the $5\%$ critical value $3.84$ and red where it rejects. Green bars span roughly $0$–$6$ exceedances; beyond that the model is rejected as under-capitalised. Zero exceedances is technically also rejected as over-conservative.*
+
+![Daily losses with a static 99% VaR line, exceedances marked red — clustered in two stressed windows. Christoffersen's IND test rejects on clustering even when total count is in-range. Exactly the failure mode that flagged static-vol VaR models during March 2020 and the 2022 rates regime change](figures/ch15-backtest-clustering.png)
 
 ### 15.7.3 Christoffersen's independence test
 
@@ -516,7 +526,7 @@ An alternative to both is *Imhof's method*: numerically invert the characteristi
 Delta-gamma parametric VaR is not merely a back-pocket approximation. In the modern risk stack it plays several distinct roles:
 
 - *Intraday limit monitoring.* When a trader executes a new option trade, the risk system can refresh the desk's VaR in milliseconds using the delta-gamma approximation. Full revaluation is too slow for this use case.
-- *Sensitivity of VaR to positions.* Because the formula (15.27) is differentiable in $\delta$ and $\Gamma$, the marginal VaR (§15.9) of any prospective trade can be computed in closed form. This supports pre-trade "what-if" analysis without running Monte Carlo for every candidate trade.
+- *Sensitivity of VaR to positions.* Because the moment inputs $(\mu_P, \sigma_P, s, \kappa)$ of (15.27) are themselves smooth functions of $\delta$, $\Gamma$, and the factor covariance $\Sigma$, the formula is differentiable through to $\delta, \Gamma$, and the marginal VaR (§15.9) of any prospective trade can be computed in closed form. This supports pre-trade "what-if" analysis without running Monte Carlo for every candidate trade.
 - *Regulatory backup.* If a bank's full-revaluation Monte Carlo engine fails or times out, the delta-gamma approximation provides a fallback VaR that can be used to continue limit monitoring and regulatory reporting while the primary engine is repaired.
 
 Cross-reference: the Greeks $\delta$ and $\Gamma$ used here are the multi-factor generalisations of the scalar deltas and gammas developed in Chapter 7. The single-name case $n = 1$ of (15.22) reduces exactly to the scalar delta-gamma expansion around the Black-Scholes price.

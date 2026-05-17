@@ -190,6 +190,8 @@ The denominator is the annuity. Since both legs are priced off the
 discount curve alone, the par swap rate is a ratio of discount factors —
 **no model required**.
 
+![5-year semi-annual IRS leg decomposition under an upward-sloping curve: fixed coupons at the par swap rate vs forward-implied floating coupons. At inception the PVs balance — the basic arithmetic every SOFR-IRS desk runs to quote a 5y bid](figures/ch13-swap-leg-decomposition.png)
+
 The par swap rate $S_0$ is the market's standard quote for "the $n$-year
 swap rate." When a Bloomberg screen shows "10y USD swap is 3.5%," that 3.5%
 is $S_0$ from (13.4) with $n$ chosen to give a 10-year maturity. The swap
@@ -309,7 +311,7 @@ bonds and zero-coupon bonds is a standard bond-math result.
 
 The Russian default did not move the swap-Treasury basis by a small amount; it moved it by $30$ bp in the wrong direction in a single week and another $30$ bp the following month. Flight-to-quality bid up the on-the-run Treasury (which is the most liquid hedge instrument in a panic) while dumping the less-liquid off-the-run, widening the very basis the trade was short. Simultaneously the swap spread — the IRS rate minus the corresponding-maturity Treasury — widened to historic levels: $10$y swap spreads went from $\sim 35$ bp pre-crisis to $\sim 90$ bp by late September, briefly tagging $200$ bp in some tenors. With portfolio DV01 around $\$50$M/bp, the $60$ bp basis widening alone equalled $\$3.0$B in mark-to-market losses; aggregated across all the convergence positions the fund lost $\$4.6$B of its $\$4.7$B equity in six weeks. The Federal Reserve organised a $\$3.625$B private-sector recapitalisation on $23$ September to prevent a forced liquidation that would have shocked counterparty banks.
 
-**Reading it through the chapter's math.** The par swap rate (13.4) is model-free — it is a discount-curve identity that holds regardless of the short-rate dynamics. But the *spread* between two rates (off-the-run vs on-the-run, IRS vs Treasury) is a *liquidity* premium that no calibrated short-rate model in this chapter captures: it is an artefact of how dealers fund inventory in repo markets, who is the marginal buyer in a flight-to-quality, and what regulatory capital weights apply to which instrument class. The swap-spread convergence trade's PnL is approximately linear in the spread, with sensitivity equal to the matched DV01 — that piece is exactly the §13.2.4 DV01 calculation. What the chapter's framework captures *correctly* is the $\Delta$P&L per basis-point move; what it cannot tell you is what magnitude of move to stress against. LTCM's internal VaR used historical correlations from $1995$–$1998$ — a benign, low-vol period — under which off-the-run, IRS-Treasury, and Russian-bond moves were close to independent. In crisis, they became a single one-factor "flight-to-quality" move and the gaussian VaR was off by a factor of $100$. Cornish-Fisher (Chapter 15.27) would have helped only if the third- and fourth-moment inputs themselves had been stressed; they were not.
+**Reading it through the chapter's math.** The par swap rate (13.4) is model-free — it is a discount-curve identity that holds regardless of the short-rate dynamics. But the *spread* between two rates (off-the-run vs on-the-run, IRS vs Treasury) is a *liquidity* premium that no calibrated short-rate model in this chapter captures: it is an artefact of how dealers fund inventory in repo markets, who is the marginal buyer in a flight-to-quality, and what regulatory capital weights apply to which instrument class. The swap-spread convergence trade's PnL is approximately linear in the spread, with sensitivity equal to the matched DV01 — that piece is exactly the §13.2.4 DV01 calculation. What the chapter's framework captures *correctly* is the $\Delta$P&L per basis-point move; what it cannot tell you is what magnitude of move to stress against. LTCM's internal VaR used historical correlations from $1995$–$1998$ — a benign, low-vol period — under which off-the-run, IRS-Treasury, and Russian-bond moves were close to independent. In crisis, they became a single one-factor "flight-to-quality" move and the gaussian VaR was off by a factor of $100$. Cornish-Fisher (Chapter 15, eq. (15.27)) would have helped only if the third- and fourth-moment inputs themselves had been stressed; they were not.
 
 **Lesson.** The trade was *correct on average* — swap spreads did mean-revert, and an unleveraged version of the position would have been profitable across the cycle. The problem was the *path*: leverage transmits drawdowns into margin calls into forced unwinds, and at $28{:}1$ even a one-sigma move in the underlying spread can wipe out equity if the move comes in a single week rather than spread over a quarter. The deeper lesson for the new hire is that DV01 measured against a normal-vol historical basis range is the wrong risk metric for a leveraged convergence trade; the right metric is "DV01 $\times$ stressed move under a flight-to-quality scenario," and the stressed move is set by judgement about regime, not by a covariance-matrix multiplier. Post-LTCM every prime broker tightened margin financing for relative-value strategies; post-LTCM regulators introduced stressed-VaR add-ons (Basel 2.5) that require the calibration window to include $1998$, $2008$, or another comparable crisis episode. The math of swap-spread arbitrage did not change after $1998$; the institutional discipline around leverage limits and stressed-correlation scenarios did.
 
@@ -440,6 +442,8 @@ identity.
 **Negative convexity.** A defining feature of callable bonds is that OAD
 is *non-monotonic* — low near the call strike (the bond is expected to be called soon), rising to the straight-bond duration far from it. The OAD concavity is the "negative convexity" of callable bonds. It forces dynamic rebalancing for hedgers and creates duration-chasing feedback loops in the wider rate market (the canonical MBS-convexity effect).
 
+![Callable bond price vs straight-bond price across rate levels: the embedded call value caps the callable's upside in low-rate regimes, creating the characteristic "negative convexity" shape. Same effect MBS portfolio managers manage on a daily basis as prepayment risk in falling rates / extension in rising](figures/ch13-callable-negative-convexity.png)
+
 ### 13.3.4 Numerical example
 
 Take a 10-year bond with 5% annual coupon, face value \$100, callable
@@ -559,6 +563,8 @@ corporate bond with a yield 150 bp above comparable Treasury is earning
 $r + 0.015$ in a flat-rate, flat-hazard world. The 150 bp is the credit
 spread, which the credit triangle (below) tells us equals $(1 - R) \lambda$
 approximately.
+
+![CDS legs under a fixed 100 bp running coupon: as market-implied intensity $\lambda$ moves, the premium leg stays flat (fixed coupon × annuity) while the default leg rises linearly. They cross at the par intensity $\lambda^*=S_{\text{run}}/(1-R)$ where upfront = 0; above $\lambda^*$ the buyer pays an upfront, below it the seller does — the post-2009 ISDA single-name quoting convention](figures/ch13-cds-leg-balance.png)
 
 **Default leg.** At default time $\tau$, the payoff $(1 - R) N$ is paid,
 discounted to $t = 0$ via the riskless discount to $\tau$. Under
@@ -939,6 +945,8 @@ martingale, as required by the new numeraire choice.
 
 The *form* "shift by the numeraire's volatility" is universal across continuous-diffusion models; the specific $B_t(T_0)\sigma$ here is just Vasicek's bond diffusion coefficient.
 
+![Vasicek convexity gap $\mathbb{E}^Q[r_T]-\mathbb{E}^{T\text{-fwd}}[r_T]=\frac{\sigma^2}{2\kappa^2}(1-e^{-2\kappa T})$ at $\sigma=0.008$, $\kappa=0.15$, sitting inside the empirical 5–15 bp ED-vs-swap band (shaded). The ED-futures-vs-forward-swap convexity has the same functional shape modulated by an additional $B(T_f,T_2)^2$ factor, hence the empirical match — a non-trivial PnL on multi-billion ED-vs-swap arbitrages](figures/ch13-convexity-adjustment.png)
+
 ![Rate distribution under Q vs T-forward measure](figures/ch11-rate-distributions.png)
 *Changing numeraire from $M_t$ to $P_t(T_0)$ shifts the drift of $r_t$ downward by $-\sigma^2 B_t(T_0)$: the conditional law of $r_{T_0}$ under the forward measure is a Gaussian with the same variance but a lower mean than under $\mathbb{Q}$. This shift is the convexity adjustment relating forward rates to expected spot rates.*
 
@@ -1177,7 +1185,6 @@ critical rate obtained by solving a scalar equation.
 
 Jamshidian reduces an option-on-portfolio to a 1D root-find plus scalar bond-option evaluations. Exact for one-factor Gaussian models; only approximate (but useful as a starting point) for multi-factor. A side-effect is flat-in-strike swaption vol under Vasicek; real swaption smile motivates §13.8.
 
-<!-- TODO V5: move to Chapter 11 §11.x (calibration chapter) -->
 ### 13.7.5 Calibration pipeline
 
 The pipeline that ties the whole chapter together:

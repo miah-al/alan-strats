@@ -54,7 +54,7 @@ $$
 
 Each of these $n$ period payoffs is called a caplet. The function $(\cdot)_+$ makes it clear that A is only ever compensated when LIBOR exceeds $K$ — the downside is truncated at zero. Economically, the caplet is A's insurance against a single bad fixing; the cap is the bundled insurance across all future fixings of the underlying swap. Graphically the net flow is hockey-stick shaped in $\ell$ with kink at $K$:
 
-![Caplet payoff vs reset rate](figures/ch12-caplet-payoff.png)
+![Caplet payoff vs reset rate](figures/ch14-caplet-payoff.png)
 *Caplet payoff vs reset rate: hockey-stick in $\ell$ — zero below the strike, slope $\Delta t_k$ above. Convex in $\ell$ $\Rightarrow$ the cap is long vega in the forward-rate vol.*
 
 So the cap is a strip of caplets, each one a call option on the forward LIBOR rate fixed at $t_{k-1}$ and paid at $t_k$. The hockey-stick payoff above also reveals why a cap is convex in the rate: every caplet is, and the sum of convex functions is convex. Convexity in the floating rate translates directly into positive vega — a cap always benefits from a higher realized volatility of forward rates, holding everything else fixed. This is the structural reason cap markets trade a vol surface in the first place.
@@ -197,7 +197,7 @@ This single equation is the whole point of the change of numeraire. We got here 
 
 The mini-budget shock was not a typical rates move. The $30$y gilt yield's $140$ bp jump in five sessions implied a one-week realised vol of $\sim 28\%$ on $30$y rates, against an implied vol of $\sim 90$ bp/year ($\approx 12.5\%$ on rate) used in standard LDI risk frameworks — that is approximately a $7$-standard-deviation move on the calibrated normal distribution. The mark-to-market loss on the receive-fixed legs was enormous: with portfolio dv$01$ across the LDI universe estimated at $\pounds 200$M–$\pounds 300$M per basis point, the $140$ bp move generated $\pounds 30$B+ of MTM losses, against collateral pools of $\sim 5$–$10\%$ of notional. Schemes had to post variation margin within $T+1$, which for many meant selling gilts to raise cash. The forced gilt selling pushed yields even higher, triggered more margin calls, and produced a self-reinforcing doom-loop that the BoE's intervention was specifically designed to halt — buying long-dated gilts unconditionally for $13$ trading days to put a ceiling on yields and let LDI managers raise collateral in an orderly fashion.
 
-**Reading it through the chapter's math.** The receive-fixed swaption book sits on the right side of (14.27): swaption value $X_t(S_t \Phi(d_+) - F\Phi(d_-))$ for a payer-equivalent re-expression. The Greeks: dv$01$ on a $30$y receive-fixed IRS is approximately the annuity $X_t$, which for a $30$-year UK swap at $4\%$ fixed runs to $\approx 17.5$ — meaning a $1$ bp parallel shift moves the IRS PV by $0.175\%$ of notional, or $\pounds 1.75$M per $\pounds 1$B notional. Across the LDI universe of $\pounds 1.6$T, dv$01$ aggregates to $\pounds 280$M/bp — and a $140$ bp move thus equals $\pounds 39$B of MTM loss in aggregate, against industry-wide collateral pools of $\sim \pounds 80$–$\pounds 150$B. Per scheme, the IR delta as a fraction of capital ran $10\%$–$20\%$ per $100$ bp move — a Black-$76$ dv$01$ calculation that risk systems had been computing correctly for years. The vega contribution from receive-fixed swaptions added another $5$–$8\%$ of capital per vol point, and the $30$-year normal swaption vol roughly tripled (from $\sim 90$ bp/y to $\sim 280$ bp/y at peak) over the week. None of this was novel mathematics; what was novel was the *speed* at which the move unfolded.
+**Reading it through the chapter's math.** The receive-fixed swaption book sits on the right side of (14.27): swaption value $X_t(S_t \Phi(d_+) - F\Phi(d_-))$ written here in payer-equivalent form — for the receivers actually held by LDI schemes, swap put-call parity flips the sign, giving $X_t(F\Phi(-d_-) - S_t\Phi(-d_+))$, so a rate rise of $140$ bp moves the book the other way (a loss for receive-fixed). The Greeks: dv$01$ on a $30$y receive-fixed IRS is approximately the annuity $X_t$, which for a $30$-year UK swap at $4\%$ fixed runs to $\approx 17.5$ — meaning a $1$ bp parallel shift moves the IRS PV by $0.175\%$ of notional, or $\pounds 1.75$M per $\pounds 1$B notional. Across the LDI universe of $\pounds 1.6$T, dv$01$ aggregates to $\pounds 280$M/bp — and a $140$ bp move thus equals $\pounds 39$B of MTM loss in aggregate, against industry-wide collateral pools of $\sim \pounds 80$–$\pounds 150$B. Per scheme, the IR delta as a fraction of capital ran $10\%$–$20\%$ per $100$ bp move — a Black-$76$ dv$01$ calculation that risk systems had been computing correctly for years. The vega contribution from receive-fixed swaptions added another $5$–$8\%$ of capital per vol point, and the $30$-year normal swaption vol roughly tripled (from $\sim 90$ bp/y to $\sim 280$ bp/y at peak) over the week. None of this was novel mathematics; what was novel was the *speed* at which the move unfolded.
 
 **Lesson.** The LDI failure mode was *liquidity*, not pricing: the math of (14.27) said correctly how much collateral needed to be posted; the math did not say that gilts could not be sold to raise the collateral without crashing the gilt market itself in turn. In the abstract, the strategy works — long-dated rate hedges genuinely match long-dated liability duration, and over a multi-decade horizon the leverage cost is well-compensated by the liability-matching benefit. The problem is the path: a sudden fiscal shock transmits into a margin call into a fire-sale in $48$ hours, and the dv$01$-based stress framework that LDI managers used (typically a $200$ bp instantaneous shift with $T+5$ remediation) was not calibrated to a $T+1$ collateral cycle in a market without unconditional buyers. Sovereign rate vol breaking a hedge book is a recurring theme — UK LDI $2022$, US Treasury basis trade $2020$, Mexican peso $1994$, Italian BTP $2018$, and the same pattern shows up in $1998$ Long-Term Capital. The deeper lesson for the new hire is that a hedge book's leverage limit should be set by *liquidity-adjusted* collateral availability under stress, not by mark-to-market $99\%$ VaR on a $5$-year history, and that central-bank backstop optionality is now an implicit hedge in every long-duration rates book — when the BoE intervened on $28$ September, $30$y vols collapsed $30\%$ in a single session, vindicating the underlying Black machinery once the regime stabilised but only after $\pounds 1.6$T of liability-hedge exposure had been threatened by a five-day fiscal shock.
 
@@ -218,7 +218,7 @@ $$
 
 Using $P_t(t_{k-1}) = P_t(t_k)\bigl(1 + \Delta t_k L_t(t_{k-1}, t_k)\bigr)$, $L_t(t_{k-1}, t_k)$ is a ratio of tradables to the numeraire $P_t(t_k)$, hence a $\mathbb{Q}^{t_k}$-martingale.
 
-![Forward-rate strip under three curve shapes](figures/ch12-forward-strip-shapes.png)
+![Forward-rate strip under three curve shapes](figures/ch14-forward-strip-shapes.png)
 *Normal (upward-sloping), flat, and inverted zero-curves imply very different forward-LIBOR strips $\{L_0(t_{k-1},t_k)\}_k$.*
 
 Postulate driftless GBM under that measure:
@@ -269,7 +269,7 @@ This is the Black-76 caplet formula. Each caplet has its own vol $\sigma_k^{B\el
 
 **Cross-reference.** The same caplet can be re-expressed as a put on a $t_k$-zero-coupon bond with strike $K_{\text{bond}} = 1/(1 + K\Delta t_k)$; see Chapter 13 §13.6 for the Vasicek-Black bond-put formula that provides an equivalent (and useful) consistency check.
 
-![Cap price vs strike (Black model)](figures/ch12-cap-price.png)
+![Cap price vs strike (Black model)](figures/ch14-cap-price.png)
 *Cap price vs strike (Black model)*
 
 The cap price is monotonically decreasing in the strike $K$ (higher strike, less in-the-money, less intrinsic, less option value). For very low strikes the cap behaves like a forward swap (all caplets deep in the money, optionality worth almost nothing on top of intrinsic). For very high strikes the cap behaves like a lottery ticket (all caplets deep out of the money, value almost entirely time value). The curvature between these extremes is driven by the Black caplet vol term structure; that is what makes the cap surface genuinely interesting.
@@ -285,7 +285,7 @@ with $\sigma_k^{B\ell}$ the k-th caplet Black implied vol. A flat cap vol $\sigm
 
 One "strips" caplet vols recursively from quoted cap prices: each cap tenor introduces one new unknown vol, solved one at a time so every market-quoted cap reprices exactly. The market quotes at several strikes; stripping is done at each strike, giving a 2D caplet-vol surface in (expiry, strike), through which traders typically fit a SABR smile per expiry.
 
-![Caplet-vol term structure vs flat cap vol](figures/ch12-caplet-vol-ts.png)
+![Caplet-vol term structure vs flat cap vol](figures/ch14-caplet-vol-ts.png)
 *A stylized humped caplet-vol curve $\sigma_k^{B\ell}$ alongside the flat cap vol $\bar\sigma^{C\ell}$ that reprices the whole 5y cap.*
 
 > Why cap $=$ sum of caplets exactly (no cross-terms). Each caplet pays $\Delta t_k(L_{t_{k-1}}(t_k)-K)_+$ on a *single* fixed date $t_k$. The cap payoff is the pointwise sum and expectation is linear, so $\text{Cap}_t = \sum_k g_t^{(k)}$ — no covariance terms. Each caplet prices under its *own* forward measure with its *own* Black vol. A swaption, by contrast, takes a max on the *already-summed* swap value, forcing a different numeraire (the annuity) and bringing in forward-rate correlations.
@@ -402,7 +402,7 @@ $$
 
 This is the Black swaption formula: a call on the swap rate $S_t$, with the annuity $X_t$ as discount factor. Same structure as Black-Scholes on equity and as the Black caplet, with the right numeraire ($X_t$) replacing the bank account or the single $t_k$-bond.
 
-![Swaption price surface over expiry x tenor](figures/ch12-swaption-surface.png)
+![Swaption price surface over expiry x tenor](figures/ch14-swaption-surface.png)
 *The Black swaption price varies smoothly over the expiry × tenor grid — the standard market quoting convention.*
 
 The swaption market trades a *two-dimensional* vol surface: expiry × tenor. A 2y5y swaption is the 2-year option to enter a 5-year swap. Consistency between the caplet surface (marginals) and the swaption surface (functionals of the joint) is a nontrivial constraint that full production models (LMM, SABR-LMM, stochastic-vol variants) try to fit simultaneously.
@@ -435,7 +435,7 @@ The spread adjustment is the operationally critical detail: it is set at the his
 
 ---
 
-## 14.7 Worked Example — Pricing a 1-into-1 Caplet
+## 14.6 Worked Example — Pricing a 1-into-3m Caplet
 
 Concrete numbers are the best way to anchor the formulas. Let us price a single quarterly caplet using the Black-76 formula and check that the answer makes sense.
 
@@ -473,10 +473,10 @@ $$
 
 i.e. about 16.07 bp of notional — the caplet PV. Rough intrinsic: $0.25 \times (0.04 - 0.035) \times 0.955 \approx 11.94$ bp; the Black price is ~4 bp above intrinsic — the time-value contribution.
 
-![ATM vs OTM caplet decomposition](figures/ch12-caplet-decomp.png)
+![ATM vs OTM caplet decomposition](figures/ch14-caplet-decomp.png)
 *For a 1y caplet, the Black price splits into intrinsic $P_t(t_k)\Delta t_k(L_t-K)_+$ and time value $g_t^{B(k)}-\text{intrinsic}$. The time component peaks near ATM and decays symmetrically in $\ln(L/K)$ — the classic log-moneyness curvature that drives cap vega.*
 
-## 14.8 Worked Example — Stripping Caplet Vols from a 2-Year Cap
+## 14.7 Worked Example — Stripping Caplet Vols from a 2-Year Cap
 
 A harder and more realistic task is to back out caplet vols from market cap quotes. Assume we see market prices for quarterly-settled caps at two tenors, and we want to produce a caplet-vol term structure consistent with both. The mechanics of the stripping procedure are easy once you see them laid out.
 
@@ -497,19 +497,13 @@ for the common forward caplet vol $\sigma^{\star}$ over caplets 5–8 (1D root f
 
 ---
 
-## 14.9 LIBOR to SOFR and Why It Matters
+## 14.8 LIBOR to SOFR and the Index-Agnostic Black Framework
 
-The entire Black-76 caplet framework was built in a world where the reference floating rate was LIBOR — the London Interbank Offered Rate. LIBOR had two features that made it a natural fit for this pricing technology: it was forward-looking (quoted at the start of an accrual period for that period's rate), and it was a credit-sensitive unsecured bank rate (which gave the curve a term premium and a nonzero credit spread over a truly riskless reference).
+Case study (b) above walked the operational arc of the June 2023 USD-LIBOR cessation; this section states the structural takeaway separately. The Black-76 caplet/swaption framework derived in §14.1–§14.5 never depended on LIBOR specifically — it depended only on the existence of a *simple forward rate* that is a martingale under its own $T_i$-forward (or annuity) measure. The post-LIBOR overnight-RFR world — SOFR, SONIA, €STR, TONA, SARON — replaces the forward LIBOR fixing with a *compounded in-arrears* fixing computed over the accrual period, plus, for legacy contracts, a frozen ISDA spread adjustment (11.448, 26.161, 42.826, 71.513 bp for 1M/3M/6M/12M USD).
 
-Following the rate-fixing scandals of the 2010s, LIBOR has been substantially withdrawn. USD LIBOR for most major tenors ceased publication; GBP LIBOR is gone; EUR is largely replaced by €STR; JPY by TONA; CHF by SARON. The replacements — SOFR in the US, SONIA in the UK, €STR in the euro area, TONA in Japan — are overnight risk-free rates. They are *backward-looking* rather than forward-looking: the rate for an accrual period is computed by compounding realized overnight fixings, so you only know the period's rate at the *end* of the period, not the beginning.
+Three structural consequences for the framework. First, the simple-forward identity (14.2) becomes an in-arrears compound — backward-looking rather than forward-looking, so the fixing is known only at the end of the accrual period. Second, the resulting in-arrears-vs-in-advance convexity carries a small but nonzero order-$\sigma^2 \Delta_k$ adjustment ($0.1$–$0.5$ bp on quarterly accruals at $1\%$ vol). Third, the annuity-measure derivation of (14.27) for swaptions is *unchanged*: the par swap rate is still an annuity-numeraire martingale regardless of whether the floating leg compounds daily SOFR or fixes 3M LIBOR. Risk systems that abstracted "LIBOR" to "simple forward rate under its own forward measure" survived the transition with wiring changes; systems that hardcoded "LIBOR" needed substantial rewrites.
 
-This timing inversion changes several things in our framework. First, the defining identity (14.2) no longer applies cleanly — the compounded SOFR rate is not a single bond-based accrual but a product of overnight factors. Second, the forward rate concept is now subtler: you can still define a forward SOFR rate, but the convexity adjustment between the in-arrears-compounded fixing and a hypothetical in-advance fixing is not zero, and careful dealers track it. Third, the caplet/floorlet conventions have been redefined to handle backward-looking fixings — SOFR caplets pay on the payment date based on a compounded in-arrears rate, which introduces a small Black-model bias that is typically accommodated by a small adjustment to the effective fix time.
-
-The cap market has adapted: SOFR caps trade actively, with stripping analogous to LIBOR caps after a small fix-time adjustment for the in-arrears mechanics. The per-caplet Black-vol architecture survives intact; what changed was the index, not the pricing framework. Risk systems should abstract "LIBOR" to "simple forward rate under its own forward measure" — that abstraction is robust to the index choice.
-
-For converted legacy LIBOR contracts, the standard fallback is "SOFR + fallback spread" with the spread set to the historical median LIBOR-SOFR basis over a five-year lookback window. Dealers hedging legacy books must track that basis risk.
-
-## 14.10 Key Takeaways
+## 14.9 Key Takeaways
 
 1. Cap = strip of caplets. Each caplet is a European call on a forward LIBOR rate, fixed at $t_{k-1}$ and paid at $t_k$. The "cap = sum of caplets" decomposition is exact (no cross-terms), because the max acts on each caplet's fixing separately.
 2. Pricing numeraire: switching from $B_t$ to $P_t(t_k)$ kills the correlation between discount and payoff. Under $\mathbb{Q}^{t_k}$ the forward LIBOR $L_t(t_{k-1}, t_k)$ is a martingale, because it is a ratio of the tradable $(P_t(t_{k-1}) - P_t(t_k))/\Delta t_k$ to the numeraire $P_t(t_k)$.
@@ -522,7 +516,7 @@ For converted legacy LIBOR contracts, the standard fallback is "SOFR + fallback 
 
 ---
 
-## 14.11 Reference Formulas
+## 14.10 Reference Formulas
 
 ### Forward rate / bond relationship
 
