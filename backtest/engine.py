@@ -25,17 +25,23 @@ logger = logging.getLogger(__name__)
 # Black-Scholes option pricing (for simulating option prices in backtest)
 # ---------------------------------------------------------------------------
 
-def bs_price(S: float, K: float, T: float, r: float, sigma: float, option_type: str) -> float:
-    """Black-Scholes option price. T in years."""
+def bs_price(S: float, K: float, T: float, r: float, sigma: float, option_type: str,
+             q: float = 0.0) -> float:
+    """Black-Scholes option price with continuous dividend yield q (default 0).
+
+    SPY pays ~1.3%; ignoring it under-prices puts and over-prices calls by enough
+    to bias strike selection from delta inversion. T in years.
+    """
     if T <= 0 or sigma <= 0:
         intrinsic = max(0, S - K) if option_type == "call" else max(0, K - S)
         return intrinsic
-    d1 = (np.log(S / K) + (r + 0.5 * sigma ** 2) * T) / (sigma * np.sqrt(T))
+    d1 = (np.log(S / K) + (r - q + 0.5 * sigma ** 2) * T) / (sigma * np.sqrt(T))
     d2 = d1 - sigma * np.sqrt(T)
+    Sd = S * np.exp(-q * T)
     if option_type == "call":
-        return S * norm.cdf(d1) - K * np.exp(-r * T) * norm.cdf(d2)
+        return Sd * norm.cdf(d1) - K * np.exp(-r * T) * norm.cdf(d2)
     else:
-        return K * np.exp(-r * T) * norm.cdf(-d2) - S * norm.cdf(-d1)
+        return K * np.exp(-r * T) * norm.cdf(-d2) - Sd * norm.cdf(-d1)
 
 
 def spread_value(

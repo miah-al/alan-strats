@@ -1,8 +1,8 @@
 # Chapter 9 — Monte Carlo, Path-Dependent, and Forward-Starting Options
 
-The simulation counterpart to lattice pricing (Ch. 2) and PDE pricing (Ch. 6). Closed forms cover only a short list of vanillas; everything else — Asians, lookbacks, cliquets, autocallables, baskets, stoch-vol, jump-diffusions, local-vol surfaces — needs numerical pricing. Monte Carlo works in any dimension, handles any payoff, and parallelises trivially; its only cost is statistical noise.
+The simulation counterpart to lattice pricing (Chapter 2) and PDE pricing (Chapter 6). Closed forms cover only a short list of vanillas; everything else — Asians, lookbacks, cliquets, autocallables, baskets, stoch-vol, jump-diffusions, local-vol surfaces — needs numerical pricing. Monte Carlo works in any dimension, handles any payoff, and parallelises trivially; its only cost is statistical noise.
 
-We motivate MC via the curse of dimensionality, build the GBM path generator (exact, by the Ch. 6 Itô solution), and apply it to European warm-ups, forward-starting cliquets (where iterated conditioning gives a closed form), and barrier options (the prototypical path-dependent payoff). Along the way we hit discretisation bias and the Brownian-bridge correction. The chapter closes with antithetic and control-variate variance reduction — bridging to the Heston Monte Carlo of Ch. 10.
+We motivate MC via the curse of dimensionality, build the GBM path generator (exact, by the Chapter 6 Itô solution), and apply it to European warm-ups, forward-starting cliquets (where iterated conditioning gives a closed form), and barrier options (the prototypical path-dependent payoff). Along the way we hit discretisation bias and the Brownian-bridge correction. The chapter closes with antithetic and control-variate variance reduction — bridging to the Heston Monte Carlo of Chapter 10.
 
 Out of scope: stratified sampling, importance sampling, quasi-MC, pathwise/LR Greek estimators, Longstaff–Schwartz for American exotics. The focus is a working production-grade pricer for European and path-dependent claims.
 
@@ -25,7 +25,7 @@ A production pricer has four sub-problems:
 3. **Path-dependent payoffs.** Many payoffs depend on the whole path: running maximum (lookback), running average (Asian), barrier-crossing indicator (knock-in/out), basket constraints. Efficient data structures and careful handling of between-grid events (Brownian-bridge correction for barriers) are central.
 4. **Sensitivity estimation (Greeks).** Delta, gamma, vega, and other Greeks must come out of the same path sample, ideally with pathwise or likelihood-ratio estimators rather than finite-difference bump-and-reprice. We will touch on this briefly but not in depth.
 
-This chapter covers (1)–(3); Greek estimation (4) is a subdiscipline left to Ch. 10 and the literature.
+This chapter covers (1)–(3); Greek estimation (4) is a subdiscipline left to Chapter 10 and the literature.
 
 ---
 
@@ -47,7 +47,7 @@ $$
 \tag{9.2}
 $$
 
-— the basis for the $\widehat{m}_M \pm 1.96\,\widehat{\sigma}_{m_1}$ 95% CI. Problem cases are reciprocals/roots of the underlying, stoch-vol near the Feller boundary (Ch. 10), and unbounded-horizon integrals.
+— the basis for the $\widehat{m}_M \pm 1.96\,\widehat{\sigma}_{m_1}$ 95% CI. Problem cases are reciprocals/roots of the underlying, stoch-vol near the Feller boundary (Chapter 10), and unbounded-horizon integrals.
 
 ---
 
@@ -101,7 +101,7 @@ The SE is an estimate of an estimate; the Gaussian CI is asymptotic. Small $M$ �
 
 ## 9.4 The Lognormal GBM Path Generator
 
-The path generator produces $\{S_{t_n}\}$ from the $\mathbb{Q}$-law. For GBM the generator is *exact* at grid points (no discretisation bias) because Ch. 6 solved the SDE in closed form.
+The path generator produces $\{S_{t_n}\}$ from the $\mathbb{Q}$-law. For GBM the generator is *exact* at grid points (no discretisation bias) because Chapter 6 solved the SDE in closed form.
 
 ![GBM sample paths under Q](figures/ch10-gbm-paths.png)
 *Thirty risk-neutral GBM paths for $S_0 = 100$, $r = 5\%$, $\sigma = 20\%$, $T = 1\text{y}$. The red curve is $\mathbb{E}^{\mathbb{Q}}[S_t] = S_0 e^{rt}$, the risk-neutral expected trajectory. Monte-Carlo pricing averages discounted payoffs over such paths; each path contributes one term of the sample mean (9.3).*
@@ -156,7 +156,7 @@ Only the terminal value $S_T$ enters, so we do not even need a grid — a single
 <!-- TODO V5: move to Chapter 3 §3.4A -->
 ### 9.4.3 Euler–Maruyama and Milstein for non-GBM SDEs
 
-For Heston, local-vol, and jump-diffusion (Ch. 10) the exact lognormal increment is unavailable. Euler–Maruyama freezes coefficients at the left endpoint:
+For Heston, local-vol, and jump-diffusion (Chapter 10) the exact lognormal increment is unavailable. Euler–Maruyama freezes coefficients at the left endpoint:
 
 $$
 X_{t_n} \;\approx\; X_{t_{n-1}} \;+\; \mu(X_{t_{n-1}})\,\Delta t_n \;+\; \sigma(X_{t_{n-1}})\sqrt{\Delta t_n}\,Z_n.
@@ -164,7 +164,7 @@ $$
 
 Weak rate $O(\Delta t)$, strong rate $O(\sqrt{\Delta t})$. Milstein adds a second-order Itô correction $\tfrac12 \sigma \sigma' \Delta t_n (Z_n^2 - 1)$ and upgrades the strong rate to $O(\Delta t)$. For constant diffusion ($\sigma' = 0$) both coincide.
 
-The Heston variance process $\mathrm{d} v_t = \kappa(\theta - v_t)\mathrm{d}t + \xi\sqrt{v_t}\mathrm{d} W_t$ has $\sigma(v) = \xi\sqrt{v}$, non-differentiable at $0$; naive Euler produces negative variance. Standard fixes: full-truncation or Andersen's QE scheme (Ch. 10). Whenever a closed-form exact simulator exists (GBM, OU, CIR, Vasicek), prefer it over Euler.
+The Heston variance process $\mathrm{d} v_t = \kappa(\theta - v_t)\mathrm{d}t + \xi\sqrt{v_t}\mathrm{d} W_t$ has $\sigma(v) = \xi\sqrt{v}$, non-differentiable at $0$; naive Euler produces negative variance. Standard fixes: full-truncation or Andersen's QE scheme (Chapter 10). Whenever a closed-form exact simulator exists (GBM, OU, CIR, Vasicek), prefer it over Euler.
 
 ### 9.4.4 Additive log-space simulation
 
@@ -357,33 +357,62 @@ since exactly one of the two triggers for every path. In-out parity lets us pric
 
 Barrier options are strictly cheaper than the corresponding vanillas (for knock-out barriers that cancel the contract) or equal-or-cheaper (for knock-ins, which have a chance of never activating and paying zero). They are used extensively in structured products: a "twin-win" note pays the magnitude of index returns unless a down-barrier is breached; a "reverse convertible" pays a coupon unless a down-barrier is breached, in which case the investor is put the stock at a fixed strike. The barrier adds path-dependence to the payoff, preventing closed-form lognormal pricing in general — though the classical Merton reflection-principle formulas *do* give closed forms under continuous monitoring of geometric Brownian motion with constant parameters.
 
-### 9.7.2 Up-and-in call — definition
+### 9.7.2 The Reflection Principle in five minutes
+
+You will see "reflection principle" twice in this chapter — once in the closed-form barrier formula (9.29), once in the Brownian-bridge crossing probability (9.32). Both are the same trick. Here it is in plain language so neither shows up as a black box later.
+
+**What we want.** Let $W_t$ be standard Brownian motion and $M_T = \max_{0 \le t \le T} W_t$ its running maximum. For a level $u > 0$, we want
+$$\mathbb{P}(M_T \ge u)$$
+— the probability the path *ever* touched $u$ during $[0, T]$.
+
+**The trick — one geometric picture.** Suppose a path does reach $u$ at some time $\tau \le T$. From $\tau$ onward, *reflect* the rest of the path across the horizontal line $y = u$. Brownian motion's strong-Markov property (the future after $\tau$ is an independent Brownian motion starting at $u$) plus the symmetry of that future ($+\varepsilon$ and $-\varepsilon$ moves are equally likely) say the reflected path is equally likely. So every original path that *touches $u$ and ends below $u$* corresponds one-to-one with a reflected path that *ends above $u$*:
+
+$$\mathbb{P}(M_T \ge u,\, W_T < u) \;=\; \mathbb{P}(W_T > u).$$
+
+**Reading off the result.** Adding the case $W_T \ge u$ (where $M_T \ge u$ holds trivially):
+
+$$
+\mathbb{P}(M_T \ge u) \;=\; \mathbb{P}(W_T \ge u) + \mathbb{P}(W_T < u,\, M_T \ge u) \;=\; 2\,\mathbb{P}(W_T \ge u), \qquad u > 0.
+\tag{9.28}
+$$
+
+In one line: **the running maximum at time $T$ has the same law as $|W_T|$.**
+
+**Sanity check.** Take $T = 1$, $u = 1$. Standard normal: $\mathbb{P}(W_1 \ge 1) = 1 - \Phi(1) \approx 0.159$. So $\mathbb{P}(M_1 \ge 1) \approx 0.317$. The path is twice as likely to *touch* 1 as to *end above* 1 — exactly what (9.28) says.
+
+**From $W$ to GBM.** Real underlyings follow geometric Brownian motion $S_t = S_0\,\exp((\mu - \tfrac{1}{2}\sigma^2)t + \sigma W_t)$, so the barrier event $\{\max_t S_t \ge U\}$ translates to $\{\max_t (\mu_W t + \sigma W_t) \ge \ln(U/S_0)\}$ — a Brownian motion *with drift*, not pure. The drift breaks the symmetry argument above directly, so we first kill the drift by a Girsanov change of measure (Chapter 5: $\mathrm{d}\tilde{W}_t = \mathrm{d}W_t + \theta\,\mathrm{d}t$ with $\theta = \mu_W/\sigma$), apply (9.28) to the now-driftless process, then reweight by the Radon–Nikodym derivative. The reweighting is what produces the $(U/S_0)^{2\lambda}$ factor in (9.29). That is the entire derivation of the closed-form barrier formula compressed to one paragraph.
+
+**Two payoffs, same engine.** The reflection principle does double duty in this chapter: it gives the continuous-monitoring closed form (9.29) and the conditional-max distribution for the Brownian-bridge correction (9.32) we use to *unbias* discrete-monitoring Monte Carlo. Both are the same identity applied to different conditionings of the path.
+
+![Brownian path (blue) that touches level $u$ at time $\tau$, then continues to end below $u$. The grey path is the *reflection* of the original after $\tau$ across the line $y=u$; it shares the original on $[0,\tau]$ and is mirror-image on $[\tau, T]$, so it ends above $u$. Both are equally likely Brownian paths. The reflection turns the hard "touched then returned" event into the easy "ended above" event](figures/ch09-reflection-principle.png)
+
+### 9.7.3 Up-and-in call — definition
 
 The up-and-in call pays
 
 $$
 \varphi \;=\; (S_T - K)_+\,\mathbf{1}_{\{\,\max_{0\le t\le T} S_t \;\ge\; U\,\}}, \qquad U > S_0,
-\tag{9.28}
+\tag{9.29a}
 $$
 
-where the typical parameter ordering is $U > K > S_0$ (barrier above strike above initial spot). The contract becomes a standard European call with strike $K$ at the first time the path crosses the barrier; otherwise the holder receives nothing. The knock-in event is measurable with respect to the path up to $T$, not just $S_T$; this is what makes the payoff path-dependent.
+with the typical parameter ordering $U > K > S_0$ (barrier above strike above initial spot). The contract activates the moment the path crosses $U$; otherwise it expires worthless. The knock-in event depends on the *whole* path, not just $S_T$ — that is the path-dependence.
 
-Under continuous monitoring of GBM there is a beautiful closed-form formula (the "reflection-principle" formula). For the up-and-in call with $S_0 < K < U$,
+Plugging the reflection-principle machinery of §9.7.2 into GBM yields the continuous-monitoring closed form. For $S_0 < K < U$:
 
 $$
 V^{\text{UIC}}_{\text{continuous}} \;=\; S_0\!\left(\tfrac{U}{S_0}\right)^{\!2\lambda}\,\Phi(y_1) \;-\; K\,e^{-rT}\!\left(\tfrac{U}{S_0}\right)^{\!2\lambda-2}\,\Phi(y_1 - \sigma\sqrt{T}),
 \tag{9.29}
 $$
 
-where $\lambda = (r + \tfrac{1}{2}\sigma^2)/\sigma^2$ and $y_1$ is an explicit log-moneyness expression. We do not derive (9.29) here — the reflection principle for Brownian motion and its Girsanov-shifted counterpart for GBM are a standard but lengthy calculation, covered in every classical derivatives text. We use the formula only as an external benchmark: the *continuous-monitoring* closed form gives us a reference number against which discrete-monitoring MC estimates can be calibrated. Under discrete monitoring (say daily fixings), the barrier is crossed only at the fixing dates, not continuously in between; MC implementations naturally approximate discrete monitoring if the grid is chosen as the monitoring dates.
+where $\lambda = (r + \tfrac{1}{2}\sigma^2)/\sigma^2$ and $y_1 = (\ln(U^2/(S_0 K)) + (r + \tfrac{1}{2}\sigma^2)T)\,/\,(\sigma\sqrt{T})$. We use (9.29) as a benchmark against which the discrete-monitoring MC estimator is calibrated. Daily-fixing barriers are *discretely* monitored — the path is checked only at the fixing dates — and the gap between (9.29) and a discrete-fixing MC estimate is precisely the bias we attack in §9.7.6 with the Brownian-bridge correction.
 
-### 9.7.3 Lattice view
+### 9.7.4 Lattice view
 
 Before moving to Monte Carlo it is worth seeing how a binomial lattice prices barrier options. The lattice view clarifies the discretisation questions that plague the MC implementation and ties the path-dependent pricing back to the backward-induction apparatus of Chapter 2. Propagate known values from the barrier level downward: at any node on or above $U$, the option is (thereafter) a standard European call with strike $K$ whose value $C^{\text{vanilla}}(S_n, t_n; K, T)$ is already known from the BS formula (9.14)–(9.15). Below the barrier the backward induction is the usual discounted $\mathbb{Q}$-expectation, but with the *known* vanilla-call value pasted in at any node that has touched $U$ along the path to that node. The tree effectively shrinks to a triangular wedge bounded by the barrier surface, and the barrier acts as a "known-value boundary" analogous to a Dirichlet condition in PDE language.
 
 In the PDE framework, the Black–Scholes equation for a barrier option carries a Dirichlet boundary condition at $S = U$: for a knock-in, $V(U, t) = $ the vanilla-call value at that time; for a knock-out, $V(U, t) = 0$. The lattice backward-induction is solving this PDE numerically, with a two-child backward expectation playing the role of the finite-difference stencil. Analytical PDE solutions via method of images or Green's functions yield the same reflection-principle formulas mentioned above. Different methods — closed form, PDE, lattice, MC — should all agree to within their respective discretisation and variance errors; cross-validation between methods is a standard sanity check in derivatives implementation.
 
-### 9.7.4 Monte-Carlo pricing with a time grid
+### 9.7.5 Monte-Carlo pricing with a time grid
 
 The path-simulation recipe (9.9) applies directly. Discretise $[0, T]$ with a grid $t_0 = 0 < t_1 < \cdots < t_N = T$, step sizes $\Delta t_n = t_n - t_{n-1}$, and simulate
 
@@ -401,13 +430,13 @@ $$
 
 Each simulated path contributes to the average only if its discretely-sampled maximum equals or exceeds $U$; paths that stay below $U$ contribute zero regardless of terminal value.
 
-### 9.7.5 Discretisation bias
+### 9.7.6 Discretisation bias
 
 The indicator $\mathbf{1}_{\{\,\max_n S_{t_n}\ge U\,\}}$ in (9.31) samples the path only at grid points; the true knock-in event $\{\,\max_{0\le t\le T} S_t \ge U\,\}$ can occur *between* grid points. For a given Brownian path one therefore underestimates the knock-in probability — each grid has some probability of missing a barrier excursion that happened between two of its points. Consequently the barrier-option MC price is *biased downward* at finite $N$, and the bias vanishes only in the limit $\Delta t_n \to 0$. This is the characteristic issue with MC pricing of path-dependent barrier and lookback contracts; the same issue arises for any payoff whose value depends on a supremum, infimum, or first-hitting time of the path.
 
 The bias can be substantial. For an up-and-in call with $S_0 = 100$, $K = 100$, $U = 110$, $\sigma = 20\%$, $r = 5\%$, $T = 1$: the true continuous-monitoring value from (9.29) is around $6.15$. With $N = 50$ monitoring points and $M = 10{,}000$ MC paths, the raw estimate from (9.31) is typically around $5.8$ — a $6\%$ downward bias. Refining the grid to $N = 500$ (factor-of-$10$ more work) without any bias correction gives an estimate near $6.10$ — still a small residual bias. Continuing to refine eventually converges to the true value but at substantial computational cost.
 
-### 9.7.6 Brownian-bridge correction
+### 9.7.7 Brownian-bridge correction
 
 Between two adjacent grid points $t_{n-1}$ and $t_n$ with known endpoints $S_{t_{n-1}}$ and $S_{t_n}$, the conditional law of the path is a *Brownian bridge* (under log-coordinates with drift). The conditional distribution of the path maximum $\max_{t\in[t_{n-1},t_n]} S_t$ given the endpoints has a closed-form CDF, derived from the reflection principle:
 
@@ -426,7 +455,7 @@ The Brownian-bridge correction uses (9.32) as follows. For each simulated path t
 
 Concrete numbers. For the up-and-in call with $S_0 = 100$, $K = 100$, $U = 110$, $\sigma = 20\%$, $r = 5\%$, $T = 1$ at $N = 50$: raw MC gives $\approx 5.8$; bridge-corrected gives $\approx 6.12$, within $0.5\%$ of the true $6.15$. The bridge at $N=50$ matches brute-force $N\approx 500$ — a factor-of-$10$ saving.
 
-### 9.7.7 Variance of the barrier estimator
+### 9.7.8 Variance of the barrier estimator
 
 The payoff $X = e^{-rT}(S_T - K)_+\,\mathbf{1}_{\{\max S\ge U\}}$ is zero on most paths when the barrier is deep OTM, so the estimator is dominated by a handful of triggering paths. If knock-in probability is $p_{\text{knock}}$, the standard error scales as $\sqrt{p_{\text{knock}}\,\sigma_X^2/M}$, needing roughly $1/p_{\text{knock}}$ more paths than the vanilla case. Rare-event MC is computationally unforgiving.
 
@@ -434,7 +463,7 @@ Two standard remedies. *Importance sampling* shifts the drift of the simulation 
 
 <!-- figure placeholder (see figures/ch10-*.png): three MC paths on [0, T] with barrier U drawn as a horizontal dashed line. Path A crosses U (circle at first-crossing time), pays (S_T - K)_+ at T; path B never crosses, pays 0; path C has a between-grid excursion above U that the coarse grid misses — illustrates discretisation bias. -->
 
-### 9.7.8 Other path-dependent families
+### 9.7.9 Other path-dependent families
 
 Having priced barriers, we preview the broader landscape of path-dependent options that the Monte-Carlo machinery handles cleanly.
 

@@ -133,6 +133,7 @@ except ImportError:
 # Constants
 # ─────────────────────────────────────────────────────────────────────────────
 _RISK_FREE_RATE   = 0.045
+_DEFAULT_DIVIDEND = 0.013      # SPY trailing-12-month yield ~1.3% — pass through to bs_price
 _WARMUP_BARS      = 252        # 1 yr — minimum to identify the crisis state cleanly
 _RETRAIN_EVERY    = 30         # ~monthly
 _SAVED_MODELS_DIR = Path(__file__).parent / "saved_models"
@@ -219,6 +220,10 @@ class _RegimeModel:
     Thin wrapper around hmmlearn.GaussianHMM (or sklearn GMM fallback).
     Tracks the relabel permutation so callers always see state 0 = low-vol,
     state 2 = high-vol regardless of EM's internal ordering.
+
+    Warm-start: pass `prior_sorted_means` from a previous fit's `sorted_means()`
+    into `fit(...)` and EM is seeded from the previous solution. This greatly
+    reduces fit-to-fit posterior jitter at retrain boundaries.
     """
 
     def __init__(self, n_components: int = 3, random_state: int = 42):
@@ -230,8 +235,13 @@ class _RegimeModel:
         self._fitted      = False
 
     # ── Fit ────────────────────────────────────────────────────────────────
-    def fit(self, X: np.ndarray) -> None:
-        """X: (n × 3) observation matrix, no NaNs."""
+    def fit(self, X: np.ndarray, prior_sorted_means: Optional[np.ndarray] = None) -> None:
+        """X: (n × 3) observation matrix, no NaNs.
+
+        prior_sorted_means: if provided, a (k × 3) matrix of means from a
+        previous fit (sorted by ascending rv20). Used as `means_init` to
+        warm-start EM and stabilise the posterior between retrains.
+        """
         if X.shape[0] < self.n_components * 5:
             raise ValueError(f"Need ≥ {self.n_components * 5} clean obs, got {X.shape[0]}")
 
@@ -242,7 +252,12 @@ class _RegimeModel:
                 n_iter=100,
                 tol=1e-3,
                 random_state=self.random_state,
+                init_params="stmc" if prior_sorted_means is None else "stc",
             )
+            if prior_sorted_means is not None and prior_sorted_means.shape == (
+                self.n_components, X.shape[1]
+            ):
+                m.means_ = prior_sorted_means.astype(np.float64).copy()
             # hmmlearn expects 2-D contiguous float64
             m.fit(np.ascontiguousarray(X, dtype=np.float64))
             raw_means = m.means_                                    # (k, 3)
@@ -254,6 +269,12 @@ class _RegimeModel:
                 tol=1e-3,
                 random_state=self.random_state,
                 reg_covar=1e-4,
+                means_init=(
+                    prior_sorted_means.astype(np.float64)
+                    if (prior_sorted_means is not None
+                        and prior_sorted_means.shape == (self.n_components, X.shape[1]))
+                    else None
+                ),
             )
             m.fit(np.ascontiguousarray(X, dtype=np.float64))
             raw_means = m.means_
@@ -314,6 +335,39 @@ class _RegimeModel:
             sorted_means[self._perm[raw_idx]] = raw_means[raw_idx]
         return sorted_means
 
+    # ── Sorted transition matrix (hmmlearn backend only) ──────────────────
+    def sorted_transmat(self) -> Optional[np.ndarray]:
+        """Return the relabeled transition matrix or None for backends without one.
+
+        sklearn-GMM is iid (no transition matrix) and returns None — callers
+        should fall back to the spot posterior in that case.
+        """
+        if not self._fitted or self.backend != "hmmlearn":
+            return None
+        raw_A = getattr(self._raw_model, "transmat_", None)
+        if raw_A is None:
+            return None
+        k = self.n_components
+        sorted_A = np.empty((k, k), dtype=float)
+        for i_raw in range(k):
+            for j_raw in range(k):
+                sorted_A[self._perm[i_raw], self._perm[j_raw]] = raw_A[i_raw, j_raw]
+        return sorted_A
+
+    def expected_posterior(self, X_upto_i: np.ndarray, horizon: int) -> np.ndarray:
+        """E[P(state) | obs_0:i] after `horizon` daily transitions.
+
+        For the hmmlearn backend: `posterior @ A^horizon`. For the iid fallback
+        (no transition matrix) we degrade to the spot posterior — the strategy
+        layer interprets the degraded value with caution.
+        """
+        spot = self.predict_proba(X_upto_i)
+        A = self.sorted_transmat()
+        if A is None or horizon <= 0:
+            return spot
+        from numpy.linalg import matrix_power
+        return spot @ matrix_power(A, int(horizon))
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Strategy class
@@ -353,6 +407,11 @@ class HMMRegimeStrategy(BaseStrategy):
         n_components:          int   = 3,
         retrain_every:         int   = 30,
         warmup_bars:           int   = 252,
+        # Backend + pricing
+        dividend_yield:        float = _DEFAULT_DIVIDEND,   # SPY ~1.3% by default
+        allow_gmm_fallback:    bool  = False,               # explicit opt-in for iid fallback
+        use_transition_matrix: bool  = True,                # forward posterior over option life
+        forward_horizon_bars:  Optional[int] = None,        # None → DTE/2 for the active state
         # State 0 — bull put credit spread
         dte_bull_put:        int   = 30,
         bull_put_short_delta: float = 0.20,
@@ -384,6 +443,18 @@ class HMMRegimeStrategy(BaseStrategy):
         self.n_components          = n_components
         self.retrain_every         = retrain_every
         self.warmup_bars           = warmup_bars
+
+        self.dividend_yield        = float(dividend_yield)
+        self.allow_gmm_fallback    = bool(allow_gmm_fallback)
+        self.use_transition_matrix = bool(use_transition_matrix)
+        self.forward_horizon_bars  = forward_horizon_bars
+
+        if _HMM_BACKEND == "sklearn_gmm" and not self.allow_gmm_fallback:
+            logger.warning(
+                "hmm_regime: hmmlearn unavailable; sklearn-GMM fallback is iid "
+                "(no transition matrix) and posteriors will flicker. Pass "
+                "allow_gmm_fallback=True to acknowledge and proceed."
+            )
 
         self.dte_bull_put          = dte_bull_put
         self.bull_put_short_delta  = bull_put_short_delta
@@ -440,6 +511,10 @@ class HMMRegimeStrategy(BaseStrategy):
             "max_concurrent":        self.max_concurrent,
             "commission_per_leg":    self.commission_per_leg,
             "slippage_per_leg":      self.slippage_per_leg,
+            "dividend_yield":        self.dividend_yield,
+            "allow_gmm_fallback":    self.allow_gmm_fallback,
+            "use_transition_matrix": self.use_transition_matrix,
+            "forward_horizon_bars":  self.forward_horizon_bars,
         }
 
     def get_backtest_ui_params(self) -> list[dict]:
@@ -648,6 +723,12 @@ class HMMRegimeStrategy(BaseStrategy):
             raise RuntimeError(
                 "No HMM backend available — install hmmlearn or scikit-learn."
             )
+        if _HMM_BACKEND == "sklearn_gmm" and not self.allow_gmm_fallback:
+            raise RuntimeError(
+                "hmm_regime: hmmlearn missing; iid sklearn-GMM fallback is "
+                "disabled by default. Either `pip install hmmlearn` or pass "
+                "allow_gmm_fallback=True to the strategy explicitly."
+            )
 
         # ── Resolve param overrides ───────────────────────────────────────
         p = {**self.get_params(), **{k: v for k, v in kwargs.items() if k in self.get_params()}}
@@ -694,6 +775,8 @@ class HMMRegimeStrategy(BaseStrategy):
         comm   = p["commission_per_leg"]
         slip   = p["slippage_per_leg"]
         r      = _RISK_FREE_RATE
+        q      = float(p.get("dividend_yield", _DEFAULT_DIVIDEND))
+        prior_means: Optional[np.ndarray] = None
 
         for i, dt in enumerate(price_data.index):
             spot   = float(close.iloc[i])
@@ -701,7 +784,7 @@ class HMMRegimeStrategy(BaseStrategy):
             iv     = max(vix / 100.0, 0.05)   # IV proxy for BS pricing
 
             if spot <= 0:
-                equity_curve.append({"date": dt, "equity": capital + self._mtm(open_trade, spot, dt, iv, r)})
+                equity_curve.append({"date": dt, "equity": capital + self._mtm(open_trade, spot, dt, iv, r, q)})
                 continue
 
             # ── Retrain at scheduled cadence, no lookahead ────────────────
@@ -714,9 +797,10 @@ class HMMRegimeStrategy(BaseStrategy):
                 X = obs_df.iloc[: i + 1].dropna().values.astype(float)
                 if X.shape[0] >= p["n_components"] * 5:
                     try:
-                        model.fit(X)
+                        model.fit(X, prior_sorted_means=prior_means)
                         last_retrain = i
                         sm = model.sorted_means()
+                        prior_means = sm   # warm-start the NEXT refit from these
                         logger.debug(
                             f"hmm_regime: refit at bar {i} ({dt.date()}); "
                             f"sorted rv means = {[round(x, 3) for x in sm[:, 2]]}"
@@ -739,7 +823,7 @@ class HMMRegimeStrategy(BaseStrategy):
             # ── 1. Manage open trade (exit checks) ────────────────────────
             if open_trade is not None:
                 exit_now, exit_reason, pnl = self._evaluate_exit(
-                    open_trade, spot, dt, iv, r, p, comm, slip, end_of_data=(i == n - 1)
+                    open_trade, spot, dt, iv, r, q, p, comm, slip, end_of_data=(i == n - 1)
                 )
                 if exit_now:
                     capital += pnl
@@ -769,25 +853,47 @@ class HMMRegimeStrategy(BaseStrategy):
             })
 
             # ── 3. Entry ──────────────────────────────────────────────────
+            # Forward posterior (expected regime distribution over the option's
+            # life). With hmmlearn we have a transition matrix and project
+            # posterior @ A^H; with the iid fallback we degrade to the spot
+            # posterior. Confirming agreement between spot and forward suppresses
+            # entries at unstable regime boundaries — the highest-leverage
+            # signal-quality fix from the v1.1 review.
+            fwd_posterior = None
+            if posterior is not None and p.get("use_transition_matrix", True):
+                state_now = int(np.argmax(posterior))
+                horizon_default = max(p["dte_bull_put"], p["dte_condor"], p["dte_long_put"]) // 2
+                horizon = int(p.get("forward_horizon_bars") or horizon_default)
+                try:
+                    X_now = obs_df.iloc[: i + 1].dropna().values.astype(float)
+                    fwd_posterior = model.expected_posterior(X_now, horizon)
+                except Exception as e:
+                    logger.debug(f"hmm_regime: expected_posterior failed at {dt.date()}: {e}")
+                    fwd_posterior = posterior
+
+            gating_post = fwd_posterior if fwd_posterior is not None else posterior
+
             can_enter = (
                 posterior is not None
+                and gating_post is not None
                 and open_trade is None
                 and vix <= p["vix_ceiling"]
-                and float(np.max(posterior)) >= p["regime_confidence_min"]
+                and float(np.max(gating_post)) >= p["regime_confidence_min"]
+                and int(np.argmax(gating_post)) == int(np.argmax(posterior))   # spot/forward agree
                 and (n - i) > max(p["dte_bull_put"], p["dte_condor"], p["dte_long_put"]) + 5
             )
 
             if can_enter:
                 state = int(np.argmax(posterior))
-                p_st  = float(posterior[state])
-                trade = self._open_trade(state, p_st, spot, iv, r, dt, capital, p, comm, slip)
+                p_st  = float(gating_post[state])
+                trade = self._open_trade(state, p_st, spot, iv, r, q, dt, capital, p, comm, slip)
                 if trade is not None:
                     open_trade = trade
                     capital -= trade.get("entry_cash_out", 0.0)
                     capital -= trade.get("open_commission", 0.0)
 
             # ── MTM ───────────────────────────────────────────────────────
-            equity = capital + self._mtm(open_trade, spot, dt, iv, r)
+            equity = capital + self._mtm(open_trade, spot, dt, iv, r, q)
             equity_curve.append({"date": dt, "equity": equity})
 
             if progress_callback and i % 50 == 0:
@@ -851,17 +957,17 @@ class HMMRegimeStrategy(BaseStrategy):
 
     def _open_trade(
         self, state: int, p_state: float, spot: float, iv: float, r: float,
-        dt: pd.Timestamp, capital: float, p: dict, comm: float, slip: float,
+        q: float, dt: pd.Timestamp, capital: float, p: dict, comm: float, slip: float,
     ) -> Optional[dict]:
         if state == 0:
-            return self._open_bull_put(spot, iv, r, dt, capital, p, comm, slip, p_state)
+            return self._open_bull_put(spot, iv, r, q, dt, capital, p, comm, slip, p_state)
         if state == 1:
-            return self._open_iron_condor(spot, iv, r, dt, capital, p, comm, slip, p_state)
+            return self._open_iron_condor(spot, iv, r, q, dt, capital, p, comm, slip, p_state)
         if state == 2:
-            return self._open_long_put_spread(spot, iv, r, dt, capital, p, comm, slip, p_state)
+            return self._open_long_put_spread(spot, iv, r, q, dt, capital, p, comm, slip, p_state)
         return None
 
-    def _open_bull_put(self, spot, iv, r, dt, capital, p, comm, slip, p_state):
+    def _open_bull_put(self, spot, iv, r, q, dt, capital, p, comm, slip, p_state):
         T = p["dte_bull_put"] / 365.0
         short_K = _strike_for_delta(spot, T, r, iv, p["bull_put_short_delta"], "put")
         long_K  = short_K * (1 - p["bull_put_wing_pct"])
@@ -869,8 +975,8 @@ class HMMRegimeStrategy(BaseStrategy):
             return None
 
         # Credit = short put price - long put price (with slippage adverse)
-        sp = bs_price(spot, short_K, T, r, iv, "put") - slip
-        lp = bs_price(spot, long_K,  T, r, iv, "put") + slip
+        sp = bs_price(spot, short_K, T, r, iv, "put", q=q) - slip
+        lp = bs_price(spot, long_K,  T, r, iv, "put", q=q) + slip
         credit_per = max(0.01, sp - lp)
         max_loss_per = max(0.01, (short_K - long_K) - credit_per)
 
@@ -900,7 +1006,7 @@ class HMMRegimeStrategy(BaseStrategy):
             "open_commission":  open_comm,
         }
 
-    def _open_iron_condor(self, spot, iv, r, dt, capital, p, comm, slip, p_state):
+    def _open_iron_condor(self, spot, iv, r, q, dt, capital, p, comm, slip, p_state):
         T = p["dte_condor"] / 365.0
         call_short_K = _strike_for_delta(spot, T, r, iv, p["condor_short_delta"], "call")
         put_short_K  = _strike_for_delta(spot, T, r, iv, p["condor_short_delta"], "put")
@@ -908,10 +1014,10 @@ class HMMRegimeStrategy(BaseStrategy):
         call_long_K = call_short_K + wing
         put_long_K  = max(0.01, put_short_K - wing)
 
-        cs = bs_price(spot, call_short_K, T, r, iv, "call") - slip
-        cl = bs_price(spot, call_long_K,  T, r, iv, "call") + slip
-        ps = bs_price(spot, put_short_K,  T, r, iv, "put")  - slip
-        pl = bs_price(spot, put_long_K,   T, r, iv, "put")  + slip
+        cs = bs_price(spot, call_short_K, T, r, iv, "call", q=q) - slip
+        cl = bs_price(spot, call_long_K,  T, r, iv, "call", q=q) + slip
+        ps = bs_price(spot, put_short_K,  T, r, iv, "put",  q=q) - slip
+        pl = bs_price(spot, put_long_K,   T, r, iv, "put",  q=q) + slip
         credit_per = max(0.01, (cs - cl) + (ps - pl))
         wing_width = max(call_long_K - call_short_K, put_short_K - put_long_K)
         max_loss_per = max(0.01, wing_width - credit_per)
@@ -944,13 +1050,13 @@ class HMMRegimeStrategy(BaseStrategy):
             "open_commission":  open_comm,
         }
 
-    def _open_long_put_spread(self, spot, iv, r, dt, capital, p, comm, slip, p_state):
+    def _open_long_put_spread(self, spot, iv, r, q, dt, capital, p, comm, slip, p_state):
         T = p["dte_long_put"] / 365.0
         long_K  = _strike_for_delta(spot, T, r, iv, p["long_put_long_delta"], "put")
         short_K = max(0.01, long_K * (1 - p["long_put_short_pct"]))
 
-        lp = bs_price(spot, long_K,  T, r, iv, "put") + slip
-        sp = bs_price(spot, short_K, T, r, iv, "put") - slip
+        lp = bs_price(spot, long_K,  T, r, iv, "put", q=q) + slip
+        sp = bs_price(spot, short_K, T, r, iv, "put", q=q) - slip
         debit_per = max(0.01, lp - sp)
         max_loss_per = debit_per   # debit spread: max loss = debit paid
 
@@ -974,20 +1080,25 @@ class HMMRegimeStrategy(BaseStrategy):
             "contracts":        contracts,
             "max_loss":         round(debit, 2),
             "margin":           0.0,
-            "entry_cash_out":   debit,                  # debit paid up front
+            # Cash-flow note: leaving entry_cash_out at 0 so the debit is paid
+            # entirely through realised P&L at exit (pnl = cur_val - debit -
+            # close_comm). Setting it to `debit` here would double-count the
+            # debit because the exit's `pnl` already subtracts it — that bug
+            # in v1 produced spurious -$300+ avg losses on state-2 trades.
+            "entry_cash_out":   0.0,
             "credit_received":  0.0,
             "open_commission":  open_comm,
         }
 
     # ── Exit logic ────────────────────────────────────────────────────────
-    def _evaluate_exit(self, trade, spot, now, iv, r, p, comm, slip, end_of_data):
+    def _evaluate_exit(self, trade, spot, now, iv, r, q, p, comm, slip, end_of_data):
         days_held = max(0, (now - trade["entry_date"]).days)
         dte_rem   = max(0, trade["entry_dte"] - days_held)
         T         = max(dte_rem, 1) / 365.0
 
         if trade["type"] == "bull_put_spread":
-            sp = bs_price(spot, trade["short_K"], T, r, iv, "put") + slip
-            lp = bs_price(spot, trade["long_K"],  T, r, iv, "put") - slip
+            sp = bs_price(spot, trade["short_K"], T, r, iv, "put", q=q) + slip
+            lp = bs_price(spot, trade["long_K"],  T, r, iv, "put", q=q) - slip
             cur_cost = max(0.0, sp - lp) * 100 * trade["contracts"]
             credit   = trade["credit_received"]
             pnl      = credit - cur_cost
@@ -1002,10 +1113,10 @@ class HMMRegimeStrategy(BaseStrategy):
             return False, None, 0.0
 
         if trade["type"] == "iron_condor":
-            cs = bs_price(spot, trade["call_short_K"], T, r, iv, "call") + slip
-            cl = bs_price(spot, trade["call_long_K"],  T, r, iv, "call") - slip
-            ps = bs_price(spot, trade["put_short_K"],  T, r, iv, "put")  + slip
-            pl = bs_price(spot, trade["put_long_K"],   T, r, iv, "put")  - slip
+            cs = bs_price(spot, trade["call_short_K"], T, r, iv, "call", q=q) + slip
+            cl = bs_price(spot, trade["call_long_K"],  T, r, iv, "call", q=q) - slip
+            ps = bs_price(spot, trade["put_short_K"],  T, r, iv, "put",  q=q) + slip
+            pl = bs_price(spot, trade["put_long_K"],   T, r, iv, "put",  q=q) - slip
             cur_cost = max(0.0, (cs - cl) + (ps - pl)) * 100 * trade["contracts"]
             credit   = trade["credit_received"]
             pnl      = credit - cur_cost
@@ -1020,8 +1131,8 @@ class HMMRegimeStrategy(BaseStrategy):
             return False, None, 0.0
 
         if trade["type"] == "long_put_spread":
-            lp = bs_price(spot, trade["long_K"],  T, r, iv, "put") - slip
-            sp = bs_price(spot, trade["short_K"], T, r, iv, "put") + slip
+            lp = bs_price(spot, trade["long_K"],  T, r, iv, "put", q=q) - slip
+            sp = bs_price(spot, trade["short_K"], T, r, iv, "put", q=q) + slip
             cur_val = max(0.0, lp - sp) * 100 * trade["contracts"]
             debit   = trade["debit"]
             pnl     = cur_val - debit
@@ -1038,7 +1149,7 @@ class HMMRegimeStrategy(BaseStrategy):
         return False, None, 0.0
 
     # ── Mark-to-market ────────────────────────────────────────────────────
-    def _mtm(self, trade, spot, now, iv, r) -> float:
+    def _mtm(self, trade, spot, now, iv, r, q: float = 0.0) -> float:
         if trade is None:
             return 0.0
         days_held = max(0, (now - trade["entry_date"]).days)
@@ -1046,22 +1157,22 @@ class HMMRegimeStrategy(BaseStrategy):
         T         = dte_rem / 365.0
 
         if trade["type"] == "bull_put_spread":
-            sp = bs_price(spot, trade["short_K"], T, r, iv, "put")
-            lp = bs_price(spot, trade["long_K"],  T, r, iv, "put")
+            sp = bs_price(spot, trade["short_K"], T, r, iv, "put", q=q)
+            lp = bs_price(spot, trade["long_K"],  T, r, iv, "put", q=q)
             cur_cost = max(0.0, sp - lp) * 100 * trade["contracts"]
             return trade["credit_received"] - cur_cost
 
         if trade["type"] == "iron_condor":
-            cs = bs_price(spot, trade["call_short_K"], T, r, iv, "call")
-            cl = bs_price(spot, trade["call_long_K"],  T, r, iv, "call")
-            ps = bs_price(spot, trade["put_short_K"],  T, r, iv, "put")
-            pl = bs_price(spot, trade["put_long_K"],   T, r, iv, "put")
+            cs = bs_price(spot, trade["call_short_K"], T, r, iv, "call", q=q)
+            cl = bs_price(spot, trade["call_long_K"],  T, r, iv, "call", q=q)
+            ps = bs_price(spot, trade["put_short_K"],  T, r, iv, "put",  q=q)
+            pl = bs_price(spot, trade["put_long_K"],   T, r, iv, "put",  q=q)
             cur_cost = max(0.0, (cs - cl) + (ps - pl)) * 100 * trade["contracts"]
             return trade["credit_received"] - cur_cost
 
         if trade["type"] == "long_put_spread":
-            lp = bs_price(spot, trade["long_K"],  T, r, iv, "put")
-            sp = bs_price(spot, trade["short_K"], T, r, iv, "put")
+            lp = bs_price(spot, trade["long_K"],  T, r, iv, "put", q=q)
+            sp = bs_price(spot, trade["short_K"], T, r, iv, "put", q=q)
             cur_val = max(0.0, lp - sp) * 100 * trade["contracts"]
             return cur_val - trade["debit"]
 

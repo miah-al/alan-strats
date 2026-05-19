@@ -2,11 +2,11 @@
 
 This chapter builds the stochastic-calculus apparatus every later chapter uses. From here forward we take Itô's lemma, the Itô isometry, and the closed-form solutions of the simplest SDEs as known.
 
-We start from the scaled random walk of Ch. 2 and take the scaling limit to Brownian motion, prove the two path properties (infinite total variation, finite quadratic variation $[W,W]_t = t$), and use them to define the Itô integral. Itô's lemma drops out of a second-order Taylor expansion that keeps exactly the $\mathrm{d}t$ terms. The SDE catalogue — GBM, Ornstein–Uhlenbeck, arithmetic BM — closes the chapter as worked exercises in Itô.
+We start from the scaled random walk of Chapter 2 and take the scaling limit to Brownian motion, prove the two path properties (infinite total variation, finite quadratic variation $[W,W]_t = t$), and use them to define the Itô integral. Itô's lemma drops out of a second-order Taylor expansion that keeps exactly the $\mathrm{d}t$ terms. The SDE catalogue — GBM, Ornstein–Uhlenbeck, arithmetic BM — closes the chapter as worked exercises in Itô.
 
 The interaction of calculus and probability is what makes the subject feel foreign on first read. The reflex "discard the second-order term" has to be permanently unlearned: $(\mathrm{d}W)^2 = \mathrm{d}t$ is the single identity behind every pricing formula, risk sensitivity, and hedging recipe in this guide.
 
-Notation. $W_t$ denotes a $\mathbb{P}$-Brownian motion. Hats or tildes decorate BMs under alternative measures (Ch. 5 onward); within this chapter measure is immaterial, since path-property statements are invariant under equivalent changes of measure.
+Notation. $W_t$ denotes a $\mathbb{P}$-Brownian motion. Hats or tildes decorate BMs under alternative measures (Chapter 5 onward); within this chapter measure is immaterial, since path-property statements are invariant under equivalent changes of measure.
 
 ---
 
@@ -14,7 +14,7 @@ Notation. $W_t$ denotes a $\mathbb{P}$-Brownian motion. Hats or tildes decorate 
 
 ### 3.1.1 The CRR tree, viewed as a discrete Brownian motion
 
-Strip the option-pricing apparatus off the Ch. 2 tree and what remains is a *scaled random walk*. Let $x_1, x_2, \dots$ be i.i.d. Bernoulli sign-flips with $\mathbb{P}(x_k = \pm 1) = \tfrac12$. Partition $[0, t]$ into steps $\Delta t = t/N$ and define
+Strip the option-pricing apparatus off the Chapter 2 tree and what remains is a *scaled random walk*. Let $x_1, x_2, \dots$ be i.i.d. Bernoulli sign-flips with $\mathbb{P}(x_k = \pm 1) = \tfrac12$. Partition $[0, t]$ into steps $\Delta t = t/N$ and define
 
 $$
 W_{n\Delta t} \;=\; W_{(n-1)\Delta t} \;+\; \sqrt{\Delta t}\,x_n, \qquad W_0 \;=\; 0.
@@ -28,7 +28,7 @@ W_{N\Delta t} \;=\; \sqrt{\Delta t}\,\sum_{n=1}^{N} x_n.
 \tag{3.2}
 $$
 
-Each increment has size $\pm\sqrt{\Delta t}$. The square-root scaling is forced: with $N$ steps per unit time, total variance is $N \cdot (\text{step variance})$, and keeping that bounded as $N \to \infty$ requires step variance $O(\Delta t)$, hence step size $O(\sqrt{\Delta t})$. Anything larger blows up; anything smaller collapses. The multiplicative version of Ch. 2 ($S \mapsto S e^{\pm\sigma\sqrt{\Delta t}}$) limits to GBM; the arithmetic version here limits to Brownian motion.
+Each increment has size $\pm\sqrt{\Delta t}$. The square-root scaling is forced: with $N$ steps per unit time, total variance is $N \cdot (\text{step variance})$, and keeping that bounded as $N \to \infty$ requires step variance $O(\Delta t)$, hence step size $O(\sqrt{\Delta t})$. Anything larger blows up; anything smaller collapses. The multiplicative version of Chapter 2 ($S \mapsto S e^{\pm\sigma\sqrt{\Delta t}}$) limits to GBM; the arithmetic version here limits to Brownian motion.
 
 ### 3.1.2 Moments of the walk
 
@@ -252,11 +252,11 @@ Memorisation trick. $\mathrm{d}W$ lives at scale $\sqrt{\mathrm{d}t}$, $\mathrm{
 
 *Every options trader on a US equity desk converts annualised vol to daily vol by dividing by 16. VIX = 16 means "expect $\sim$ 1% S\&P moves." VIX = 32 means "expect $\sim$ 2% moves." This is not a heuristic — it is the QV identity (3.19) evaluated at $t = 1/252$, and it is one of the few places in finance where a continuous-time identity is *directly falsifiable* against tick data on any given day.*
 
-**Context.** The CBOE Volatility Index (VIX) is a model-free 30-day implied vol on the S\&P 500, quoted in *annualised* units. On 14 May 2026 the VIX closed near 14; through 2024–2025 it traded in a 12–22 range outside of brief stress spikes (March 2020 COVID, August 2024 yen-carry unwind, April 2025 tariff shock). The trading floor's *rule of 16* — divide the VIX by 16 to get the implied 1-day standard deviation in percent — comes from $\sqrt{252} \approx 15.87$. So a VIX of 16 implies a 1-day SPX move of roughly $\pm 1\%$; a VIX of 32 implies $\pm 2\%$; a VIX of 80 (March 2020) implied $\pm 5\%$. Empirically: in 2024 the VIX averaged $\sim$ 15.7, predicting $\sim$ 0.98% daily moves, and the realised one-standard-deviation S\&P 500 daily move that year was 0.84% — within the same order of magnitude, with the small undershoot tracing to the well-known variance risk premium (implied vol structurally exceeds realised vol; see Ch 10–11).
+**Context.** The CBOE Volatility Index (VIX) is a model-free 30-day implied vol on the S\&P 500, quoted in *annualised* units. On 14 May 2026 the VIX closed near 14; through 2024–2025 it traded in a 12–22 range outside of brief stress spikes (March 2020 COVID, August 2024 yen-carry unwind, April 2025 tariff shock). The trading floor's *rule of 16* — divide the VIX by 16 to get the implied 1-day standard deviation in percent — comes from $\sqrt{252} \approx 15.87$. So a VIX of 16 implies a 1-day SPX move of roughly $\pm 1\%$; a VIX of 32 implies $\pm 2\%$; a VIX of 80 (March 2020) implied $\pm 5\%$. Empirically: in 2024 the VIX averaged $\sim$ 15.7, predicting $\sim$ 0.98% daily moves, and the realised one-standard-deviation S\&P 500 daily move that year was 0.84% — within the same order of magnitude, with the small undershoot tracing to the well-known variance risk premium (implied vol structurally exceeds realised vol; see Chapter 10–11).
 
 **Math mapping.** This is (3.19) made tradable. Model the S\&P log-price as Brownian under the risk-neutral measure with annualised volatility $\sigma$: $\mathrm dS_t/S_t = r\,\mathrm dt + \sigma\,\mathrm dW_t$, so $\mathrm d\log S_t = (r - \tfrac12\sigma^2)\,\mathrm dt + \sigma\,\mathrm dW_t$. The QV identity (3.19) gives $[\log S, \log S]_t = \sigma^2 t$. Equivalently, the variance of the log-return over horizon $\Delta t$ is $\sigma^2 \Delta t$ and the standard deviation is $\sigma\sqrt{\Delta t}$. With $\Delta t = 1/252$ trading days and $\sigma = $ VIX$/100$, this gives $\text{StDev}_{\text{daily}} = \text{VIX}/(100 \cdot \sqrt{252}) \approx \text{VIX}/1587$, and quoting the result in percent removes the factor of 100: $\text{StDev}_{\text{daily}}(\%) \approx \text{VIX}/\sqrt{252} \approx \text{VIX}/16$. The $\sqrt{t}$ scaling is *not* a model assumption — it is forced by the QV identity, which holds for any continuous semimartingale with absolutely continuous QV. So when the rule-of-16 prediction matches realised daily standard deviations, you are confirming that the path is locally Brownian; when it fails, the path has acquired roughness inconsistent with $[W, W]_t = t$.
 
-**Lesson.** Three failure modes a desk watches for. First, *gap moves at the open*: 17 Sept 2008 (Lehman week, S\&P opened $-4.7\%$ on a VIX-implied $\sim$ 2% one-day SD) and 16 March 2020 (COVID, S\&P open down $-7\%$ vs VIX-implied $\sim$ 5%) blew through the daily standard deviation by 2–3$\sigma$ each — the path is not continuous overnight, and overnight returns satisfy a different scaling regime than intraday returns (the QV of an overnight gap is *concentrated*, not spread out at $\sqrt t$). Second, *vol-of-vol regimes*: in stress episodes the VIX itself moves 20–30% intraday, so the rule-of-16 conversion using yesterday's VIX systematically under-predicts today's moves; this is the phenomenon Heston-style stochastic vol models (Ch 10) are built to capture. Third, *jump components*: equity microstructure has a jump component (earnings, central bank meetings, exchange-pause incidents) that contributes additional QV beyond the diffusive $\sigma^2 \,\mathrm dt$; the rule-of-16 implicitly assumes pure diffusion. Operationally, a desk computes a "realised-vs-implied ratio" daily — realised standard deviation of one-minute returns scaled to daily, divided by VIX/16 — and uses sustained excursions above 1.0 as a signal that the diffusive Brownian model is locally inadequate and one should trade vol-of-vol products (VVIX, variance-of-variance swaps) instead of plain vol.
+**Lesson.** Three failure modes a desk watches for. First, *gap moves at the open*: 17 Sept 2008 (Lehman week, S\&P opened $-4.7\%$ on a VIX-implied $\sim$ 2% one-day SD) and 16 March 2020 (COVID, S\&P open down $-7\%$ vs VIX-implied $\sim$ 5%) blew through the daily standard deviation by 2–3$\sigma$ each — the path is not continuous overnight, and overnight returns satisfy a different scaling regime than intraday returns (the QV of an overnight gap is *concentrated*, not spread out at $\sqrt t$). Second, *vol-of-vol regimes*: in stress episodes the VIX itself moves 20–30% intraday, so the rule-of-16 conversion using yesterday's VIX systematically under-predicts today's moves; this is the phenomenon Heston-style stochastic vol models (Chapter 10) are built to capture. Third, *jump components*: equity microstructure has a jump component (earnings, central bank meetings, exchange-pause incidents) that contributes additional QV beyond the diffusive $\sigma^2 \,\mathrm dt$; the rule-of-16 implicitly assumes pure diffusion. Operationally, a desk computes a "realised-vs-implied ratio" daily — realised standard deviation of one-minute returns scaled to daily, divided by VIX/16 — and uses sustained excursions above 1.0 as a signal that the diffusive Brownian model is locally inadequate and one should trade vol-of-vol products (VVIX, variance-of-variance swaps) instead of plain vol.
 
 ---
 
@@ -564,7 +564,7 @@ $$
 
 The first integral is an ordinary Riemann integral; the second is a stochastic integral of the type defined in (3.22).
 
-**Reading (3.41).** Drift + martingale: a bounded-variation Lebesgue piece plus an Itô integral that carries all the QV. This is the Doob–Meyer decomposition for Itô processes. Taking expectations kills the martingale and leaves $\mathbb{E}[f(t, W_t)] - f(0, 0) = \int_0^t \mathbb{E}[\partial_s f + \tfrac12 \partial_{ww}f]\,\mathrm{d}s$ — the engine of the Feynman–Kac derivations in Ch. 4.
+**Reading (3.41).** Drift + martingale: a bounded-variation Lebesgue piece plus an Itô integral that carries all the QV. This is the Doob–Meyer decomposition for Itô processes. Taking expectations kills the martingale and leaves $\mathbb{E}[f(t, W_t)] - f(0, 0) = \int_0^t \mathbb{E}[\partial_s f + \tfrac12 \partial_{ww}f]\,\mathrm{d}s$ — the engine of the Feynman–Kac derivations in Chapter 4.
 
 ![Itô vs classical chain rule on $f(W_t)=W_t^2$](figures/ch03-ito-vs-chain.png)
 *Monte-Carlo $\mathbb{E}[W_t^2]$ tracks the Itô prediction $t$ (green dashed), not the classical chain rule's $0$ (red dotted). The gap is the Itô correction $\tfrac12 f''\,\mathrm{d}t = \mathrm{d}t$ integrated from $0$ to $t$ — precisely the drift contribution that ordinary calculus discards.*
@@ -838,7 +838,7 @@ The integrated rate $\int_0^T r_u\,\mathrm{d}u$, needed for bond pricing in Chap
 ![OU vs GBM sample paths](figures/ch03-ou-vs-gbm.png)
 *Side-by-side comparison of the two workhorse SDEs. **Left:** GBM paths trend exponentially with multiplicative noise; the mean curve $S_0 e^{\mu t}$ grows without bound. **Right:** OU / Vasicek paths wobble around the long-run mean $\theta$; variance saturates at $\sigma^2/(2\kappa)$ so the ensemble never escapes. Mean-reversion is visually unmistakable.*
 
-![Two correlated Brownian motions generated via Cholesky $L=[1,0;\rho,\sqrt{1-\rho^2}]$ at $\rho=-0.6$, with the empirical increment scatter recovering the target correlation. This is the noise structure of Heston, where $\rho^{SPX,\sqrt{v}} \approx -0.7$ since 2010 (Ch. 10's empirical chapter appendix)](figures/ch03-sde-correlated.png)
+![Two correlated Brownian motions generated via Cholesky $L=[1,0;\rho,\sqrt{1-\rho^2}]$ at $\rho=-0.6$, with the empirical increment scatter recovering the target correlation. This is the noise structure of Heston, where $\rho^{SPX,\sqrt{v}} \approx -0.7$ since 2010 (Chapter 10's empirical chapter appendix)](figures/ch03-sde-correlated.png)
 
 ### 3.10.3 Constant-coefficient arithmetic BM
 
@@ -862,7 +862,7 @@ Arithmetic BM allows $X_t < 0$ (Gaussian support is all of $\mathbb{R}$); GBM ke
 
 ### 3.10.3b The Brownian Bridge
 
-A Brownian motion conditioned on its two endpoints is called a **Brownian Bridge** and plays a starring role in barrier-option Monte Carlo (Ch. 9), CDS calibration, and any path-conditioned simulation. Fix $T > 0$ and a real number $b$. The Brownian Bridge is the law of $W$ on $[0, T]$ conditional on $W_0 = 0$ and $W_T = b$:
+A Brownian motion conditioned on its two endpoints is called a **Brownian Bridge** and plays a starring role in barrier-option Monte Carlo (Chapter 9), CDS calibration, and any path-conditioned simulation. Fix $T > 0$ and a real number $b$. The Brownian Bridge is the law of $W$ on $[0, T]$ conditional on $W_0 = 0$ and $W_T = b$:
 
 $$
 B_t \;:=\; (W_t \mid W_0 = 0,\, W_T = b), \qquad t \in [0, T].
@@ -898,9 +898,9 @@ $$
 $$
 The mean-reversion to the pin $b$ accelerates as $t \to T$ — a forced landing. As a useful sanity check, the same drift pulls toward $tb/T$ in expectation, which is exactly (3.57b).
 
-![Free Brownian motion endpoints scatter freely (left) versus Brownian Bridge endpoints pinned at $b=0.4$ (right) — the conditioning that drives Monte-Carlo barrier-option corrections in Ch. 9](figures/ch03-bb-vs-bm.png)
+![Free Brownian motion endpoints scatter freely (left) versus Brownian Bridge endpoints pinned at $b=0.4$ (right) — the conditioning that drives Monte-Carlo barrier-option corrections in Chapter 9](figures/ch03-bb-vs-bm.png)
 
-**Where it matters.** Beyond the Ch. 9 barrier correction, the bridge controls (i) intra-day volatility of a daily-closed asset (open and close are observed; the conditional max/min has bridge laws), (ii) interpolation of yield-curve nodes between calibrated maturities, and (iii) every "fixed start, fixed end" stochastic model — e.g. central-bank rate paths between meetings where guidance pins the endpoints.
+**Where it matters.** Beyond the Chapter 9 barrier correction, the bridge controls (i) intra-day volatility of a daily-closed asset (open and close are observed; the conditional max/min has bridge laws), (ii) interpolation of yield-curve nodes between calibrated maturities, and (iii) every "fixed start, fixed end" stochastic model — e.g. central-bank rate paths between meetings where guidance pins the endpoints.
 
 ### 3.10.4 Summary of solved SDEs
 

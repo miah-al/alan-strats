@@ -2,7 +2,7 @@
 
 Chapters 1–2 introduced $\mathbb{Q}$ as *the* pricing measure. This chapter widens the lens: **every strictly positive tradable defines its own pricing measure**, and Girsanov's theorem says exactly how those measures are related at the Brownian-motion level.
 
-The payoff is large. Margrabe exchange options collapse to one-dimensional Black–Scholes calls (Ch. 8); caplets become driftless Black-76 expectations (Ch. 14); futures prices are martingales under a futures measure (Ch. 8); the market price of risk of Ch. 6 is just the $\mathbb{P}\to\mathbb{Q}$ Girsanov shift. The toolkit built here is reused without re-derivation in every later chapter.
+The payoff is large. Margrabe exchange options collapse to one-dimensional Black–Scholes calls (Chapter 8); caplets become driftless Black-76 expectations (Chapter 14); futures prices are martingales under a futures measure (Chapter 8); the market price of risk of Chapter 6 is just the $\mathbb{P}\to\mathbb{Q}$ Girsanov shift. The toolkit built here is reused without re-derivation in every later chapter.
 
 ---
 
@@ -538,7 +538,7 @@ Each application is the same template with different nouns plugged in.
 
 ## 5.7 Preview — the T-Forward and Annuity Measures
 
-Two interest-rate numeraires worth a preview; full treatment in Ch. 12–14.
+Two interest-rate numeraires worth a preview; full treatment in Chapter 12–14.
 
 ### 5.7.1 The $T$-forward measure
 
@@ -721,5 +721,5 @@ $$
 
 ---
 
-*Ch. 6 picks up the Black–Scholes PDE using market price of risk as the operational face of (5.29). Ch. 8 prices exchange options and options on futures via (5.41). Ch. 12–14 use the $T$-forward and annuity measures without re-derivation.*
+*Chapter 6 picks up the Black–Scholes PDE using market price of risk as the operational face of (5.29). Chapter 8 prices exchange options and options on futures via (5.41). Chapter 12–14 use the $T$-forward and annuity measures without re-derivation.*
 

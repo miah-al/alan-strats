@@ -482,19 +482,19 @@ which converges in distribution (Donsker's functional CLT) to Brownian motion $W
 
 $$A_t \;=\; A_0\, e^{(r - \tfrac{1}{2}\sigma^2)t \;+\; \sigma W_t}, \qquad dA_t \;=\; r\,A_t\,dt \;+\; \sigma\,A_t\,dW_t. \tag{2.75}$$
 
-Rigorous derivation needs Brownian motion, the stochastic integral, and Itô's lemma — all built in Ch. 3.
+Rigorous derivation needs Brownian motion, the stochastic integral, and Itô's lemma — all built in Chapter 3.
 
 The European call in the GBM limit is the Black–Scholes formula,
 
 $$C_0 \;=\; A_0\,\Phi(d_+) \;-\; K\,e^{-rT}\,\Phi(d_-), \qquad d_\pm \;=\; \frac{\ln(A_0/K) + (r \pm \tfrac{1}{2}\sigma^2)T}{\sigma\sqrt{T}}, \tag{2.76}$$
 
-derived directly via the measure-change split $(A_T - K)_+ = A_T \mathbf{1}_{\{A_T > K\}} - K \mathbf{1}_{\{A_T > K\}}$, pricing each piece under its natural numéraire (stock vs cash) and reading the exceedance probabilities as Gaussian tails. The same formula drops out of the Ch. 6 hedging argument once Itô is available.
+derived directly via the measure-change split $(A_T - K)_+ = A_T \mathbf{1}_{\{A_T > K\}} - K \mathbf{1}_{\{A_T > K\}}$, pricing each piece under its natural numéraire (stock vs cash) and reading the exceedance probabilities as Gaussian tails. The same formula drops out of the Chapter 6 hedging argument once Itô is available.
 
 Three takeaways from this chapter:
 
 1. The no-arbitrage price of any European claim is a discounted $\mathbb{Q}$-expectation of its payoff.
 2. Backward induction makes the expectation $O(N^2)$ and extends to American exercise.
-3. In the limit the tree becomes GBM and vanilla Euros become Black–Scholes — pinned down rigorously in Ch. 3–6.
+3. In the limit the tree becomes GBM and vanilla Euros become Black–Scholes — pinned down rigorously in Chapter 3–6.
 
 ---
 

@@ -1,6 +1,6 @@
 # Chapter 7 — Dynamic Hedging II: Greeks, Delta-Gamma, Vega, and Dividends
 
-Ch. 6 built the single-instrument delta hedge, the generalised BS PDE, and the vanilla Greeks. Here we enlarge the hedging basis — first to neutralise curvature (delta-gamma), then volatility (vega), then dividends — and account for transaction costs. The Itô machinery is unchanged; what grows is the hedge basis.
+Chapter 6 built the single-instrument delta hedge, the generalised BS PDE, and the vanilla Greeks. Here we enlarge the hedging basis — first to neutralise curvature (delta-gamma), then volatility (vega), then dividends — and account for transaction costs. The Itô machinery is unchanged; what grows is the hedge basis.
 
 ## 7.0 Chapter orientation
 
@@ -8,7 +8,7 @@ A delta hedge is *first-order* risk-free: the $\mathrm{d}W_t$ coefficient is zer
 
 Most higher Greeks are not hedgeable with the stock alone — stock has zero gamma, zero vega. To kill curvature or vol-level risk we add another traded option. The linear algebra is easy; the bookkeeping is where the subtleties live.
 
-Notation as in Ch. 6: $S_t$ stock, $g(t, S)$ a claim, $\Delta = \partial_S g$, $\Gamma = \partial_{SS} g$, $\mathcal{V} = \partial_\sigma g$. Expectations under $\mathbb{Q}$.
+Notation as in Chapter 6: $S_t$ stock, $g(t, S)$ a claim, $\Delta = \partial_S g$, $\Gamma = \partial_{SS} g$, $\mathcal{V} = \partial_\sigma g$. Expectations under $\mathbb{Q}$.
 
 ---
 
@@ -56,7 +56,7 @@ moneyness index.
 ![Call vs put delta across moneyness](figures/ch07-call-put-delta.png)
 *Put-call parity in delta form: $\Delta_{\mathrm{call}} - \Delta_{\mathrm{put}} = 1$ for every spot. The call delta rises from $0$ to $+1$ through the strike; the put delta sits a parallel unit below, running from $-1$ to $0$. A long call plus a short put with the same strike is always $100\%$ long the underlying.*
 
-Ch. 6's argument used one Greek (delta) because one Brownian was being neutralised. A delta-hedged position is delta-hedged only at the rebalance instant — between rebalances, the residuals (gamma, vega, etc.) are the dominant source of P&L variance. A flow desk that leaves gamma, vega, and dividends unmodelled isn't running a simplified BS hedge — it's running a book where residuals dominate. The residuals are the business.
+Chapter 6's argument used one Greek (delta) because one Brownian was being neutralised. A delta-hedged position is delta-hedged only at the rebalance instant — between rebalances, the residuals (gamma, vega, etc.) are the dominant source of P&L variance. A flow desk that leaves gamma, vega, and dividends unmodelled isn't running a simplified BS hedge — it's running a book where residuals dominate. The residuals are the business.
 
 ---
 
@@ -541,7 +541,7 @@ A 1-point vol move costs the option 20 cents — a substantial slice of the prem
 
 ### 7.3.2 Volatility as a hidden state variable
 
-Once $\sigma$ becomes stochastic (Heston, SABR, local-vol — Ch. 10), the option price is $g(t, S_t, \sigma_t)$ and Itô picks up extra terms:
+Once $\sigma$ becomes stochastic (Heston, SABR, local-vol — Chapter 10), the option price is $g(t, S_t, \sigma_t)$ and Itô picks up extra terms:
 
 $$
 \begin{aligned}
@@ -773,7 +773,7 @@ $r - q$. The market is still risk-neutral on the *reinvestment* of
 dividends, but the quoted price lags the reinvested total return by the
 dividend yield.
 
-$q = 0$ recovers Ch. 6's PDE — the dividend correction enters the drift only.
+$q = 0$ recovers Chapter 6's PDE — the dividend correction enters the drift only.
 
 ### 7.4.5 The Black-Scholes-Merton formula with dividends
 
@@ -789,7 +789,7 @@ $$
 d_\pm \;=\; \frac{\ln(S/K) \;+\; \big(r - q \pm \tfrac{1}{2}\sigma^2\big)(T - t)}{\sigma\sqrt{T - t}}. \tag{7.52}
 $$
 
-Three features. The stock term carries $e^{-q(T-t)}$ — the option holder doesn't receive dividends, so the effective stock value is $S e^{-q(T-t)}$. The moneyness drift becomes $r - q$ relative to the forward $F_t = S_t e^{(r-q)(T-t)}$. Setting $q = 0$ recovers Ch. 6; treating $K$ as a stochastic asset's "self-dividend" recovers Margrabe (Ch. 8).
+Three features. The stock term carries $e^{-q(T-t)}$ — the option holder doesn't receive dividends, so the effective stock value is $S e^{-q(T-t)}$. The moneyness drift becomes $r - q$ relative to the forward $F_t = S_t e^{(r-q)(T-t)}$. Setting $q = 0$ recovers Chapter 6; treating $K$ as a stochastic asset's "self-dividend" recovers Margrabe (Chapter 8).
 
 For a European put, the analogous formula is
 
@@ -810,7 +810,7 @@ $$
 g(t, S) \;=\; e^{-r(T-t)}\!\left[F_t\,\Phi(d_+) \;-\; K\,\Phi(d_-)\right], \tag{7.55}
 $$
 
-— the classical formula with spot replaced by forward. Pricing against the forward numeraire absorbs the dividend yield (Ch. 8).
+— the classical formula with spot replaced by forward. Pricing against the forward numeraire absorbs the dividend yield (Chapter 8).
 
 ### 7.4.6 Delta of a dividend-paying call
 
@@ -846,13 +846,13 @@ $$
 g(t, F) \;=\; e^{-r(T - t)}\,\mathbb{E}^{\mathbb{Q}}_t[\varphi(F_T)], \tag{7.59}
 $$
 
-For $\varphi(F) = (F - K)_+$ this evaluates to (7.55) — Black-76, which reappears in Ch. 8, 13, and 14 with only the definition of "the forward" changing. *Dividends tilt the drift; they do not change the structure.*
+For $\varphi(F) = (F - K)_+$ this evaluates to (7.55) — Black-76, which reappears in Chapter 8, 13, and 14 with only the definition of "the forward" changing. *Dividends tilt the drift; they do not change the structure.*
 
 ---
 
 ## 7.5 Transaction costs and the self-financing bookkeeping
 
-Self-financing intuitively says no external cash flows. But adjusting weights $(\alpha_t, \beta_t, \gamma_t)$ creates price-driven cash flows, and the naive "$\mathrm{d}V = \alpha\,\mathrm{d}S + \beta\,\mathrm{d}M$" only holds with the right covariation bookkeeping. Ch. 6 elided this; we revisit it here to handle transaction costs and stochastic hedge weights.
+Self-financing intuitively says no external cash flows. But adjusting weights $(\alpha_t, \beta_t, \gamma_t)$ creates price-driven cash flows, and the naive "$\mathrm{d}V = \alpha\,\mathrm{d}S + \beta\,\mathrm{d}M$" only holds with the right covariation bookkeeping. Chapter 6 elided this; we revisit it here to handle transaction costs and stochastic hedge weights.
 
 ### 7.5.1 Self-financing revisited — the covariation terms
 

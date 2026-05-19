@@ -351,7 +351,7 @@ def ch03():
     ax.bar(x + width/2, B, width, label="Asset B", color="#e07a2a")
     ax.set_xticks(x); ax.set_xticklabels(states)
     ax.set_ylabel("Price ($)")
-    ax.set_title("Two-asset state prices (Ch 3 example)")
+    ax.set_title("Two-asset state prices (Chapter 3 example)")
     ax.legend()
     save("ch03-asset-states.png")
 

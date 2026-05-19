@@ -55,7 +55,7 @@ def fig_heat_kernel():
     ax.set_xlabel("$x$")
     ax.set_ylabel(r"$u(t, x)$")
     ax.set_title(r"Heat-kernel evolution of a peaked initial condition: $u_t = \frac{1}{2} u_{xx}$" +
-                 "\nMass spreads as $\\sqrt{t}$ — every European option price evolves under exactly this PDE (Ch. 6)")
+                 "\nMass spreads as $\\sqrt{t}$ — every European option price evolves under exactly this PDE (Chapter 6)")
     ax.legend(loc="upper right", frameon=False, fontsize=9)
     _save("ch04-heat-kernel.png")
 
@@ -191,7 +191,7 @@ def fig_fd_vs_mc():
     ax.set_xlabel("computational cost (proxy: # ops)")
     ax.set_ylabel(r"absolute error vs truth $\mathbb{E}[X_T^2]=1$")
     ax.set_title("FD vs MC convergence on a 1-D Feynman-Kac problem\n"
-                 "FD wins at low dimension; MC wins above the curse-of-dimensionality threshold (Ch. 9)")
+                 "FD wins at low dimension; MC wins above the curse-of-dimensionality threshold (Chapter 9)")
     ax.legend(loc="upper right", frameon=False, fontsize=10)
     _save("ch04-fd-vs-mc.png")
 

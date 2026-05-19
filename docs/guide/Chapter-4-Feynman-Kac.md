@@ -1,8 +1,8 @@
 # Chapter 4 — Feynman-Kac and the SDE-PDE Bridge
 
-This chapter uses the Ch. 3 toolkit for its first major payoff: the *Feynman–Kac* theorem, the bidirectional bridge between a linear parabolic PDE and the conditional expectation of a diffusion-driven payoff. Every pricing problem in the rest of the guide — Black–Scholes (Ch. 6), Vasicek bonds (Ch. 12), caplets (Ch. 14) — is one substitution into the same template.
+This chapter uses the Chapter 3 toolkit for its first major payoff: the *Feynman–Kac* theorem, the bidirectional bridge between a linear parabolic PDE and the conditional expectation of a diffusion-driven payoff. Every pricing problem in the rest of the guide — Black–Scholes (Chapter 6), Vasicek bonds (Chapter 12), caplets (Chapter 14) — is one substitution into the same template.
 
-We establish the duality in three forms — zero-drift BM, constant-coefficient drifted BM with discounting, and full state-time-dependent coefficients — and compute three worked examples to see the machinery turn. The Black–Scholes derivation itself is deferred to Ch. 6 (twice: once via hedging, once as a Feynman–Kac corollary); measure change is Ch. 5.
+We establish the duality in three forms — zero-drift BM, constant-coefficient drifted BM with discounting, and full state-time-dependent coefficients — and compute three worked examples to see the machinery turn. The Black–Scholes derivation itself is deferred to Chapter 6 (twice: once via hedging, once as a Feynman–Kac corollary); measure change is Chapter 5.
 
 ## 4.1 Motivation — Why an SDE-PDE Bridge Matters
 
@@ -10,7 +10,7 @@ Every pricing problem reduces to one of two computations: solve a backward parab
 
 Routing is practical. Low-dimensional smooth problems (single-asset vanilla, single-rate caplet) are faster via PDE — a Crank–Nicolson grid converges in milliseconds. High-dimensional or path-dependent problems (baskets, exotics, multi-factor rates) are faster via Monte Carlo — $1/\sqrt{N_{\text{paths}}}$ error independent of state dimension. American features favour PDEs (exercise boundary embeds in the grid); path-dependent features favour MC (track a functional along the path). Feynman–Kac guarantees the answers agree.
 
-Every linear pricing PDE in this guide — Black–Scholes, Vasicek, Hull–White, Heston, the caplet equations of Ch. 14 — is a Feynman–Kac PDE for some SDE and some discount rate. Mastering the bridge in its full state-dependent form gives a single theorem that, properly instantiated, prices every linear problem in the guide.
+Every linear pricing PDE in this guide — Black–Scholes, Vasicek, Hull–White, Heston, the caplet equations of Chapter 14 — is a Feynman–Kac PDE for some SDE and some discount rate. Mastering the bridge in its full state-dependent form gives a single theorem that, properly instantiated, prices every linear problem in the guide.
 
 ---
 
@@ -46,7 +46,7 @@ The PDE in $(4.1)$ is the reverse heat equation — the Kolmogorov backward equa
 ![Heat-equation analogy](figures/ch04-heat-analogy.png)
 *As $t$ moves backward from $T$ toward $0$, the terminal payoff $\varphi$ diffuses and smooths: kinks (vanilla calls) round off, step functions (digitals) bloom into Gaussian-shaped bumps. Every option price is literally a smoothed payoff, where the smoothing kernel is a Gaussian of width $\sqrt{T-t}$.*
 
-![Heat-kernel evolution of a peaked initial profile under $u_t = \tfrac{1}{2} u_{xx}$ at $t = 0.05, 0.2, 0.5, 1.0, 2.0$. Mass spreads as $\sqrt{t}$ — this *is* the Black-Scholes price evolution after the standard log-transform (Ch. 6), and is why a digital option printed sharply at expiry diffuses into a smooth bump as we step back in time](figures/ch04-heat-kernel.png)
+![Heat-kernel evolution of a peaked initial profile under $u_t = \tfrac{1}{2} u_{xx}$ at $t = 0.05, 0.2, 0.5, 1.0, 2.0$. Mass spreads as $\sqrt{t}$ — this *is* the Black-Scholes price evolution after the standard log-transform (Chapter 6), and is why a digital option printed sharply at expiry diffuses into a smooth bump as we step back in time](figures/ch04-heat-kernel.png)
 
 ### 4.2.2 What the expectation is
 

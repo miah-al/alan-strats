@@ -1,8 +1,8 @@
 # Chapter 6 — Dynamic Hedging I: Self-Financing Strategies and the Black-Scholes PDE
 
-With Ch. 3–5 in hand, we derive the Black–Scholes PDE from first principles. Three acts: build the **self-financing replicating portfolio**, force zero local risk, and read off the **market price of risk** (which is the Girsanov shift from $\mathbb{P}$ to $\mathbb{Q}$ — Ch. 5). Derive the **generalised BS PDE**, specialise to GBM, and read off the closed forms for calls, puts, and digitals; then check the same PDE drops out of a Feynman–Kac martingale argument (Ch. 4). Finally, turn to **discrete rebalancing**: hedge-error distribution, $\sqrt{\Delta t}$ variance scaling, and a move-based alternative.
+With Chapter 3–5 in hand, we derive the Black–Scholes PDE from first principles. Three acts: build the **self-financing replicating portfolio**, force zero local risk, and read off the **market price of risk** (which is the Girsanov shift from $\mathbb{P}$ to $\mathbb{Q}$ — Chapter 5). Derive the **generalised BS PDE**, specialise to GBM, and read off the closed forms for calls, puts, and digitals; then check the same PDE drops out of a Feynman–Kac martingale argument (Chapter 4). Finally, turn to **discrete rebalancing**: hedge-error distribution, $\sqrt{\Delta t}$ variance scaling, and a move-based alternative.
 
-Notation follows Ch. 3. $W_t$ is $\mathbb{P}$-Brownian; $\widetilde W_t$ is its $\mathbb{Q}$-counterpart after the measure change.
+Notation follows Chapter 3. $W_t$ is $\mathbb{P}$-Brownian; $\widetilde W_t$ is its $\mathbb{Q}$-counterpart after the measure change.
 
 ---
 
@@ -312,7 +312,7 @@ $$
 \mu^f_t - r_t \;=\; \lambda_t\,\sigma^f_t\;}. \tag{6.20}
 $$
 
-> **Connection to Girsanov.** Ch. 5 says: a Girsanov shift by $\lambda_t$ makes $\widetilde W_t = W_t + \int_0^t \lambda_s\,\mathrm{d}s$ a $\mathbb{Q}$-Brownian motion, and $X$'s drift becomes $\mu^x_t - \sigma^x_t \lambda_t$. (6.20) picks out *exactly* the shift that neutralises the risk premium: under $\mathbb{Q}$, every traded claim drifts at $r_t$. Market price of risk and Girsanov shift are the same scalar.
+> **Connection to Girsanov.** Chapter 5 says: a Girsanov shift by $\lambda_t$ makes $\widetilde W_t = W_t + \int_0^t \lambda_s\,\mathrm{d}s$ a $\mathbb{Q}$-Brownian motion, and $X$'s drift becomes $\mu^x_t - \sigma^x_t \lambda_t$. (6.20) picks out *exactly* the shift that neutralises the risk premium: under $\mathbb{Q}$, every traded claim drifts at $r_t$. Market price of risk and Girsanov shift are the same scalar.
 
 Rewriting (6.20) as $\mu^f_t = r_t + \lambda_t \sigma^f_t$: expected return = risk-free rate + vol $\times$ price-per-unit-vol. Under $\mathbb{Q}$ the risk premium is zero (the replicator sees no risk). The shift is drift-only, leaving diffusion measure-invariant — gamma and vega P&L are unchanged. Long-run US equity Sharpe of ~0.4 is the empirical $\lambda$; spikes in crises.
 
@@ -351,7 +351,7 @@ $$
 
 **Generalised Black-Scholes PDE.** Backwards parabolic; the terminal $f(T, x) = \varphi(x)$ anchors the payoff shape and the PDE propagates it back. Sharp features (kinks, steps, cliffs) smooth out as time runs backward — diffusion smearing.
 
-The drift coefficient $\mu^x - \sigma^x \lambda$ is the *risk-neutral* drift, not the physical one — exactly the Girsanov shift (Ch. 5). The $\tfrac12 (\sigma^x)^2 \partial_{xx} f$ term is the Itô curvature, independent of drift — which is why option prices do not depend on $\mu$. The RHS $r f$ says the replicator grows at the risk-free rate.
+The drift coefficient $\mu^x - \sigma^x \lambda$ is the *risk-neutral* drift, not the physical one — exactly the Girsanov shift (Chapter 5). The $\tfrac12 (\sigma^x)^2 \partial_{xx} f$ term is the Itô curvature, independent of drift — which is why option prices do not depend on $\mu$. The RHS $r f$ says the replicator grows at the risk-free rate.
 
 > **What happens when $\Delta$ is wrong.** If $\alpha_t \neq \partial_x f$, the $\mathrm{d}W_t$ coefficient is non-zero. Hedge error over $[t, t+\mathrm{d}t]$ is $(\alpha_t \sigma^g_t g_t - \sigma^f_t f_t)\,\mathrm{d}W_t$ — mean-zero noise plus a second-order $\tfrac12 \partial_{xx} f (\mathrm{d}X_t^2 - \sigma^2 X_t^2 \mathrm{d}t)$ that accumulates as realised-minus-implied variance. This is the **P&L attribution**: discretely-hedged short gamma loses money when realised vol exceeds implied. See `ch06-hedge-error.png`.
 
@@ -419,7 +419,7 @@ $$
 
 ## 6.7 Black-Scholes formulas for call, put, and digital
 
-The closed forms follow from (6.27) by ansatz, by direct $\mathbb{Q}$-expectation under (6.25a), or via Feynman–Kac (Ch. 4). Derivation in §6.7A.
+The closed forms follow from (6.27) by ansatz, by direct $\mathbb{Q}$-expectation under (6.25a), or via Feynman–Kac (Chapter 4). Derivation in §6.7A.
 
 **Vanilla call.** For $\varphi(x) = (x - K)_+$,
 

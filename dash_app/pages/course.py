@@ -27,23 +27,40 @@ _FIG_DIR    = _GUIDE_DIR / "figures"
 # ── Chapter discovery ─────────────────────────────────────────────────────
 
 _PARTS: list[tuple[str, range]] = [
-    ("Part I — Discrete-Time Models",              range(1, 3)),   # CH01–CH02
-    ("Part II — Continuous-Time Models",           range(3, 6)),   # CH03–CH05
-    ("Part III — Equity Derivatives",              range(6, 11)),  # CH06–CH10
-    ("Part IV — Interest-Rate Models",             range(11, 14)), # CH11–CH13
-    ("Part V — Stochastic Vol & Rate Derivatives", range(14, 16)), # CH14–CH15
+    ("Prerequisites",                                  range(0, 1)),    # Chapter 0
+    ("Part I — Discrete-Time Models",                  range(1, 3)),    # Chapter 1–2
+    ("Part II — Continuous-Time Models",               range(3, 6)),    # Chapter 3–5
+    ("Part III — Equity Derivatives",                  range(6, 10)),   # Chapter 6–9
+    ("Part IV — Stochastic Volatility",                range(10, 11)),  # Chapter 10
+    ("Part V — Calibration & Interest-Rate Models",    range(11, 15)),  # Chapter 11–14
+    ("Part VI — Capstone",                             range(15, 16)),  # Chapter 15
+    ("Bibliography",                                   range(16, 17)),  # Chapter 16
 ]
+
+
+_CHAPTER_STEM_RE = re.compile(r"^Chapter-(\d+)-(.+)$")
+
+
+def _parse_chapter_stem(stem: str) -> tuple[int, str] | None:
+    """`Chapter-13-Rate-Derivative-Applications` → (13, 'Rate Derivative Applications')."""
+    m = _CHAPTER_STEM_RE.match(stem)
+    if not m:
+        return None
+    return int(m.group(1)), m.group(2).replace("-", " ")
 
 
 def _chapter_options() -> list[dict]:
     """Flat list of chapter options (value = filename stem), used by the callback."""
-    opts = []
-    for p in sorted(_GUIDE_DIR.glob("CH*.md")):
-        stem = p.stem
-        num = stem[2:4]
-        title = stem[5:].replace("-", " ")
-        opts.append({"label": f"{num} — {title}", "value": stem, "num": int(num)})
-    return opts
+    raw: list[tuple[int, str, str]] = []
+    for p in _GUIDE_DIR.glob("Chapter-*.md"):
+        parsed = _parse_chapter_stem(p.stem)
+        if parsed is None:
+            continue
+        num, title = parsed
+        raw.append((num, title, p.stem))
+    raw.sort(key=lambda t: t[0])
+    return [{"label": f"Chapter {num} — {title}", "value": stem, "num": num}
+            for num, title, stem in raw]
 
 
 def _grouped_chapter_options() -> list[tuple[str, list[dict]]]:
@@ -170,7 +187,7 @@ def layout() -> html.Div:
     return html.Div([
         html.H1("Quant Course", style={"color": T.TEXT_PRIMARY, "fontSize": "22px",
                                          "fontWeight": "700", "marginBottom": "4px"}),
-        html.Div("12-chapter study guide on arbitrage pricing, "
+        html.Div("16-chapter study guide on arbitrage pricing, "
                  "stochastic-vol, short-rate models and rate derivatives.",
                  style={"color": T.TEXT_SEC, "fontSize": "13px",
                         "marginBottom": "20px"}),
@@ -355,8 +372,13 @@ def _build_print_html(only_chapter: str | None = None) -> str:
         readme = _GUIDE_DIR / "README.md"
         if readme.is_file():
             chapters.append(readme.read_text(encoding="utf-8"))
-        # Every chapter in order
-        for p in sorted(_GUIDE_DIR.glob("CH*.md")):
+        # Every chapter in order (numeric, so Chapter 10 sorts after Chapter 9)
+        chapter_paths = [
+            (parsed[0], p) for p in _GUIDE_DIR.glob("Chapter-*.md")
+            if (parsed := _parse_chapter_stem(p.stem)) is not None
+        ]
+        chapter_paths.sort(key=lambda t: t[0])
+        for _, p in chapter_paths:
             chapters.append(p.read_text(encoding="utf-8"))
 
     combined_md = "\n\n".join(_inline_figures_for_print(c) for c in chapters)

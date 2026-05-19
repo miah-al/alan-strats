@@ -321,6 +321,74 @@ def fig_bb_survival():
 
 
 # ---------------------------------------------------------------------
+def fig_reflection_principle():
+    """A Brownian path that touches level u at time tau, plus its reflection
+    after tau across y=u. Visualises §9.7.2 — the one-to-one correspondence
+    between "touched u, ended below u" and "ended above u".
+    """
+    np.random.seed(7)
+    T = 1.0
+    N = 1000
+    dt = T / N
+    times = np.linspace(0.0, T, N + 1)
+    u = 1.0   # barrier level
+
+    # Sample a Brownian path that DOES cross u and ENDS below u — we draw paths
+    # until we find one with that signature, so the figure is unambiguous.
+    while True:
+        z = np.random.standard_normal(N)
+        W = np.concatenate([[0.0], np.cumsum(z) * np.sqrt(dt)])
+        crosses = (W >= u).any()
+        ends_below = W[-1] < u
+        if crosses and ends_below and W[-1] > -1.5 and W[-1] < u - 0.05:
+            break
+
+    # First-hit time index tau_idx (first index where W >= u)
+    tau_idx = int(np.argmax(W >= u))
+
+    # Reflected path: same on [0, tau], mirror across u on (tau, T]
+    W_refl = W.copy()
+    W_refl[tau_idx:] = 2 * u - W[tau_idx:]
+
+    fig, ax = plt.subplots(figsize=(9.5, 5.5))
+
+    # Pre-hit segment shared by both paths
+    ax.plot(times[: tau_idx + 1], W[: tau_idx + 1],
+            color="#1e3a8a", lw=1.7, label="Original path $W_t$")
+    # Original continues below
+    ax.plot(times[tau_idx:], W[tau_idx:], color="#1e3a8a", lw=1.7)
+    # Reflected continues above
+    ax.plot(times[tau_idx:], W_refl[tau_idx:],
+            color="#7f7f7f", lw=1.7, linestyle="--",
+            label=r"Reflected path (mirror of $W_t$ across $y=u$ for $t>\tau$)")
+
+    # Barrier and first-hit markers
+    ax.axhline(u, color="#c2410c", lw=1.4, linestyle=":")
+    ax.text(0.02, u + 0.04, "$u$", color="#c2410c", fontsize=12, fontweight="bold")
+    ax.axvline(times[tau_idx], color="#999999", lw=0.8, linestyle="--", alpha=0.6)
+    ax.text(times[tau_idx] + 0.01, ax.get_ylim()[0] + 0.15, r"$\tau$", fontsize=11)
+    ax.scatter([times[tau_idx]], [u], color="#c2410c", s=55, zorder=5,
+               label=r"First-hit $\tau$ of level $u$")
+
+    # End-point markers
+    ax.scatter([T], [W[-1]],      color="#1e3a8a", s=55, zorder=5)
+    ax.scatter([T], [W_refl[-1]], color="#7f7f7f", s=55, zorder=5,
+               facecolors="none", edgecolors="#7f7f7f", linewidths=1.7)
+
+    ax.set_xlabel("$t$")
+    ax.set_ylabel(r"$W_t$")
+    ax.set_xlim(0, T)
+    ax.set_title(
+        "Reflection principle: every path that touches $u$ and ends below $u$ pairs one-to-one\n"
+        r"with a reflected path that ends above $u$. Both are equally likely.  $\Rightarrow\;\mathbb{P}(M_T\geq u)=2\,\mathbb{P}(W_T\geq u)$",
+        fontsize=11,
+    )
+    ax.legend(loc="lower left", fontsize=9.5, framealpha=0.95)
+    fig.tight_layout()
+    _save("ch09-reflection-principle.png")
+
+
+# ---------------------------------------------------------------------
 if __name__ == "__main__":
     fig_sqrt_n_error()
     fig_antithetic()
@@ -328,4 +396,5 @@ if __name__ == "__main__":
     fig_sobol_vs_pseudo()
     fig_bb_barrier()
     fig_bb_survival()
+    fig_reflection_principle()
     print("Chapter 9 extras: done")

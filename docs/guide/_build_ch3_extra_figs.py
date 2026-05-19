@@ -129,7 +129,7 @@ def fig_bb_vs_bm():
     ax.set_title(r"Brownian Bridge — endpoints pinned at $0$ and $b$")
     ax.legend(loc="upper left", frameon=False, fontsize=9)
 
-    fig.suptitle("Brownian Bridge conditions a BM on its endpoints — the distribution between is exactly a bridge, used in MC barrier-option corrections (Ch. 9)",
+    fig.suptitle("Brownian Bridge conditions a BM on its endpoints — the distribution between is exactly a bridge, used in MC barrier-option corrections (Chapter 9)",
                  fontsize=10.5)
     fig.tight_layout(rect=(0, 0, 1, 0.92))
     _save("ch03-bb-vs-bm.png")

@@ -2,7 +2,7 @@
 
 A European call on the December S&P 500 futures looks identical to a call on the spot index, but the pricing PDE loses its drift term, the closed form drops a factor of $e^{-rT}$, and the underlying dynamics under $\mathbb{Q}$ are driftless rather than GBM with drift $r$. The reason: *entering a futures position costs nothing*.
 
-This chapter consolidates the self-financing derivation of the Black PDE, the parallel Feynman–Kac argument (Ch. 4), the Bachelier and OU futures examples, the Margrabe exchange option (the cleanest two-asset numeraire change in the guide), and the convexity adjustment between futures and forwards under stochastic rates.
+This chapter consolidates the self-financing derivation of the Black PDE, the parallel Feynman–Kac argument (Chapter 4), the Bachelier and OU futures examples, the Margrabe exchange option (the cleanest two-asset numeraire change in the guide), and the convexity adjustment between futures and forwards under stochastic rates.
 
 **Notation.** We write $F_t(T)$ for both forward and futures, distinguishing only when needed. Under deterministic rates they are equal (§8.2); under stochastic rates they differ by the §8.11 convexity adjustment. Sections 8.3–8.10 treat them interchangeably; only §8.11 separates them.
 
@@ -53,7 +53,7 @@ Under constant rates this reduces to (8.3). The formula depends only on spot and
 
 **Forward price vs value.** The forward *value* of an existing contract with strike $K_0$ is $\Pi_t = (F^{\text{fwd}}_t(T) - K_0) P(t, T)$; the forward *price* is the strike that makes a newly signed contract worth zero. The market quotes the latter; mark-to-market produces the former.
 
-Under the $T$-forward measure $\mathbb{Q}^T$ with numeraire $P(t, T)$, the ratio $S_t/P(t, T) = F^{\text{fwd}}_t(T)$ is a martingale (Ch. 5 with $A = P(\cdot, T)$, $F = S$). This is why forwards admit Black-type formulas even under stochastic rates — under $\mathbb{Q}^T$ the forward is driftless. Used heavily in Ch. 13 for bond options.
+Under the $T$-forward measure $\mathbb{Q}^T$ with numeraire $P(t, T)$, the ratio $S_t/P(t, T) = F^{\text{fwd}}_t(T)$ is a martingale (Chapter 5 with $A = P(\cdot, T)$, $F = S$). This is why forwards admit Black-type formulas even under stochastic rates — under $\mathbb{Q}^T$ the forward is driftless. Used heavily in Chapter 13 for bond options.
 
 **Cost of carry, generalised.** $F^{\text{fwd}} = S/P$ generalises to
 other asset classes by adjusting the carry leg:
@@ -365,7 +365,7 @@ $$
 \frac{g(t, F)}{P(t, T_0)} \;=\; \mathbb{E}^{\mathbb{Q}^{T_0}}\!\left[\,\varphi(F_{T_0}(T))\,\big|\,F_t(T) = F\,\right] \tag{8.27}
 $$
 
-is the cleaner starting point (Ch. 13). Integrating (8.14) gives the GBM and Bachelier marginals:
+is the cleaner starting point (Chapter 13). Integrating (8.14) gives the GBM and Bachelier marginals:
 
 $$
 F_{T_0}(T) \;=\; F_t(T)\,\exp\!\left\{-\tfrac12 \sigma^2 (T_0 - t) + \sigma\,(\widehat{W}_{T_0} - \widehat{W}_t)\right\} \tag{8.28}
@@ -472,7 +472,7 @@ $$
 
 The analogous BS spot call (same parameters) gives $\approx 4.62$ — higher than Black '76 because the spot drifts at $r > 0$ under $\mathbb{Q}$ while the futures is a martingale. The difference is the drift term cumulating over $\tau$.
 
-**Why Black is ubiquitous.** Beyond literal futures options, Black '76 prices caps, floors, swaptions (Ch. 14), commodity-forward options, and ATM options on forward yield curves. The mechanism is always the same: any underlying that is a martingale under *some* numeraire reduces the PDE to (8.25). In the LIBOR/SOFR caplet setting, $L(t, T_1, T_2)$ is a martingale under the $T_2$-forward measure and the caplet price is Black '76 with $F = L$.
+**Why Black is ubiquitous.** Beyond literal futures options, Black '76 prices caps, floors, swaptions (Chapter 14), commodity-forward options, and ATM options on forward yield curves. The mechanism is always the same: any underlying that is a martingale under *some* numeraire reduces the PDE to (8.25). In the LIBOR/SOFR caplet setting, $L(t, T_1, T_2)$ is a martingale under the $T_2$-forward measure and the caplet price is Black '76 with $F = L$.
 
 ![Black '76 drift-cancel schematic](figures/ch08-drift-cancel.png)
 *Drift-cancel schematic — the first-derivative drift term in the Black PDE
@@ -754,7 +754,7 @@ practice (see Chapter 13 multi-factor short-rate and Chapter 14 LIBOR market mod
 
 ## 8.10 Margrabe Exchange Option — A Numeraire Change Tour de Force
 
-The Margrabe exchange option is the cleanest testbed for Ch. 5's numeraire-change machinery. A frontal 2-D PDE is painful; a numeraire change reduces it to a 1-D Black–Scholes put with no interest-rate discount visible. Principle: *if the payoff has a natural unit, price in that unit*.
+The Margrabe exchange option is the cleanest testbed for Chapter 5's numeraire-change machinery. A frontal 2-D PDE is painful; a numeraire change reduces it to a 1-D Black–Scholes put with no interest-rate discount visible. Principle: *if the payoff has a natural unit, price in that unit*.
 
 ### 8.10.1 Setup
 
