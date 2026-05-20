@@ -19,6 +19,19 @@ from dash_app import theme as T
 _ACCOUNT_ID = 1
 
 
+def _pretty_strategy(name: str) -> str:
+    """Map a strategy slug (e.g. 'hmm_regime') to its display label
+    (e.g. 'HMM Regime Classifier'). Falls back to the input unchanged
+    if no mapping is registered."""
+    if not name:
+        return name
+    try:
+        from dash_app.pages.strategies.registry import _SLUG_TO_LABEL
+        return _SLUG_TO_LABEL.get(str(name), str(name))
+    except Exception:
+        return str(name)
+
+
 def _get_engine():
     from db.client import get_engine
     return get_engine()
@@ -1378,7 +1391,7 @@ def refresh_all(_n, _btn):
             else grp["Symbol"].iloc[0] if not grp.empty else "?"
         )
         ne = _net_entry(grp)
-        strategy = str(grp["StrategyName"].iloc[0]) if not grp.empty else "?"
+        strategy = _pretty_strategy(str(grp["StrategyName"].iloc[0])) if not grp.empty else "?"
 
         # DTE — earliest option expiration
         dte = None
@@ -1504,7 +1517,7 @@ def refresh_all(_n, _btn):
         pnl = r.get("P&L $", 0) or 0
         closed_data.append({
             "Underlying": str(r.get("Underlying", "?")),
-            "Strategy":   str(r.get("Strategy", "?")),
+            "Strategy":   _pretty_strategy(str(r.get("Strategy", "?"))),
             "Open Date":  str(r.get("Open Date", ""))[:10],
             "Close Date": str(r.get("Close Date", ""))[:10],
             "P&L":        f"{'+'if pnl>=0 else ''}${pnl:,.2f}",
@@ -1563,7 +1576,7 @@ def refresh_all(_n, _btn):
             txns_data.append({
                 "Date":       str(r.get("BusinessDate", ""))[:10],
                 "Underlying": str(r.get("Underlying", "")),
-                "Strategy":   str(r.get("StrategyName", "")),
+                "Strategy":   _pretty_strategy(str(r.get("StrategyName", ""))),
                 "Symbol":     str(r.get("Symbol", "")),
                 "LegType":    str(r.get("LegType", "")),
                 "Direction":  dirn,
@@ -1663,7 +1676,7 @@ def build_modal_body(tgid):
         if "Underlying" in grp.columns and not grp["Underlying"].dropna().empty
         else grp["Symbol"].iloc[0] if not grp.empty else "?"
     )
-    strategy  = str(grp["StrategyName"].iloc[0]) if not grp.empty else "?"
+    strategy  = _pretty_strategy(str(grp["StrategyName"].iloc[0])) if not grp.empty else "?"
     open_date = str(grp["BusinessDate"].min())[:10] if not grp.empty else ""
     ne        = _net_entry(grp)
     ne_str    = f"{'+' if ne >= 0 else ''}${ne:,.2f}"
@@ -2773,7 +2786,7 @@ def get_open_trade_groups_simple(txns_df: "pd.DataFrame") -> dict:
         und = (grp["Underlying"].dropna().iloc[0]
                if "Underlying" in grp.columns and not grp["Underlying"].dropna().empty
                else grp["Symbol"].iloc[0] if not grp.empty else "?")
-        strat = str(grp["StrategyName"].iloc[0]) if not grp.empty else "?"
+        strat = _pretty_strategy(str(grp["StrategyName"].iloc[0])) if not grp.empty else "?"
         # Earliest transaction date for this group
         open_date = ""
         for date_col in ("BusinessDate", "Date", "CreatedAt"):

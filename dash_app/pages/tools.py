@@ -1501,6 +1501,7 @@ def _render_guide(slug):
         "momentum_factor":       "dash_app.guide_charts.momentum_factor_charts",
         "momentum_12_1":         "dash_app.guide_charts.momentum_factor_charts",
         "momentum_cross_sector": "dash_app.guide_charts.momentum_factor_charts",
+        "hmm_regime":            "dash_app.guide_charts.hmm_regime_charts",
     }
 
     extra: list = []

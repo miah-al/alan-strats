@@ -156,23 +156,28 @@ _STATE_TRADE = {
 # ─────────────────────────────────────────────────────────────────────────────
 
 def _bs_delta(S: float, K: float, T: float, r: float, sigma: float,
-              option_type: str) -> float:
+              option_type: str, q: float = 0.0) -> float:
+    """Black-Scholes delta with optional continuous dividend yield q."""
     if T <= 0 or sigma <= 0 or S <= 0 or K <= 0:
         return (1.0 if S > K else 0.0) if option_type == "call" else (-1.0 if S < K else 0.0)
-    d1 = (math.log(S / K) + (r + 0.5 * sigma * sigma) * T) / (sigma * math.sqrt(T))
-    return float(norm.cdf(d1)) if option_type == "call" else float(norm.cdf(d1) - 1.0)
+    d1 = (math.log(S / K) + (r - q + 0.5 * sigma * sigma) * T) / (sigma * math.sqrt(T))
+    disc_q = math.exp(-q * T)
+    return float(disc_q * norm.cdf(d1)) if option_type == "call" \
+        else float(disc_q * (norm.cdf(d1) - 1.0))
 
 
 def _strike_for_delta(S: float, T: float, r: float, sigma: float,
-                      target_delta: float, option_type: str) -> float:
-    """Invert BS for a target |delta| strike. Returns spot on degenerate inputs."""
+                      target_delta: float, option_type: str,
+                      q: float = 0.0) -> float:
+    """Invert BS for a target |delta| strike, accounting for dividend yield q.
+    Returns spot on degenerate inputs."""
     if T <= 0 or sigma <= 0 or S <= 0:
         return S
     sign = 1.0 if option_type == "call" else -1.0
     target_abs = abs(target_delta)
 
     def obj(K: float) -> float:
-        return abs(_bs_delta(S, K, T, r, sigma, option_type)) - target_abs
+        return abs(_bs_delta(S, K, T, r, sigma, option_type, q=q)) - target_abs
 
     try:
         return float(brentq(obj, S * 0.40, S * 1.60, xtol=0.01, maxiter=60))
@@ -421,6 +426,8 @@ class HMMRegimeStrategy(BaseStrategy):
         condor_short_delta:  float = 0.16,
         condor_wing_pct:     float = 0.05,
         condor_dte_exit:     int   = 21,
+        bull_put_dte_exit:   int   = 7,
+        long_put_dte_exit:   int   = 7,
         # State 2 — long put debit spread
         dte_long_put:        int   = 45,
         long_put_long_delta: float = 0.30,
@@ -464,6 +471,8 @@ class HMMRegimeStrategy(BaseStrategy):
         self.condor_short_delta    = condor_short_delta
         self.condor_wing_pct       = condor_wing_pct
         self.condor_dte_exit       = condor_dte_exit
+        self.bull_put_dte_exit     = bull_put_dte_exit
+        self.long_put_dte_exit     = long_put_dte_exit
 
         self.dte_long_put          = dte_long_put
         self.long_put_long_delta   = long_put_long_delta
@@ -500,6 +509,8 @@ class HMMRegimeStrategy(BaseStrategy):
             "condor_short_delta":    self.condor_short_delta,
             "condor_wing_pct":       self.condor_wing_pct,
             "condor_dte_exit":       self.condor_dte_exit,
+            "bull_put_dte_exit":     self.bull_put_dte_exit,
+            "long_put_dte_exit":     self.long_put_dte_exit,
             "dte_long_put":          self.dte_long_put,
             "long_put_long_delta":   self.long_put_long_delta,
             "long_put_short_pct":    self.long_put_short_pct,
@@ -758,11 +769,40 @@ class HMMRegimeStrategy(BaseStrategy):
         close = price_data["close"]
         n     = len(close)
 
+        # ── Per-ticker IV series (auxiliary_data["atm_iv"]) — overrides VIX proxy ─
+        #
+        # If the caller supplies an `atm_iv` series in `auxiliary_data`, it is
+        # used for BS pricing instead of VIX/100. This matters for non-SPY
+        # tickers whose own IV surface diverges from the broad-market VIX.
+        # The series must be indexed by date and contain IV as a decimal
+        # (e.g. 0.18 for 18% annualised). Falls back to VIX/100 if absent.
+        atm_iv_series = None
+        if auxiliary_data:
+            _atm_iv_raw = auxiliary_data.get("atm_iv")
+            if _atm_iv_raw is not None:
+                try:
+                    if isinstance(_atm_iv_raw, pd.DataFrame):
+                        _atm_iv_raw = (
+                            _atm_iv_raw["atm_iv"] if "atm_iv" in _atm_iv_raw.columns
+                            else _atm_iv_raw.iloc[:, 0]
+                        )
+                    _s = pd.Series(_atm_iv_raw)
+                    _s.index = pd.to_datetime(_s.index)
+                    atm_iv_series = _s.reindex(price_data.index).ffill()
+                    logger.info(
+                        f"hmm_regime: using per-ticker ATM IV from auxiliary_data "
+                        f"({atm_iv_series.notna().sum()} bars populated)"
+                    )
+                except Exception as e:
+                    logger.warning(f"hmm_regime: atm_iv parse failed ({e}); falling back to VIX/100")
+                    atm_iv_series = None
+
         # ── Build observation matrix ──────────────────────────────────────
         obs_df = _build_observation_matrix(close, vix_series)
 
         # ── Walk-forward state ────────────────────────────────────────────
         capital         = float(starting_capital)
+        reserved_margin = 0.0    # tracks margin tied up in open credit spreads
         equity_curve    = []
         regime_log      = []
         trades:         list[dict] = []
@@ -781,7 +821,15 @@ class HMMRegimeStrategy(BaseStrategy):
         for i, dt in enumerate(price_data.index):
             spot   = float(close.iloc[i])
             vix    = float(vix_series.iloc[i])
-            iv     = max(vix / 100.0, 0.05)   # IV proxy for BS pricing
+            # IV: prefer per-ticker ATM IV if provided; otherwise VIX/100 proxy
+            if atm_iv_series is not None:
+                _iv_val = atm_iv_series.iloc[i] if i < len(atm_iv_series) else float("nan")
+                if pd.isna(_iv_val) or _iv_val <= 0:
+                    iv = max(vix / 100.0, 0.05)
+                else:
+                    iv = max(float(_iv_val), 0.05)
+            else:
+                iv = max(vix / 100.0, 0.05)
 
             if spot <= 0:
                 equity_curve.append({"date": dt, "equity": capital + self._mtm(open_trade, spot, dt, iv, r, q)})
@@ -827,6 +875,8 @@ class HMMRegimeStrategy(BaseStrategy):
                 )
                 if exit_now:
                     capital += pnl
+                    # Release margin reserved for this trade
+                    reserved_margin -= float(open_trade.get("margin", 0.0))
                     trades.append({
                         **{k: open_trade.get(k) for k in (
                             "entry_date", "trade_type", "state", "p_state",
@@ -873,6 +923,7 @@ class HMMRegimeStrategy(BaseStrategy):
 
             gating_post = fwd_posterior if fwd_posterior is not None else posterior
 
+            free_capital = capital - reserved_margin
             can_enter = (
                 posterior is not None
                 and gating_post is not None
@@ -881,16 +932,28 @@ class HMMRegimeStrategy(BaseStrategy):
                 and float(np.max(gating_post)) >= p["regime_confidence_min"]
                 and int(np.argmax(gating_post)) == int(np.argmax(posterior))   # spot/forward agree
                 and (n - i) > max(p["dte_bull_put"], p["dte_condor"], p["dte_long_put"]) + 5
+                and free_capital > 0   # must have free capital after margin reserves
             )
 
             if can_enter:
                 state = int(np.argmax(posterior))
                 p_st  = float(gating_post[state])
-                trade = self._open_trade(state, p_st, spot, iv, r, q, dt, capital, p, comm, slip)
+                # Size against free_capital (capital - reserved_margin) so we
+                # don't over-leverage when running max_concurrent > 1
+                trade = self._open_trade(state, p_st, spot, iv, r, q, dt, free_capital, p, comm, slip)
                 if trade is not None:
-                    open_trade = trade
-                    capital -= trade.get("entry_cash_out", 0.0)
-                    capital -= trade.get("open_commission", 0.0)
+                    # Verify margin fits within free capital before opening
+                    margin_needed = float(trade.get("margin", 0.0))
+                    if margin_needed <= free_capital:
+                        open_trade = trade
+                        reserved_margin += margin_needed
+                        capital -= trade.get("entry_cash_out", 0.0)
+                        capital -= trade.get("open_commission", 0.0)
+                    else:
+                        logger.debug(
+                            f"hmm_regime: skip entry at {dt.date()} - margin "
+                            f"${margin_needed:,.0f} > free ${free_capital:,.0f}"
+                        )
 
             # ── MTM ───────────────────────────────────────────────────────
             equity = capital + self._mtm(open_trade, spot, dt, iv, r, q)
@@ -969,7 +1032,7 @@ class HMMRegimeStrategy(BaseStrategy):
 
     def _open_bull_put(self, spot, iv, r, q, dt, capital, p, comm, slip, p_state):
         T = p["dte_bull_put"] / 365.0
-        short_K = _strike_for_delta(spot, T, r, iv, p["bull_put_short_delta"], "put")
+        short_K = _strike_for_delta(spot, T, r, iv, p["bull_put_short_delta"], "put", q=q)
         long_K  = short_K * (1 - p["bull_put_wing_pct"])
         if long_K <= 0:
             return None
@@ -1008,8 +1071,8 @@ class HMMRegimeStrategy(BaseStrategy):
 
     def _open_iron_condor(self, spot, iv, r, q, dt, capital, p, comm, slip, p_state):
         T = p["dte_condor"] / 365.0
-        call_short_K = _strike_for_delta(spot, T, r, iv, p["condor_short_delta"], "call")
-        put_short_K  = _strike_for_delta(spot, T, r, iv, p["condor_short_delta"], "put")
+        call_short_K = _strike_for_delta(spot, T, r, iv, p["condor_short_delta"], "call", q=q)
+        put_short_K  = _strike_for_delta(spot, T, r, iv, p["condor_short_delta"], "put", q=q)
         wing = spot * p["condor_wing_pct"]
         call_long_K = call_short_K + wing
         put_long_K  = max(0.01, put_short_K - wing)
@@ -1052,7 +1115,7 @@ class HMMRegimeStrategy(BaseStrategy):
 
     def _open_long_put_spread(self, spot, iv, r, q, dt, capital, p, comm, slip, p_state):
         T = p["dte_long_put"] / 365.0
-        long_K  = _strike_for_delta(spot, T, r, iv, p["long_put_long_delta"], "put")
+        long_K  = _strike_for_delta(spot, T, r, iv, p["long_put_long_delta"], "put", q=q)
         short_K = max(0.01, long_K * (1 - p["long_put_short_pct"]))
 
         lp = bs_price(spot, long_K,  T, r, iv, "put", q=q) + slip
@@ -1106,7 +1169,7 @@ class HMMRegimeStrategy(BaseStrategy):
 
             tp = pnl >= p["profit_target_pct"] * credit
             sl = cur_cost >= p["stop_loss_mult"] * credit
-            dte_ex = dte_rem <= 7   # bull put: hold longer than condor
+            dte_ex = dte_rem <= p["bull_put_dte_exit"]
             if tp or sl or dte_ex or end_of_data:
                 reason = "profit_target" if tp else "stop_loss" if sl else "dte_exit" if dte_ex else "end_of_data"
                 return True, reason, pnl - close_comm
@@ -1140,7 +1203,7 @@ class HMMRegimeStrategy(BaseStrategy):
 
             tp = pnl >= p["debit_profit_target"] * debit
             sl = cur_val <= (1 - p["debit_stop_loss_pct"]) * debit
-            dte_ex = dte_rem <= 7
+            dte_ex = dte_rem <= p["long_put_dte_exit"]
             if tp or sl or dte_ex or end_of_data:
                 reason = "profit_target" if tp else "stop_loss" if sl else "dte_exit" if dte_ex else "end_of_data"
                 return True, reason, pnl - close_comm

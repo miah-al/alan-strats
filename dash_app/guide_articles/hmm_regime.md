@@ -19,6 +19,49 @@ The model is *not* a crystal ball. It will lag at fast regime transitions (March
 
 ---
 
+## What the ML Does vs. What the Rules Do
+
+The strategy is often described as "AI-driven," but the honest breakdown is that the ML component is **small** and the rules component is **large**. Knowing exactly where the line is matters when you debug a bad trade, explain the strategy to a partner, or evaluate whether the ML is earning its complexity.
+
+### The ML's one job: regime classification
+
+```
+Input:    3 numbers per day  (log return, VIX, 20d realized vol)
+Process:  3-state Gaussian HMM, fit via EM/Baum-Welch
+Output:   P(state = 0), P(state = 1), P(state = 2)
+```
+
+That is it. The HMM is genuinely learned from data — `hmmlearn.GaussianHMM` fits emission means, covariance matrices, and the 3×3 transition matrix via Baum-Welch iterations. The output is a probability distribution over three regime labels. No supervised target, no neural net, no LLM, no reinforcement learning — just an unsupervised clustering algorithm from the 1960s applied to three features.
+
+### The rules carry everything else
+
+Every decision *after* "you are in state X" is hardcoded:
+
+| Decision | Source | Value |
+|----------|--------|-------|
+| Which trade to do in each state | Rule | State 0 → bull put. State 1 → IC. State 2 → long put spread. |
+| Short-strike delta | Rule | 0.20 / 0.16 / 0.30 fixed |
+| Wing width | Rule | 5% of short strike |
+| DTE | Rule | 30 / 35 / 45 days fixed |
+| Profit target | Rule | 50% of credit (100% of debit) |
+| Stop loss | Rule | 2× credit (50% of debit) |
+| Position size | Rule | 3% of capital per trade |
+| Entry gate | Rule | P(state) ≥ 0.60 AND VIX ≤ 40 |
+| Concurrent trades | Rule | Max 1 |
+| Forced exits | Rule | DTE-based (7 / 21 / 7 days) |
+
+If you removed the HMM and replaced it with a coarse VIX-bucket heuristic (VIX < 15 → state 0; VIX 15–22 → state 1; VIX > 22 → state 2), the strategy would still mostly work. In fact, the live heuristic fallback in `_heuristic_signal` does exactly this when the model file is not loaded. You would lose maybe 20–30% of the edge but capture the bulk of it.
+
+That is the right way to think about the HMM's contribution: **it refines the regime classification by using the joint distribution of (return, VIX, realized vol), which catches transitions where VIX has not moved yet but realized vol has, and vice versa.**
+
+### Honest one-liner
+
+> **An ML-classified regime feeds a rules-based trade selector.**
+
+The edge is in the rules responding correctly to each regime, not in the ML being clever. The ML's job is to be reliable, not surprising.
+
+---
+
 ## How It Works
 
 ### Observation features (3 columns, no kitchen-sink ML)
@@ -245,6 +288,100 @@ chopped through 195-205 in September.
 **Position sizing is fractional, not Kelly.** position_size_pct = 3% default. This is conservative for the typical edge per trade (~0.4 Sharpe per cluster). Live operators may scale to 5% if they have ≥ 6 months of paper-trade evidence the model is calibrated. Never above 8% — the regime-misclassification tail risk (August 2015 example above) is real and re-occurs every 18-36 months.
 
 **Model drift detection.** If the HMM has not refitted in > 2 × retrain_every bars, log a warning and HOLD. Stale models produce confident-but-wrong posteriors after a structural break.
+
+---
+
+## Live Deployment Checklist
+
+### Daily routine (EOD, after market close)
+
+```
+1.  Sync data:
+      - Pull today's SPY OHLCV (or your ticker)
+      - Pull today's VIX close
+      - Compute log_return_t = log(close_t / close_{t-1})
+      - Update rolling rv20_t = stdev(log returns over [t-19, t]) × √252
+
+2.  Load model:
+      - Read saved_models/hmm_regime_<ticker>.pkl
+      - Verify the model loaded successfully (model._fitted == True)
+      - If the load fails OR the file is missing → HOLD for the day
+
+3.  Compute posterior:
+      - X = obs_df.dropna().values  (all clean obs ≤ today)
+      - posterior = model.predict_proba(X)
+      - state = argmax(posterior)
+      - p_state = max(posterior)
+
+4.  Evaluate entry gates (all must pass):
+      - p_state ≥ 0.60                      (confidence floor)
+      - VIX ≤ 40                            (dislocation circuit breaker)
+      - spot/forward posterior agree         (regime stability gate)
+      - No open trade                       (max_concurrent = 1)
+      - Not a known event day               (FOMC / CPI / NFP / OpEx)
+
+5.  If all gates pass:
+      - Determine trade type from state (bull put / IC / long put spread)
+      - Compute strikes via BS delta inversion at IV proxy = VIX / 100
+      - Size: contracts = floor(capital × 0.03 / (max_loss_per × 100))
+      - Place order at broker; log entry to trade ledger
+
+6.  Manage open trade (if exists):
+      - Mark-to-market against BS at today's IV proxy
+      - Check profit target / stop loss / DTE exit
+      - Close if any condition is met; log exit to ledger
+```
+
+### Model lifecycle
+
+```
+First deployment
+  - Backtest writes saved_models/hmm_regime_<ticker>.pkl on completion
+  - Pickle contains the fully-fitted _RegimeModel including the state-relabel
+    permutation. Live signal loads this pickle and reuses it until the next
+    scheduled refit.
+
+Refit cadence (default: every 30 trading bars, ~monthly)
+  - In production, run a scheduled job that re-runs the backtest with
+    end_date = today, then overwrites the pickle.
+  - Warm-start: the new fit seeds means_init from the previous fit's
+    sorted_means to stabilise the posterior across boundaries.
+  - Log: timestamp + sorted rv-mean of each state + diagonal of transition
+    matrix. Persist these for drift detection.
+
+Staleness detection
+  - Compute days_since_last_refit = today − model.fit_date
+  - If > 2 × retrain_every (60 days default) → log a warning and HOLD until
+    a clean refit completes
+  - If the pickle is missing entirely → HOLD; do NOT fall back to the iid
+    GMM emergency mode unless allow_gmm_fallback=True is set explicitly
+
+Sanity checks after every refit (red-flag any violation)
+  - sorted_means[2, rv20_col] > 2 × sorted_means[0, rv20_col]
+        State 2 vol mean should be clearly higher than state 0
+  - Transition matrix diagonal > 0.85 in every state
+        Regime persistence (a state should mostly stay in itself day-to-day)
+  - Posterior at the most recent bar should not be uniform
+        max(posterior) > 0.40 even BEFORE applying the 0.60 confidence floor
+```
+
+### Known limitations (audit 2026-05)
+
+Documented as of the most recent code audit (see also `guide/AI_STRATEGIES_RANKING.md`):
+
+1. **No reserved-margin accounting in the backtest.** Hidden by `max_concurrent = 1`. If you raise `max_concurrent` via the UI, the strategy can over-leverage. Track free capital before sizing.
+2. **Dividend yield `q` is not threaded through `_strike_for_delta`.** Strike inversion uses no-dividend BS while the credit/debit calc uses `q`. With SPY's q ≈ 1.3% the strike-vs-delta map drifts ~1%. Tolerable for SPY; reconsider for high-dividend ETFs (XLU, REZ).
+3. **`dte_ex` is hardcoded to 7 days for bull-put and long-put exits**, while the iron condor uses the parameterised `condor_dte_exit`. Inconsistent — parameterise all three for full control.
+4. **VIX-as-IV is a SPY-only assumption.** For any non-SPX-correlated ticker, BS pricing in the backtest will be biased. Either restrict deployment to SPY/SPX/QQQ, or thread per-ticker IV from `option_snapshots` into the pricing.
+
+### First-week monitoring (paper trading)
+
+For the first 5–10 trading days after going live:
+
+- **Compare paper vs backtest:** on the same bar, the live model's posterior should agree with the backtest's posterior to within rounding. Any divergence → stop, investigate.
+- **Audit every entry:** capture screenshots/logs of the state, posterior probabilities, strikes, credit/debit, and contract count for every entry decision. This is your paper-trail for post-hoc review.
+- **Verify gate enforcement:** confirm that entries fire only when the entry checklist passes. A bug that bypasses the VIX ceiling is the highest-risk failure mode.
+- **Daily journal:** record posterior, dominant state, VIX, and "would have traded?" — even on HOLD days. Builds the calibration intuition for when to trust the model.
 
 ---
 

@@ -177,7 +177,32 @@ def _screener_layout(slug: str) -> html.Div:
     locked_label = "SPY only" if spy_only else "11 Sector ETFs" if sector_only else ""
     locked_value = "SPY" if spy_only else ",".join(_SECTOR_ETFS_LIST) if sector_only else None
 
+    # Strategy-specific info banner (e.g., HMM doesn't really use the screener)
+    info_banner = None
+    if slug == "hmm_regime":
+        info_banner = dbc.Alert([
+            html.Strong("HMM is a single-ticker strategy. "),
+            "The Screener scans a universe for candidates, but HMM has ",
+            html.Code("max_concurrent = 1"),
+            " and is normally run on a single broad-market ticker (SPY). ",
+            "For today's signal and model status, use the ",
+            html.Strong("Live & Model"),
+            " tab instead. Scanning here will only return tickers that have a trained ",
+            html.Code(".pkl"),
+            " in ", html.Code("saved_models/"), " and ≥ 252 bars of history.",
+        ],
+            color="info",
+            style={"fontSize": "12px", "padding": "10px 14px",
+                   "marginBottom": "14px", "borderLeft": f"3px solid {T.ACCENT}",
+                   "backgroundColor": "rgba(99,102,241,0.08)", "color": T.TEXT_PRIMARY,
+                   "border": f"1px solid {T.BORDER}"},
+            dismissable=False,
+        )
+
     return html.Div([
+        # Optional strategy-specific info banner
+        *([info_banner] if info_banner is not None else []),
+
         # VIX banner — populated by callback
         html.Div(id=vix_banner_id),
 
@@ -426,6 +451,187 @@ def _simulator_stub(slug: str) -> html.Div:
         )),
         style=T.STYLE_CARD,
     )
+
+
+# ── Live Signal + Model tab (HMM Regime) ──────────────────────────────────────
+
+_HMM_MODEL_DIR = Path(__file__).parent.parent.parent.parent / "saved_models"
+
+_HMM_STATE_REF = [
+    ("State 0", "Bull / quiet drift",  "Bull put credit spread", "0.20Δ short, 5% wing, 30 DTE", T.SUCCESS),
+    ("State 1", "Chop / mean-reverting", "Iron condor",          "0.16Δ both sides, 5% wings, 35 DTE", T.WARNING),
+    ("State 2", "Crisis / bear",        "Long put debit spread", "0.30Δ long put, 5% short, 45 DTE", T.DANGER),
+]
+
+_HMM_ENTRY_GATES = [
+    ("p_state >= 0.60",                  "Posterior confidence floor"),
+    ("VIX <= 40",                        "Dislocation circuit breaker"),
+    ("spot/forward posterior agree",     "Regime stability check"),
+    ("No open trade (max_concurrent=1)", "Single-position discipline"),
+    ("Not a known event day",            "FOMC / CPI / NFP / OpEx pause"),
+]
+
+
+def _hmm_load_model(ticker: str = "spy"):
+    """Try to load the saved HMM model. Returns (model, status_text, status_color, fit_date)."""
+    path = _HMM_MODEL_DIR / f"hmm_regime_{ticker.lower()}.pkl"
+    if not path.exists():
+        return None, f"No saved model at {path.name} — run a backtest to train.", T.WARNING, None
+    try:
+        import pickle
+        with open(path, "rb") as f:
+            model = pickle.load(f)
+        if model is None or not getattr(model, "_fitted", False):
+            return None, "Model file present but not fitted — re-run backtest.", T.DANGER, None
+        from datetime import datetime
+        fit_date = datetime.fromtimestamp(path.stat().st_mtime).strftime("%Y-%m-%d %H:%M")
+        backend = getattr(model, "backend", "unknown")
+        return model, f"Loaded ({backend}) — last fit {fit_date}", T.SUCCESS, fit_date
+    except Exception as e:
+        return None, f"Failed to load model: {e}", T.DANGER, None
+
+
+def _hmm_live_signal_tab(slug: str) -> html.Div:
+    if slug != "hmm_regime":
+        return html.Div()
+
+    model, status_text, status_color, fit_date = _hmm_load_model("spy")
+
+    # ── Model status banner ──────────────────────────────────────────────────
+    status_card = dbc.Card(dbc.CardBody([
+        dbc.Row([
+            dbc.Col(html.Div([
+                html.Span("●  ", style={"color": status_color, "fontSize": "16px"}),
+                html.Span("Model status: ", style={
+                    "color": T.TEXT_MUTED, "fontSize": "12px", "fontWeight": "600",
+                    "textTransform": "uppercase", "letterSpacing": "0.06em"}),
+                html.Span(status_text, style={"color": T.TEXT_PRIMARY, "fontSize": "13px"}),
+            ]), width=True),
+            dbc.Col(html.Div([
+                html.Span("Algorithm: ", style={"color": T.TEXT_MUTED, "fontSize": "11px",
+                                                 "fontWeight": "600", "textTransform": "uppercase"}),
+                html.Span("3-state Gaussian HMM (hmmlearn)",
+                          style={"color": T.ACCENT, "fontSize": "12px",
+                                 "fontFamily": "JetBrains Mono, monospace"}),
+            ]), width="auto"),
+        ], align="center"),
+    ]), style={**T.STYLE_CARD, "borderLeft": f"3px solid {status_color}", "marginBottom": "16px"})
+
+    # ── Sanity check row (only if model loaded) ──────────────────────────────
+    sanity_card = None
+    if model is not None:
+        try:
+            sm = model.sorted_means()  # (3, 3) array
+            tmat = model.sorted_transmat()  # (3, 3) or None
+            rv_means = [float(sm[i, 2]) for i in range(3)]
+            rv_ratio = rv_means[2] / max(rv_means[0], 1e-6)
+            rv_ok = rv_ratio >= 2.0
+            if tmat is not None:
+                diag = [float(tmat[i, i]) for i in range(3)]
+                diag_ok = all(d >= 0.85 for d in diag)
+                diag_text = f"{diag[0]:.2f} / {diag[1]:.2f} / {diag[2]:.2f}"
+            else:
+                diag_ok = None
+                diag_text = "n/a (GMM fallback)"
+        except Exception as e:
+            rv_means, rv_ratio, rv_ok = [0, 0, 0], 0, False
+            diag_ok, diag_text = False, f"error: {e}"
+
+        def _check_row(label: str, value: str, ok: bool | None) -> html.Div:
+            if ok is True:
+                ind = "✓"; color = T.SUCCESS
+            elif ok is False:
+                ind = "✗"; color = T.DANGER
+            else:
+                ind = "—"; color = T.TEXT_MUTED
+            return html.Div([
+                html.Span(ind, style={"color": color, "fontSize": "14px",
+                                       "fontWeight": "700", "marginRight": "10px",
+                                       "fontFamily": "JetBrains Mono, monospace"}),
+                html.Span(label, style={"color": T.TEXT_PRIMARY, "fontSize": "12px"}),
+                html.Span(f"  →  {value}", style={"color": T.TEXT_MUTED, "fontSize": "12px",
+                                                    "fontFamily": "JetBrains Mono, monospace"}),
+            ], style={"marginBottom": "6px"})
+
+        sanity_card = dbc.Card(dbc.CardBody([
+            html.Div("Model sanity checks", style={
+                "color": T.ACCENT, "fontSize": "11px", "fontWeight": "700",
+                "textTransform": "uppercase", "letterSpacing": "0.08em", "marginBottom": "10px"}),
+            html.Hr(style={"borderColor": T.BORDER, "margin": "0 0 10px"}),
+            _check_row("rv20 mean(state 2) > 2× mean(state 0)",
+                       f"{rv_means[0]:.3f} / {rv_means[1]:.3f} / {rv_means[2]:.3f}  (ratio {rv_ratio:.2f}×)",
+                       rv_ok),
+            _check_row("Transition matrix diagonal > 0.85 (regime persistence)",
+                       diag_text, diag_ok),
+        ]), style={**T.STYLE_CARD, "marginBottom": "16px"})
+
+    # ── State reference cards ────────────────────────────────────────────────
+    state_cards = []
+    for label, desc, trade, struct, color in _HMM_STATE_REF:
+        state_cards.append(dbc.Col(dbc.Card(dbc.CardBody([
+            html.Div(label, style={"color": color, "fontSize": "11px",
+                                    "fontWeight": "700", "textTransform": "uppercase",
+                                    "letterSpacing": "0.08em", "marginBottom": "4px"}),
+            html.Div(desc, style={"color": T.TEXT_PRIMARY, "fontSize": "13px",
+                                   "fontWeight": "600", "marginBottom": "8px"}),
+            html.Div(trade, style={"color": T.ACCENT, "fontSize": "12px",
+                                    "fontFamily": "JetBrains Mono, monospace",
+                                    "marginBottom": "4px"}),
+            html.Div(struct, style={"color": T.TEXT_MUTED, "fontSize": "11px",
+                                     "fontFamily": "JetBrains Mono, monospace"}),
+        ]), style={**T.STYLE_CARD, "borderTop": f"3px solid {color}", "height": "100%"}), md=4))
+
+    state_ref_row = dbc.Row(state_cards, style={"marginBottom": "16px"})
+
+    # ── Entry checklist (static reference) ───────────────────────────────────
+    gate_rows = [html.Div([
+        html.Span("□  ", style={"color": T.TEXT_MUTED, "fontFamily": "JetBrains Mono, monospace"}),
+        html.Span(gate, style={"color": T.TEXT_PRIMARY, "fontSize": "12px",
+                                "fontFamily": "JetBrains Mono, monospace"}),
+        html.Span(f"   — {note}", style={"color": T.TEXT_MUTED, "fontSize": "11px"}),
+    ], style={"marginBottom": "5px"}) for gate, note in _HMM_ENTRY_GATES]
+
+    gates_card = dbc.Card(dbc.CardBody([
+        html.Div("Entry checklist (all must pass to open a trade)", style={
+            "color": T.ACCENT, "fontSize": "11px", "fontWeight": "700",
+            "textTransform": "uppercase", "letterSpacing": "0.08em", "marginBottom": "10px"}),
+        html.Hr(style={"borderColor": T.BORDER, "margin": "0 0 10px"}),
+        *gate_rows,
+    ]), style={**T.STYLE_CARD, "marginBottom": "16px"})
+
+    # ── Compute today's signal — placeholder (callback to be wired) ──────────
+    compute_card = dbc.Card(dbc.CardBody([
+        html.Div("Today's signal", style={
+            "color": T.ACCENT, "fontSize": "11px", "fontWeight": "700",
+            "textTransform": "uppercase", "letterSpacing": "0.08em", "marginBottom": "10px"}),
+        html.Hr(style={"borderColor": T.BORDER, "margin": "0 0 10px"}),
+        html.P(
+            "Click below to fetch the latest SPY + VIX data, run the loaded model, "
+            "and display today's regime posterior and trade recommendation.",
+            style={"color": T.TEXT_MUTED, "fontSize": "12px", "marginBottom": "12px"},
+        ),
+        dbc.Button(
+            "Compute today's signal",
+            id=f"str-{slug}-live-compute-btn",
+            color="primary", size="sm",
+            disabled=(model is None),
+            style={"marginBottom": "12px"},
+        ),
+        html.Div(
+            id=f"str-{slug}-live-signal-output",
+            children=html.P("(Awaiting compute — output will appear here)",
+                            style={"color": T.TEXT_MUTED, "fontSize": "11px",
+                                   "fontStyle": "italic", "margin": "0"}),
+        ),
+    ]), style={**T.STYLE_CARD, "marginBottom": "16px"})
+
+    return html.Div([
+        status_card,
+        *([sanity_card] if sanity_card is not None else []),
+        state_ref_row,
+        gates_card,
+        compute_card,
+    ])
 
 
 # ── Model details tab (Iron Condor AI only) ───────────────────────────────────
@@ -1056,6 +1262,16 @@ def _inner_tabs(slug: str) -> dbc.Tabs:
             active_tab_style={**tab_act_style, "borderTop": f"2px solid #a78bfa"},
         ))
 
+    # Live Signal & Model tab — HMM Regime only
+    if slug == "hmm_regime":
+        tabs.append(dbc.Tab(
+            _hmm_live_signal_tab(slug),
+            label="Live & Model",
+            tab_id=f"str-{slug}-inner-live",
+            tab_style=tab_style,
+            active_tab_style={**tab_act_style, "borderTop": f"2px solid #a78bfa"},
+        ))
+
     tabs.append(dbc.Tab(
         _test_tab(slug),
         label="Test",
@@ -1250,7 +1466,7 @@ def layout() -> html.Div:
                 ], style={"backgroundColor": T.BG_ELEVATED,
                           "borderTop": f"1px solid {T.BORDER}",
                           "display": "flex", "alignItems": "center"}),
-            ], id="str-sig-modal", size="lg", is_open=False, scrollable=True),
+            ], id="str-sig-modal", size="xl", is_open=False, scrollable=True),
             dcc.Store(id="str-sig-row-store"),
 
             # ── Store + outer tabs container ──────────────────────────────────
@@ -1552,6 +1768,288 @@ def _build_ic_payoff_fig(spot, short_call_k, long_call_k, short_put_k, long_put_
         template="plotly_dark",
     )
     return fig
+
+
+def _hmm_trade_preview(state: int, spot: float, vix: float, ticker: str = "SPY") -> dict | None:
+    """Build a state-specific trade preview for the HMM Regime modal.
+
+    Mirrors the strategy's actual structures (see strategies/hmm_regime.py):
+      state 0  → bull put credit spread (short 0.20Δ put, long 5% wider)        30 DTE
+      state 1  → iron condor (0.16Δ both sides, 5% wings)                       35 DTE
+      state 2  → long put debit spread (long 0.30Δ put, short 5% lower)         45 DTE
+
+    Strikes are computed via BS delta inversion at IV proxy = VIX / 100 (same
+    approximation the strategy uses internally). Returns a dict with:
+        metrics     : html.Div  — metric cards row
+        legs_table  : dag.AgGrid — leg-by-leg breakdown
+        chart       : dcc.Graph — payoff diagram (P&L at expiry)
+    Or None if inputs are degenerate.
+    """
+    if spot <= 0 or vix <= 0 or state not in (0, 1, 2):
+        return None
+
+    iv = max(vix / 100.0, 0.05)
+    r  = 0.045
+
+    sqT_per_yr = math.sqrt
+    cdf = _scipy_norm.cdf
+
+    def bs_call(S, K, T, sig):
+        if T <= 0 or sig <= 0 or S <= 0 or K <= 0:
+            return max(0.0, S - K)
+        d1 = (math.log(S / K) + (r + 0.5 * sig * sig) * T) / (sig * sqT_per_yr(T))
+        d2 = d1 - sig * sqT_per_yr(T)
+        return float(S * cdf(d1) - K * math.exp(-r * T) * cdf(d2))
+
+    def bs_put(S, K, T, sig):
+        if T <= 0 or sig <= 0 or S <= 0 or K <= 0:
+            return max(0.0, K - S)
+        d1 = (math.log(S / K) + (r + 0.5 * sig * sig) * T) / (sig * sqT_per_yr(T))
+        d2 = d1 - sig * sqT_per_yr(T)
+        return float(K * math.exp(-r * T) * cdf(-d2) - S * cdf(-d1))
+
+    def bs_delta(S, K, T, sig, option_type):
+        if T <= 0 or sig <= 0 or S <= 0 or K <= 0:
+            return (1.0 if S > K else 0.0) if option_type == "call" else (-1.0 if S < K else 0.0)
+        d1 = (math.log(S / K) + (r + 0.5 * sig * sig) * T) / (sig * sqT_per_yr(T))
+        return float(cdf(d1)) if option_type == "call" else float(cdf(d1) - 1.0)
+
+    def strike_for_delta(target_abs_delta, T, option_type):
+        from scipy.optimize import brentq
+        def obj(K):
+            return abs(bs_delta(spot, K, T, iv, option_type)) - target_abs_delta
+        try:
+            return float(brentq(obj, spot * 0.40, spot * 1.60, xtol=0.01, maxiter=60))
+        except (ValueError, RuntimeError):
+            sign = 1.0 if option_type == "call" else -1.0
+            return spot * math.exp(sign * iv * sqT_per_yr(T))
+
+    # ── Build per-state structure ──────────────────────────────────────────
+    if state == 0:
+        # Bull put credit spread — 30 DTE
+        dte = 30
+        tau = dte / 365.0
+        short_put_K = strike_for_delta(0.20, tau, "put")
+        long_put_K  = short_put_K * 0.95
+        sp = bs_put(spot, short_put_K, tau, iv)
+        lp = bs_put(spot, long_put_K,  tau, iv)
+        net_credit = max(0.01, sp - lp)
+        wing       = short_put_K - long_put_K
+        max_loss   = max(0.01, wing - net_credit)
+        profit_target = net_credit * 0.50
+        stop_loss     = -net_credit * 2.0
+        be_lower      = short_put_K - net_credit
+        be_upper      = None  # bull put has no upper BE (unbounded profit cap)
+
+        trade_label = "Bull put credit spread"
+        delta_target = 0.20
+        is_credit = True
+
+        # Payoff at expiry
+        prices = np.linspace(spot * 0.85, spot * 1.10, 400)
+        pnl_exp = np.where(
+            prices >= short_put_K, net_credit * 100,
+            np.where(prices >= long_put_K,
+                     (net_credit - (short_put_K - prices)) * 100,
+                     -max_loss * 100)
+        )
+        leg_rows = [
+            {"Leg": "Short put",        "Strike": f"${short_put_K:.0f}",
+             "Mid": f"${sp:.2f}", "Action": "SELL",
+             "$/Contract": f"+${sp*100:.2f}"},
+            {"Leg": "Long put (wing)",  "Strike": f"${long_put_K:.0f}",
+             "Mid": f"${lp:.2f}", "Action": "BUY",
+             "$/Contract": f"-${lp*100:.2f}"},
+            {"Leg": "NET CREDIT",       "Strike": "", "Mid": "", "Action": "",
+             "$/Contract": f"+${net_credit*100:.2f}"},
+        ]
+        be_marks = [("BE", be_lower)]
+
+    elif state == 1:
+        # Iron condor — 35 DTE
+        dte = 35
+        tau = dte / 365.0
+        short_call_K = strike_for_delta(0.16, tau, "call")
+        short_put_K  = strike_for_delta(0.16, tau, "put")
+        long_call_K  = short_call_K * 1.05
+        long_put_K   = short_put_K  * 0.95
+        cs = bs_call(spot, short_call_K, tau, iv)
+        cl = bs_call(spot, long_call_K,  tau, iv)
+        sp = bs_put (spot, short_put_K,  tau, iv)
+        lp = bs_put (spot, long_put_K,   tau, iv)
+        net_credit = max(0.01, (cs - cl) + (sp - lp))
+        wing       = max(short_call_K - long_call_K, short_put_K - long_put_K) * -1 + (long_call_K - short_call_K)
+        # wing width is symmetric; use call-side
+        wing       = long_call_K - short_call_K
+        max_loss   = max(0.01, wing - net_credit)
+        profit_target = net_credit * 0.50
+        stop_loss     = -net_credit * 2.0
+        be_lower      = short_put_K  - net_credit
+        be_upper      = short_call_K + net_credit
+
+        trade_label  = "Iron condor"
+        delta_target = 0.16
+        is_credit    = True
+
+        prices = np.linspace(spot * 0.85, spot * 1.15, 400)
+        call_spread = np.minimum(0, short_call_K - prices) + np.maximum(0, prices - long_call_K)
+        put_spread  = np.minimum(0, prices - short_put_K)  + np.maximum(0, long_put_K  - prices)
+        pnl_exp     = (net_credit + call_spread + put_spread) * 100
+
+        leg_rows = [
+            {"Leg": "Long call (wing)", "Strike": f"${long_call_K:.0f}",
+             "Mid": f"${cl:.2f}", "Action": "BUY",
+             "$/Contract": f"-${cl*100:.2f}"},
+            {"Leg": "Short call",       "Strike": f"${short_call_K:.0f}",
+             "Mid": f"${cs:.2f}", "Action": "SELL",
+             "$/Contract": f"+${cs*100:.2f}"},
+            {"Leg": "Short put",        "Strike": f"${short_put_K:.0f}",
+             "Mid": f"${sp:.2f}", "Action": "SELL",
+             "$/Contract": f"+${sp*100:.2f}"},
+            {"Leg": "Long put (wing)",  "Strike": f"${long_put_K:.0f}",
+             "Mid": f"${lp:.2f}", "Action": "BUY",
+             "$/Contract": f"-${lp*100:.2f}"},
+            {"Leg": "NET CREDIT",       "Strike": "", "Mid": "", "Action": "",
+             "$/Contract": f"+${net_credit*100:.2f}"},
+        ]
+        be_marks = [("BE", be_lower), ("BE", be_upper)]
+
+    else:  # state == 2
+        # Long put debit spread — 45 DTE
+        dte = 45
+        tau = dte / 365.0
+        long_put_K  = strike_for_delta(0.30, tau, "put")
+        short_put_K = long_put_K * 0.95
+        lp = bs_put(spot, long_put_K,  tau, iv)
+        sp = bs_put(spot, short_put_K, tau, iv)
+        net_debit  = max(0.01, lp - sp)
+        max_profit = (long_put_K - short_put_K) - net_debit
+        max_loss   = net_debit  # debit paid IS the max loss
+        profit_target = net_debit * 1.00   # +100% of debit
+        stop_loss     = -net_debit * 0.50  # -50% of debit
+        be_upper = long_put_K - net_debit  # breakeven where the spread ITM portion covers debit
+        be_lower = None
+
+        trade_label  = "Long put debit spread"
+        delta_target = 0.30
+        is_credit    = False
+
+        prices = np.linspace(spot * 0.80, spot * 1.10, 400)
+        pnl_exp = np.where(
+            prices >= long_put_K, -net_debit * 100,
+            np.where(prices >= short_put_K,
+                     ((long_put_K - prices) - net_debit) * 100,
+                     ((long_put_K - short_put_K) - net_debit) * 100)
+        )
+
+        leg_rows = [
+            {"Leg": "Long put",          "Strike": f"${long_put_K:.0f}",
+             "Mid": f"${lp:.2f}", "Action": "BUY",
+             "$/Contract": f"-${lp*100:.2f}"},
+            {"Leg": "Short put (wing)",  "Strike": f"${short_put_K:.0f}",
+             "Mid": f"${sp:.2f}", "Action": "SELL",
+             "$/Contract": f"+${sp*100:.2f}"},
+            {"Leg": "NET DEBIT",         "Strike": "", "Mid": "", "Action": "",
+             "$/Contract": f"-${net_debit*100:.2f}"},
+        ]
+        be_marks = [("BE", be_upper)]
+
+    # ── Metric cards ───────────────────────────────────────────────────────
+    def _mc(label: str, val: str, color: str = T.TEXT_PRIMARY) -> html.Div:
+        return html.Div([
+            html.Div(label, style={"color": T.TEXT_MUTED, "fontSize": "10px",
+                                    "fontWeight": "600", "textTransform": "uppercase",
+                                    "marginBottom": "4px"}),
+            html.Div(val,   style={"color": color, "fontSize": "1.05rem",
+                                    "fontWeight": "700"}),
+        ], style={**T.STYLE_CARD, "flex": "1", "minWidth": "110px", "padding": "10px 12px"})
+
+    nc100 = (net_credit if is_credit else net_debit) * 100
+    ml100 = max_loss * 100
+    pt100 = profit_target * 100
+    metric_cards = [
+        _mc("Net Credit" if is_credit else "Net Debit",
+            f"+${nc100:.2f}" if is_credit else f"-${nc100:.2f}",
+            T.SUCCESS if is_credit else T.WARNING),
+        _mc("Max Loss",     f"-${ml100:.2f}", T.DANGER),
+        _mc("50% Target" if is_credit else "100% Target",
+            f"+${pt100:.2f}", T.SUCCESS),
+    ]
+    if be_upper is not None:
+        metric_cards.append(_mc("Upper BE", f"${be_upper:.2f}"))
+    if be_lower is not None:
+        metric_cards.append(_mc("Lower BE", f"${be_lower:.2f}"))
+    metric_cards.append(_mc("DTE", f"{dte}d"))
+    metric_cards.append(_mc("Δ target", f"~{delta_target:.0%}"))
+    metric_cards.append(_mc("IV proxy", f"{iv*100:.1f}%"))
+
+    metrics = html.Div(metric_cards,
+        style={"display": "flex", "gap": "10px", "flexWrap": "wrap", "marginBottom": "14px"})
+
+    # ── Legs table ─────────────────────────────────────────────────────────
+    legs_table = dag.AgGrid(
+        columnDefs=[
+            {"field": "Leg",        "width": 200,
+             "cellStyle": {"function": "params.data.Leg && params.data.Leg.startsWith('NET') ? {'fontWeight':'700','borderTop':'1px solid #374151'} : {}"}},
+            {"field": "Strike",     "width": 110,
+             "cellStyle": {"function": "params.data.Leg && params.data.Leg.startsWith('NET') ? {'borderTop':'1px solid #374151'} : {}"}},
+            {"field": "Mid",        "width": 110,
+             "cellStyle": {"function": "params.data.Leg && params.data.Leg.startsWith('NET') ? {'borderTop':'1px solid #374151'} : {}"}},
+            {"field": "Action",     "width": 100,
+             "cellStyle": {"function": "params.data.Leg && params.data.Leg.startsWith('NET') ? {'borderTop':'1px solid #374151'} : {}"}},
+            {"field": "$/Contract", "flex": 1, "minWidth": 130,
+             "cellStyle": {"function": "(() => { const v = params.value; const base = params.data.Leg && params.data.Leg.startsWith('NET') ? {'fontWeight':'700','borderTop':'1px solid #374151','fontFamily':'monospace'} : {'fontWeight':'600','fontFamily':'monospace'}; if (!v || v === '—') return base; return {...base, color: v.startsWith('+') ? '#10b981' : '#ef4444'}; })()"}},
+        ],
+        rowData=leg_rows,
+        defaultColDef={"resizable": True},
+        dashGridOptions={"domLayout": "autoHeight"},
+        className=T.AGGRID_THEME,
+        style={"width": "100%", "marginBottom": "14px"},
+    )
+
+    # ── Payoff figure ──────────────────────────────────────────────────────
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(x=prices, y=np.where(pnl_exp >= 0, pnl_exp, 0),
+        fill="tozeroy", fillcolor="rgba(16,185,129,0.10)",
+        line=dict(width=0), showlegend=False, hoverinfo="skip"))
+    fig.add_trace(go.Scatter(x=prices, y=np.where(pnl_exp < 0, pnl_exp, 0),
+        fill="tozeroy", fillcolor="rgba(239,68,68,0.10)",
+        line=dict(width=0), showlegend=False, hoverinfo="skip"))
+    fig.add_trace(go.Scatter(x=prices, y=pnl_exp,
+        line=dict(color="#6366f1", width=2), name="P&L at expiry",
+        hovertemplate="$%{x:.2f} → $%{y:.0f}<extra>At expiry</extra>"))
+
+    fig.add_hline(y=profit_target * 100, line=dict(color="#10b981", width=1.5, dash="dash"),
+        annotation_text=f"✅ target: +${profit_target*100:.0f}",
+        annotation_position="top left", annotation_font_color="#10b981")
+    fig.add_hline(y=stop_loss * 100, line=dict(color="#ef4444", width=1.5, dash="dash"),
+        annotation_text=f"🛑 stop: ${stop_loss*100:.0f}",
+        annotation_position="bottom left", annotation_font_color="#ef4444")
+    fig.add_hline(y=0, line=dict(color="#374151", width=1))
+    fig.add_vline(x=spot, line=dict(color="#f59e0b", width=1.5, dash="dash"),
+        annotation_text=f"Spot ${spot:.0f}", annotation_font_color="#f59e0b")
+    for label, x in be_marks:
+        if x is not None:
+            fig.add_vline(x=x, line=dict(color="#9ca3af", width=1, dash="dot"),
+                annotation_text=f"{label} ${x:.0f}",
+                annotation_font_color="#9ca3af")
+
+    fig.update_layout(
+        title=dict(text=f"{ticker} {trade_label}  |  {dte} DTE  |  IV proxy {iv*100:.1f}%",
+                   font=dict(size=13)),
+        xaxis_title="Underlying Price",
+        yaxis_title="P&L per Contract ($)",
+        height=360, margin=dict(l=0, r=0, t=50, b=0),
+        paper_bgcolor=T.BG_BASE, plot_bgcolor=T.BG_CARD,
+        font=dict(color=T.TEXT_SEC, size=12),
+        xaxis=dict(gridcolor=T.BORDER, tickformat="$,.0f"),
+        yaxis=dict(gridcolor=T.BORDER, tickformat="$,.0f", zeroline=False),
+        legend=dict(bgcolor="rgba(0,0,0,0)", orientation="h", y=-0.15),
+        template="plotly_dark",
+    )
+    chart = dcc.Graph(figure=fig, config={"displayModeBar": False})
+
+    return {"metrics": metrics, "legs_table": legs_table, "chart": chart}
 
 
 def _fetch_data(tickers: list[str], api_key: str):
@@ -2367,6 +2865,96 @@ def _get_ui_params_for_slug(slug: str) -> list:
         return []
 
 
+def _build_hmm_regime_panel(regime_df, extra: dict) -> dbc.Card | None:
+    """HMM-specific results panel: posterior time series + state distribution + health flags."""
+    if regime_df is None or regime_df.empty:
+        return None
+    if not all(c in regime_df.columns for c in ("p_state0", "p_state1", "p_state2")):
+        return None
+
+    df = regime_df.dropna(subset=["p_state0", "p_state1", "p_state2"]).copy()
+    if df.empty:
+        return None
+
+    # ── Posterior stacked area ────────────────────────────────────────────────
+    fig = make_subplots(rows=1, cols=1)
+    fig.add_trace(go.Scatter(x=df["date"], y=df["p_state0"], mode="lines",
+        name="P(state 0) bull", line=dict(color=T.SUCCESS, width=1.2),
+        stackgroup="one", fillcolor="rgba(16,185,129,0.55)",
+        hovertemplate="%{x|%Y-%m-%d}  P0=%{y:.2f}<extra></extra>"))
+    fig.add_trace(go.Scatter(x=df["date"], y=df["p_state1"], mode="lines",
+        name="P(state 1) chop", line=dict(color=T.WARNING, width=1.2),
+        stackgroup="one", fillcolor="rgba(245,158,11,0.55)",
+        hovertemplate="%{x|%Y-%m-%d}  P1=%{y:.2f}<extra></extra>"))
+    fig.add_trace(go.Scatter(x=df["date"], y=df["p_state2"], mode="lines",
+        name="P(state 2) crisis", line=dict(color=T.DANGER, width=1.2),
+        stackgroup="one", fillcolor="rgba(239,68,68,0.55)",
+        hovertemplate="%{x|%Y-%m-%d}  P2=%{y:.2f}<extra></extra>"))
+    fig.add_hline(y=0.60, line_dash="dash", line_color=T.TEXT_MUTED, line_width=1,
+                  annotation_text="Entry floor 0.60", annotation_position="top right",
+                  annotation_font=dict(size=10, color=T.TEXT_MUTED))
+    fig.update_layout(
+        paper_bgcolor=T.BG_CARD, plot_bgcolor=T.BG_CARD,
+        font=dict(color=T.TEXT_PRIMARY, family="Inter, sans-serif", size=12),
+        height=340, margin=dict(l=10, r=10, t=20, b=10),
+        legend=dict(orientation="h", yanchor="bottom", y=-0.22, xanchor="center", x=0.5,
+                    bgcolor="rgba(0,0,0,0)", font=dict(size=11)),
+        hovermode="x unified", template="plotly_dark",
+    )
+    fig.update_xaxes(gridcolor=T.BORDER, showgrid=True)
+    fig.update_yaxes(gridcolor=T.BORDER, range=[0, 1.05], tickformat=".0%")
+
+    # ── State distribution summary ────────────────────────────────────────────
+    state_counts = df["state"].value_counts(normalize=True).reindex([0, 1, 2], fill_value=0.0)
+    feat = extra.get("feature_importance", {}) or {}
+    mean_p0 = float(feat.get("mean_p_state0", state_counts.get(0, 0.0))) * 100
+    mean_p1 = float(feat.get("mean_p_state1", state_counts.get(1, 0.0))) * 100
+    mean_p2 = float(feat.get("mean_p_state2", state_counts.get(2, 0.0))) * 100
+
+    def _stat_chip(label: str, value: str, color: str) -> html.Div:
+        return html.Div([
+            html.Div(label, style={"color": T.TEXT_MUTED, "fontSize": "10px",
+                                   "fontWeight": "700", "textTransform": "uppercase",
+                                   "letterSpacing": "0.05em", "marginBottom": "4px"}),
+            html.Div(value, style={"color": color, "fontSize": "1.15rem",
+                                   "fontWeight": "700", "fontFamily": "JetBrains Mono, monospace"}),
+        ], style={**T.STYLE_CARD, "flex": "1", "minWidth": "110px",
+                  "padding": "10px 14px", "marginRight": "8px"})
+
+    # ── Health flags ──────────────────────────────────────────────────────────
+    n_bars = len(df)
+    n_entry = int((df[["p_state0", "p_state1", "p_state2"]].max(axis=1) >= 0.60).sum())
+    pct_confident = 100.0 * n_entry / max(n_bars, 1)
+    backend = extra.get("hmm_backend", "unknown")
+    health_msg = "OK" if backend == "hmmlearn" else "GMM fallback (iid)"
+    health_color = T.SUCCESS if backend == "hmmlearn" else T.WARNING
+
+    stats_row = html.Div([
+        _stat_chip("Bull state (avg)",  f"{mean_p0:.1f}%", T.SUCCESS),
+        _stat_chip("Chop state (avg)",  f"{mean_p1:.1f}%", T.WARNING),
+        _stat_chip("Crisis state (avg)", f"{mean_p2:.1f}%", T.DANGER),
+        _stat_chip("Confident bars",   f"{pct_confident:.1f}%", T.ACCENT),
+        _stat_chip("Backend",          health_msg, health_color),
+    ], style={"display": "flex", "gap": "0", "flexWrap": "wrap", "marginBottom": "12px"})
+
+    return dbc.Card(dbc.CardBody([
+        html.Div("HMM Regime Posterior", style={
+            "color": T.ACCENT, "fontSize": "11px", "fontWeight": "700",
+            "textTransform": "uppercase", "letterSpacing": "0.08em",
+            "marginBottom": "8px",
+        }),
+        html.Hr(style={"borderColor": T.BORDER, "margin": "0 0 10px"}),
+        stats_row,
+        dcc.Graph(figure=fig, config={"displayModeBar": False}),
+        html.P(
+            "Each band shows the probability that today belongs to that regime. "
+            "Trades fire only when one band exceeds the 0.60 entry floor.",
+            style={"color": T.TEXT_MUTED, "fontSize": "11px",
+                   "margin": "8px 0 0", "fontStyle": "italic"},
+        ),
+    ]), style={**T.STYLE_CARD, "marginBottom": "16px"})
+
+
 def _render_backtest_results(result, slug: str) -> html.Div:
     """Build the full results display: metric cards, equity curve, monthly heatmap, trades table."""
     m = result.metrics
@@ -2612,9 +3200,18 @@ def _render_backtest_results(result, slug: str) -> html.Div:
             trades_grid,
         ]), style={**T.STYLE_CARD, "marginBottom": "16px"})
 
+    # ── Strategy-specific panels ─────────────────────────────────────────────
+    extra_panels = []
+    if slug == "hmm_regime":
+        regime_df = result.extra.get("regime_log") if hasattr(result, "extra") else None
+        hmm_panel = _build_hmm_regime_panel(regime_df, result.extra or {})
+        if hmm_panel is not None:
+            extra_panels.append(hmm_panel)
+
     return html.Div([
         metric_row,
         equity_chart,
+        *extra_panels,
         heatmap_card,
         trades_card,
     ])
@@ -3983,6 +4580,88 @@ def _build_signal_body(row):
                                -ml_for_chart, max_prof, max_prof * 0.5,
                                stop_level=-cred_f * 2 * 100)
 
+    elif slug == "hmm_regime":
+        state    = row.get("State", "—")
+        p_state  = row.get("P(state)", "—")
+        regime   = row.get("Regime", "—")
+        trade    = row.get("Trade", "—")
+        sig_val  = row.get("Signal", "—")
+        mode     = row.get("Mode", "—")
+        vix_val  = row.get("VIX", "—")
+        ivr      = row.get("IVR", "—")
+        ret5d    = row.get("5d Ret", "—")
+        ret20d   = row.get("20d Ret", "—")
+        rv20     = row.get("RV20", "—")
+        spot_val = row.get("Price", 0)
+
+        state_color = (T.SUCCESS if str(state) == "0" else
+                       T.WARNING if str(state) == "1" else
+                       T.DANGER  if str(state) == "2" else T.TEXT_MUTED)
+        sig_color = (T.SUCCESS if str(sig_val).upper() == "SELL" else
+                     T.ACCENT  if str(sig_val).upper() == "BUY"  else T.TEXT_MUTED)
+        try:
+            p_float = float(p_state)
+        except Exception:
+            p_float = 0.0
+        conv_color = (T.SUCCESS if p_float >= 0.60 else
+                      T.WARNING if p_float >= 0.50 else T.DANGER)
+
+        # ── Regime status row (state classification context) ──────────────
+        regime_status = html.Div([
+            _row(
+                _mc("State",     str(state),    state_color),
+                _mc("Regime",    str(regime)),
+                _mc("P(state)",  str(p_state),  conv_color),
+                _mc("Signal",    str(sig_val),  sig_color),
+                _mc("Mode",      str(mode),     T.WARNING if str(mode) == "heuristic" else T.SUCCESS),
+                _mc("VIX",       str(vix_val)),
+                _mc("IVR",       str(ivr)),
+            ),
+        ], style={"marginBottom": "14px"})
+
+        # ── Try to build state-specific trade preview (payoff diagram) ────
+        try:
+            spot_f = float(spot_val) if spot_val not in ("—", None, "") else 0.0
+            vix_f  = float(vix_val) if vix_val not in ("—", None, "") else 0.0
+            state_i = int(state) if str(state).isdigit() else -1
+            preview = _hmm_trade_preview(state_i, spot_f, vix_f, ticker)
+        except Exception:
+            preview = None
+
+        if preview is not None:
+            # Trade preview metrics + leg table + payoff diagram
+            preview_metrics = preview["metrics"]
+            legs_table = preview["legs_table"]
+            chart      = preview["chart"]
+
+            # Disclaimer banner about IV proxy mode
+            disclaimer = html.Div([
+                html.Span("ℹ️ ", style={"fontSize": "13px"}),
+                html.Span(
+                    "Strikes computed via BS delta inversion at IV proxy = VIX / 100. "
+                    "Real fills will differ — verify against your broker chain before paper-trading."
+                    if str(mode) == "heuristic" else
+                    "Model mode active. Strikes computed via BS at IV proxy.",
+                    style={"color": T.TEXT_MUTED, "fontSize": "11px", "fontStyle": "italic"},
+                ),
+            ], style={"marginBottom": "12px", "padding": "8px 12px",
+                       "backgroundColor": "rgba(99,102,241,0.08)",
+                       "border": f"1px solid {T.BORDER}",
+                       "borderLeft": f"3px solid {T.ACCENT}",
+                       "borderRadius": "4px"})
+
+            # Combine regime status + disclaimer + trade metrics into the metrics slot
+            metrics = html.Div([regime_status, disclaimer, preview_metrics])
+        else:
+            # Fall back to status-only view if spot/vix are degenerate
+            metrics = html.Div([
+                regime_status,
+                html.P(f"Unable to render trade preview: spot={spot_val}, vix={vix_val}",
+                       style={"color": T.WARNING, "fontSize": "12px"}),
+            ])
+
+        signal = f"{sig_val} — {trade}"
+
     else:  # gex_positioning
         regime  = row.get("Regime", "—")
         sig     = row.get("Signal", "—")
@@ -4106,6 +4785,156 @@ def _dismiss_sig_modal(n):
 for _slug in (
     "vix_spike_fade", "ivr_credit_spread", "vol_arbitrage", "gex_positioning",
     "broken_wing_butterfly", "calendar_spread", "earnings_straddle",
-    "wheel_strategy", "bull_put_spread", "put_steal",
+    "wheel_strategy", "bull_put_spread", "put_steal", "hmm_regime",
 ):
     _make_signal_callback(_slug)
+
+
+# ── HMM Live Signal compute callback ──────────────────────────────────────────
+
+@callback(
+    Output("str-hmm_regime-live-signal-output", "children"),
+    Input("str-hmm_regime-live-compute-btn", "n_clicks"),
+    prevent_initial_call=True,
+)
+def _compute_hmm_live_signal(n_clicks):
+    """Fetch the latest SPY + VIX bars, score the HMM heuristic, and render
+    today's posterior + recommended trade. If a trained model pickle exists,
+    use it for a full posterior; otherwise fall back to the VIX-bucket heuristic
+    (same path as the strategy's `_heuristic_signal`)."""
+    if not n_clicks:
+        return no_update
+
+    try:
+        from dash_app import get_polygon_api_key
+        from engine.screener import _fetch_ohlcv, _score_hmm_regime
+        from engine.iv_metrics import get_iv_metrics_batch
+
+        api_key = get_polygon_api_key()
+        if not api_key:
+            return dbc.Alert(
+                "No Polygon API key configured — set POLYGON_API_KEY in your env.",
+                color="danger", style={"fontSize": "12px"},
+            )
+
+        # Fetch SPY OHLCV (60 bars is enough for rv20 + recent context)
+        spy_df = _fetch_ohlcv("SPY", api_key, bars=60)
+        if spy_df.empty:
+            return dbc.Alert("Failed to fetch SPY data from Polygon.",
+                              color="danger", style={"fontSize": "12px"})
+
+        # Fetch VIX (DB-first, Polygon-fallback)
+        vix_series = _get_vix_series(api_key)
+        if vix_series is None or vix_series.empty:
+            return dbc.Alert("No VIX data available (DB and Polygon both failed).",
+                              color="danger", style={"fontSize": "12px"})
+
+        # IV metrics (atm_iv, ivr)
+        try:
+            iv_metrics = get_iv_metrics_batch(["SPY"], spy_df.iloc[-1].name).get("SPY", {})
+        except Exception:
+            iv_metrics = {}
+
+        # Score via heuristic — same code path the screener uses
+        row = _score_hmm_regime("SPY", spy_df, vix_series, iv_metrics or {})
+        if row is None:
+            return dbc.Alert("Heuristic scoring returned no data — check data freshness.",
+                              color="warning", style={"fontSize": "12px"})
+
+        # Headline cards
+        state    = row.get("State", "—")
+        regime   = row.get("Regime", "—")
+        p_state  = row.get("P(state)", 0.0)
+        trade    = row.get("Trade", "—")
+        signal   = row.get("Signal", "—")
+        vix_now  = row.get("VIX", 0.0)
+        ivr_now  = row.get("IVR") or 0.0
+        spot     = row.get("Price", 0.0)
+
+        state_color = (T.SUCCESS if str(state) == "0" else
+                       T.WARNING if str(state) == "1" else
+                       T.DANGER  if str(state) == "2" else T.TEXT_MUTED)
+        conf_color = (T.SUCCESS if p_state >= 0.60 else
+                      T.WARNING if p_state >= 0.50 else T.DANGER)
+
+        def _chip(label, val, color=T.TEXT_PRIMARY):
+            return html.Div([
+                html.Div(label, style={"color": T.TEXT_MUTED, "fontSize": "10px",
+                                        "fontWeight": "600", "textTransform": "uppercase",
+                                        "marginBottom": "4px"}),
+                html.Div(str(val), style={"color": color, "fontSize": "1.05rem",
+                                            "fontWeight": "700"}),
+            ], style={**T.STYLE_CARD, "flex": "1", "minWidth": "100px", "padding": "10px 12px"})
+
+        # Entry-gate evaluation
+        vix_ok  = vix_now <= 40.0
+        conf_ok = p_state >= 0.60
+        gates = [
+            ("p_state >= 0.60",  conf_ok, f"{p_state:.2f}"),
+            ("VIX <= 40",        vix_ok, f"{vix_now:.2f}"),
+        ]
+        gate_rows = []
+        for name, ok, val in gates:
+            ind = "✓" if ok else "✗"
+            color = T.SUCCESS if ok else T.DANGER
+            gate_rows.append(html.Div([
+                html.Span(ind, style={"color": color, "fontWeight": "700",
+                                       "marginRight": "8px",
+                                       "fontFamily": "JetBrains Mono, monospace"}),
+                html.Span(name, style={"color": T.TEXT_PRIMARY, "fontSize": "12px"}),
+                html.Span(f"  →  {val}",
+                          style={"color": T.TEXT_MUTED, "fontSize": "11px",
+                                  "fontFamily": "JetBrains Mono, monospace"}),
+            ], style={"marginBottom": "4px"}))
+
+        all_pass = vix_ok and conf_ok
+        verdict_color = T.SUCCESS if all_pass else T.WARNING
+        verdict_text  = ("✅ ENTRY READY — would open " + str(trade)) if all_pass \
+            else "⏸ HOLD — at least one gate failed"
+
+        mode_text = row.get("Mode", "heuristic")
+        status = row.get("Status", "")
+
+        return html.Div([
+            # Headline cards
+            html.Div([
+                _chip("State",     str(state),                    state_color),
+                _chip("Regime",    regime),
+                _chip("P(state)",  f"{p_state:.2f}",              conf_color),
+                _chip("Trade",     trade,                         T.ACCENT),
+                _chip("Signal",    signal,                        T.SUCCESS if signal == "SELL"
+                                                                  else T.ACCENT),
+                _chip("Mode",      mode_text,                     T.WARNING if mode_text == "heuristic"
+                                                                  else T.SUCCESS),
+            ], style={"display": "flex", "gap": "8px", "flexWrap": "wrap", "marginBottom": "12px"}),
+            html.Div([
+                _chip("Spot",   f"${spot:.2f}"),
+                _chip("VIX",    f"{vix_now:.2f}"),
+                _chip("IVR",    f"{(ivr_now or 0)*100:.1f}%" if ivr_now < 1 else f"{ivr_now:.1f}"),
+            ], style={"display": "flex", "gap": "8px", "flexWrap": "wrap", "marginBottom": "12px"}),
+
+            # Entry gate evaluation
+            html.Div([
+                html.Div("Entry gate check", style={
+                    "color": T.TEXT_MUTED, "fontSize": "11px", "fontWeight": "700",
+                    "textTransform": "uppercase", "letterSpacing": "0.06em",
+                    "marginBottom": "8px"}),
+                *gate_rows,
+            ], style={**T.STYLE_CARD, "padding": "10px 14px", "marginBottom": "12px"}),
+
+            # Verdict
+            html.Div([
+                html.Span(verdict_text, style={
+                    "color": verdict_color, "fontSize": "13px", "fontWeight": "700"}),
+            ], style={"marginBottom": "8px"}),
+
+            html.P(status, style={"color": T.TEXT_MUTED, "fontSize": "11px",
+                                    "fontStyle": "italic", "margin": "0"}),
+        ])
+
+    except Exception as e:
+        logger.exception("hmm_regime compute live signal failed")
+        return dbc.Alert(
+            f"Compute failed: {e}",
+            color="danger", style={"fontSize": "12px"},
+        )

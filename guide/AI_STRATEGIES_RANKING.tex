@@ -1,0 +1,248 @@
+\documentclass[11pt,a4paper]{article}
+\usepackage[margin=2.2cm]{geometry}
+\usepackage{fontspec}
+\usepackage{xcolor}
+\usepackage{booktabs}
+\usepackage{longtable}
+\usepackage{array}
+\usepackage{ragged2e}
+\usepackage{amssymb}
+\usepackage{titlesec}
+\usepackage{enumitem}
+\usepackage{fancyhdr}
+\usepackage{parskip}
+\usepackage{hyperref}
+
+% Fonts (system fonts on Windows)
+\setmainfont{Calibri}
+\setsansfont{Calibri}
+\setmonofont{Consolas}[Scale=0.9]
+
+% Colors
+\definecolor{accent}{HTML}{1F6FEB}
+\definecolor{good}{HTML}{2DA44E}
+\definecolor{warn}{HTML}{BF8700}
+\definecolor{bad}{HTML}{CF222E}
+\definecolor{rule}{HTML}{D0D7DE}
+
+\hypersetup{
+  colorlinks=true,
+  linkcolor=accent,
+  urlcolor=accent,
+  pdftitle={AI Strategy Ranking},
+  pdfauthor={Claude Opus 4.7}
+}
+
+% Headings
+\titleformat{\section}{\Large\bfseries\color{accent}}{}{0pt}{}
+\titleformat{\subsection}{\large\bfseries}{}{0pt}{}
+\titlespacing*{\section}{0pt}{14pt}{6pt}
+\titlespacing*{\subsection}{0pt}{10pt}{4pt}
+
+% Header / footer
+\pagestyle{fancy}
+\fancyhf{}
+\renewcommand{\headrulewidth}{0pt}
+\fancyfoot[C]{\thepage}
+\fancyfoot[L]{\small\color{gray}Strategy Ranking}
+\fancyfoot[R]{\small\color{gray}2026-05-19}
+
+% Column types for table
+\newcolumntype{R}[1]{>{\RaggedRight\arraybackslash}p{#1}}
+\newcolumntype{C}[1]{>{\Centering\arraybackslash}p{#1}}
+
+% Verdict colorings
+\newcommand{\verdictdeploy}[1]{\textcolor{good}{\textbf{#1}}}
+\newcommand{\verdictpaper}[1]{\textcolor{warn}{\textbf{#1}}}
+\newcommand{\verdictstop}[1]{\textcolor{bad}{\textbf{#1}}}
+
+\begin{document}
+
+\begin{center}
+{\huge\bfseries\color{accent}Strategy Ranking}\\[4pt]
+{\large Honest Assessment of All 38 Strategies in \texttt{alan\_trader}}\\[10pt]
+{\small\color{gray}Audit date: 2026-05-19 \quad$\bullet$\quad Auditor: Claude Opus 4.7 (1M context)}\\
+{\small\color{gray}Scope: 18 AI-driven + 20 rules-based}
+\end{center}
+
+\vspace{8pt}
+\hrule height 0.5pt
+\vspace{14pt}
+
+\section*{Top 10 Overall}
+
+\textit{Ranked by likelihood of making money in production --- combining edge thesis strength, backtest realism, code quality, risk profile, and live-readiness.}
+
+\renewcommand{\arraystretch}{1.3}
+\begin{center}
+\footnotesize
+\begin{longtable}{C{0.5cm} R{3.4cm} C{0.9cm} C{0.8cm} R{6.5cm} C{1.4cm}}
+\toprule
+\textbf{\#} & \textbf{Strategy} & \textbf{Type} & \textbf{Grade} & \textbf{Why it's here} & \textbf{Trades/yr}\\
+\midrule
+\endhead
+
+\textbf{1} & \texttt{hmm\textunderscore regime} & AI & \textcolor{good}{\textbf{A}} & Classifies current vol regime (not predicting); matches defined-risk structure to it. Cleanest walk-forward in the codebase. Slippage modeled. & 12--18\\
+\midrule
+\textbf{2} & \texttt{rates\textunderscore spy\textunderscore rotation\textunderscore options} & Rules & \textcolor{good}{\textbf{A}} & Four-regime rotation on real option chain data. Roll logic sound. Long-only options = capped downside. & 8--12\\
+\midrule
+\textbf{3} & \texttt{vix\textunderscore spike\textunderscore fade} & Rules & \textcolor{good}{\textbf{B+}} & VIX mean reversion into 200d MA is one of the most empirically reliable edges; bull call spread caps cost. & 8--15\\
+\midrule
+\textbf{4} & \texttt{iron\textunderscore condor\textunderscore rules} & Rules & \textcolor{warn}{\textbf{B}} & Vanilla VRP harvest with three hard gates (IVR / VIX / ADX). 50\% profit target. Production-grade simplicity. & 8--15\\
+\midrule
+\textbf{5} & \texttt{fomc\textunderscore event\textunderscore straddle} & Rules & \textcolor{warn}{\textbf{B}} & Calendar-triggered (FOMC dates published, no lookahead). Realized $>$ implied at events documented (Lucca, Savor). & $\sim$8\\
+\midrule
+\textbf{6} & \texttt{tail\textunderscore risk\textunderscore put\textunderscore spread} & Rules & \textcolor{warn}{\textbf{B}} & Mechanical quarterly hedge, cost-capped at 1\%/yr. Put-skew premium on solid empirical footing (Cole 2013). & $\sim$4\\
+\midrule
+\textbf{7} & \texttt{dealer\textunderscore gamma\textunderscore regime} & Rules & \textcolor{warn}{\textbf{B}} & GEX regime classification: long-straddle (negative GEX) vs IC (positive GEX). Sound thesis. & 8--12\\
+\midrule
+\textbf{8} & \texttt{earnings\textunderscore iv\textunderscore crush} & Rules & \textcolor{warn}{\textbf{B}} & IV crush post-earnings is real and persistent (20--40\% on avg); short iron condor 1-day hold captures the bulk. & 40--60\\
+\midrule
+\textbf{9} & \texttt{earnings\textunderscore post\textunderscore drift} & Rules & \textcolor{warn}{\textbf{B}} & Post-earnings drift (SUE effect) is one of the most-replicated anomalies in academic finance. & 40--60\\
+\midrule
+\textbf{10} & \texttt{ivr\textunderscore credit\textunderscore spread} & Rules & \textcolor{warn}{\textbf{B}} & Plain vanilla VRP harvest at IVR $\geq$ 50\%. Boring is good --- proven theta strategy. & 12--18\\
+\bottomrule
+\end{longtable}
+\end{center}
+
+\subsection*{Honorable mentions}
+\begin{itemize}[leftmargin=*,itemsep=2pt]
+  \item \texttt{put\textunderscore steal} (AI, B) --- NII regime signal + GBM survival on bull puts.
+  \item \texttt{vix\textunderscore term\textunderscore structure} (AI, B) --- VIX contango/backwardation regime classifier.
+  \item \texttt{rates\textunderscore spy\textunderscore rotation} (Rules, B) --- Simpler allocation version of \#2.
+  \item \texttt{bull\textunderscore put\textunderscore spread} (Rules, B-) --- IVR-gated bull put. Solid but delta-approx instead of real BS.
+\end{itemize}
+
+\subsection*{The bottom (avoid until rewritten)}
+\begin{itemize}[leftmargin=*,itemsep=2pt]
+  \item \verdictstop{\texttt{covered\textunderscore call\textunderscore ai}} (AI, D) --- Assignment modeling missing; backtest unreliable.
+  \item \texttt{vol\textunderscore calendar\textunderscore spread}, \texttt{vol\textunderscore term\textunderscore structure\textunderscore regime}, \texttt{oi\textunderscore imbalance\textunderscore put\textunderscore fade}, \texttt{gamma\textunderscore flip\textunderscore breakout} (AI, D) --- Incomplete or label-feature tautologies.
+  \item \texttt{broken\textunderscore wing\textunderscore butterfly}, \texttt{calendar\textunderscore spread}, \texttt{earnings\textunderscore straddle}, \texttt{vol\textunderscore arbitrage}, \texttt{gex\textunderscore positioning}, \texttt{calendar\textunderscore spread\textunderscore vix} --- heavy heuristic approximation.
+\end{itemize}
+
+\vspace{12pt}
+\hrule height 0.5pt
+\vspace{8pt}
+{\small\color{gray}\textit{The deep-dive below covers only the three originally-audited AI strategies. The other 35 were graded via triage in the table above.}}
+\vspace{10pt}
+
+\section*{TL;DR — Which AI strategy makes money?}
+
+\begin{quote}
+\textbf{\texttt{hmm\_regime} is the only strategy with a credible path to real edge.}\\
+The other two have known flaws large enough to swamp any ML contribution.
+\end{quote}
+
+The HMM strategy works because it is \emph{not actually trying to predict the future}. It classifies the \textbf{current} vol regime (a well-documented stylized fact since Hamilton 1989, Ang--Bekaert 2002) and matches a defined-risk option structure to it. That is how real vol traders think. The other two strategies use ML to do something ML is bad at (predict direction or range) and then layer cost-modeling errors on top.
+
+\section*{Ranking Table}
+
+\renewcommand{\arraystretch}{1.35}
+\begin{center}
+\scriptsize
+\begin{longtable}{C{0.4cm} R{1.9cm} R{2.5cm} R{3.4cm} R{2.6cm} R{2.2cm} R{1.4cm}}
+\toprule
+\textbf{\#} & \textbf{Strategy} & \textbf{Thesis} & \textbf{Code Quality} & \textbf{ML Value} & \textbf{Risk \& Live} & \textbf{Verdict}\\
+\midrule
+\endhead
+
+\textbf{1} & \texttt{hmm\textunderscore regime} &
+Regime-switching is academically supported (Hamilton, Ang--Bekaert). Classifies \emph{current} regime, doesn't predict. &
+Cleanest walk-forward; state-relabel handles label switching; slippage modeled; warm-start; forward-posterior gating. Minor: no margin tracking. &
+Genuine. HMM provides info a rules-based IVR/VIX gate doesn't. &
+All defined-risk. \texttt{max\textunderscore concurrent}=1. Live wired with model + heuristic fallback. &
+\verdictdeploy{DEPLOY}\\
+
+\midrule
+
+\textbf{2} & \texttt{iron\textunderscore condor\textunderscore ai} &
+``Predict range-bound next 45 days'' is auto-correlated with IVR/VIX features the model already sees. &
+Already had one leakage fix. Still: no slippage, VIX-as-IV for any ticker, adaptive-delta logic runs backwards from Kelly. &
+Self-acknowledged $\sim$0.5--0.9 Sharpe vs. rules IC baseline $\sim$0.6--0.8. Marginal lift. &
+Defined-risk. \texttt{max\textunderscore concurrent}=4. Margin tracked. Live IVR proxy disagrees with backtest. &
+\verdictpaper{PAPER ONLY}\\
+
+\midrule
+
+\textbf{3} & \texttt{covered\textunderscore call\textunderscore ai} &
+Thesis claims (delta $\times$ DTE) optimization; code is binary write-yes/no with two delta buckets. Label trivial. &
+\textbf{No assignment modeling.} Fake \texttt{days\textunderscore since\textunderscore earnings}. No commissions. ML model never used in live signal. &
+Model predicts ``did stock not crash'' --- a directional/momentum signal in option-selling clothes. &
+Stock + short call. Loss path partly hidden by missing assignment. Live signal ignores trained model. &
+\verdictstop{DO NOT USE}\\
+\bottomrule
+\end{longtable}
+\end{center}
+
+\section*{Trading Frequency}
+
+\renewcommand{\arraystretch}{1.25}
+\begin{center}
+\small
+\begin{tabular}{R{3.2cm} C{1.6cm} C{1.8cm} R{6.0cm} C{2.2cm}}
+\toprule
+\textbf{Strategy} & \textbf{Concurrent} & \textbf{Avg Hold} & \textbf{Entry Gate} & \textbf{Trades/Year}\\
+\midrule
+\texttt{hmm\_regime}      & 1 & 12--25 days & P(state) $\geq$ 0.60 \,\&\, VIX $\leq$ 40 \,\&\, spot/forward agree     & $\sim$12--18\\
+\texttt{iron\_condor\_ai} & 4 & 21--24 days & P(range) $\geq$ 0.50 \,\&\, IVR $\geq$ 0.20 \,\&\, VIX $\leq$ 38       & $\sim$30--50\\
+\texttt{covered\_call\_ai}& 1 & 10--18 days & IVR $\geq$ 0.30 \,\&\, days\_since\_earn $\geq$ 10                      & $\sim$15--25\\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\textit{Important caveat:} These are decision-frequency estimates, not fill-rates. On real chains expect 70--85\% of these to actually fill at acceptable prices --- bid/ask widens on illiquid strikes and IV mismatches against BS-priced theoretical credit/debit will reject some entries.
+
+\section*{What ``makes money'' actually depends on}
+
+A strategy makes money in production when \textbf{all four} of these hold:
+
+\begin{enumerate}[leftmargin=*,itemsep=2pt]
+  \item \textbf{Edge exists in the population} --- there is a real, persistent inefficiency. (HMM \checkmark, IC\_AI $\sim$, CC\_AI $\times$)
+  \item \textbf{The backtest faithfully simulates fills} --- no theoretical mid-mark fantasies. (HMM \checkmark, IC\_AI $\times$, CC\_AI $\times$)
+  \item \textbf{The labels measure what the thesis says} --- the ML is learning the right thing. (HMM N/A unsupervised, IC\_AI $\sim$, CC\_AI $\times$)
+  \item \textbf{Live = backtest} --- same features, same model path. (HMM \checkmark, IC\_AI $\times$, CC\_AI $\times$)
+\end{enumerate}
+
+\textbf{\texttt{hmm\_regime} is the only one that passes all four.}
+
+\section*{Cross-cutting issues across all three}
+
+These hurt every ``AI'' strategy in the codebase regardless of rank:
+
+\begin{itemize}[leftmargin=*,itemsep=3pt]
+  \item \textbf{VIX-as-IV is a SPY-only assumption.} Treating the VIX as the implied vol for \emph{any} ticker's options is fine for SPY/SPX-correlated names, materially wrong for single stocks. The \texttt{description} field claims ticker-genericity; the implementation doesn't deliver it.
+  \item \textbf{No bid/ask cost component.} Slippage parameters are inconsistent: HMM has \texttt{slip=0.05/leg}, IC\_AI has 0, CC\_AI has 0. A 4-leg IC closed at 50\% of credit can be entirely consumed by 3--5\textcent /leg adverse fills.
+  \item \textbf{Final saved model = last walk-forward fit.} All three save the most recent retrain's model. That is typically trained on the most recent 9--12 months only --- which may be the most regime-anomalous window. Consider refitting on full history before persisting for live use.
+  \item \textbf{Tree-based GBM with StandardScaler.} Both \texttt{iron\_condor\_ai} and \texttt{covered\_call\_ai} pipeline a scaler ahead of GBM. Trees are scale-invariant. Harmless but cargo-cult.
+\end{itemize}
+
+\section*{Recommended next moves}
+
+\textit{In order of leverage:}
+
+\begin{enumerate}[leftmargin=*,itemsep=3pt]
+  \item \textbf{Promote \texttt{hmm\_regime} to first-class.} Add reserved-margin tracking, thread per-ticker $q$, parameterize the bull-put / long-put \texttt{dte\_ex} exits. Paper-trade for 60--90 days on SPY before risking capital.
+  \item \textbf{Park \texttt{iron\_condor\_ai} until} you have added bid/ask slippage, threaded per-ticker IV (read from \texttt{option\_snapshots}), and either fixed or A/B tested the inverted adaptive-delta logic.
+  \item \textbf{Rewrite \texttt{covered\_call\_ai} before quoting any number from it.} The assignment-modeling gap is a correctness bug, not a refinement. Until then its backtest equity curve is fiction.
+  \item \textbf{Treat the ``rules'' IC as the honest baseline.} If \texttt{iron\_condor\_ai}'s post-fix Sharpe is 0.5--0.9 and the rules IC already does $\sim$0.6--0.8 (per the IC\_AI audit comments), the ML layer is not earning its complexity budget. That is a defensible reason to \emph{remove} the AI variant, not improve it.
+\end{enumerate}
+
+\section*{Caveats on this ranking}
+
+\begin{itemize}[leftmargin=*,itemsep=2pt]
+  \item Scores reflect what I can verify by reading source code on \textbf{2026-05-19}, not live performance.
+  \item I have not run any of the backtests; ratings are about \emph{whether the backtest is trustworthy}, not what its equity curve shows.
+  \item The ``Expected Real Sharpe'' column in the source markdown is a wide range, not a forecast. It reflects how much I would haircut the headline backtest after correcting the issues listed.
+  \item An ``edge candidate'' still needs walk-forward out-of-sample validation, paper trading, and small-size live validation before it earns real capital.
+\end{itemize}
+
+\vspace{12pt}
+\hrule height 0.5pt
+\vspace{6pt}
+\begin{center}
+\footnotesize\color{gray}
+Note: this ranking covers only the three \texttt{*\_ai} / \texttt{hmm\_*} strategies originally audited.\\
+A broader pass over all 18 \texttt{StrategyType.AI\_DRIVEN} strategies is in progress separately.
+\end{center}
+
+\end{document}
