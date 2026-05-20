@@ -432,6 +432,18 @@ class HMMRegimeStrategy(BaseStrategy):
         dte_long_put:        int   = 45,
         long_put_long_delta: float = 0.30,
         long_put_short_pct:  float = 0.05,
+        # State 2 entry gates (added 2026-05 after backtest diagnosis showed
+        # state-2 trades won only 15% of the time and accounted for the entire
+        # -38% drawdown). Two complementary defenses:
+        #   (a) require VIX to be DESCENDING from a recent peak before entering
+        #       long-vol — the strategy is designed for the RECOVERY side of a
+        #       vol spike, not the run-up.
+        #   (b) size state-2 trades smaller than state-0 / state-1 since the
+        #       Kelly fraction at a 15% win rate is negative.
+        state2_require_vix_descending: bool  = True,
+        state2_vix_descent_pct:        float = 0.15,   # VIX must be >=15% off 5-bar peak
+        state2_vix_descent_lookback:   int   = 5,      # bars over which to find the peak
+        state2_size_multiplier:        float = 0.5,    # half-size state 2 entries
         # Risk / exits — short-vol structures
         profit_target_pct:   float = 0.50,
         stop_loss_mult:      float = 2.0,
@@ -478,6 +490,11 @@ class HMMRegimeStrategy(BaseStrategy):
         self.long_put_long_delta   = long_put_long_delta
         self.long_put_short_pct    = long_put_short_pct
 
+        self.state2_require_vix_descending = bool(state2_require_vix_descending)
+        self.state2_vix_descent_pct        = float(state2_vix_descent_pct)
+        self.state2_vix_descent_lookback   = int(state2_vix_descent_lookback)
+        self.state2_size_multiplier        = float(state2_size_multiplier)
+
         self.profit_target_pct     = profit_target_pct
         self.stop_loss_mult        = stop_loss_mult
         self.debit_profit_target   = debit_profit_target
@@ -514,6 +531,10 @@ class HMMRegimeStrategy(BaseStrategy):
             "dte_long_put":          self.dte_long_put,
             "long_put_long_delta":   self.long_put_long_delta,
             "long_put_short_pct":    self.long_put_short_pct,
+            "state2_require_vix_descending": self.state2_require_vix_descending,
+            "state2_vix_descent_pct":        self.state2_vix_descent_pct,
+            "state2_vix_descent_lookback":   self.state2_vix_descent_lookback,
+            "state2_size_multiplier":        self.state2_size_multiplier,
             "profit_target_pct":     self.profit_target_pct,
             "stop_loss_mult":        self.stop_loss_mult,
             "debit_profit_target":   self.debit_profit_target,
@@ -568,6 +589,19 @@ class HMMRegimeStrategy(BaseStrategy):
             {"key": "position_size_pct",    "label": "Position size",   "type": "slider",
              "min": 0.01, "max": 0.10, "default": 0.03, "step": 0.01,
              "col": 1, "row": 3},
+
+            # State-2 (long put debit spread) defensive controls — added 2026-05.
+            # Diagnosis showed 15% win rate, single biggest source of drawdown.
+            {"key": "state2_vix_descent_pct", "label": "State-2: VIX dropoff (%)",
+             "type": "slider", "min": 0.0, "max": 0.30, "default": 0.15, "step": 0.05,
+             "col": 2, "row": 3,
+             "help": "Require VIX to be this far below its 5-bar peak before entering "
+                     "state-2 long-vol trades. 0 disables the gate."},
+            {"key": "state2_size_multiplier", "label": "State-2: size multiplier",
+             "type": "slider", "min": 0.0, "max": 1.0, "default": 0.5, "step": 0.1,
+             "col": 0, "row": 4,
+             "help": "Multiplier on position_size_pct for state-2 trades. "
+                     "0 disables state-2 entries entirely (cash in crisis)."},
         ]
 
     # ═══════════════════════════════════════════════════════════════════════
@@ -924,7 +958,7 @@ class HMMRegimeStrategy(BaseStrategy):
             gating_post = fwd_posterior if fwd_posterior is not None else posterior
 
             free_capital = capital - reserved_margin
-            can_enter = (
+            base_can_enter = (
                 posterior is not None
                 and gating_post is not None
                 and open_trade is None
@@ -935,12 +969,47 @@ class HMMRegimeStrategy(BaseStrategy):
                 and free_capital > 0   # must have free capital after margin reserves
             )
 
+            # ── State-2 defensive gates (added after 2026-05 backtest diagnosis) ──
+            # The HMM correctly classifies the crisis state but stays sticky on
+            # state 2 for weeks after vol mean-reverts. Two gates:
+            #   1. VIX must be descending from its lookback peak (RECOVERY side).
+            #   2. State-2 size multiplier (separate parameter, applied below).
+            # Setting state2_size_multiplier=0 disables state-2 entries entirely.
+            can_enter = base_can_enter
+            state2_skip_reason = None
+            if base_can_enter and int(np.argmax(posterior)) == 2:
+                # Gate 1: VIX descent from lookback peak
+                if p.get("state2_require_vix_descending", True):
+                    lookback = int(p.get("state2_vix_descent_lookback", 5))
+                    descent_pct = float(p.get("state2_vix_descent_pct", 0.15))
+                    if descent_pct > 0:
+                        lo = max(0, i - lookback)
+                        vix_peak = float(vix_series.iloc[lo:i + 1].max())
+                        vix_threshold = vix_peak * (1.0 - descent_pct)
+                        if vix > vix_threshold:
+                            can_enter = False
+                            state2_skip_reason = (
+                                f"vix {vix:.2f} > peak {vix_peak:.2f} × "
+                                f"(1-{descent_pct:.0%}) = {vix_threshold:.2f}"
+                            )
+                # Gate 2: size multiplier == 0 disables state 2 entirely
+                if can_enter and float(p.get("state2_size_multiplier", 0.5)) <= 0.0:
+                    can_enter = False
+                    state2_skip_reason = "state2_size_multiplier=0 (state 2 disabled)"
+
+            if state2_skip_reason is not None:
+                logger.debug(f"hmm_regime: skip state-2 entry at {dt.date()} - {state2_skip_reason}")
+
             if can_enter:
                 state = int(np.argmax(posterior))
                 p_st  = float(gating_post[state])
-                # Size against free_capital (capital - reserved_margin) so we
-                # don't over-leverage when running max_concurrent > 1
-                trade = self._open_trade(state, p_st, spot, iv, r, q, dt, free_capital, p, comm, slip)
+                # Per-state size multiplier (state 2 is half-sized by default)
+                size_mult = 1.0
+                if state == 2:
+                    size_mult = float(p.get("state2_size_multiplier", 0.5))
+                # Size against free_capital × size_mult
+                sizing_capital = free_capital * size_mult
+                trade = self._open_trade(state, p_st, spot, iv, r, q, dt, sizing_capital, p, comm, slip)
                 if trade is not None:
                     # Verify margin fits within free capital before opening
                     margin_needed = float(trade.get("margin", 0.0))

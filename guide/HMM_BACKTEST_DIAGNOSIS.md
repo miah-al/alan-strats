@@ -83,6 +83,39 @@ The 2024 Aug spike is a textbook regime-recovery scenario that the guide's exist
 
 ---
 
+## Empirical fix results (2026-05-19 update)
+
+The proposed fixes below were implemented as new strategy parameters
+(`state2_require_vix_descending`, `state2_vix_descent_pct`,
+`state2_vix_descent_lookback`, `state2_size_multiplier`) and the four
+configurations below were tested on the same 2022-2026 SPY window:
+
+| Scenario | Final equity | Return | Max DD | Sharpe | Trades |
+|----------|-------------:|-------:|-------:|-------:|------:|
+| D: No defenses (yesterday's baseline) | $5,631 | **-43.69%** | -58.04% | -0.767 | 78 |
+| A: Defaults (15% descent + 0.5× size, 5-bar lookback) | $7,309 | -26.91% | -47.31% | -0.648 | 71 |
+| C: Aggressive (20% descent + 0.3× size, 10-bar lookback) | $6,843 | -31.57% | -51.39% | -0.702 | 72 |
+| 🏆 **B: State-2 OFF entirely** (`state2_size_multiplier=0`) | **$10,325** | **+3.25%** | **-26.34%** | -0.326 | 63 |
+
+**Headline finding:** Disabling state-2 trades entirely takes the strategy
+from a -43.69% loss to a +3.25% gain. Drawdown halves. State 2 trades are
+not a hedge; they are a bleed on this dataset. Setting
+`state2_size_multiplier = 0` from the backtest UI yields the best result.
+
+The middle scenarios (A and C) reduce but don't eliminate the bleed —
+half-sized state-2 trades still lose money, just more slowly. The
+VIX-descent gate filters out *some* bad entries (the early-Aug-2024
+entries that the gate would have blocked) but state-2 trades that DO
+pass the gate still tend to lose because the HMM stays sticky on
+state 2 for weeks after vol mean-reverts.
+
+The defaults ship at scenario A (defensive but not off): this preserves
+the long-vol thesis if a future crisis is sustained like 2008/2020. If
+the user's view is that future crises will be V-shaped like Aug 2024,
+they should set the size multiplier to 0 from the UI.
+
+---
+
 ## Proposed fixes (in order of leverage)
 
 ### 1. State-2 entry gate: require VIX to be FALLING from peak (highest leverage)
