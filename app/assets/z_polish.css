@@ -1,290 +1,280 @@
 /* =============================================================================
-   z_polish.css — UI polish layer for Alan Trader
-   Loads AFTER dark.css (alphabetical: dark.css → z_polish.css), so where the two
-   overlap, these refined rules win. Palette matches dash_app/theme.py exactly:
+   z_polish.css — Modern UI layer for Alan Trader
+   Loads AFTER dark.css (alphabetical), so these refined rules win on overlap.
+   Palette matches app/theme.py:
      base #0a0e1a · card #111827 · elevated #161d2e · accent #6366f1
      border #1f2937 · border-bright #374151 · text #f9fafb / #9ca3af / #6b7280
-   This file is ADDITIVE — it adds transitions, focus states, hover, form-control
-   theming, and editorial typography that inline styles + dark.css don't cover.
+   Pure presentation — additive, never touches Python or component ids.
    ============================================================================= */
 
 :root {
-  --bg-base:     #0a0e1a;
-  --bg-card:     #111827;
-  --bg-elevated: #161d2e;
-  --accent:      #6366f1;
-  --accent-2:    #818cf8;
-  --success:     #10b981;
-  --danger:      #ef4444;
-  --warning:     #f59e0b;
-  --text:        #f9fafb;
-  --text-sec:    #9ca3af;
-  --text-muted:  #6b7280;
-  --border:      #1f2937;
-  --border-brt:  #374151;
+  --bg-base:    #0a0e1a;
+  --bg-card:    #111827;
+  --bg-elev:    #161d2e;
+  --bg-raised:  #1a2336;
+  --accent:     #6366f1;
+  --accent-2:   #818cf8;
+  --accent-3:   #4f46e5;
+  --success:    #10b981;
+  --danger:     #ef4444;
+  --warning:    #f59e0b;
+  --text:       #f9fafb;
+  --text-sec:   #9ca3af;
+  --text-muted: #6b7280;
+  --border:     #1f2937;
+  --border-brt: #374151;
+
+  --r-sm: 7px;
+  --r-md: 11px;
+  --r-lg: 16px;
+  --r-pill: 999px;
+
+  --sh-sm: 0 1px 2px rgba(0,0,0,.30);
+  --sh-md: 0 6px 18px rgba(0,0,0,.38);
+  --sh-lg: 0 18px 48px rgba(0,0,0,.55);
+  --glow:  0 0 0 3px rgba(99,102,241,.18);
+
   --ease: cubic-bezier(.4, 0, .2, 1);
-  --dur:  .15s;
+  --dur:  .16s;
+
+  --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
   --font-mono: 'JetBrains Mono', 'Fira Code', ui-monospace, 'Courier New', monospace;
 }
 
+/* ── Base ──────────────────────────────────────────────────────────────── */
+html, body {
+  background: var(--bg-base);
+  color: var(--text);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+  font-feature-settings: "cv11", "ss01";
+  letter-spacing: -0.003em;
+}
 * { box-sizing: border-box; }
-html, body { -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale;
-             text-rendering: optimizeLegibility; }
 ::selection { background: rgba(99,102,241,.32); color: #fff; }
 
-/* Keyboard focus ring (mouse clicks never trigger it) */
-:focus { outline: none; }
-:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 6px; }
+/* Subtle ambient gradient on the page background — modern depth, not flat */
+body::before {
+  content: ""; position: fixed; inset: 0; z-index: -1; pointer-events: none;
+  background:
+    radial-gradient(900px 500px at 78% -8%, rgba(99,102,241,.10), transparent 60%),
+    radial-gradient(800px 500px at 0% 100%, rgba(16,185,129,.05), transparent 55%);
+}
 
-/* ── Scrollbars: thinner, theme-matched ────────────────────────────────── */
+/* Tabular numerals everywhere data lives → columns align, terminal feel */
+.ag-cell, .ag-header-cell, td, th, input,
+.guide-md td, .Select-value-label {
+  font-variant-numeric: tabular-nums; font-feature-settings: "tnum";
+}
+
+/* Keyboard focus ring */
+:focus { outline: none; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: var(--r-sm); }
+
+/* ── Scrollbars — slim, modern ─────────────────────────────────────────── */
 * { scrollbar-width: thin; scrollbar-color: var(--border-brt) transparent; }
-::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar { width: 9px; height: 9px; }
 ::-webkit-scrollbar-track { background: transparent; }
-::-webkit-scrollbar-thumb { background: var(--border-brt); border-radius: 999px;
+::-webkit-scrollbar-thumb { background: var(--border-brt); border-radius: var(--r-pill);
                             border: 2px solid var(--bg-base); }
 ::-webkit-scrollbar-thumb:hover { background: #44506a; }
 
-/* ── Page-content entrance on tab switch ───────────────────────────────── */
-#page-content > * { animation: fadeUp .26s var(--ease); }
-@keyframes fadeUp { from { opacity: 0; transform: translateY(6px); }
+/* ── Page-content entrance ─────────────────────────────────────────────── */
+#page-content > * { animation: fadeUp .3s var(--ease); }
+@keyframes fadeUp { from { opacity: 0; transform: translateY(8px); }
                     to   { opacity: 1; transform: translateY(0); } }
 
-/* ── Sidebar nav links (navbar.py uses dbc.Nav pills → .nav-pills .nav-link) ─
-   dark.css already sets the active/hover background; we only ADD a left accent
-   rail + smooth transition (no layout shift: base links get a transparent rail). */
-.nav-pills .nav-link {
-  border-left: 3px solid transparent;
-  border-radius: 6px;
-  transition: background var(--dur) var(--ease), color var(--dur) var(--ease),
-              border-left-color var(--dur) var(--ease);
+/* ── Headings — tight, modern, gradient h1 ─────────────────────────────── */
+h1, h2, h3, h4, h5 { letter-spacing: -.02em; }
+h1 {
+  font-weight: 800;
+  background: linear-gradient(95deg, #fff 0%, #c7d2fe 90%);
+  -webkit-background-clip: text; background-clip: text;
+  -webkit-text-fill-color: transparent;
 }
-.nav-pills .nav-link.active { border-left-color: var(--accent); font-weight: 600; }
 
-/* ── Cards: hover lift ─────────────────────────────────────────────────── */
-.card {
-  border-radius: 10px !important;
-  box-shadow: 0 1px 2px rgba(0,0,0,.30);
+/* ── Sidebar — modern glass nav ────────────────────────────────────────── */
+.nav-pills { padding: 0 2px; }
+.nav-pills .nav-link {
+  position: relative; margin-bottom: 4px;
+  border-radius: var(--r-sm);
+  border-left: 3px solid transparent;
+  transition: background var(--dur) var(--ease), color var(--dur) var(--ease),
+              padding-left var(--dur) var(--ease), border-left-color var(--dur) var(--ease);
+}
+.nav-pills .nav-link:hover {
+  background: rgba(99,102,241,.09) !important;
+  color: var(--text) !important; padding-left: 17px;
+}
+.nav-pills .nav-link.active {
+  background: linear-gradient(90deg, rgba(99,102,241,.22), rgba(99,102,241,.05)) !important;
+  color: #fff !important;
+  border-left: 3px solid var(--accent) !important;
+  box-shadow: 0 1px 10px rgba(99,102,241,.20);
+}
+
+/* ── Cards — elevation, soft top-light, hover lift ─────────────────────── */
+.card, .ui-card {
+  position: relative;
+  background: linear-gradient(180deg, #131c2b 0%, var(--bg-card) 58%) !important;
+  border: 1px solid var(--border) !important;
+  border-radius: var(--r-md) !important;
+  box-shadow: 0 1px 0 rgba(255,255,255,.025) inset, var(--sh-sm);
   transition: transform var(--dur) var(--ease), box-shadow var(--dur) var(--ease),
               border-color var(--dur) var(--ease);
 }
-.card:hover { border-color: var(--border-brt) !important; box-shadow: 0 4px 14px rgba(0,0,0,.40); }
+.card:hover, .ui-card:hover {
+  transform: translateY(-2px);
+  border-color: var(--border-brt) !important;
+  box-shadow: 0 1px 0 rgba(255,255,255,.04) inset, var(--sh-md);
+}
+.card-body { background: transparent !important; }
 
-/* ── Buttons ───────────────────────────────────────────────────────────── */
-.btn { font-weight: 600; border-radius: 6px !important;
-        transition: background var(--dur) var(--ease), transform var(--dur) var(--ease),
-                    box-shadow var(--dur) var(--ease), border-color var(--dur) var(--ease); }
+/* ── Buttons — gradient primary, smooth press ──────────────────────────── */
+.btn { font-weight: 600; border-radius: var(--r-sm) !important;
+       transition: background var(--dur) var(--ease), transform var(--dur) var(--ease),
+                   box-shadow var(--dur) var(--ease), border-color var(--dur) var(--ease); }
 .btn:hover { transform: translateY(-1px); }
 .btn:active { transform: translateY(0); }
-.btn-primary { background: var(--accent) !important; border-color: var(--accent) !important; }
-.btn-primary:hover { background: #4f52e0 !important; border-color: #4f52e0 !important;
-                     box-shadow: 0 4px 14px rgba(99,102,241,.35); }
+.btn-primary {
+  background: linear-gradient(180deg, #7174f6, var(--accent)) !important;
+  border: 1px solid #565ada !important;
+  box-shadow: 0 1px 0 rgba(255,255,255,.13) inset, 0 2px 8px rgba(79,70,229,.32);
+}
+.btn-primary:hover {
+  background: linear-gradient(180deg, var(--accent), var(--accent-3)) !important;
+  box-shadow: 0 1px 0 rgba(255,255,255,.15) inset, 0 7px 18px rgba(79,70,229,.45);
+}
 button { transition: background var(--dur) var(--ease), transform var(--dur) var(--ease),
                      color var(--dur) var(--ease), box-shadow var(--dur) var(--ease); }
 button:not(:disabled):active { transform: translateY(.5px); }
 
-/* ── Form controls ─────────────────────────────────────────────────────── */
-input, textarea, select, .form-control, .form-select {
-  border-radius: 6px !important;
-  transition: border-color var(--dur) var(--ease), box-shadow var(--dur) var(--ease);
+/* ── Form controls — consistent radius + focus glow ────────────────────── */
+.form-control, .form-select, input, textarea,
+.Select-control, [class*="-control"] {
+  border-radius: var(--r-sm) !important;
+  transition: border-color var(--dur) var(--ease), box-shadow var(--dur) var(--ease) !important;
 }
-input:hover, textarea:hover, .form-control:hover { border-color: var(--border-brt) !important; }
-input:focus, textarea:focus, select:focus, .form-control:focus, .form-select:focus {
-  border-color: var(--accent) !important;
-  box-shadow: 0 0 0 3px rgba(99,102,241,.18) !important; outline: none;
+.form-control:hover, input:hover, .Select-control:hover { border-color: var(--border-brt) !important; }
+.form-control:focus, .form-select:focus, input:focus, textarea:focus,
+.Select.is-focused:not(.is-open) > .Select-control {
+  border-color: var(--accent) !important; box-shadow: var(--glow) !important; outline: none;
 }
 ::placeholder { color: var(--text-muted); opacity: 1; }
 input[type="checkbox"], input[type="radio"] { accent-color: var(--accent); cursor: pointer; }
 
-/* ── dcc.Dropdown (React-Select) ───────────────────────────────────────── */
-.Select-control { background: var(--bg-elevated) !important; border-color: var(--border) !important;
-                  border-radius: 6px !important; transition: border-color var(--dur) var(--ease); }
-.Select-control:hover { border-color: var(--border-brt) !important; }
-.Select.is-focused:not(.is-open) > .Select-control {
-  border-color: var(--accent) !important; box-shadow: 0 0 0 3px rgba(99,102,241,.18) !important; }
-.Select-menu-outer { background: var(--bg-elevated) !important; border: 1px solid var(--border-brt) !important;
-                     border-radius: 6px !important; box-shadow: 0 4px 14px rgba(0,0,0,.45); overflow: hidden; }
-.Select-option { background: var(--bg-elevated) !important; color: var(--text-sec) !important; }
-.Select-option.is-focused { background: #1c2436 !important; color: var(--text) !important; }
-.Select-option.is-selected { background: rgba(99,102,241,.16) !important; color: var(--text) !important; }
-.Select-value-label, .Select-placeholder, .Select--single .Select-value { color: var(--text) !important; }
+/* dcc.Dropdown menu */
+.Select-menu-outer {
+  background: var(--bg-elev) !important; border: 1px solid var(--border-brt) !important;
+  border-radius: var(--r-sm) !important; box-shadow: var(--sh-md); overflow: hidden;
+}
+.Select-option.is-focused { background: var(--bg-raised) !important; }
+.Select-option.is-selected { background: rgba(99,102,241,.16) !important; }
 
-/* ── Sliders (rc-slider) ───────────────────────────────────────────────── */
+/* Sliders */
 .rc-slider-track { background: var(--accent) !important; }
 .rc-slider-rail  { background: var(--border) !important; }
 .rc-slider-handle { border-color: var(--accent) !important; background: var(--accent) !important;
                     box-shadow: 0 0 0 2px rgba(99,102,241,.25) !important;
                     transition: box-shadow var(--dur) var(--ease); }
-.rc-slider-handle:hover, .rc-slider-handle:focus { box-shadow: 0 0 0 5px rgba(99,102,241,.30) !important; }
-.rc-slider-dot { border-color: var(--border) !important; background: var(--bg-card) !important; }
+.rc-slider-handle:hover, .rc-slider-handle:focus { box-shadow: 0 0 0 6px rgba(99,102,241,.30) !important; }
 
-/* ── dbc Tabs ──────────────────────────────────────────────────────────── */
+/* ── Tabs — modern underline ───────────────────────────────────────────── */
 .nav-tabs { border-bottom: 1px solid var(--border) !important; }
 .nav-tabs .nav-link {
   color: var(--text-sec) !important; border: none !important;
   border-bottom: 2px solid transparent !important; background: transparent !important;
-  font-weight: 600; transition: color var(--dur) var(--ease), border-color var(--dur) var(--ease);
+  font-weight: 600; padding: 9px 16px !important; letter-spacing: .01em;
+  transition: color var(--dur) var(--ease), border-color var(--dur) var(--ease),
+              background var(--dur) var(--ease);
 }
 .nav-tabs .nav-link:hover { color: var(--text) !important; }
-.nav-tabs .nav-link.active { color: var(--accent-2) !important;
-  border-bottom-color: var(--accent) !important; background: transparent !important; }
-
-/* ── Tables / AG Grid ──────────────────────────────────────────────────── */
-tbody tr { transition: background var(--dur) var(--ease); }
-tbody tr:hover td { background: #161d2e !important; }
-.ag-theme-quartz-dark, .ag-theme-alpine-dark, .ag-theme-balham-dark {
-  --ag-background-color: var(--bg-card);
-  --ag-odd-row-background-color: rgba(255,255,255,.02);
-  --ag-header-background-color: var(--bg-elevated);
-  --ag-border-color: var(--border);
-  --ag-row-hover-color: #161d2e;
-  --ag-foreground-color: var(--text);
-  --ag-header-foreground-color: var(--text-sec);
-  border-radius: 10px; overflow: hidden;
+.nav-tabs .nav-link.active {
+  color: var(--accent-2) !important; border-bottom-color: var(--accent) !important;
+  background: linear-gradient(180deg, rgba(99,102,241,.10), transparent) !important;
 }
 
-/* ── Plotly modebar — hide until hover ─────────────────────────────────── */
-.modebar { opacity: 0 !important; transition: opacity var(--dur) var(--ease); }
-.js-plotly-plot:hover .modebar { opacity: .5 !important; }
-.modebar-btn svg { fill: var(--text-sec) !important; }
-
-/* ── Tooltips ──────────────────────────────────────────────────────────── */
-.tooltip-inner { background: var(--bg-elevated) !important; color: var(--text) !important;
-  border: 1px solid var(--border-brt); border-radius: 6px;
-  box-shadow: 0 4px 14px rgba(0,0,0,.4); font-size: 12px; }
-
-/* =============================================================================
-   Guide / Markdown article typography  (.guide-md)
-   ============================================================================= */
-.guide-md { color: var(--text); font-size: 14.5px; line-height: 1.72; max-width: 78ch; }
-.guide-md > *:first-child { margin-top: 0; }
-.guide-md h1, .guide-md h2, .guide-md h3, .guide-md h4 {
-  color: var(--text); line-height: 1.25; letter-spacing: -.015em; scroll-margin-top: 24px; }
-.guide-md h1 { font-size: 1.9em;  margin: 0 0 .5em;  font-weight: 800; }
-.guide-md h2 { font-size: 1.42em; margin: 1.8em 0 .6em; font-weight: 700;
-               padding-bottom: .3em; border-bottom: 1px solid var(--border); }
-.guide-md h3 { font-size: 1.16em; margin: 1.5em 0 .5em; font-weight: 700; }
-.guide-md h4 { font-size: 1em; margin: 1.2em 0 .4em; font-weight: 700; color: var(--text-sec);
-               text-transform: uppercase; letter-spacing: .04em; }
-.guide-md p { margin: 0 0 1.05em; }
-.guide-md strong { color: #fff; font-weight: 650; }
-.guide-md em { color: var(--text-sec); }
-.guide-md ul, .guide-md ol { margin: 0 0 1.1em; padding-left: 1.4em; }
-.guide-md li { margin: .35em 0; }
-.guide-md li::marker { color: var(--accent); }
-.guide-md a { color: var(--accent-2); border-bottom: 1px solid rgba(129,140,248,.3); }
-.guide-md a:hover { border-bottom-color: var(--accent-2); text-decoration: none; }
-.guide-md blockquote p:last-child { margin-bottom: 0; }
-.guide-md hr { border: none; border-top: 1px solid var(--border); margin: 2em 0; }
-/* NOTE: code blocks, inline code, and tables for .guide-md are intentionally
-   left to dark.css, which already styles them deliberately. We add only the
-   heading/paragraph/list/link rhythm that dark.css does not cover. */
-
-/* ── Respect reduced-motion ────────────────────────────────────────────── */
-@media (prefers-reduced-motion: reduce) {
-  *, #page-content > * { animation: none !important; transition: none !important; }
-}
-
-/* =============================================================================
-   REFINED-DARK v2 — layout · density · depth · typography
-   Beyond color: tabular numerals, card elevation + top-accent, tighter type
-   hierarchy, denser polished tables, refined sidebar, gradient header accents.
-   Propagates app-wide via rendered element classes (no per-page edits needed).
-   ============================================================================= */
-
-body { font-feature-settings: "cv11", "ss01"; letter-spacing: -0.003em; }
-
-.ag-cell, .ag-header-cell, td, th,
-.guide-md td, input, .Select-value-label {
-  font-variant-numeric: tabular-nums;
-  font-feature-settings: "tnum";
-}
-
-/* Card elevation system — depth, not just a border */
-.card, .ui-card {
-  position: relative;
-  background: linear-gradient(180deg, #131b29 0%, var(--bg-card) 60%) !important;
-  box-shadow: 0 1px 0 rgba(255,255,255,.02) inset, 0 2px 8px rgba(0,0,0,.28);
-  transition: transform var(--dur) var(--ease), box-shadow var(--dur) var(--ease),
-              border-color var(--dur) var(--ease);
-}
-.card:hover, .ui-card:hover {
-  transform: translateY(-1px);
-  border-color: var(--border-brt) !important;
-  box-shadow: 0 1px 0 rgba(255,255,255,.03) inset, 0 8px 22px rgba(0,0,0,.42);
-}
-
-/* Gradient text on h1 page headers */
-h1 {
-  background: linear-gradient(90deg, #fff 0%, #c7d2fe 100%);
-  -webkit-background-clip: text; background-clip: text;
-  -webkit-text-fill-color: transparent;
-}
-
-/* Sidebar — refined nav */
-.nav-pills .nav-link {
-  position: relative; margin-bottom: 3px;
-  transition: background var(--dur) var(--ease), color var(--dur) var(--ease),
-              padding-left var(--dur) var(--ease), border-left-color var(--dur) var(--ease);
-}
-.nav-pills .nav-link:hover {
-  background: rgba(99,102,241,.08) !important; color: var(--text) !important;
-  padding-left: 16px;
-}
-.nav-pills .nav-link.active {
-  background: linear-gradient(90deg, rgba(99,102,241,.20), rgba(99,102,241,.06)) !important;
-  color: #fff !important; border-left: 3px solid var(--accent) !important;
-  box-shadow: 0 1px 8px rgba(99,102,241,.18);
-}
-
-/* Tables — denser, zebra, sticky gradient header, hover */
+/* ── Tables — dense, zebra, sticky gradient header, hover ──────────────── */
 .guide-md table, table:not(.ag-table) { font-size: 12.5px; }
 .guide-md thead th, table thead th {
   position: sticky; top: 0; z-index: 1;
-  background: linear-gradient(180deg, #1a2336, var(--bg-elevated)) !important;
-  font-size: 10.5px !important; letter-spacing: .06em;
+  background: linear-gradient(180deg, var(--bg-raised), var(--bg-elev)) !important;
+  color: var(--text-sec) !important; text-align: left; font-weight: 700;
+  font-size: 10.5px !important; text-transform: uppercase; letter-spacing: .06em;
   border-bottom: 1px solid var(--border-brt) !important;
 }
 .guide-md tbody tr, table tbody tr { transition: background var(--dur) var(--ease); }
-.guide-md tbody tr:hover td, table tbody tr:hover td {
-  background: rgba(99,102,241,.06) !important;
-}
+.guide-md tbody tr:hover td, table tbody tr:hover td { background: rgba(99,102,241,.06) !important; }
 
-/* AG-Grid — quant terminal density + crisp header */
+/* ── AG-Grid — quant-terminal density ──────────────────────────────────── */
 .ag-theme-quartz-dark {
   --ag-row-height: 34px; --ag-header-height: 38px; --ag-font-size: 12.5px;
+  border-radius: var(--r-md); overflow: hidden;
 }
 .ag-theme-quartz-dark .ag-header {
-  background: linear-gradient(180deg, #1a2336, var(--bg-elevated)) !important;
+  background: linear-gradient(180deg, var(--bg-raised), var(--bg-elev)) !important;
   border-bottom: 1px solid var(--border-brt) !important;
 }
 .ag-theme-quartz-dark .ag-row { border-color: rgba(31,41,55,.6) !important; }
 .ag-theme-quartz-dark .ag-cell { font-variant-numeric: tabular-nums; }
 .ag-theme-quartz-dark .ag-row-hover { background: rgba(99,102,241,.07) !important; }
 
-/* Inputs / dropdowns — refined radius + focus glow */
-.form-control, .form-select, input, textarea,
-.Select-control, [class*="-control"] {
-  border-radius: 7px !important;
-  transition: border-color var(--dur) var(--ease), box-shadow var(--dur) var(--ease) !important;
+/* ── Plotly modebar — hide until hover ─────────────────────────────────── */
+.modebar { opacity: 0 !important; transition: opacity var(--dur) var(--ease); }
+.js-plotly-plot:hover .modebar { opacity: .5 !important; }
+.modebar-btn svg { fill: var(--text-sec) !important; }
+
+/* ── Modals — stronger elevation + backdrop blur ───────────────────────── */
+.modal-content {
+  border-radius: var(--r-lg) !important;
+  border: 1px solid var(--border-brt) !important;
+  box-shadow: var(--sh-lg) !important;
+}
+.modal-backdrop.show { opacity: .62; backdrop-filter: blur(3px); }
+
+/* ── Tooltips ──────────────────────────────────────────────────────────── */
+.tooltip-inner {
+  background: var(--bg-elev) !important; color: var(--text) !important;
+  border: 1px solid var(--border-brt); border-radius: var(--r-sm);
+  box-shadow: var(--sh-md); font-size: 12px;
 }
 
-/* Buttons — gradient primary */
-.btn-primary {
-  background: linear-gradient(180deg, #6f72f5, var(--accent)) !important;
-  border: 1px solid #565ada !important;
-  box-shadow: 0 1px 0 rgba(255,255,255,.12) inset, 0 2px 6px rgba(79,70,229,.30);
-}
-.btn-primary:hover {
-  background: linear-gradient(180deg, #6366f1, #4f46e5) !important;
-  box-shadow: 0 1px 0 rgba(255,255,255,.14) inset, 0 6px 16px rgba(79,70,229,.42);
+/* ── Busy indicator — modern pill ──────────────────────────────────────── */
+#app-busy-indicator {
+  border-radius: var(--r-pill) !important;
+  backdrop-filter: blur(6px);
+  box-shadow: var(--sh-md);
 }
 
-/* dbc Tabs — smoother active */
-.nav-tabs .nav-link { letter-spacing: .01em; padding: 9px 16px !important; }
-.nav-tabs .nav-link.active {
-  background: linear-gradient(180deg, rgba(99,102,241,.10), transparent) !important;
-}
+/* =============================================================================
+   Guide / Markdown article typography  (.guide-md)
+   ============================================================================= */
+.guide-md { color: var(--text); font-size: 14.5px; line-height: 1.72; max-width: 80ch; }
+.guide-md > *:first-child { margin-top: 0; }
+.guide-md h1, .guide-md h2, .guide-md h3, .guide-md h4 { line-height: 1.25; scroll-margin-top: 24px; }
+.guide-md h1 { font-size: 1.9em;  margin: 0 0 .5em; }
+.guide-md h2 { font-size: 1.4em;  margin: 1.8em 0 .6em; font-weight: 700;
+               padding-bottom: .3em; border-bottom: 1px solid var(--border);
+               -webkit-text-fill-color: var(--text); }
+.guide-md h3 { font-size: 1.15em; margin: 1.5em 0 .5em; font-weight: 700;
+               -webkit-text-fill-color: var(--text); }
+.guide-md h4 { font-size: 1em; margin: 1.2em 0 .4em; font-weight: 700; color: var(--text-sec);
+               text-transform: uppercase; letter-spacing: .04em; }
+.guide-md p { margin: 0 0 1.05em; }
+.guide-md strong { color: #fff; font-weight: 650; }
+.guide-md ul, .guide-md ol { margin: 0 0 1.1em; padding-left: 1.4em; }
+.guide-md li { margin: .35em 0; }
+.guide-md li::marker { color: var(--accent); }
+.guide-md a { color: var(--accent-2); border-bottom: 1px solid rgba(129,140,248,.3); }
+.guide-md a:hover { border-bottom-color: var(--accent-2); text-decoration: none; }
+.guide-md blockquote { margin: 0 0 1.2em; padding: .7em 1.1em; border-left: 3px solid var(--accent);
+  background: rgba(99,102,241,.07); border-radius: 0 var(--r-sm) var(--r-sm) 0; color: var(--text-sec); }
+.guide-md blockquote p:last-child { margin-bottom: 0; }
+.guide-md hr { border: none; border-top: 1px solid var(--border); margin: 2em 0; }
 
-/* Modals — stronger elevation + backdrop blur */
-.modal-content { border-radius: 12px !important; box-shadow: 0 24px 70px rgba(0,0,0,.6) !important; }
-.modal-backdrop.show { opacity: .6; backdrop-filter: blur(2px); }
+/* ── Respect reduced-motion ────────────────────────────────────────────── */
+@media (prefers-reduced-motion: reduce) {
+  *, #page-content > * { animation: none !important; transition: none !important; }
+}
