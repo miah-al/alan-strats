@@ -278,3 +278,60 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--accent); curso
 @media (prefers-reduced-motion: reduce) {
   *, #page-content > * { animation: none !important; transition: none !important; }
 }
+
+/* =============================================================================
+   FORCE-MODERN — override inline styles that block the modern feel
+   The pages carry ~1,769 inline style={} dicts (hardcoded 11px fonts, tight
+   padding, borders everywhere). Inline styles beat normal CSS, so these rules
+   use !important narrowly to lift the cramped terminal density into a modern,
+   breathable layout without editing 1,769 call sites.
+   ============================================================================= */
+
+/* Bigger, calmer base type — the single biggest "modern" signal */
+body, .dash-table-container, .Select, p, span, div, label, td, th, li, a {
+  font-size-adjust: none;
+}
+#page-content { font-size: 14px; line-height: 1.6; }
+
+/* Lift tiny 10-11px section labels / pills to a readable size */
+#page-content [style*="font-size: 11px"],
+#page-content [style*="fontSize: 11px"],
+#page-content [style*="font-size:11px"] { font-size: 12px !important; }
+#page-content [style*="font-size: 10px"],
+#page-content [style*="font-size:10px"] { font-size: 11px !important; letter-spacing: .04em; }
+
+/* Cards: force the modern radius + generous padding + depth even when inline
+   styles set their own (most use {**STYLE_CARD} so theme bump covers them, this
+   catches the rest). */
+#page-content > div > div[style*="border-radius: 10px"],
+#page-content div[style*="borderRadius"][style*="16px"] { border-radius: 14px !important; }
+
+/* Generous vertical rhythm between stacked cards */
+#page-content > div > div { margin-bottom: 18px; }
+
+/* Soften every 1px hard border into the modern subtle divider */
+#page-content [style*="1px solid #1f2937"] { border-color: rgba(255,255,255,.06) !important; }
+
+/* Uppercase section headers: more air, brighter */
+#page-content [style*="text-transform: uppercase"],
+#page-content [style*="textTransform"] {
+  letter-spacing: .08em !important;
+}
+
+/* Inputs/selects: taller, rounder touch targets (modern, not cramped) */
+#page-content input, #page-content .form-control, #page-content .Select-control,
+#page-content .form-select {
+  min-height: 38px !important; border-radius: 9px !important;
+}
+
+/* Primary accent buttons that are inline-styled (background:#6366f1) — gradient */
+#page-content button[style*="6366f1"] {
+  background: linear-gradient(180deg, #7174f6, #6366f1) !important;
+  border: none !important; border-radius: 9px !important;
+  box-shadow: 0 2px 8px rgba(79,70,229,.32) !important;
+}
+
+/* Page title — make it big and confident */
+#page-content h1, #page-content h2:first-of-type {
+  font-size: 26px !important; font-weight: 800 !important; letter-spacing: -.02em !important;
+}
