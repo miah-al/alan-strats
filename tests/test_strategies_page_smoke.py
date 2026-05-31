@@ -1,7 +1,7 @@
 """
 tests/test_strategies_page_smoke.py
 
-Smoke tests for dash_app/pages/strategies.py — the giant Dash callback module
+Smoke tests for app/pages/strategies.py — the giant Dash callback module
 (~4,800 lines). The page has no functional test coverage today; these tests
 gate any future refactor of the file.
 
@@ -30,7 +30,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 def test_module_imports():
     """The strategies page imports without raising — catches syntax errors and
     broken imports introduced by refactors."""
-    mod = importlib.import_module("dash_app.pages.strategies")
+    mod = importlib.import_module("app.pages.strategies")
     assert mod is not None
 
 
@@ -39,7 +39,7 @@ def test_module_imports():
 def test_layout_returns_div():
     """layout() returns a Dash html.Div (or function-callable that returns one)
     without crashing on call."""
-    from dash_app.pages import strategies as page
+    from app.pages import strategies as page
     from dash import html
 
     layout = getattr(page, "layout", None)
@@ -56,7 +56,7 @@ def test_every_user_visible_slug_has_backtest_class():
     """Every entry in the user-facing _STRATEGIES dropdown must have a backtest
     class wired in `_STRATEGY_CLASSES_BT`. Missing entries silently break the
     Backtest tab for that strategy."""
-    from dash_app.pages import strategies as page
+    from app.pages import strategies as page
 
     slugs    = [s["value"] for s in page._STRATEGIES]
     bt_map   = page._STRATEGY_CLASSES_BT
@@ -70,7 +70,7 @@ def test_every_user_visible_slug_has_backtest_class():
 def test_every_backtest_class_resolves():
     """Every (module, class) pair in _STRATEGY_CLASSES_BT must import and
     resolve to an instantiable class. Catches stale class paths after renames."""
-    from dash_app.pages import strategies as page
+    from app.pages import strategies as page
 
     failures: list[str] = []
     for slug, (mod_path, cls_name) in page._STRATEGY_CLASSES_BT.items():
@@ -110,5 +110,5 @@ def test_every_active_registry_strategy_has_class_path():
 def test_fetch_ic_strikes_is_exported():
     """tests/test_ic_rules_integration.py imports _fetch_ic_strikes from this
     module. Refactors must keep that re-export alive."""
-    from dash_app.pages.strategies import _fetch_ic_strikes
+    from app.pages.strategies import _fetch_ic_strikes
     assert callable(_fetch_ic_strikes)

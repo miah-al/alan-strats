@@ -39,7 +39,7 @@ short_squeeze_vol_expansion (sibling strategy):
 
 short_squeeze_detector (THIS strategy):
   * trades LONG CALLS — uncapped upside, lottery-ticket payoff per the existing
-    quant guide (dash_app/guide_articles/short_squeeze_detector.md).
+    quant guide (app/guide_articles/short_squeeze_detector.md).
   * PRIMARY signal is FINRA-style short-interest data when provided in
     auxiliary_data["short_interest"]: short_interest_pct_float, days_to_cover,
     utilization. These features are the empirical preconditions identified in

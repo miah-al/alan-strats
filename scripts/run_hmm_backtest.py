@@ -31,7 +31,7 @@ import pandas as pd
 # such that "alan_trader" *is* the project root directory. Putting both the
 # repo root (`alan_trader/`) and its parent on sys.path lets both
 # `strategies.foo` and `alan_trader.strategies.foo` resolve, matching how
-# dash_app/app.py bootstraps itself.
+# app/app.py bootstraps itself.
 _ROOT   = Path(__file__).resolve().parent.parent
 _PARENT = _ROOT.parent
 for p in (_ROOT, _PARENT):

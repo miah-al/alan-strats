@@ -513,7 +513,7 @@ class TestIcRulesWithPolygonData:
         Fetch real options chain from Polygon, run _fetch_ic_strikes,
         validate strike logic and null-price display.
         """
-        from dash_app.pages.strategies import _fetch_ic_strikes
+        from app.pages.strategies import _fetch_ic_strikes
 
         spot = float(spy_price_df["close"].iloc[-1])
         api_key = os.environ.get("POLYGON_API_KEY") or _try_load_env_key()
