@@ -21,7 +21,6 @@ import plotly.graph_objects as go
 from dash import html, dcc, callback, Input, Output, State, no_update
 
 from app import theme as T, get_polygon_api_key
-from app.ui import tokens as D, components as C
 
 from app.pages.tools.tabs import _get_tab_builder
 from app.pages.tools.data import (
@@ -292,14 +291,19 @@ def _run_iv_scan(n, tickers_str, user_api_key):
         marker_color=T.SUCCESS,
         opacity=0.75,
     ))
-    fig_iv_hv.update_layout(**D.plotly_layout(
-        height=300,
+    fig_iv_hv.update_layout(
         barmode="group",
         title="ATM IV vs HV20 (%)",
+        paper_bgcolor=T.BG_CARD,
+        plot_bgcolor=T.BG_CARD,
+        template="plotly_dark",
+        font={"color": T.TEXT_PRIMARY, "size": 12},
+        legend={"font": {"color": T.TEXT_SEC}},
         margin={"t": 40, "b": 40, "l": 40, "r": 20},
-        yaxis={"title": "Volatility (%)", "gridcolor": D.COLOR.border},
-        xaxis={"gridcolor": D.COLOR.border},
-    ))
+        yaxis={"title": "Volatility (%)", "gridcolor": T.BORDER},
+        xaxis={"gridcolor": T.BORDER},
+        height=300,
+    )
 
     # ── IVR bar chart ─────────────────────────────────────────────────────────
     ivr_vals = []
@@ -327,13 +331,18 @@ def _run_iv_scan(n, tickers_str, user_api_key):
     ))
     fig_ivr.add_hline(y=50, line_dash="dash", line_color=T.TEXT_MUTED,
                       annotation_text="50% threshold")
-    fig_ivr.update_layout(**D.plotly_layout(
-        height=280,
+    fig_ivr.update_layout(
         title="IV Rank (IVR %)",
+        paper_bgcolor=T.BG_CARD,
+        plot_bgcolor=T.BG_CARD,
+        template="plotly_dark",
+        font={"color": T.TEXT_PRIMARY, "size": 12},
+        legend={"font": {"color": T.TEXT_SEC}},
         margin={"t": 40, "b": 40, "l": 40, "r": 20},
-        yaxis={"title": "IVR (%)", "range": [0, 110], "gridcolor": D.COLOR.border},
-        xaxis={"gridcolor": D.COLOR.border},
-    ))
+        yaxis={"title": "IVR (%)", "range": [0, 110], "gridcolor": T.BORDER},
+        xaxis={"gridcolor": T.BORDER},
+        height=280,
+    )
 
     # ── VRP chart ─────────────────────────────────────────────────────────────
     vrp_vals = []
@@ -358,13 +367,17 @@ def _run_iv_scan(n, tickers_str, user_api_key):
         opacity=0.85,
     ))
     fig_vrp.add_hline(y=0, line_color=T.TEXT_MUTED)
-    fig_vrp.update_layout(**D.plotly_layout(
-        height=260,
+    fig_vrp.update_layout(
         title="Variance Risk Premium = IV − HV20 (%)",
+        paper_bgcolor=T.BG_CARD,
+        plot_bgcolor=T.BG_CARD,
+        template="plotly_dark",
+        font={"color": T.TEXT_PRIMARY, "size": 12},
         margin={"t": 40, "b": 40, "l": 40, "r": 20},
-        yaxis={"title": "VRP (%)", "gridcolor": D.COLOR.border},
-        xaxis={"gridcolor": D.COLOR.border},
-    ))
+        yaxis={"title": "VRP (%)", "gridcolor": T.BORDER},
+        xaxis={"gridcolor": T.BORDER},
+        height=260,
+    )
 
     return html.Div([
         summary_grid,
@@ -538,12 +551,15 @@ def _px_bars(n, ticker, mult, timespan, from_date, to_date, api_key):
         open=df["open"], high=df["high"], low=df["low"], close=df["close"],
         name=tk,
     ))
-    fig.update_layout(**D.plotly_layout(
-        height=360,
+    fig.update_layout(
         title=f"{tk} OHLCV ({timespan})",
+        paper_bgcolor=T.BG_CARD, plot_bgcolor=T.BG_CARD,
+        template="plotly_dark",
+        font={"color": T.TEXT_PRIMARY, "size": 12},
         margin={"t": 40, "b": 40, "l": 40, "r": 20},
+        height=360,
         xaxis_rangeslider_visible=False,
-    ))
+    )
     return html.Div([
         dcc.Graph(figure=fig, config={"displayModeBar": False}),
         _px_df_grid(df.tail(100), height=260),
@@ -598,11 +614,14 @@ def _px_indicators(n, ticker, ind_type, window, timespan, from_date, to_date, ap
     else:
         return _px_error("Unexpected result format.")
 
-    fig.update_layout(**D.plotly_layout(
-        height=300,
+    fig.update_layout(
         title=f"{tk} {(ind_type or 'indicator').upper()}(window={window})",
+        paper_bgcolor=T.BG_CARD, plot_bgcolor=T.BG_CARD,
+        template="plotly_dark",
+        font={"color": T.TEXT_PRIMARY, "size": 12},
         margin={"t": 40, "b": 40, "l": 40, "r": 20},
-    ))
+        height=300,
+    )
     return html.Div([
         dcc.Graph(figure=fig, config={"displayModeBar": False}),
         _px_df_grid(df.tail(100), height=240),
@@ -781,13 +800,16 @@ def _px_chain(n, ticker, expiration, contract_type, strike_range,
     if spot:
         fig_smile.add_vline(x=spot, line_dash="dash", line_color=T.TEXT_MUTED,
                              annotation_text="Spot")
-    fig_smile.update_layout(**D.plotly_layout(
-        height=300,
+    fig_smile.update_layout(
         title=f"{tk} IV Smile — {expiration}",
+        paper_bgcolor=T.BG_CARD, plot_bgcolor=T.BG_CARD,
+        template="plotly_dark",
+        font={"color": T.TEXT_PRIMARY, "size": 12},
         margin={"t": 40, "b": 40, "l": 40, "r": 20},
-        xaxis={"title": "Strike", "gridcolor": D.COLOR.border},
-        yaxis={"title": "IV (%)",  "gridcolor": D.COLOR.border},
-    ))
+        height=300,
+        xaxis={"title": "Strike", "gridcolor": T.BORDER},
+        yaxis={"title": "IV (%)",  "gridcolor": T.BORDER},
+    )
 
     # ── OI chart ──────────────────────────────────────────────────────────────
     fig_oi = go.Figure()
@@ -806,13 +828,16 @@ def _px_chain(n, ticker, expiration, contract_type, strike_range,
     if max_pain_strike:
         fig_oi.add_vline(x=max_pain_strike, line_dash="dot", line_color=T.WARNING,
                           annotation_text=f"Max Pain {max_pain_strike:.0f}")
-    fig_oi.update_layout(**D.plotly_layout(
-        height=280,
+    fig_oi.update_layout(
         title=f"{tk} Open Interest — {expiration}",
+        paper_bgcolor=T.BG_CARD, plot_bgcolor=T.BG_CARD,
+        template="plotly_dark",
         barmode="overlay",
+        font={"color": T.TEXT_PRIMARY, "size": 12},
         margin={"t": 40, "b": 40, "l": 40, "r": 20},
-        xaxis={"title": "Strike", "gridcolor": D.COLOR.border},
-        yaxis={"title": "Open Interest", "gridcolor": D.COLOR.border},
+        height=280,
+        xaxis={"title": "Strike", "gridcolor": T.BORDER},
+        yaxis={"title": "Open Interest", "gridcolor": T.BORDER},
     )
 
     # ── Chain grid ────────────────────────────────────────────────────────────

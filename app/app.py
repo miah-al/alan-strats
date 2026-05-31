@@ -75,13 +75,19 @@ app.layout = html.Div(
 )
 
 # ── Pre-import all page modules so callbacks register at startup ──────────────
-import app.pages.paper_trading
-import app.pages.market
-import app.pages.strategies
-import app.pages.tools
-import app.pages.models
-import app.pages.course
-import app.pages.broker  # registers broker panel callbacks
+# NOTE: use `from app.pages import X`, NOT `import app.pages.X`. The latter binds
+# the name `app` in this module's namespace to the *package* `app`, shadowing the
+# local `app = Dash(...)` instance above and breaking `@app.callback` below (the
+# package has no `.callback`). The `from ... import` form binds only the submodule.
+from app.pages import (  # noqa: F401  (imported for callback-registration side effects)
+    paper_trading as _pg_paper_trading,
+    market as _pg_market,
+    strategies as _pg_strategies,
+    tools as _pg_tools,
+    models as _pg_models,
+    course as _pg_course,
+    broker as _pg_broker,  # registers broker panel callbacks
+)
 
 # ── Routing ───────────────────────────────────────────────────────────────────
 @app.callback(Output("page-content", "children"), Input("url", "pathname"))
