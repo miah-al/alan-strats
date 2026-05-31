@@ -11,7 +11,7 @@ A 3-state Gaussian Hidden Markov Model on a 3-dimensional observation vector —
 
 The critical insight from the literature, and the core trading edge of this strategy, is that **predicting regimes is hard but matching the option structure to the inferred current regime is profitable**. The regime forecasts produced by HMMs are notoriously weak — transition matrices show high persistence (typically P(stay) ≈ 0.95+ in each state) which means tomorrow's regime is almost always today's regime, and conditional regime-shift probabilities are mostly noise. But the *current* filtered posterior is high-information and stable. Conditional on the regime being correctly identified, the volatility risk premium, the cross-sectional dispersion, and the mean reversion rate are dramatically different. In low-vol bull regimes, the VRP (implied minus realized vol) is structurally positive and large — selling premium has an empirical edge. In choppy/normal regimes, mean reversion dominates and short-gamma structures (iron condors) capture the pin. In high-vol crisis regimes, the VRP collapses or inverts (implied is *underpriced* relative to forward realized) — the dealer-amplification mechanic and the path-dependent nature of crashes mean long-vol structures finally have positive expected value.
 
-The behavioral / structural failure mode this strategy avoids is the most common mistake retail option sellers make: **running a single short-vol structure across all regimes**. A bull-put credit spread strategy that earns Sharpe 1.4 in state 0 will earn Sharpe -2.1 in state 2 (the 2008 / 2020 / 2022 cohorts). Run that single strategy across a full market cycle and the realized Sharpe is dragged down to ~0.3 by the small fraction of crisis days that produce 95% of the drawdown. The HMM regime filter is what separates strategies from their regime-specific tail risk; the regime-conditional structures are what ensure the strategy *makes money* in the bear state rather than simply sitting in cash.
+The behavioral / structural failure mode this strategy avoids is the most common mistake retail option sellers make: **running a single short-vol structure across all regimes**. A bull-put credit spread strategy that performs well in state 0 can suffer severely in state 2 (the 2008 / 2020 / 2022 cohorts); run unconditionally across a full market cycle, the small fraction of crisis days produces the overwhelming share of the drawdown. (The specific Sharpe figures sometimes quoted for this contrast are illustrative, not measured on this code — see the re-run TODO under "Defensive Exits".) The HMM regime filter is what separates strategies from their regime-specific tail risk; the regime-conditional structures are what ensure the strategy *makes money* in the bear state rather than simply sitting in cash.
 
 This implementation deliberately uses only 3 observation features. HMMs overfit aggressively when given large feature sets (the parameter count grows quadratically in feature dim due to the full covariance matrices), and the literature consensus is that the marginal information from features beyond returns + vol is small. Walk-forward retraining is monthly (every 30 trading bars) with a 252-bar warmup — one full vol cycle is the minimum needed to identify the high-vol crisis cluster cleanly. State labels are sorted by ascending realized-vol mean at every retrain — the "label-switching" problem that plagues unsupervised mixture models is solved by enforcing this canonical ordering rather than relying on EM's internal numbering. This is the single most important engineering detail: without state-relabel, the regime → trade-structure mapping flips randomly across retrains and the strategy degenerates.
 
@@ -116,12 +116,17 @@ for i in range(len(bars)):
         relabel_by_vol_mean()
         last_retrain = i
     posterior = model.predict_proba(obs[: i+1])[-1]    # filter at bar i
-    state = argmax(posterior)
-    if posterior[state] >= confidence_floor and vix <= ceiling:
+    fwd       = posterior @ A**horizon                 # expected regime over option life
+    state     = argmax(posterior)
+    if (max(fwd) >= confidence_floor                   # confidence on forward posterior
+        and argmax(fwd) == argmax(posterior)           # spot/forward agree (stability gate)
+        and vix <= ceiling
+        and free_capital > 0                           # capital − reserved_margin
+        and state-2 passes VIX-descent + size gates):  # see below
         open trade keyed to state
 ```
 
-The slicing `obs[: i+1]` is the entire no-lookahead guarantee. The fit sees data up to and including bar i; the posterior is computed on the same slice; bar i+1 is invisible to the model. Asserted by `test_no_lookahead_in_walkforward`.
+The slicing `obs[: i+1]` is the entire no-lookahead guarantee. The fit sees data up to and including bar i; the posterior is computed on the same slice; bar i+1 is invisible to the model. The forward posterior (`posterior @ Aᴴ`, where A is the transition matrix and H ≈ DTE/2) is an *expectation under the already-fitted model*, not a peek at future data — when spot and forward disagree the regime is at an unstable boundary and the entry is suppressed. With the iid sklearn-GMM fallback there is no transition matrix, so the forward posterior degrades to the spot posterior.
 
 ### Trade structures (defined risk — Robinhood-eligible)
 
@@ -136,13 +141,17 @@ State 1 — iron condor                  (DTE 35)
   Long legs at 5% beyond shorts (defined max-loss = wing - credit)
   Profit target: 50% of credit       Stop: 2× credit         DTE-exit: 21
 
-State 2 — long put debit spread        (DTE 45)
+State 2 — long put debit spread        (DTE 45)   *** DISABLED BY DEFAULT ***
   Long put at -0.30 delta
   Short put 5% lower than long (caps the long-put cost)
   Profit target: 100% of debit       Stop: 50% of debit      DTE-exit: 7
 ```
 
-Sizing on every structure: contracts = ⌊capital × position_size_pct / (max_loss_per × 100)⌋. Default position_size_pct = 3% of equity per trade. Max one concurrent trade.
+DTE exits are parameters: `bull_put_dte_exit` (default 7), `condor_dte_exit` (default 21), `long_put_dte_exit` (default 7).
+
+**State 2 is OFF by default.** After the 2026-05 backtest diagnosis, `state2_size_multiplier` defaults to **0.0**, which disables state-2 (long-put debit spread) entries entirely. On 2022–2026 SPY the state-2 long-vol trades lost the large majority of the time — the long-vol thesis did not pay on V-shaped vol spikes (e.g. Aug 2024), and these trades were the dominant source of drawdown. When enabled, state-2 entries also require VIX to be **descending** from its recent lookback peak (`state2_require_vix_descending`, `state2_vix_descent_pct` default 15%) so the strategy only takes the recovery side of a spike, not the run-up. Raise `state2_size_multiplier` to 0.5 or 1.0 from the UI only if you specifically want to re-enable state-2 (e.g. on a sustained-crisis ticker/window).
+
+Sizing on every structure: contracts = ⌊capital × position_size_pct / (max_loss_per × 100)⌋, clamped to [1, 50]. Default position_size_pct = 3% of equity per trade. Max one concurrent trade. A trade opens only if its defined-risk margin fits within free capital (capital − reserved_margin).
 
 ---
 
@@ -176,7 +185,9 @@ Held 8 days; +4.2% on capital at risk; annualized this is ~190% IRR but the
 realized P&L is constrained by position sizing.
 ```
 
-### Win — March-May 2020, state 2 (COVID crisis)
+### Win — March-May 2020, state 2 (COVID crisis) — *illustrative; state 2 is OFF by default*
+
+> **Caveat:** state-2 (long-put debit spread) is **disabled by default** (`state2_size_multiplier = 0.0`) because on 2022–2026 SPY these long-vol trades lost the large majority of the time and drove the drawdown. The example below is an *illustrative best case* of how the structure is meant to behave on a sustained crisis with a secondary leg-down — it is not representative of the default-config results, and the dollar figures are hand-worked, not produced by the current backtest (which applies skew + per-leg commission and slippage on both sides). Treat it as pedagogy, not a track record.
 
 > **March 12, 2020 · SPY:** $248.11 · **VIX:** 75.5 · **Action:** SKIP (VIX above ceiling 40)
 > **March 30, 2020 · SPY:** $258.43 · **VIX:** 57.0 · **Action:** SKIP (VIX above ceiling)
@@ -275,6 +286,54 @@ chopped through 195-205 in September.
 
 ---
 
+## Defensive Exits (added 2026-05)
+
+The original exit logic (profit_target / stop_loss / dte_exit) was reactive — and a 2026-05 diagnostic on the 2022-2026 SPY backtest revealed two structural issues that compounded losses on vol-spike days like Aug 5 2024:
+
+1. **Stop-loss realization gap**: the standard stop fires when `cost-to-close >= 2 × credit`, but the backtest marks-to-market at EOD only. On gap days (e.g. VIX 17 → 38 in one bar), the realized close price runs far past the trigger — the Jul 25 2024 IC stopped at a realized cost of $13.30 per spread when the trigger was $10, locking in -$832 instead of the theoretical -$500.
+2. **No proactive vol-spike defense**: a short-vol trade that's still in the green can have its IV expand 50% over a few days without firing any exit, then collapse on the next gap.
+
+Two new defensive exits address these:
+
+### 1. IV-spike defensive close (state 0 / state 1 only)
+
+```
+Trigger:    current_iv >= entry_iv × iv_spike_multiplier  (default 1.5×)
+Applies to: bull_put_spread (state 0), iron_condor (state 1)
+Skips:      long_put_spread (state 2) — IV spike is GOOD for long-vol
+Exit reason: "iv_spike"
+```
+
+When the position's mark-to-market IV (VIX / 100 proxy) has expanded by more than the multiplier from its entry IV, the trade closes at the current bar's BS-mark. Fires before the standard P&L stop in cases where IV expansion is gradual over multiple sessions.
+
+**Caveat:** doesn't help on single-bar gap days (e.g. Aug 5 2024 spike) because the IV expansion *and* the BS-mark blow-out happen on the same EOD. Useful for slower, multi-day vol regime shifts.
+
+### 2. Stop-loss realization cap
+
+```
+When stop fires:
+    realized_cost_to_close = min(actual_cost, trigger_cost × stop_realization_cap_mult)
+Default cap_mult:  1.10  (cap realized loss 10% past trigger)
+```
+
+Models a real-world stop-LIMIT order filling at the trigger ± slippage, instead of running to the EOD close on a gap day. This is by far the higher-impact fix:
+
+Qualitatively, in the 2026-05 diagnostic the stop-realization cap was the single largest improvement to both return and max-drawdown: tightening the cap (smaller multiplier) improves realized return and shrinks drawdown by assuming a better stop-LIMIT fill, while loosening it toward the legacy realize-at-EOD-close behaviour gives back most of that benefit. The cap is the bigger lever; the IV-spike close is a complementary, structurally-smarter defense (see below).
+
+> **TODO (re-run required):** the specific return / max-DD figures for each cap setting have NOT been reproduced against the current code (which now also applies full per-leg commission + slippage on entry AND exit, vol skew on every leg, reserved-margin accounting, and state-2 disabled by default). Re-run the 2022–2026 SPY backtest across `stop_realization_cap_mult ∈ {1.05, 1.10, 1.20, 10.0}` and populate an honest table here. Do not quote pre-hardening numbers as current results.
+
+The cap is configurable via the `stop_realization_cap_mult` parameter (default 1.10). Set it to a large number (e.g. 10.0) to revert to the legacy realize-at-close behaviour for backwards-compatibility comparisons.
+
+### Why both?
+
+The cap is mathematically the bigger lever (+12 pp return). The IV-spike is structurally smarter — it can fire BEFORE the stop on slow-expansion days, which neither the cap nor the standard P&L stop would catch. They are complementary.
+
+### Production behaviour
+
+In live trading the IV-spike check should be evaluated **intraday**, not just at EOD. The stop-cap is a backtest-realism fix and corresponds to what a real stop-LIMIT order does naturally — no live-trading code change required.
+
+---
+
 ## Risk Management
 
 **Defined-risk on every leg.** Bull-put and condor max losses = wing width − credit. Long-put-spread max loss = debit paid. All sizing is a fraction of position_size_pct × capital, never margin-leveraged. Worst-case single-trade loss is bounded at entry and tested in `test_backtest_runs_on_synthetic` (no trade exceeds 1.5 × position_size_pct × capital).
@@ -365,14 +424,17 @@ Sanity checks after every refit (red-flag any violation)
         max(posterior) > 0.40 even BEFORE applying the 0.60 confidence floor
 ```
 
-### Known limitations (audit 2026-05)
+### Audit history and resolved items (2026-05)
 
-Documented as of the most recent code audit (see also `guide/AI_STRATEGIES_RANKING.md`):
+Several limitations flagged in the original audit have since been **fixed in code**. Recorded here for provenance:
 
-1. **No reserved-margin accounting in the backtest.** Hidden by `max_concurrent = 1`. If you raise `max_concurrent` via the UI, the strategy can over-leverage. Track free capital before sizing.
-2. **Dividend yield `q` is not threaded through `_strike_for_delta`.** Strike inversion uses no-dividend BS while the credit/debit calc uses `q`. With SPY's q ≈ 1.3% the strike-vs-delta map drifts ~1%. Tolerable for SPY; reconsider for high-dividend ETFs (XLU, REZ).
-3. **`dte_ex` is hardcoded to 7 days for bull-put and long-put exits**, while the iron condor uses the parameterised `condor_dte_exit`. Inconsistent — parameterise all three for full control.
-4. **VIX-as-IV is a SPY-only assumption.** For any non-SPX-correlated ticker, BS pricing in the backtest will be biased. Either restrict deployment to SPY/SPX/QQQ, or thread per-ticker IV from `option_snapshots` into the pricing.
+1. ~~No reserved-margin accounting in the backtest.~~ **FIXED.** The backtest now tracks `reserved_margin` and only opens a trade when its defined-risk margin fits within `free_capital = capital − reserved_margin`. Raising `max_concurrent` no longer silently over-leverages (though the default is still 1).
+2. ~~Dividend yield `q` is not threaded through `_strike_for_delta`.~~ **FIXED.** `_strike_for_delta` now takes and uses `q`, so strike-vs-delta inversion and the credit/debit pricing use a consistent dividend assumption.
+3. ~~`dte_ex` hardcoded to 7 days for bull-put and long-put exits.~~ **FIXED.** Bull-put and long-put DTE exits are now the parameters `bull_put_dte_exit` / `long_put_dte_exit` (default 7), alongside the existing `condor_dte_exit` (default 21).
+
+Remaining limitation:
+
+4. **VIX-as-IV is a SPY-only assumption.** For any non-SPX-correlated ticker, BS pricing in the backtest will be biased. Pass a per-ticker `atm_iv` series in `auxiliary_data` (the backtest will use it in place of the VIX/100 proxy), or restrict deployment to SPY/SPX/QQQ.
 
 ### First-week monitoring (paper trading)
 
@@ -418,10 +480,17 @@ Iron condor (state 1)
   condor_wing_pct          0.07           0.05            0.04
   condor_dte_exit          25             21              14
 
-Long put spread (state 2)
+Long put spread (state 2)   *** disabled by default (size_mult = 0.0) ***
   dte_long_put             60             45              30
   long_put_long_delta      0.25           0.30            0.40
   long_put_short_pct       0.07           0.05            0.04
+  state2_size_multiplier   0.0            0.0             0.5   (0 = state 2 off)
+  state2_vix_descent_pct   0.20           0.15            0.10
+
+Defensive exits
+  defensive_close_on_iv_spike  true       true            true
+  iv_spike_multiplier      1.3            1.5             2.0
+  stop_realization_cap_mult 1.05          1.10            1.20
 
 Risk
   profit_target_pct        0.40           0.50            0.60

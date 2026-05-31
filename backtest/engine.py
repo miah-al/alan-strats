@@ -44,6 +44,79 @@ def bs_price(S: float, K: float, T: float, r: float, sigma: float, option_type: 
         return K * np.exp(-r * T) * norm.cdf(-d2) - Sd * norm.cdf(-d1)
 
 
+# ---------------------------------------------------------------------------
+# REALISM helpers (backward-compatible add-ons; do NOT change bs_price above)
+# ---------------------------------------------------------------------------
+#
+# Flat-IV Black-Scholes (bs_price) is convenient but unrealistic for equity
+# indices: the real implied-vol surface exhibits a persistent *skew* (the
+# "smirk") where downside strikes trade at materially higher IV than upside
+# strikes. The helpers below let strategies opt into a simple linear skew and
+# expose standard friction constants — all without touching bs_price or any of
+# its existing callers.
+
+# Default per-leg frictions for strategies to import. Per *contract* (×100 sh)
+# semantics are the caller's responsibility; these are in the same BS-mark /
+# per-share dollar units used throughout the engine and strategy modules.
+DEFAULT_SLIPPAGE_PER_LEG   = 0.05   # adverse fill per leg, BS-mark units
+DEFAULT_COMMISSION_PER_LEG = 0.65   # broker commission per leg ($/contract)
+
+# Single source of truth for the downside equity-index IV-skew slope. Strategies
+# should reference this rather than hardcoding 0.15, so the whole book can be
+# re-sloped in one place. NOTE: bs_price itself stays a PURE flat-IV primitive —
+# skew is applied exactly once, by effective_iv / bs_price_skew. Folding skew
+# into bs_price would double-apply it for every caller that already routes
+# through bs_price_skew.
+DEFAULT_SKEW_SLOPE = 0.15
+
+
+def effective_iv(S: float, K: float, atm_iv: float, skew_slope: float = DEFAULT_SKEW_SLOPE) -> float:
+    """Moneyness-adjusted IV implementing a simple linear equity-index skew.
+
+    Real index option surfaces show a downside "smirk": OTM puts (LOWER strikes,
+    K < S) trade at HIGHER implied vol, while OTM calls (HIGHER strikes, K > S)
+    trade at LOWER implied vol. We model this as a line in log-moneyness:
+
+        m   = ln(K / S)                      # < 0 for low strikes, > 0 for high
+        iv  = atm_iv - skew_slope * m
+
+    SIGN CONVENTION
+    ---------------
+      - K < S  (OTM put / ITM call):  m < 0  ->  iv = atm_iv - slope*m > atm_iv  (HIGHER)
+      - K = S  (ATM):                 m = 0  ->  iv = atm_iv                      (unchanged)
+      - K > S  (OTM call / ITM put):  m > 0  ->  iv = atm_iv - slope*m < atm_iv  (LOWER)
+
+    `skew_slope` is the IV change per unit log-moneyness (default 0.15, i.e. a
+    ~15 vol-point steeper IV for a strike a full e-fold below spot). It is the
+    NEGATIVE of the surface's slope in IV-vs-log-moneyness space; a larger value
+    means a steeper downside skew. Pass 0.0 to recover flat IV.
+
+    The result is clamped to a small positive floor so deep-OTM-call strikes can
+    never drive IV to zero or negative (which would break bs_price).
+    """
+    if S <= 0 or K <= 0:
+        return max(float(atm_iv), 1e-6)
+    m = np.log(K / S)
+    iv = atm_iv - skew_slope * m
+    # Sane floor: keep IV strictly positive for bs_price.
+    return float(max(iv, 1e-6))
+
+
+def bs_price_skew(S: float, K: float, T: float, r: float, atm_iv: float,
+                  option_type: str, skew_slope: float = DEFAULT_SKEW_SLOPE,
+                  q: float = 0.0) -> float:
+    """Black-Scholes price using a skew-adjusted IV, then delegating to bs_price.
+
+    Computes the moneyness-adjusted vol via :func:`effective_iv` and prices with
+    the existing :func:`bs_price`, so dividend handling (continuous yield ``q``,
+    default 0.0) and all other behavior stay identical to the flat-IV path. This
+    is a strict superset of bs_price: ``bs_price_skew(..., skew_slope=0.0)`` ==
+    ``bs_price(..., atm_iv, ...)``.
+    """
+    iv = effective_iv(S, K, atm_iv, skew_slope=skew_slope)
+    return bs_price(S, K, T, r, iv, option_type, q=q)
+
+
 def spread_value(
     S: float,
     long_K: float,

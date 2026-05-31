@@ -88,6 +88,61 @@ from alan_trader.risk.metrics import compute_all_metrics
 
 logger = logging.getLogger(__name__)
 
+# ── Shared transaction-cost defaults (engine canonical source) ────────────────
+# Use the engine-wide per-leg slippage/commission so this strategy shares the same
+# realistic cost model as every other short-vol strategy. Fall back to the prior
+# literals if the engine does not expose them.
+try:  # pragma: no cover - import shape depends on engine version
+    from alan_trader.backtest.engine import (
+        DEFAULT_SLIPPAGE_PER_LEG as _ENGINE_SLIPPAGE_PER_LEG,
+        DEFAULT_COMMISSION_PER_LEG as _ENGINE_COMMISSION_PER_LEG,
+    )
+except Exception:  # pragma: no cover
+    _ENGINE_SLIPPAGE_PER_LEG = 0.05
+    _ENGINE_COMMISSION_PER_LEG = 0.65
+
+# ── Skew-aware option pricing (engine canonical source) ───────────────────────
+# Prefer bs_price_skew / effective_iv so OTM wings get a realistic IV bump rather
+# than being priced at the same flat ATM IV as the body. Fall back to flat-IV
+# bs_price if the engine does not expose them.
+try:  # pragma: no cover
+    from alan_trader.backtest.engine import bs_price_skew as _bs_price_skew
+except Exception:  # pragma: no cover
+    _bs_price_skew = None
+
+try:  # pragma: no cover
+    from alan_trader.backtest.engine import effective_iv as _effective_iv
+except Exception:  # pragma: no cover
+    _effective_iv = None
+
+
+def _price_leg(spot: float, strike: float, T: float, r: float, atm_iv: float,
+               kind: str) -> float:
+    """
+    Price a single option leg WITH skew when the engine supports it.
+
+    The engine's skew model bumps IV for OTM strikes (puts richer than calls),
+    which makes the long OTM wings cost MORE than a flat-IV mark — a conservative,
+    correct adjustment versus pricing every leg at one flat ATM IV.
+
+    engine signatures (confirmed):
+        bs_price_skew(S, K, T, r, atm_iv, option_type)
+        effective_iv(S, K, atm_iv, skew_slope=0.15)
+    """
+    if _bs_price_skew is not None:
+        try:
+            return float(_bs_price_skew(spot, strike, T, r, atm_iv, kind))
+        except Exception:
+            pass
+    if _effective_iv is not None:
+        try:
+            iv_k = float(_effective_iv(spot, strike, atm_iv))
+            return float(bs_price(spot, strike, T, r, iv_k, kind))
+        except Exception:
+            pass
+    return float(bs_price(spot, strike, T, r, atm_iv, kind))
+
+
 _RISK_FREE = 0.045
 
 
@@ -309,8 +364,8 @@ class ExpiryMaxPainStrategy(BaseStrategy):
         stop_loss_mult:      float = 2.0,     # stop at 2× credit loss
         position_size_pct:   float = 0.02,    # max 2% capital at risk per trade
         require_positive_gex: bool = True,
-        slippage_per_leg:    float = 0.05,
-        commission_per_leg:  float = 0.65,
+        slippage_per_leg:    float = _ENGINE_SLIPPAGE_PER_LEG,
+        commission_per_leg:  float = _ENGINE_COMMISSION_PER_LEG,
     ):
         self.min_dist_pct        = float(min_dist_pct)
         self.max_dist_pct        = float(max_dist_pct)
@@ -485,6 +540,28 @@ class ExpiryMaxPainStrategy(BaseStrategy):
                 "running the backtest."
             )
 
+        # ── Resolve UI/override params (None-aware so an explicit 0 is honoured) ─
+        # The backtest UI passes get_backtest_ui_params() keys through **kwargs.
+        # Use 'X if X is not None else self.X' semantics (NOT 'X or self.X', which
+        # would silently drop a legitimate 0/0.0 value).
+        def _ov(key, default):
+            v = kwargs.get(key, None)
+            return default if v is None else v
+
+        self.min_dist_pct      = float(_ov("min_dist_pct",      self.min_dist_pct))
+        self.max_dist_pct      = float(_ov("max_dist_pct",      self.max_dist_pct))
+        self.vix_ceiling       = float(_ov("vix_ceiling",       self.vix_ceiling))
+        self.wing_width_pct    = float(_ov("wing_width_pct",    self.wing_width_pct))
+        self.entry_dte_min     = int(  _ov("entry_dte_min",     self.entry_dte_min))
+        self.entry_dte_max     = int(  _ov("entry_dte_max",     self.entry_dte_max))
+        self.profit_target_pct = float(_ov("profit_target_pct", self.profit_target_pct))
+        self.stop_loss_mult    = float(_ov("stop_loss_mult",    self.stop_loss_mult))
+        self.position_size_pct = float(_ov("position_size_pct", self.position_size_pct))
+        if kwargs.get("require_positive_gex") is not None:
+            self.require_positive_gex = bool(kwargs["require_positive_gex"])
+        self.slippage_per_leg   = float(_ov("slippage_per_leg",   self.slippage_per_leg))
+        self.commission_per_leg = float(_ov("commission_per_leg", self.commission_per_leg))
+
         # ── normalise inputs ────────────────────────────────────────────────
         price_data = price_data.copy()
         price_data.index = pd.to_datetime(price_data.index)
@@ -548,9 +625,20 @@ class ExpiryMaxPainStrategy(BaseStrategy):
                     cur_cost_ps   = self._butterfly_close_cost_per_share(spot, ts, open_trade, r)
                     pnl_per_share = open_trade["credit_per_share"] - cur_cost_ps
                     cred_ps       = open_trade["credit_per_share"]
+                    # Stop threshold = stop_loss_mult × credit, CLAMPED to just inside
+                    # the structure's bounded max loss. A defined-risk butterfly can
+                    # never lose more than (wing − credit) per share, so an un-clamped
+                    # "× credit" stop is frequently UNREACHABLE (e.g. wing $7, credit
+                    # $5 → max loss $2, but 2×credit = $10 never triggers). The clamp
+                    # guarantees the stop fires before max loss is realised.
+                    max_loss_ps   = open_trade.get(
+                        "max_loss_per_share",
+                        max(0.01, open_trade["wing_width"] - cred_ps),
+                    )
+                    stop_loss_ps  = min(self.stop_loss_mult * cred_ps, 0.95 * max_loss_ps)
                     if pnl_per_share >= self.profit_target_pct * cred_ps:
                         exit_now, exit_reason = True, "profit_target"
-                    elif pnl_per_share <= -self.stop_loss_mult * cred_ps:
+                    elif pnl_per_share <= -stop_loss_ps:
                         exit_now, exit_reason = True, "stop_loss"
 
                 if exit_now:
@@ -761,10 +849,10 @@ class ExpiryMaxPainStrategy(BaseStrategy):
 
         # Price legs (BS). Short call/put we receive premium minus slippage; long wings
         # we pay premium plus slippage.
-        sc = bs_price(spot, body_k,      T, r, iv, "call") - self.slippage_per_leg
-        sp = bs_price(spot, body_k,      T, r, iv, "put")  - self.slippage_per_leg
-        wc = bs_price(spot, wing_call_k, T, r, iv, "call") + self.slippage_per_leg
-        wp = bs_price(spot, wing_put_k,  T, r, iv, "put")  + self.slippage_per_leg
+        sc = _price_leg(spot, body_k,      T, r, iv, "call") - self.slippage_per_leg
+        sp = _price_leg(spot, body_k,      T, r, iv, "put")  - self.slippage_per_leg
+        wc = _price_leg(spot, wing_call_k, T, r, iv, "call") + self.slippage_per_leg
+        wp = _price_leg(spot, wing_put_k,  T, r, iv, "put")  + self.slippage_per_leg
 
         credit_per_share = sc + sp - wc - wp
         # No-arbitrage cap: a short iron butterfly's credit cannot exceed the wing
@@ -818,6 +906,7 @@ class ExpiryMaxPainStrategy(BaseStrategy):
             "wing_call_k":     float(wing_call_k),
             "wing_put_k":      float(wing_put_k),
             "wing_width":      float(wing),
+            "max_loss_per_share": float(max(0.01, wing - credit_per_share)),
             "credit_per_share": float(credit_per_share),
             "credit_total":     float(credit_total),
             "contracts":       int(contracts),
@@ -838,10 +927,10 @@ class ExpiryMaxPainStrategy(BaseStrategy):
         T = max(dte_rem, 0) / 365.0
         iv = trade["entry_iv"]
 
-        sc = bs_price(spot, trade["body_k"],      T, r, iv, "call") + self.slippage_per_leg
-        sp = bs_price(spot, trade["body_k"],      T, r, iv, "put")  + self.slippage_per_leg
-        wc = bs_price(spot, trade["wing_call_k"], T, r, iv, "call") - self.slippage_per_leg
-        wp = bs_price(spot, trade["wing_put_k"],  T, r, iv, "put")  - self.slippage_per_leg
+        sc = _price_leg(spot, trade["body_k"],      T, r, iv, "call") + self.slippage_per_leg
+        sp = _price_leg(spot, trade["body_k"],      T, r, iv, "put")  + self.slippage_per_leg
+        wc = _price_leg(spot, trade["wing_call_k"], T, r, iv, "call") - self.slippage_per_leg
+        wp = _price_leg(spot, trade["wing_put_k"],  T, r, iv, "put")  - self.slippage_per_leg
         # To close: BUY back body, SELL wings → net cost = (sc + sp) − (wc + wp)
         cost_per_share = (sc + sp) - (wc + wp)
         # Bound cost-to-close by the no-arb max-loss frontier: cost cannot exceed

@@ -25,11 +25,8 @@ def _col(field: str, width: int | None = None, flex: int | None = None,
     return d
 
 
-_VIEW_BTN = {"field": "Details", "width": 110, "sortable": False, "filter": False,
-             "cellStyle": {"textAlign": "center", "cursor": "pointer"},
-             "valueGetter": {"function": "'📊 View'"},
-             "cellClass": "ic-chart-btn"}
-
+# _VIEW_BTN removed 2026-05-28: the entire row is now clickable via the JS
+# bridge (see assets/mrt_row_click.js). A dedicated View column is redundant.
 
 _IC_COLS = [
     _col("Ticker",  width=150, pinned="left"),
@@ -109,7 +106,6 @@ _GEX_COLS = [
     _col("Regime Label", width=220),
     _col("Score",        width=110, numeric=True, sort="desc"),
     _col("Status",       width=120),
-    _VIEW_BTN,
 ]
 
 _BWB_COLS = [
@@ -123,7 +119,6 @@ _BWB_COLS = [
     _col("Wide Wing",   width=120, numeric=True),
     _col("Score",       width=120, numeric=True, sort="desc"),
     _col("Status",      width=130),
-    _VIEW_BTN,
 ]
 
 _CAL_COLS = [
@@ -137,7 +132,6 @@ _CAL_COLS = [
     _col("ADX",     width=120, numeric=True),
     _col("Score",   width=120, numeric=True, sort="desc"),
     _col("Status",  width=130),
-    _VIEW_BTN,
 ]
 
 _EARN_COLS = [
@@ -151,7 +145,6 @@ _EARN_COLS = [
     _col("VIX",              width=120, numeric=True),
     _col("Score",            width=120, numeric=True, sort="desc"),
     _col("Status",           width=130),
-    _VIEW_BTN,
 ]
 
 _WHEEL_COLS = [
@@ -166,7 +159,6 @@ _WHEEL_COLS = [
     _col("~Premium",  width=120, numeric=True),
     _col("Score",     width=120, numeric=True, sort="desc"),
     _col("Status",    width=130),
-    _VIEW_BTN,
 ]
 
 _BPS_COLS = [
@@ -182,7 +174,6 @@ _BPS_COLS = [
     _col("Credit/Width", width=130, numeric=True),
     _col("Score",        width=120, numeric=True, sort="desc"),
     _col("Status",       width=130),
-    _VIEW_BTN,
 ]
 
 _VTS_COLS = [
@@ -196,7 +187,6 @@ _VTS_COLS = [
     _col("5d Chg",   width=110, numeric=True),
     _col("Score",    width=110, numeric=True, sort="desc"),
     _col("Status",   width=120),
-    _VIEW_BTN,
 ]
 
 _EVC_COLS = [
@@ -209,7 +199,6 @@ _EVC_COLS = [
     _col("RV20",      width=110, numeric=True),
     _col("Score",     width=110, numeric=True, sort="desc"),
     _col("Status",    width=130),
-    _VIEW_BTN,
 ]
 
 _MRS_COLS = [
@@ -223,7 +212,6 @@ _MRS_COLS = [
     _col("VIX/MA",   width=110, numeric=True),
     _col("Score",    width=110, numeric=True, sort="desc"),
     _col("Status",   width=140),
-    _VIEW_BTN,
 ]
 
 _CCA_COLS = [
@@ -236,7 +224,6 @@ _CCA_COLS = [
     _col("VIX",        width=100, numeric=True),
     _col("Score",      width=110, numeric=True, sort="desc"),
     _col("Status",     width=140),
-    _VIEW_BTN,
 ]
 
 _RCS_COLS = [
@@ -249,7 +236,6 @@ _RCS_COLS = [
     _col("ADX",      width=100, numeric=True),
     _col("Score",    width=110, numeric=True, sort="desc"),
     _col("Status",   width=130),
-    _VIEW_BTN,
 ]
 
 _PS_COLS = [
@@ -268,7 +254,6 @@ _PS_COLS = [
     _col("VIX",       width=90,  numeric=True),
     _col("Score",     width=100, numeric=True, sort="desc"),
     _col("Status",    width=120),
-    _VIEW_BTN,
 ]
 
 _HMM_COLS = [
@@ -286,7 +271,6 @@ _HMM_COLS = [
     _col("Mode",     width=120),
     _col("Score",    width=110, numeric=True, sort="desc"),
     _col("Status",   width=240),
-    _VIEW_BTN,
 ]
 
 _EMP_COLS = [
@@ -300,7 +284,6 @@ _EMP_COLS = [
     _col("Structure",   width=180),
     _col("Score",       width=110, numeric=True, sort="desc"),
     _col("Status",      width=280),
-    _VIEW_BTN,
 ]
 
 _SSD_COLS = [
@@ -316,7 +299,6 @@ _SSD_COLS = [
     _col("Mode",       width=160),
     _col("Score",      width=110, numeric=True, sort="desc"),
     _col("Status",     width=260),
-    _VIEW_BTN,
 ]
 
 _TRP_COLS = [
@@ -334,7 +316,6 @@ _TRP_COLS = [
     _col("Structure",    width=180),
     _col("Score",        width=110, numeric=True, sort="desc"),
     _col("Status",       width=260),
-    _VIEW_BTN,
 ]
 
 _NSN_COLS = [
@@ -351,7 +332,6 @@ _NSN_COLS = [
     _col("Mode",       width=160),
     _col("Score",      width=110, numeric=True, sort="desc"),
     _col("Status",     width=260),
-    _VIEW_BTN,
 ]
 
 _COLS_BY_SLUG: dict[str, list[dict]] = {
@@ -379,4 +359,8 @@ _COLS_BY_SLUG: dict[str, list[dict]] = {
     "short_squeeze_detector": _SSD_COLS,
     "tail_risk_put_spread":   _TRP_COLS,
     "news_sentiment_nlp":     _NSN_COLS,
+    # VIX / vol calendar spreads — reuse the generic calendar column set.
+    # The screener fills a subset; absent fields render blank, never error.
+    "calendar_spread_vix":    _CAL_COLS,
+    "vol_calendar_spread":    _CAL_COLS,
 }

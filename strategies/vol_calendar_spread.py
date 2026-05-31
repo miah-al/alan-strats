@@ -9,13 +9,15 @@ future implied volatility relative to what realized volatility will be.
   Overpriced IV  → IV will compress → Short Calendar (credit spread)
   Underpriced IV → IV will expand   → Long Calendar  (debit spread)
 
-A 3-class XGBoost classifier is trained on four feature groups:
-  1. IV term structure   (front IV, back IV, slope, IVR, IVR spread)
-  2. Variance risk premium (realized vol, VRP, VRP z-score)
-  3. Market context       (VIX, put/call ratio, options volume spike)
-  4. News sentiment       (FinBERT ticker + macro sentiment, velocity)
+A 3-class XGBoost classifier is trained on 16 features in four groups:
+  1. IV term structure   (front IV, back IV, slope, front/back IVR, IVR spread) — 6
+  2. Variance risk premium (realized vol, VRP, VRP z-score)                      — 3
+  3. Market context       (VIX, put/call ratio, vol spike, ticker-market corr)  — 4
+  4. News sentiment       (FinBERT ticker + macro sentiment, velocity)          — 3
 
-Labels are 5-day forward IV changes bucketed into COMPRESS / NEUTRAL / EXPAND.
+Labels are `label_horizon`-day (default 5) forward *relative* front-IV changes
+bucketed into COMPRESS / NEUTRAL / EXPAND, thresholded at label_sigma_mult × the
+rolling 90-day σ of those changes.
 Walk-forward expanding-window CV with 20% holdout for OOS evaluation.
 
 TRADE STRUCTURE
@@ -31,7 +33,10 @@ Short Calendar (COMPRESS signal):
   Net: credit — profits if IV compresses
 
 Strike: ATM (maximises theta window for front leg)
-Exit  : 50% max profit, or front-month ≤ 5 DTE, or regime flip
+Exit  : whichever comes first of (a) +50% of entry cost captured, or
+        (b) the model's forward horizon elapses (hold_days = label_horizon).
+        (Front-month-DTE and regime-flip exits are described in the guide as
+        discretionary overlays but are NOT simulated in this backtest.)
 
 REFERENCES
 ----------
@@ -45,7 +50,6 @@ from __future__ import annotations
 
 import datetime
 import logging
-import math
 import os
 import pickle
 from pathlib import Path
@@ -62,6 +66,21 @@ from alan_trader.strategies.base import (
     StrategyType,
 )
 from alan_trader.risk.metrics import compute_all_metrics
+
+# Shared transaction-cost constants and skew-aware pricing from the engine.
+# Importing the engine defaults keeps frictions consistent across all strategies.
+try:  # pragma: no cover - import resolution differs in some run contexts
+    from alan_trader.backtest.engine import (
+        DEFAULT_SLIPPAGE_PER_LEG,
+        DEFAULT_COMMISSION_PER_LEG,
+        bs_price_skew,
+    )
+except ImportError:  # pragma: no cover
+    from backtest.engine import (  # type: ignore
+        DEFAULT_SLIPPAGE_PER_LEG,
+        DEFAULT_COMMISSION_PER_LEG,
+        bs_price_skew,
+    )
 
 logger = logging.getLogger(__name__)
 
@@ -95,7 +114,7 @@ class VolCalendarSpreadStrategy(BaseStrategy):
         "Features: IV term structure, variance risk premium, VIX context, FinBERT news sentiment."
     )
     asset_class          = "equities_options"
-    typical_holding_days = 21
+    typical_holding_days = 5   # backtest holds over the model's forward horizon (label_horizon)
     target_sharpe        = 1.2
 
     # ── Feature column order (must match training) ────────────────────────────
@@ -135,12 +154,19 @@ class VolCalendarSpreadStrategy(BaseStrategy):
         colsample_bytree:   float = 0.8,
         oos_fraction:       float = 0.20,  # holdout fraction for OOS evaluation
         starting_capital:   float = 100_000.0,
-        slippage_per_leg:   float = 0.05,  # dollars per option per share (bid-ask half-spread)
-        commission_per_leg: float = 0.65,  # dollars per contract per leg (standard retail)
+        slippage_per_leg:   Optional[float] = None,  # bid-ask half-spread per leg per share; None → engine default
+        commission_per_leg: Optional[float] = None,  # $/contract per leg; None → engine default
     ):
         self.starting_capital  = starting_capital
-        self.slippage_per_leg  = slippage_per_leg
-        self.commission_per_leg = commission_per_leg
+        # Use engine-wide friction defaults unless explicitly overridden.
+        # NOTE: `X if X is not None else default` (NOT `X or default`) so a caller
+        # can legitimately pass 0.0 to disable a cost without it being silently dropped.
+        self.slippage_per_leg  = (
+            slippage_per_leg if slippage_per_leg is not None else DEFAULT_SLIPPAGE_PER_LEG
+        )
+        self.commission_per_leg = (
+            commission_per_leg if commission_per_leg is not None else DEFAULT_COMMISSION_PER_LEG
+        )
         self.front_dte_min     = front_dte_min
         self.front_dte_max     = front_dte_max
         self.back_dte_target   = back_dte_target
@@ -571,7 +597,15 @@ class VolCalendarSpreadStrategy(BaseStrategy):
         n_oos    = max(1, int(n * self.oos_fraction))
         n_train  = n - n_oos
 
-        X_train, y_train = X_all[:n_train], y_all[:n_train]
+        # ── Purge gap (look-ahead protection) ──────────────────────────────
+        # Each label looks `label_horizon` days FORWARD. Without a gap, the last
+        # `label_horizon` training rows are labelled using IV observed inside the
+        # OOS window — a leak. Drop those rows from the training fit so the model
+        # never sees post-cutoff information. The OOS set is untouched.
+        purge = int(self.label_horizon)
+        train_cutoff = max(1, n_train - purge)
+
+        X_train, y_train = X_all[:train_cutoff], y_all[:train_cutoff]
         X_oos,   y_oos   = X_all[n_train:], y_all[n_train:]
 
         if progress_callback:
@@ -584,9 +618,13 @@ class VolCalendarSpreadStrategy(BaseStrategy):
         init_train   = max(60, fold_size * 2)
 
         fold_idx = 0
+        purge = int(self.label_horizon)
         total_folds = max(1, (n_train - init_train) // fold_size)
         for start in range(init_train, n_train - fold_size, fold_size):
-            X_f, y_f = X_all[:start], y_all[:start]
+            # Purge the last `label_horizon` rows of the training fold: their
+            # forward-looking labels overlap the validation fold (leak).
+            fold_cut = max(1, start - purge)
+            X_f, y_f = X_all[:fold_cut], y_all[:fold_cut]
             X_v, y_v = X_all[start:start + fold_size], y_all[start:start + fold_size]
             if len(np.unique(y_f)) < 2:
                 continue
@@ -762,6 +800,53 @@ class VolCalendarSpreadStrategy(BaseStrategy):
     # Backtest
     # ═════════════════════════════════════════════════════════════════════════
 
+    def _mark_open_trade(
+        self,
+        ot: dict,
+        as_of,
+        spot: float,
+        chain_d: Optional[pd.DataFrame],
+    ) -> float:
+        """
+        Mark an OPEN calendar to market and return its *unrealized* P&L in dollars
+        (already scaled by contracts), NET of the round-trip exit frictions that
+        would be paid to close it. Used so the equity curve reflects the value of
+        live positions instead of a cash-only step function.
+
+        Mirrors the realized-exit math: prefers real chain prices, falls back to
+        skew-aware BS using the stored entry IVs.
+        """
+        days_held = max(0, (pd.Timestamp(as_of) - pd.Timestamp(ot["entry_date"])).days)
+        contracts = max(int(ot.get("contracts", 1)), 1)
+        slip      = self.slippage_per_leg
+        comm_exit = self.commission_per_leg * 2 * contracts  # 2 legs to close
+
+        f_price = self._atm_price(chain_d, ot["front_exp"], spot) if chain_d is not None else None
+        b_price = self._atm_price(chain_d, ot["back_exp"],  spot) if chain_d is not None else None
+
+        if f_price is None or b_price is None:
+            # Skew-aware BS fallback using stored entry IVs (ATM → skew ~0).
+            f_iv = float(ot.get("front_iv") or 0.0) / 100.0
+            b_iv = float(ot.get("back_iv")  or 0.0) / 100.0
+            if f_iv <= 0 or b_iv <= 0 or spot <= 0:
+                return 0.0
+            dte_f = max(1, int(ot.get("front_dte", self.front_dte_min)) - days_held)
+            dte_b = max(1, int(self.back_dte_target) - days_held)
+            f_price = bs_price_skew(spot, ot["spot"], dte_f / 252.0, 0.045, f_iv, "call")
+            b_price = bs_price_skew(spot, ot["spot"], dte_b / 252.0, 0.045, b_iv, "call")
+
+        if ot["trade_type"] == "debit_calendar":
+            exit_spread = ((b_price - slip) - (f_price + slip)) * 100
+        else:
+            exit_spread = ((b_price + slip) - (f_price - slip)) * 100
+        entry_spread = ot["cost"] / contracts
+
+        if ot["trade_type"] == "debit_calendar":
+            pnl = (exit_spread - entry_spread) * contracts - comm_exit
+        else:
+            pnl = (entry_spread - exit_spread) * contracts - comm_exit
+        return pnl
+
     def backtest(
         self,
         price_data:       pd.DataFrame,
@@ -774,6 +859,22 @@ class VolCalendarSpreadStrategy(BaseStrategy):
         progress_callback = None,
         **kwargs,
     ) -> BacktestResult:
+        # The dash backtest runner instantiates the strategy with defaults and
+        # forwards the UI-tuned params (which are constructor-style knobs) into
+        # backtest() as **kwargs. Apply any recognised knobs to self so the UI
+        # sliders actually take effect instead of being silently swallowed.
+        # Use 'is not None' (NOT truthiness) so a slider set to 0 / 0.0 is honoured.
+        for _k in (
+            "front_dte_min", "front_dte_max", "back_dte_target",
+            "label_horizon", "label_sigma_mult", "confidence_min",
+            "position_size_pct", "min_ivr_compress", "max_ivr_expand",
+            "min_term_slope", "max_term_slope", "min_ivr_quality", "max_vrp_noisy",
+            "n_estimators", "max_depth", "learning_rate",
+            "subsample", "colsample_bytree", "oos_fraction",
+            "slippage_per_leg", "commission_per_leg",
+        ):
+            if _k in kwargs and kwargs[_k] is not None:
+                setattr(self, _k, kwargs[_k])
         """
         Full walk-forward backtest.
 
@@ -887,7 +988,10 @@ class VolCalendarSpreadStrategy(BaseStrategy):
         equity_pts  = [{"date": feature_df.index[n_train - 1], "equity": capital}]
         trade_rows  = []
         open_trades = []
-        hold_days   = 5  # default hold period
+        # Hold the calendar over the same forward window the model is trained to
+        # predict (label_horizon). Keeping these equal avoids holding a position
+        # past the horizon its signal was estimated over.
+        hold_days   = int(self.label_horizon)
 
         # Build actual labels for OOS window for signal ledger
         _all_labels = self._build_labels(feature_df)
@@ -931,12 +1035,11 @@ class VolCalendarSpreadStrategy(BaseStrategy):
                         else:
                             pnl = (entry_spread - exit_spread) * ot["contracts"] - _comm_exit * ot["contracts"]
                     elif f_iv_exit is not None and b_iv_exit is not None:
-                        # BS fallback using stored IVs
-                        from alan_trader.backtest.engine import bs_price as _bs_exit
+                        # BS fallback using stored IVs (skew-aware; strike == entry spot)
                         _dte_f = max(1, ot.get("front_dte", 21) - days_held)
                         _dte_b = max(1, self.back_dte_target - days_held)
-                        _f_bs = _bs_exit(spot_exit, ot["spot"], _dte_f / 252, 0.045, f_iv_exit / 100, "call")
-                        _b_bs = _bs_exit(spot_exit, ot["spot"], _dte_b / 252, 0.045, b_iv_exit / 100, "call")
+                        _f_bs = bs_price_skew(spot_exit, ot["spot"], _dte_f / 252, 0.045, f_iv_exit / 100, "call")
+                        _b_bs = bs_price_skew(spot_exit, ot["spot"], _dte_b / 252, 0.045, b_iv_exit / 100, "call")
                         if ot["trade_type"] == "debit_calendar":
                             exit_spread = ((_b_bs - _slip) - (_f_bs + _slip)) * 100
                         else:
@@ -1034,14 +1137,16 @@ class VolCalendarSpreadStrategy(BaseStrategy):
                     cost = max(0.01, (back_adj - front_adj)) * 100
                     price_source = "market"
                 else:
-                    # BS fallback: price both legs using stored IV
-                    from alan_trader.backtest.engine import bs_price as _bs_price
+                    # BS fallback: price both legs using stored IV. Use the
+                    # skew-aware pricer so the model is consistent with the rest
+                    # of the engine. Legs are ATM (K == spot) here, so the skew
+                    # term is ~0, but using bs_price_skew keeps a single code path.
                     _iv_f = feat_row["front_iv"] / 100.0
                     _iv_b = feat_row["back_iv"]  / 100.0
                     _T_f  = max(dte_f, 1) / 252.0
                     _T_b  = max(self.back_dte_target, 1) / 252.0
-                    front_price = _bs_price(spot, spot, _T_f, 0.045, _iv_f, "call")
-                    back_price  = _bs_price(spot, spot, _T_b, 0.045, _iv_b, "call")
+                    front_price = bs_price_skew(spot, spot, _T_f, 0.045, _iv_f, "call")
+                    back_price  = bs_price_skew(spot, spot, _T_b, 0.045, _iv_b, "call")
                     if result["trade_type"] == "debit_calendar":
                         cost = max(0.01, (back_price + slip) - (front_price - slip)) * 100
                     else:
@@ -1057,8 +1162,8 @@ class VolCalendarSpreadStrategy(BaseStrategy):
                     "trade_type":   result["trade_type"],
                     "front_exp":    front_exp,
                     "back_exp":     back_exp,
-                    "front_iv":     result["front_iv"]  or feat_row["front_iv"],
-                    "back_iv":      result["back_iv"]   or feat_row["back_iv"],
+                    "front_iv":     result["front_iv"] if result["front_iv"] is not None else feat_row["front_iv"],
+                    "back_iv":      result["back_iv"]  if result["back_iv"]  is not None else feat_row["back_iv"],
                     "front_price":  front_price,
                     "back_price":   back_price,
                     "price_source": price_source,
@@ -1070,7 +1175,19 @@ class VolCalendarSpreadStrategy(BaseStrategy):
                     "confidence":   result["confidence"],
                 })
 
-            equity_pts.append({"date": dt, "equity": capital})
+            # Mark open positions to market so equity is not a cash-only step
+            # function. Each open trade's value ≈ committed cost + unrealized P&L.
+            _cd_mark = chains.get(dt)
+            if _cd_mark is None:
+                _cd_mark = chains.get(pd.Timestamp(dt))
+            _mark_spot = float(
+                price_data.loc[pd.Timestamp(dt), "close"]
+                if pd.Timestamp(dt) in price_data.index else feat_row["spot"]
+            )
+            open_value = 0.0
+            for ot in open_trades:
+                open_value += ot["cost"] + self._mark_open_trade(ot, dt, _mark_spot, _cd_mark)
+            equity_pts.append({"date": dt, "equity": capital + open_value})
 
         # ── Force-close any still-open trades at end of OOS ───────────────
         last_dt = oos_df.index[-1] if len(oos_df) > 0 else feature_df.index[-1]
@@ -1081,21 +1198,22 @@ class VolCalendarSpreadStrategy(BaseStrategy):
             if pd.Timestamp(last_dt) in price_data.index else 0
         )
         for ot in open_trades:
-            days_held = (pd.Timestamp(last_dt) - pd.Timestamp(ot["entry_date"])).days
-            pnl = 0.0
-            if last_chain is not None and last_spot > 0:
-                f_iv_exit = self._atm_iv(last_chain, ot["front_exp"], last_spot)
-                b_iv_exit = self._atm_iv(last_chain, ot["back_exp"],  last_spot)
-                if f_iv_exit is not None and b_iv_exit is not None:
-                    entry_spread = ot["back_iv"] - ot["front_iv"]
-                    exit_spread  = b_iv_exit - f_iv_exit
-                    d_spread     = exit_spread - entry_spread
-                    dte_approx   = max(1, ot.get("front_dte", 21) - days_held)
-                    vega_proxy   = ot["spot"] * 0.01 * math.sqrt(dte_approx / 252) * 100
-                    if ot["trade_type"] == "debit_calendar":
-                        pnl = d_spread * vega_proxy * ot["contracts"]
-                    else:
-                        pnl = -d_spread * vega_proxy * ot["contracts"]
+            # Use the same mark-to-market math as the running equity curve and the
+            # main exit path so the final realized P&L is internally consistent
+            # (no separate vega-proxy model). P&L is scaled by contracts inside
+            # the helper and is net of exit frictions.
+            if last_spot > 0:
+                pnl = self._mark_open_trade(ot, last_dt, last_spot, last_chain)
+            else:
+                pnl = 0.0
+            f_iv_exit = (
+                self._atm_iv(last_chain, ot["front_exp"], last_spot)
+                if (last_chain is not None and last_spot > 0) else None
+            )
+            b_iv_exit = (
+                self._atm_iv(last_chain, ot["back_exp"], last_spot)
+                if (last_chain is not None and last_spot > 0) else None
+            )
             capital += ot["cost"] + pnl
             trade_rows.append({
                 "ticker":         ticker,
@@ -1106,8 +1224,8 @@ class VolCalendarSpreadStrategy(BaseStrategy):
                 "back_exp":       ot["back_exp"],
                 "front_iv_entry": ot["front_iv"],
                 "back_iv_entry":  ot["back_iv"],
-                "front_iv_exit":  None,
-                "back_iv_exit":   None,
+                "front_iv_exit":  f_iv_exit,
+                "back_iv_exit":   b_iv_exit,
                 "vrp_entry":      ot["vrp"],
                 "confidence":     ot["confidence"],
                 "contracts":      ot["contracts"],

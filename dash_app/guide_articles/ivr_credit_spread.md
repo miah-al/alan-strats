@@ -70,7 +70,9 @@ Window: 252 trading days (one calendar year)
   VIX_52w_high = max(VIX over past 252 days)
   IVR          = (VIX_today − low) / (high − low)   → clipped [0, 1]
 
-Minimum warmup: 30 bars before IVR is valid
+Minimum warmup: 126 bars (≈ 6 months) before IVR is valid.
+A shorter window over-states the rank: a 30-day range is far narrower than the
+true 52-week range, so early bars would look artificially "elevated."
 ```
 
 ---
@@ -147,14 +149,16 @@ The short strike is placed at the **16-delta** level. This is mathematically ele
 Delta ≈ N(d1) ≈ probability of expiring in-the-money
 
 16-delta put:  approximately 16% probability of being ITM at expiry
-               → 84% probability of the spread expiring worthless
-               → Theoretical max-profit win rate: 84%
+               → ~84% theoretical probability of the short strike expiring OTM
+                 under the log-normal model
 
 In practice:
-  Realized vol < implied vol ~70% of the time
-  → Actual win rate (empirically) is HIGHER than 84%
-  → Historical spreads at 16-delta: 78-82% max-profit outcomes
-    (lower than 84% because of vol mean-reversion timing)
+  The realized win rate depends on trade management (50% profit target, 2× credit
+  stop, 21-DTE exit) and on the skew/cost model, NOT on the raw 84% OTM
+  probability. Early profit-taking raises the hit-rate but caps per-trade profit;
+  the 2× stop and gamma near expiry lower it.
+  TODO: re-run the backtest to report the realized max-profit / win rate under the
+  current cost-and-skew model. Do not quote a number until then.
 ```
 
 ### Computing the 16-Delta Strike
@@ -180,7 +184,12 @@ Default spread_width_pct = 5% of spot
 
 ---
 
-## Real Trade Walkthrough #1 — Bull Put Spread Win
+> **Note — illustrative examples.** The two walkthroughs below are hand-built
+> teaching examples, not fills produced by the backtest engine. Some of the IVR
+> arithmetic in the original drafts was internally inconsistent; treat the prices,
+> credits, and P&L as illustrative of the *mechanics*, not as historical results.
+
+## Real Trade Walkthrough #1 — Bull Put Spread Win (Illustrative)
 
 **Date:** September 12, 2023 | **SPY:** $445.00 | **VIX:** 18.4
 
@@ -276,7 +285,7 @@ Timeline of P&L accrual:
 
 ---
 
-## Real Trade Walkthrough #2 — The Loss: Vol Expansion
+## Real Trade Walkthrough #2 — The Loss: Vol Expansion (Illustrative)
 
 **Date:** July 31, 2024 | **SPY:** $539 | **VIX:** 16.8 | **IVR:** 0.59
 
@@ -482,26 +491,36 @@ occurs if stock at or below $478 at expiry
 
 ```
 Daily process:
-  1. Compute rolling IVR from VIX history (252-day window)
-  2. Compute 50-day MA of SPY/QQQ closing price
-  3. If IVR ≥ 0.50 AND not already in a trade: enter appropriate spread
-  4. Price spread daily via Black-Scholes (VIX as IV proxy)
-  5. Check exit conditions: 50% profit, 21 DTE, 2× stop loss
-  6. Log entry date, strikes, credit, contracts, exit reason, DTE held
+  1. Compute rolling IVR from VIX history (252-day window, 126-bar warmup)
+  2. Compute 50-day MA of the ticker's closing price
+  3. If IVR ≥ ivr_min AND we have valid history: enter the appropriate spread
+  4. Price both legs daily via skew-adjusted Black-Scholes (VIX as ATM IV proxy)
+  5. Check exit conditions: 50% profit, 21 DTE, 2× stop loss, end-of-data
+  6. Log entry date, strikes, credit, contracts, exit reason, bars held
 
 Assumptions:
-  → Mid-market fills (no bid/ask spread)
-  → $0.65 per contract per leg commissions
-  → VIX used as IV proxy (appropriate for SPY/QQQ)
-  → Black-Scholes pricing (accurate for liquid large-cap options)
+  → Volatility SKEW applied (engine bs_price_skew): the OTM short strike carries
+    higher IV than the flat VIX level, so modeled credits are conservative.
+  → BOTH commission (DEFAULT_COMMISSION_PER_LEG, $/contract) AND slippage
+    (DEFAULT_SLIPPAGE_PER_LEG, BS-mark units) are charged per leg × contracts on
+    ENTRY and on EXIT. Slippage reduces the entry credit and raises the exit cost.
+  → Calendar DTE is converted to trading-day bars (× 252/365) so the simulated
+    hold matches the quoted expiry.
+  → VIX used as the ATM IV proxy (appropriate for SPY/QQQ; rougher for single names).
+  → Stops/targets are evaluated and realized at the daily close (end-of-day), so
+    gap days can realize worse-or-better than the intraday trigger price.
 ```
 
 ---
 
 ## Historical Context — When IVR Signals Fire
 
+> The frequency / average-credit figures below are illustrative ranges to build
+> intuition about *when* the signal fires across regimes — they are not exact
+> backtest outputs.
+
 ```
-Major IVR ≥ 0.50 periods for SPY (2019–2024):
+Major IVR ≥ 0.50 periods for SPY (2019–2024, illustrative):
 
 Period                    VIX Range    IVR > 0.50   Trades possible    Avg credit
 ──────────────────────────────────────────────────────────────────────────────────
@@ -609,10 +628,12 @@ Time of year  Post-earnings season (May, August, November)  Vol spikes from earn
    transforms a defined-risk strategy into a undefined-risk one. The 2× stop is calibrated
    to cut losses before gamma blowup while allowing normal vol expansion to self-correct.
 
-6. **Not accounting for bid/ask spreads.** The backtest assumes mid-market fills. In
-   practice, a 4-leg iron condor might cost $0.15-$0.20 in bid/ask on entry and exit.
-   On a $1.70 credit, that's a 10-15% friction cost. For spreads with credit < $0.80,
-   the transaction friction may consume most of the theoretical edge.
+6. **Underestimating bid/ask spreads.** The backtest charges per-leg slippage and
+   commission on entry and exit, but live two-leg spreads can still cost $0.10–$0.20
+   in bid/ask round-trip. On a $1.70 credit that's ~10% friction; for spreads with
+   credit < $0.80 the transaction friction may consume most of the theoretical edge.
+   Skew-adjusted leg pricing in the model already makes the modeled credit
+   conservative, but real fills on thin single-name options can be worse.
 
 7. **Using this strategy as a "set and forget."** Daily monitoring is required to catch
    the 2× stop trigger. An unexpected gap on day 3 of a 45-DTE trade requires same-day
@@ -633,10 +654,21 @@ Parameter            Default                        Description
 `profit_target_pct`  50%                            Close when P&L = 50% of max credit
 `stop_loss_mult`     2.0×                           Close when spread value = 2× credit received
 `position_size_pct`  3%                             Capital at risk per trade (based on max loss)
+`commission_per_leg` engine default ($0.65)         Broker commission, per leg × contracts, entry + exit
+`slippage_per_leg`   engine default ($0.05/sh)      Adverse fill, per leg × contracts, entry + exit
 Trend filter         50-day MA                      Bull put above MA, bear call below MA
 Max loss             (spread_width − credit) × 100  Per contract, fully defined at entry
-Target Sharpe        1.2                            Strategy performance target
+Target Sharpe        1.2 (aspirational target)      NOT a realized figure — re-run required (see below)
 ```
+
+> **Honest-stats note.** The "Target Sharpe 1.2" above is an aspirational design
+> target, not a measured backtest result. After the recent cost-and-skew hardening
+> (skew-adjusted leg pricing, entry+exit slippage, calendar→trading-day DTE), all
+> realized headline statistics (Sharpe, win rate, CAGR, max drawdown) must be
+> **re-computed** before being quoted. The variance-risk-premium edge and the
+> academic references below remain valid as *context*, but no specific realized
+> performance number should be cited until the backtest is re-run.
+> **TODO: re-run backtest and populate honest headline stats here.**
 
 ---
 
@@ -651,8 +683,10 @@ VIX daily close        Polygon `VIXIND`  IV proxy, IVR calculation
 ```
 
 All data must be synced from the Data Manager before running the backtest. The IVR
-calculation requires 252 bars of VIX history minimum — ensure your data sync covers
-at least 13 months of VIX data for accurate IVR computation.
+calculation uses a 252-bar (one-year) rolling window and requires a minimum of 126
+bars (≈ 6 months) of VIX history before it returns a valid rank; entries also
+require 50 bars for the 50-day MA. Ensure your data sync covers at least ~13 months
+of VIX data so the 52-week range is fully populated for accurate IVR.
 
 ---
 

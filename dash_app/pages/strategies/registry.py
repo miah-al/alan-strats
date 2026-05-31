@@ -36,6 +36,7 @@ _STRATEGIES_AI = [
     {"label": "Earnings Vol Crush AI",        "value": "earnings_vol_crush"},
     {"label": "Momentum Regime Spread AI",    "value": "momentum_regime_spread"},
     {"label": "Covered Call Optimizer AI",    "value": "covered_call_ai"},
+    {"label": "Vol Regime Calendar Spread AI","value": "vol_calendar_spread"},
     {"label": "RS Credit Spread AI",          "value": "rs_credit_spread"},
     {"label": "Put Steal — Interest Arb AI",  "value": "put_steal"},
     {"label": "HMM Regime Classifier",        "value": "hmm_regime"},
@@ -49,6 +50,59 @@ _STRATEGIES_AI = [
 _STRATEGIES = _STRATEGIES_RULES + _STRATEGIES_AI
 
 _SLUG_TO_LABEL: dict[str, str] = {s["value"]: s["label"] for s in _STRATEGIES}
+
+
+# ── Review status per strategy ────────────────────────────────────────────────
+# Drives the colour-coded selector chips in the UI.
+#   ready     : audited + signed off; safe to deploy / paper-trade
+#   reviewed  : audited, has known issues but credible — paper only
+#   reviewing : not yet audited / under review
+#   avoid     : known broken — do not deploy until rewritten
+# Defaults to "reviewing" for any slug not in this map.
+_STRATEGY_STATUS: dict[str, str] = {
+    # Ready
+    "hmm_regime":            "ready",
+    "iron_condor_rules":     "ready",
+    # Reviewed (B-grade)
+    "vix_spike_fade":        "reviewed",
+    "fomc_event_straddle":   "reviewed",
+    "tail_risk_put_spread":  "reviewed",
+    "dealer_gamma_regime":   "reviewed",
+    "ivr_credit_spread":     "reviewed",
+    "bull_put_spread":       "reviewed",
+    "put_steal":             "reviewed",
+    "vix_term_structure":    "reviewed",
+    "earnings_pin_risk":     "reviewed",
+    "tail_risk_long_put":    "reviewed",
+    # Avoid (D-grade or structurally broken)
+    "covered_call_ai":       "avoid",
+    "vol_arbitrage":         "avoid",
+    "broken_wing_butterfly": "avoid",
+    "calendar_spread":       "avoid",
+    # everything else defaults to "reviewing"
+}
+
+# Palette mapped to status; consumed by the strategy selector.
+#   ready     : green
+#   reviewed  : yellow
+#   reviewing : light orange (peach)
+#   avoid     : red
+_STATUS_COLORS: dict[str, dict] = {
+    "ready":     {"label": "Ready",     "border": "#10b981", "dot": "#10b981", "tint": "rgba(16,185,129,0.10)"},
+    "reviewed":  {"label": "Reviewed",  "border": "#facc15", "dot": "#facc15", "tint": "rgba(250,204,21,0.10)"},
+    "reviewing": {"label": "Reviewing", "border": "#fdba74", "dot": "#fdba74", "tint": "rgba(253,186,116,0.10)"},
+    "avoid":     {"label": "Avoid",     "border": "#ef4444", "dot": "#ef4444", "tint": "rgba(239,68,68,0.10)"},
+}
+
+
+def get_strategy_status(slug: str) -> str:
+    """Return the review status for a slug. Defaults to 'reviewing'."""
+    return _STRATEGY_STATUS.get(slug, "reviewing")
+
+
+def get_status_color(slug: str, key: str = "border") -> str:
+    """Return the colour value for a slug's status. `key` is one of border / dot / tint."""
+    return _STATUS_COLORS[get_strategy_status(slug)][key]
 
 # ── Universe options ──────────────────────────────────────────────────────────
 

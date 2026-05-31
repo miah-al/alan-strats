@@ -12,7 +12,7 @@ premium sellers. This strategy uses a gradient boosting classifier to distinguis
 contango (sell premium) from backwardation (buy protection) regimes before entry.
 
 LAYER 1 — REGIME CLASSIFIER (Gradient Boosting):
-  Predicts P(14d realized vol > current implied vol) = P(backwardation).
+  Predicts P(realized vol over next dte_target days > implied vol) = P(backwardation).
   Features: VIX momentum, vol-of-vol, SPY trend, IV-RV spread, term structure.
   P < 0.40 → contango regime → sell credit spread (harvest premium).
   P > 0.60 → backwardation regime → buy debit spread (buy protection).
@@ -33,9 +33,23 @@ FEATURE SET (12 features)
 
 LABEL CONSTRUCTION
 ------------------
-  backwardation_N = 1 if realized_vol_14d_forward > vix_today / 100
+  backwardation_N = 1 if realized_vol over the next `dte_target` days > vix_today/100
   This is binary: will realized vol exceed the current implied vol estimate?
   Positive rate: ~22% (backwardation is the minority but catastrophic regime).
+  The forward window equals dte_target (default 21); training purges the last
+  dte_target bars (cutoff = i - dte_target) so no label uses data beyond bar i.
+
+TRANSACTION COSTS
+-----------------
+  Commission + slippage are charged per leg (2 legs/vertical) on BOTH entry and
+  exit, scaled by the number of contracts. Costs come from the shared engine
+  constants (DEFAULT_COMMISSION_PER_LEG, DEFAULT_SLIPPAGE_PER_LEG).
+
+OPTION PRICING
+--------------
+  Each leg is priced with a volatility skew (bs_price_skew): OTM puts carry a
+  richer effective IV than a single flat ATM vol, which is conservative for the
+  short put legs of the credit spread.
 """
 
 from __future__ import annotations
@@ -58,11 +72,40 @@ from alan_trader.strategies.base import (
 )
 from alan_trader.risk.metrics import compute_all_metrics
 
+# ── Transaction costs + skew-aware pricing from the shared backtest engine ───────
+# Import path differs between package-installed and flat layouts; try both. If the
+# engine cannot be imported, fall back to conservative defaults / flat IV so the
+# strategy never crashes, but the realistic path is preferred.
+try:                                                # pragma: no cover - import shim
+    from alan_trader.backtest.engine import (
+        DEFAULT_SLIPPAGE_PER_LEG,
+        DEFAULT_COMMISSION_PER_LEG,
+        bs_price_skew,
+    )
+    _HAVE_SKEW = True
+except Exception:                                   # pragma: no cover - import shim
+    try:
+        from backtest.engine import (
+            DEFAULT_SLIPPAGE_PER_LEG,
+            DEFAULT_COMMISSION_PER_LEG,
+            bs_price_skew,
+        )
+        _HAVE_SKEW = True
+    except Exception:
+        DEFAULT_SLIPPAGE_PER_LEG   = 0.05
+        DEFAULT_COMMISSION_PER_LEG = 0.65
+        bs_price_skew = None
+        _HAVE_SKEW = False
+
 logger = logging.getLogger(__name__)
 
 _RISK_FREE_RATE   = 0.045
 _WARMUP_BARS      = 90
 _RETRAIN_EVERY    = 15
+# Per-leg cost (commission + slippage) charged on BOTH entry and exit, per leg
+# (a vertical has 2 legs) × contracts.
+_COST_PER_LEG     = float(DEFAULT_COMMISSION_PER_LEG) + float(DEFAULT_SLIPPAGE_PER_LEG)
+_LEGS_PER_SPREAD  = 2
 _SAVED_MODELS_DIR = Path(__file__).parent.parent / "saved_models"
 
 
@@ -78,23 +121,38 @@ def _bs_price(S, K, T, r, sigma, option_type):
     return float(K * np.exp(-r * T) * norm.cdf(-d2) - S * norm.cdf(-d1))
 
 
+def _leg_price(S, K, T, r, atm_iv, option_type):
+    """Price one leg with a vol skew when the engine helper is available.
+
+    bs_price_skew applies a linear smile internally (via effective_iv), so OTM
+    strikes get a realistic effective IV instead of a single flat ATM vol. Falls
+    back to flat-IV Black-Scholes if the engine import failed.
+    """
+    if _HAVE_SKEW:
+        try:
+            return float(bs_price_skew(S, K, T, r, atm_iv, option_type))
+        except Exception:                           # pragma: no cover - defensive
+            pass
+    return _bs_price(S, K, T, r, atm_iv, option_type)
+
+
 def _spread_value(S, short_K, long_K, T, r, iv, spread_type):
-    """Net value of a vertical spread at expiry-equivalent pricing."""
+    """Net value of a vertical spread, skew-aware per leg."""
     if spread_type == "bull_put":
-        short_val = _bs_price(S, short_K, T, r, iv, "put")
-        long_val  = _bs_price(S, long_K,  T, r, iv, "put")
+        short_val = _leg_price(S, short_K, T, r, iv, "put")
+        long_val  = _leg_price(S, long_K,  T, r, iv, "put")
         return short_val - long_val
     elif spread_type == "bear_call":
-        short_val = _bs_price(S, short_K, T, r, iv, "call")
-        long_val  = _bs_price(S, long_K,  T, r, iv, "call")
+        short_val = _leg_price(S, short_K, T, r, iv, "call")
+        long_val  = _leg_price(S, long_K,  T, r, iv, "call")
         return short_val - long_val
     elif spread_type == "bear_put":  # debit
-        long_val  = _bs_price(S, long_K,  T, r, iv, "put")
-        short_val = _bs_price(S, short_K, T, r, iv, "put")
+        long_val  = _leg_price(S, long_K,  T, r, iv, "put")
+        short_val = _leg_price(S, short_K, T, r, iv, "put")
         return long_val - short_val
     elif spread_type == "bull_call":  # debit
-        long_val  = _bs_price(S, long_K,  T, r, iv, "call")
-        short_val = _bs_price(S, short_K, T, r, iv, "call")
+        long_val  = _leg_price(S, long_K,  T, r, iv, "call")
+        short_val = _leg_price(S, short_K, T, r, iv, "call")
         return long_val - short_val
     return 0.0
 
@@ -145,7 +203,7 @@ def _build_features(
     return df.ffill()
 
 
-def _build_labels(close: pd.Series, vix: pd.Series, n_forward: int = 14) -> pd.Series:
+def _build_labels(close: pd.Series, vix: pd.Series, n_forward: int = 21) -> pd.Series:
     """
     Binary label: 1 if realized vol over the next n_forward days
     exceeds the current VIX/100 (implied vol estimate).
@@ -348,6 +406,7 @@ class VIXTermStructureStrategy(BaseStrategy):
         last_train  = -999
 
         for i, dt in enumerate(all_dates):
+            unrealized = 0.0  # MTM of any open position, marks equity each bar
             # ── Update open trade ──────────────────────────────────────────
             if open_trade is not None:
                 open_trade["days_held"] += 1
@@ -367,9 +426,16 @@ class VIXTermStructureStrategy(BaseStrategy):
                     open_trade["spread_type"],
                 )
 
-                entry_val = open_trade["entry_value"]
-                is_credit = open_trade["is_credit"]
-                pnl_now   = (entry_val - val_now) * 100 if is_credit else (val_now - entry_val) * 100
+                entry_val  = open_trade["entry_value"]
+                is_credit  = open_trade["is_credit"]
+                contracts  = open_trade["contracts"]
+                # P&L scaled by contracts × 100 multiplier (was unscaled — bug).
+                gross_pnl  = (((entry_val - val_now) if is_credit
+                               else (val_now - entry_val)) * 100 * contracts)
+                # Exit costs: commission + slippage, per leg × contracts. Entry
+                # costs were already charged at open. Net P&L bears both sides.
+                exit_cost  = _COST_PER_LEG * _LEGS_PER_SPREAD * contracts
+                pnl_now    = gross_pnl - open_trade["entry_fees"] - exit_cost
                 max_profit = open_trade["max_profit"]
                 max_loss   = open_trade["max_loss"]
 
@@ -377,31 +443,51 @@ class VIXTermStructureStrategy(BaseStrategy):
                 if is_credit:
                     if pnl_now >= max_profit * pt_pct:
                         exit_reason = "profit_target"
-                    elif pnl_now <= -max_loss * sl_mult:
+                    # Stop at a multiple of the CREDIT received, capped at max_loss.
+                    # max_profit == credit; loss is capped at max_loss, so a plain
+                    # "-max_loss * sl_mult" (sl_mult>1) stop could never trigger.
+                    elif pnl_now <= -min(max_profit * sl_mult, max_loss):
                         exit_reason = "stop_loss"
                 else:
-                    if pnl_now >= max_loss * pt_pct:
+                    # Debit: take profit at pt_pct of MAX GAIN (was max_loss — bug);
+                    # stop at half the debit paid.
+                    if pnl_now >= max_profit * pt_pct:
                         exit_reason = "profit_target"
-                    elif pnl_now <= -open_trade["entry_cost"] * 0.5:
+                    elif pnl_now <= -0.5 * open_trade["entry_cost"]:
                         exit_reason = "stop_loss"
 
                 if T_remain <= dte_ex:
                     exit_reason = "dte_exit"
 
                 if exit_reason:
-                    capital += pnl_now
+                    # Credit: nothing was paid at entry, realize net P&L. Debit: the
+                    # debit was paid out of cash at entry, so closing returns the
+                    # live spread value minus exit costs.
+                    if is_credit:
+                        capital += pnl_now
+                    else:
+                        capital += val_now * 100 * contracts - exit_cost
                     trades_list.append({
                         "entry_date":   open_trade["entry_date"].date(),
                         "exit_date":    dt.date(),
                         "spread_type":  open_trade["spread_type"],
+                        "contracts":    contracts,
                         "entry_cost":   round(open_trade["entry_cost"], 2),
-                        "exit_value":   round(val_now * 100, 2),
+                        "exit_value":   round(val_now * 100 * contracts, 2),
                         "pnl":          round(pnl_now, 2),
                         "exit_reason":  exit_reason,
                     })
                     open_trade = None
+                else:
+                    # Mark the still-open position to market so equity is not a
+                    # step function. Credit: unrealized net P&L. Debit: live value
+                    # (cash was already debited at entry).
+                    if is_credit:
+                        unrealized = pnl_now
+                    else:
+                        unrealized = val_now * 100 * contracts - exit_cost
 
-            equity_list.append(capital)
+            equity_list.append(capital + unrealized)
 
             if i < _WARMUP_BARS:
                 continue
@@ -460,12 +546,16 @@ class VIXTermStructureStrategy(BaseStrategy):
                 if entry_v <= 0:
                     continue
                 contracts  = max(1, int(max_cost / ((wing - entry_v) * 100)))
+                entry_fees = _COST_PER_LEG * _LEGS_PER_SPREAD * contracts
                 max_profit = entry_v * 100 * contracts
                 max_loss_  = (wing - entry_v) * 100 * contracts
+                # Credit spread: no debit paid at entry, but commissions hit now.
+                capital   -= entry_fees
                 open_trade = {
                     "entry_date": dt, "spread_type": "bull_put",
                     "short_strike": short_K, "long_strike": long_K,
                     "entry_value": entry_v, "entry_cost": entry_v * 100 * contracts,
+                    "contracts": contracts, "entry_fees": entry_fees,
                     "is_credit": True, "max_profit": max_profit, "max_loss": max_loss_,
                     "dte_remaining": dte_tgt, "days_held": 0,
                     "prob": prob_backwardation,
@@ -479,39 +569,65 @@ class VIXTermStructureStrategy(BaseStrategy):
                 if entry_v <= 0:
                     continue
                 contracts  = max(1, int(max_cost / (entry_v * 100)))
-                max_loss_  = entry_v * 100 * contracts
-                capital   -= max_loss_
-                if capital < 0:
-                    capital += max_loss_
+                entry_fees = _COST_PER_LEG * _LEGS_PER_SPREAD * contracts
+                debit_paid = entry_v * 100 * contracts
+                max_loss_  = debit_paid
+                # Debit + commissions are paid out of cash at entry.
+                cash_out = debit_paid + entry_fees
+                if capital - cash_out < 0:
                     continue
+                capital -= cash_out
                 open_trade = {
                     "entry_date": dt, "spread_type": "bear_put",
                     "short_strike": short_K, "long_strike": long_K,
-                    "entry_value": entry_v, "entry_cost": max_loss_,
+                    "entry_value": entry_v, "entry_cost": debit_paid,
+                    "contracts": contracts, "entry_fees": entry_fees,
                     "is_credit": False, "max_profit": (wing - entry_v) * 100 * contracts,
                     "max_loss": max_loss_,
                     "dte_remaining": dte_tgt, "days_held": 0,
                     "prob": prob_backwardation,
                 }
 
-        # Close any open trade at final bar
+        # Close any open trade at the final bar, marking to the live spread value.
         if open_trade is not None:
+            spot      = float(close.iloc[-1])
+            iv_now    = float(vix.iloc[-1]) / 100.0
+            t_yr      = max(0, open_trade["dte_remaining"]) / 252.0
+            contracts = open_trade["contracts"]
+            is_credit = open_trade["is_credit"]
+            entry_val = open_trade["entry_value"]
+            val_now   = _spread_value(
+                spot, open_trade["short_strike"], open_trade["long_strike"],
+                t_yr, _RISK_FREE_RATE, iv_now, open_trade["spread_type"],
+            )
+            exit_cost = _COST_PER_LEG * _LEGS_PER_SPREAD * contracts
+            gross_pnl = (((entry_val - val_now) if is_credit
+                          else (val_now - entry_val)) * 100 * contracts)
+            pnl_now   = gross_pnl - open_trade["entry_fees"] - exit_cost
+            if is_credit:
+                capital += pnl_now
+            else:
+                capital += val_now * 100 * contracts - exit_cost
             trades_list.append({
                 "entry_date":  open_trade["entry_date"].date(),
                 "exit_date":   all_dates[-1].date(),
                 "spread_type": open_trade["spread_type"],
+                "contracts":   contracts,
                 "entry_cost":  round(open_trade["entry_cost"], 2),
-                "exit_value":  0.0,
-                "pnl":         round(-open_trade["entry_cost"], 2) if not open_trade["is_credit"] else 0.0,
+                "exit_value":  round(val_now * 100 * contracts, 2),
+                "pnl":         round(pnl_now, 2),
                 "exit_reason": "end_of_data",
             })
+            open_trade = None
+            if equity_list:
+                equity_list[-1] = capital
 
         equity    = pd.Series(equity_list, index=price_data.index, dtype=float)
         daily_ret = equity.pct_change().dropna()
         bh_ret    = close.pct_change().reindex(equity.index).dropna()
 
         trades_df = pd.DataFrame(trades_list) if trades_list else pd.DataFrame(
-            columns=["entry_date", "exit_date", "spread_type",
+            columns=["entry_date", "exit_date", "spread_type", "contracts",
                      "entry_cost", "exit_value", "pnl", "exit_reason"]
         )
 

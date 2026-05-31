@@ -106,13 +106,21 @@ Recession starting: ISM PMI < 45, claims rising above 350,000+
 
 ## How It Works — Step by Step
 
-**The process:**
+**The process (as actually coded — rule-based):**
 
-1. VIX spikes above 35 (entry threshold) — alert triggered
-2. Model evaluates all five fingerprints simultaneously
-3. If P(capitulation) ≥ 0.70: wait for VIX to show its first down day
-4. Enter bull call spread on SPY at close of first VIX down day
-5. Exit at 50% profit or max profit (spread expires deep ITM), or stop loss at 100% of debit
+1. VIX closes above `spike_threshold` (default **25**) AND above `spike_ratio` × its
+   20-day average (default 1.3×) — spike detected.
+2. Regime filter: price is within 5% of its 200-day MA (not a structural breakdown),
+   and the post-exit cooldown (`min_days_between_trades`) has elapsed.
+3. Enter a bull call spread on the supplied ticker at that day's close.
+4. Exit on the FIRST of: VIX falls below `revert_threshold` (default 22), the spread's
+   value reaches `entry_debit × (1 + profit_target_pct)` (default +50%), or the
+   `max_hold_days` time stop (default 15 calendar days).
+
+> The "five fingerprints" and the "wait for the first VIX down day" / `P(capitulation)`
+> discussion below are educational context, NOT part of the coded entry rule. The code
+> does not consult HYG, breadth, put/call, or macro data, and it has no explicit
+> stop-loss leg — downside is bounded by the defined-risk spread debit itself.
 
 **Why wait for the first VIX down day?** Entering while VIX is still accelerating risks
 being 2-3 days early. The maximum pain period before the recovery can last several days
@@ -336,10 +344,16 @@ Profit drivers:
 
 ### Model Score Interpretation
 
-```
-The logistic regression outputs P(capitulation) from 0 to 1.
+> **Illustrative only — no live model ships in the code.** This strategy is
+> `RULE_BASED`. The `P(capitulation)` scores and the per-bucket win rates below are
+> a teaching device for *why* certain real-world spikes mean-reverted; they are **not**
+> outputs of a fitted model and **not** measured backtest statistics. Do not treat the
+> percentages as realized performance.
 
-Calibration (approximate, from historical training data):
+```
+A hypothetical logistic regression would output P(capitulation) from 0 to 1.
+
+Illustrative calibration (NOT measured — for intuition only):
   P ≥ 0.80: Very high confidence — "textbook capitulation" like Aug 5, 2024
              Historical win rate: ~78%
   P = 0.70–0.79: High confidence — enter
@@ -388,7 +402,12 @@ Entry spot + debit = break-even at expiry
 
 ---
 
-## Historical Capitulation Events — Model Scorecard
+## Historical Capitulation Events — Illustrative Scorecard
+
+> The "Model Score" column below is **illustrative, not a fitted-model output**, and
+> the outcomes are after-the-fact narrative, not a trade-by-trade backtest ledger.
+> They show the *kind* of reasoning the rule set encodes. **TODO: replace with an
+> actual backtest trade log once the strategy is re-run.**
 
 ```
 Event                    VIX Peak  Duration  Credit  Model Score  Outcome
@@ -512,19 +531,23 @@ S&P 500 RSI breadth  Computed from index constituents  Breadth exhaustion check
 A senior-quant audit was performed on the entry / exit logic. Findings:
 
 - **No look-ahead.** Rolling indicators are backward-looking by default
-  (`vix.rolling(20).mean()`, `close.rolling(200).mean()`). Both training and live
-  decision use today's close — a realistic EOD setup.
-- **Headline target Sharpe (1.8) is structurally optimistic** for three reasons that
-  are NOT bugs but ARE modeling assumptions worth knowing:
-  1. **Frictionless EOD fills.** The simulator fills the bull call spread at
-     Black-Scholes mid on the close — no bid/ask spread, no slippage, no market impact.
-     Real retail round-trip friction on a 2-leg vertical is ~$0.05–$0.10 per spread.
-  2. **VIX-as-IV proxy.** `iv_now = vix_val / 100.0` is used to price the spread on
-     the trading instrument. For SPY this is reasonable; for QQQ/IWM/individual names
-     VIX systematically underprices the spread by 10–30%, inflating the modeled debit.
-  3. **Backtest period bias.** 2020–2024 contained multiple historic VIX-revert events
-     (March 2020 COVID, August 2024 yen-carry unwind, regional-bank scares) that
-     over-represent successful spike-fade outcomes.
-
-  Combined effect: live performance will likely be 30-50% below the headline Sharpe
-  even with the rules executed exactly. The strategy is not broken — it's optimistic.
+  (`vix.rolling(20).mean()`, `close.rolling(200).mean()`), and VIX is forward-filled
+  only (never back-filled). The decision uses today's close — a realistic EOD setup.
+- **Transaction costs ARE modeled.** Both legs of the vertical pay slippage **and**
+  commission on entry and again on exit (per leg × contracts), imported from the
+  shared engine defaults. Earlier versions of this note described "frictionless EOD
+  fills" — that is no longer accurate; the simulator now deducts these frictions.
+- **Skew-aware pricing.** Legs are priced with `bs_price_skew`, so the OTM short call
+  carries its own (lower) moneyness-adjusted IV rather than a single flat `VIX/100`.
+  This makes the modeled debit slightly more conservative for the buyer than flat IV.
+- **`target_sharpe` (1.8) is an aspiration, not a measured backtest result.** It has
+  not been re-measured after the cost/skew fixes. **TODO: run the backtest on the
+  intended universe and publish the realized Sharpe, win rate, max drawdown and trade
+  count here — do not quote a headline figure until then.** Two structural reasons to
+  expect live results below any optimistic target remain:
+  1. **VIX-as-IV proxy for non-SPY names.** `iv_now = vix_val / 100.0` is reasonable
+     for SPY; for QQQ/IWM/individual names VIX can mis-price the spread, biasing the
+     modeled debit.
+  2. **Backtest period bias.** A 2020–2024 window contains several historic VIX-revert
+     events (March 2020 COVID, August 2024 yen-carry unwind, regional-bank scares)
+     that over-represent successful spike-fade outcomes.

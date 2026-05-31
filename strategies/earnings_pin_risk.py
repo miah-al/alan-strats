@@ -106,7 +106,12 @@ from alan_trader.strategies.base import (
     StrategyStatus,
     StrategyType,
 )
-from alan_trader.backtest.engine import bs_price
+from alan_trader.backtest.engine import (
+    bs_price,
+    bs_price_skew,
+    DEFAULT_SLIPPAGE_PER_LEG,
+    DEFAULT_COMMISSION_PER_LEG,
+)
 from alan_trader.risk.metrics import compute_all_metrics
 
 logger = logging.getLogger(__name__)
@@ -114,8 +119,12 @@ logger = logging.getLogger(__name__)
 # ── Constants ──────────────────────────────────────────────────────────────────
 _RISK_FREE_RATE   = 0.045
 _WARMUP_BARS      = 90
-_RETRAIN_EVERY    = 30
 _SAVED_MODELS_DIR = Path(__file__).parent.parent / "saved_models"
+# Wings sit ±wing_pct from spot, so they are genuine OTM strikes that trade at a
+# different implied vol than the ATM straddle. Price them on the skewed surface.
+_SKEW_SLOPE       = 0.15
+# Number of option legs in the iron butterfly (2 short ATM + 2 long wings).
+_N_LEGS           = 4
 
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
@@ -310,7 +319,8 @@ class EarningsPinRiskStrategy(BaseStrategy):
         n_estimators:        int   = 80,
         max_depth:           int   = 3,
         retrain_every:       int   = 30,
-        commission_per_leg:  float = 0.65,
+        commission_per_leg:  float = DEFAULT_COMMISSION_PER_LEG,
+        slippage_per_leg:    float = DEFAULT_SLIPPAGE_PER_LEG,
     ):
         self.pin_threshold       = pin_threshold
         self.ivr_max             = ivr_max
@@ -327,6 +337,7 @@ class EarningsPinRiskStrategy(BaseStrategy):
         self.max_depth           = max_depth
         self.retrain_every       = retrain_every
         self.commission_per_leg  = commission_per_leg
+        self.slippage_per_leg    = slippage_per_leg
         self._model              = None  # trained GBM classifier
 
     # ── Params ─────────────────────────────────────────────────────────────
@@ -348,6 +359,7 @@ class EarningsPinRiskStrategy(BaseStrategy):
             "max_depth":           self.max_depth,
             "retrain_every":       self.retrain_every,
             "commission_per_leg":  self.commission_per_leg,
+            "slippage_per_leg":    self.slippage_per_leg,
         }
 
     def get_backtest_ui_params(self) -> list:
@@ -520,6 +532,7 @@ class EarningsPinRiskStrategy(BaseStrategy):
         n_est    = n_estimators      if n_estimators      is not None else self.n_estimators
         sl_mult  = self.stop_loss_mult
         comm     = self.commission_per_leg
+        slip     = self.slippage_per_leg
         r        = _RISK_FREE_RATE
 
         # ── Earnings calendar — REQUIRED ──────────────────────────────────
@@ -691,15 +704,16 @@ class EarningsPinRiskStrategy(BaseStrategy):
                 exit_idx = trade["exit_idx"]
                 T_now = max((trade["release_idx"] + self.exit_days_post + 1 - i) / 252.0, 1e-6)
 
-                cs = bs_price(spot, trade["call_short_K"], T_now, r, iv_val, "call")
-                cl = bs_price(spot, trade["call_long_K"],  T_now, r, iv_val, "call")
-                ps = bs_price(spot, trade["put_short_K"],  T_now, r, iv_val, "put")
-                pl = bs_price(spot, trade["put_long_K"],   T_now, r, iv_val, "put")
+                cs = bs_price_skew(spot, trade["call_short_K"], T_now, r, iv_val, "call", _SKEW_SLOPE)
+                cl = bs_price_skew(spot, trade["call_long_K"],  T_now, r, iv_val, "call", _SKEW_SLOPE)
+                ps = bs_price_skew(spot, trade["put_short_K"],  T_now, r, iv_val, "put",  _SKEW_SLOPE)
+                pl = bs_price_skew(spot, trade["put_long_K"],   T_now, r, iv_val, "put",  _SKEW_SLOPE)
 
-                cur_cost = max((cs - cl) + (ps - pl), 0.0)
+                # Cost to buy the spread back, inflated by exit slippage on all legs.
+                cur_cost = max((cs - cl) + (ps - pl), 0.0) + _N_LEGS * slip
                 pnl_per  = trade["credit"] - cur_cost
                 pnl_tot  = pnl_per * trade["contracts"] * 100
-                close_comm = 4 * comm * trade["contracts"]
+                close_comm = _N_LEGS * comm * trade["contracts"]
 
                 exit_reason = None
                 # Profit target — only allowed AFTER the release (the IV crush has happened)
@@ -892,12 +906,18 @@ class EarningsPinRiskStrategy(BaseStrategy):
                 call_long_K  = atm_K + wing_w
                 put_long_K   = atm_K - wing_w
 
-                credit = (
-                    bs_price(spot, call_short_K, T_release, r, iv_val, "call")
-                    - bs_price(spot, call_long_K,  T_release, r, iv_val, "call")
-                    + bs_price(spot, put_short_K,  T_release, r, iv_val, "put")
-                    - bs_price(spot, put_long_K,   T_release, r, iv_val, "put")
+                # Price each leg on the skewed surface so the OTM wings get a
+                # realistic (higher-IV downside / lower-IV upside) mark rather
+                # than the flat ATM IV. ATM short legs are unchanged at K=S.
+                gross_credit = (
+                    bs_price_skew(spot, call_short_K, T_release, r, iv_val, "call", _SKEW_SLOPE)
+                    - bs_price_skew(spot, call_long_K,  T_release, r, iv_val, "call", _SKEW_SLOPE)
+                    + bs_price_skew(spot, put_short_K,  T_release, r, iv_val, "put",  _SKEW_SLOPE)
+                    - bs_price_skew(spot, put_long_K,   T_release, r, iv_val, "put",  _SKEW_SLOPE)
                 )
+                # Entry slippage: we cross the spread on every leg, so the credit
+                # we actually receive is reduced by slippage on all 4 legs.
+                credit = gross_credit - _N_LEGS * slip
                 if credit <= 0.05:
                     events_processed.add(rd)
                     signal_ledger.append({
@@ -918,7 +938,7 @@ class EarningsPinRiskStrategy(BaseStrategy):
                 contracts = min(contracts, 25)
 
                 margin_needed = max_loss_per * contracts * 100
-                open_comm     = 4 * comm * contracts
+                open_comm     = _N_LEGS * comm * contracts
                 exit_idx      = min(ridx + self.exit_days_post, n - 1)
 
                 reserved_margin += margin_needed

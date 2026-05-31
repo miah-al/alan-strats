@@ -12,11 +12,12 @@ structure curve. The result is a position that profits purely from whether IV is
 or incorrectly priced, largely independent of the direction the underlying stock moves.
 
 The edge in this strategy is not the spread structure itself — anyone can leg a calendar.
-The edge is the AI model that predicts which direction IV is heading **before you trade**.
-Without the regime filter, calendar spreads are marginally negative-expectation trades
-(bid/ask spreads kill the math). With the regime filter correctly identifying COMPRESS vs
-EXPAND regimes, the win rate increases by 8–12 percentage points — enough to flip the
-strategy from slightly negative to clearly positive.
+The intended edge is the AI model that predicts which direction IV is heading **before you
+trade**. Without a regime filter, calendar spreads are at best marginal-expectation trades
+once bid/ask and commissions are charged on all four legs. The thesis is that a regime
+filter which correctly identifies COMPRESS vs EXPAND regimes can lift the win rate enough to
+clear those costs. Whether it does so out-of-sample for this implementation has not yet been
+measured — see the "Performance figures" note further down before relying on any number.
 
 The core insight: **implied volatility in the front month moves faster and further than
 back-month IV during volatility events.** When vol spikes, front IV doubles while back IV
@@ -25,14 +26,16 @@ asymmetric response means a long calendar (short front, long back) profits enorm
 vol spikes, while a short calendar (short back, long front) profits from vol compression.
 The model's job is to tell you which regime you're about to enter.
 
-### Academic Evidence
+### Academic Evidence (external — not this strategy's results)
 
-The PMC 2024 walk-forward study of VIX Constant Maturity Futures showed that ML-filtered
-calendar trade entries achieved an Information Ratio of 0.623 vs 0.404 without filtering
-— a 54% improvement in risk-adjusted returns purely from regime prediction. ORATS backtests
-on SPY calendars confirmed that unfiltered calendars return approximately −0.09% annually
-(bid-ask destroys the gross edge) while regime-filtered calendars return +0.58% — the
-difference is entirely the prediction quality.
+The motivation comes from published work, NOT from a backtest of this code. A PMC 2024
+walk-forward study of VIX Constant Maturity Futures reported that ML-filtered calendar
+entries improved risk-adjusted returns (Information Ratio) versus unfiltered entries, and
+ORATS calendar backtests have shown that unfiltered SPY calendars are roughly break-even
+after bid/ask while a regime filter shifts them positive. These are third-party findings
+on related (not identical) setups; they justify trying the approach but do not establish
+the performance of THIS strategy on THIS universe. Our own figures are TBD pending the
+re-run noted below.
 
 ---
 
@@ -131,26 +134,32 @@ Output: 3-class probability vector
   P(NEUTRAL):  probability of flat IV
   P(EXPAND):   probability that front IV rises ≥ 0.5σ over next 5 days
 
-Entry rules:
-  P(COMPRESS) ≥ min_confidence → enter Short Calendar
-  P(EXPAND)   ≥ min_confidence → enter Long Calendar
-  Otherwise: no trade (NEUTRAL wins or insufficient confidence)
+Entry rules (all gates must pass):
+  P(COMPRESS) ≥ confidence_min AND front_ivr ≥ min_ivr_compress → enter Short Calendar
+  P(EXPAND)   ≥ confidence_min AND front_ivr ≤ max_ivr_expand   → enter Long Calendar
+  Plus quality gates: term-slope and |VRP| must be in the allowed band
+  (max_term_slope, max_vrp_noisy, min_ivr_quality).
+  Otherwise: no trade (NEUTRAL, low confidence, or a quality gate blocks it).
 ```
 
 ### Label Construction
 
 ```
-5-day forward IV change:
-  Δiv = front_iv[t+5] − front_iv[t]
-  σ_Δiv = rolling 90-day standard deviation of Δiv
+label_horizon-day forward RELATIVE front-IV change (default horizon = 5):
+  Δrel  = (front_iv[t+h] − front_iv[t]) / front_iv[t]      # relative, not absolute
+  σ_rel = rolling 90-day std of those relative changes (min 20 obs)
+  thr   = label_sigma_mult × σ_rel                          # default label_sigma_mult = 0.5
 
-  COMPRESS:  Δiv < −0.5 × σ_Δiv
-  EXPAND:    Δiv > +0.5 × σ_Δiv
+  COMPRESS:  Δrel < −thr
+  EXPAND:    Δrel > +thr
   NEUTRAL:   otherwise
 
-This produces approximately 30% COMPRESS / 40% NEUTRAL / 30% EXPAND class distribution
-— avoiding the "all NEUTRAL" degenerate model that would result from predicting the
-most common class without a threshold.
+Relative (%) change is used so the threshold is comparable across tickers with very
+different IV levels — a 3-point swing at IV=25 is a big move, at IV=80 it is noise. The
+resulting class balance depends on the ticker and period; the model is trained with
+balanced class weights so it does not collapse onto the most common class. The final
+`label_horizon` rows have no forward data and are masked out of training, and the
+train/validation split purges a `label_horizon` gap so labels never peek across the cutoff.
 ```
 
 ### Feature Groups
@@ -183,11 +192,10 @@ Feature             Description
 ```
 Feature                Description
 ---------------------  ---------------------------------------------------------------
-`vix`                  CBOE VIX — macro vol regime
 `vix`                  CBOE VIX level — macro vol regime
 `pc_ratio`             Put/call OI ratio — sentiment and hedging demand
-`iv_vol_spike`         Today's option volume / 20-day average — unusual activity flag
-`ticker_mkt_corr_20d`  20-day rolling correlation of ticker to SPY (code feature name)
+`iv_vol_spike`         Today's stock volume / 20-day average — unusual-activity proxy
+`ticker_mkt_corr_20d`  20-day rolling correlation of the ticker to the market benchmark
 ```
 
 **Group 4 — News Sentiment:**
@@ -197,13 +205,17 @@ Feature               Description
 --------------------  ----------------------------------------------------------
 `news_sentiment`      FinBERT sentiment score on ticker-specific news (−1 to +1)
 `macro_sentiment`     FinBERT sentiment score on macroeconomic headlines
-`sentiment_velocity`  3-day avg − 10-day avg sentiment — momentum of shift
-`sentiment_velocity`  3-day avg − 10-day avg sentiment — momentum of shift
+`sentiment_velocity`  3-day avg − 10-day avg sentiment — momentum of the shift
 ```
 
 ---
 
-## Real Trade Walkthrough #1 — COMPRESS Signal: AAPL August 2023
+## Trade Walkthrough #1 — COMPRESS Signal: AAPL August 2023
+
+> The two walkthroughs below are *illustrative* worked examples chosen to explain
+> the mechanics and the signal logic. The prices and P&L are hand-constructed for
+> teaching, not pulled from a backtest trade ledger. Do not read the dollar
+> figures as realized performance.
 
 **Date:** August 14, 2023 | **AAPL:** $177.80
 
@@ -439,24 +451,32 @@ when both front and back IVR exceed 0.60, skip short calendar entries regardless
 
 ---
 
+> **Performance figures: pending an honest re-run.**
+> Earlier versions of this page showed a specific SPY backtest table (annual
+> returns, win rates, Information Ratios, profit factors). Those numbers were
+> illustrative placeholders, not the output of the current code, and have been
+> removed rather than left to mislead. The strategy was recently hardened —
+> engine-default per-leg slippage and commission are now applied on BOTH entry
+> and exit, the train/validation split purges the label-horizon window to remove
+> a forward-looking label leak, the equity curve now marks open calendars to
+> market, and the force-close path uses the same P&L math as live exits. All of
+> these make results MORE conservative than the old figures.
+>
+> **TODO:** Re-run `VolCalendarSpreadStrategy.backtest()` on real Polygon option
+> chains and report Sharpe, win rate, profit factor, and max drawdown here from
+> the actual `metrics` dict. Until then, treat the qualitative claims below as a
+> hypothesis to be tested, not a measured result.
+
 ```
-SPY calendar spread backtest (2019–2024, quarterly retraining):
+Qualitative expectation (NOT a measured backtest):
 
-Metric                          Unfiltered     COMPRESS filter    EXPAND filter
-────────────────────────────────────────────────────────────────────────────────
-Annual return (before friction) +0.12%         +0.71%             +0.84%
-Annual return (after bid/ask)   −0.09%         +0.51%             +0.61%
-Information Ratio               0.404          0.587              0.623
-Win rate                        47%            58%                61%
-Average win                     $310/calendar  $380/calendar      $420/calendar
-Average loss                    −$190          −$160              −$180
-Profit factor                   1.21           1.73               1.87
-Max drawdown                    −8.2%          −5.1%              −4.9%
-
-Key insight:
-  The unfiltered calendar is essentially a coin flip after costs.
-  The regime filter adds 11–14 percentage points to win rate.
-  This improvement is the ENTIRE alpha of the strategy.
+  - Calendar spreads are roughly break-even-to-slightly-negative GROSS of the
+    regime filter once realistic bid/ask and commissions are charged on all four
+    legs (entry + exit). This matches the academic literature cited below.
+  - The intended source of edge is the XGBoost regime filter: only entering when
+    the model is confident about COMPRESS vs EXPAND. Whether that filter actually
+    clears transaction costs out-of-sample must be demonstrated by the re-run
+    above — it is NOT assumed here.
 ```
 
 ---
@@ -499,9 +519,10 @@ Known upcoming catalyst  10-20 days out           Unpriced event risk creates ex
    expensive when front IV is this high. The short front leg is expensive to close, and
    any adverse move makes the structure hard to manage.
 
-3. **Model confidence < 0.60:** Below this threshold, the XGBoost model is not sufficiently
-   certain. Marginal COMPRESS or EXPAND signals have lower win rates and narrow expected
-   value margins that are wiped out by transaction costs.
+3. **Model confidence below `confidence_min` (default 0.55):** Below this threshold, the
+   XGBoost model is not sufficiently certain. Marginal COMPRESS or EXPAND signals have lower
+   win rates and narrow expected-value margins that are wiped out by transaction costs.
+   Raising `confidence_min` toward 0.65–0.75 trades fewer signals for higher selectivity.
 
 4. **When both front and back IVR are < 30%:** Low IV environments mean thin calendars
    with minimal premium — bid/ask spreads consume most of the theoretical edge. Skip.
@@ -576,21 +597,30 @@ Loss > 50% of debit (long cal)  Stop loss — IV compressed contrary to forecast
 
 ## Quick Reference
 
+These are the ACTUAL constructor defaults in `VolCalendarSpreadStrategy` (keep this table
+in sync with the code):
+
 ```
-Parameter            Default          Range           Description
--------------------  ---------------  --------------  ----------------------------------------------
-`min_confidence`     0.60             0.55–0.75       XGBoost min probability for COMPRESS or EXPAND
-`front_dte_min`      21 DTE           15–30           Minimum front-month DTE at entry
-`back_dte_target`    45 DTE           35–60           Target back-month DTE
-`strike`             ATM              ATM ± 1 strike  Calendar strike (keep ATM for maximum theta)
-`profit_target`      50% of max       40–70%          Close calendar at % of max profit
-`stop_compress`      2× credit        1.5–3×          Close short calendar if loss reaches this
-`stop_expand`        50% of debit     40–60%          Close long calendar if debit lost by this %
-`front_expiry_exit`  5 DTE            3–7             Close before this DTE on front leg
-`position_size_pct`  2%               1–3%            Capital at risk per trade
-`min_vrp`            +3 for COMPRESS  0–+8            Minimum VRP for short calendar
-`max_vrp`            +5 for EXPAND    0–+10           Maximum VRP for long calendar (lower = better)
+Parameter            Default   Range         Description
+-------------------  --------  ------------  ------------------------------------------------
+`confidence_min`     0.55      0.40–0.90     XGBoost min probability for COMPRESS or EXPAND
+`front_dte_min`      21 DTE    7–45          Minimum front-month DTE at entry
+`front_dte_max`      35 DTE    14–60         Maximum front-month DTE at entry
+`back_dte_target`    45 DTE    30–90         Target back-month DTE
+`label_horizon`      5 days    2–10          Forward window for labels; also the hold period
+`label_sigma_mult`   0.50      0.2–1.0       σ multiplier for the COMPRESS/EXPAND threshold
+`position_size_pct`  0.05      0.01–0.20     Capital fraction sized per trade
+`min_ivr_compress`   0.50      0.0–0.9       Min front IVR to allow a COMPRESS (short) trade
+`max_ivr_expand`     0.60      0.0–0.9       Max front IVR to allow an EXPAND (long) trade
+`max_term_slope`     −5.0      −30.0–0.0     Skip when term structure is too flat
+`max_vrp_noisy`      999.0     5.0–999.0     Skip when |VRP| exceeds this (noise gate)
 ```
+
+Strike is always ATM (round to nearest available strike). The backtest exit is whichever
+comes first of **+50% of entry cost captured** or **the `label_horizon` hold window
+elapsing**. The 50%-of-max-profit, fixed-DTE, regime-flip, and hard stop-loss rules
+described elsewhere on this page are discretionary live-trading overlays and are **not**
+simulated by the current `backtest()` method.
 
 ---
 

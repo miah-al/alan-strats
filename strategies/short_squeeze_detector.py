@@ -91,6 +91,16 @@ TRADE STRUCTURE
 * Hard cap at floor(capital * 0.05 / (prem * 100)) for safety (5% absolute risk).
 * Max concurrent: 3 (squeezes are correlated).
 
+COSTS & PRICING
+---------------
+* Legs priced with the engine's skew-aware pricer (bs_price_skew) when
+  available so the OTM call strike reflects the volatility smirk; flat-IV
+  Black-Scholes fallback. Because OTM calls sit on the lower-vol wing, skew
+  pricing makes the lottery ticket cheaper-but-honest vs. a flat-IV mark.
+* Per-leg slippage + commission applied on BOTH entry AND exit, scaled by
+  contracts (1 leg per long call) via DEFAULT_SLIPPAGE_PER_LEG /
+  DEFAULT_COMMISSION_PER_LEG.
+
 EXITS
 -----
 * Profit target: +100% on the call premium → close fully.
@@ -122,6 +132,35 @@ from alan_trader.strategies.base import (
 from alan_trader.backtest.engine import bs_price
 from alan_trader.risk.metrics import compute_all_metrics
 
+# Transaction-cost constants and the skew-aware pricer live in the backtest
+# engine. Import them defensively so the module stays importable even if the
+# engine API drifts; fall back to conservative defaults / flat IV in that case.
+try:  # pragma: no cover - import shim
+    from alan_trader.backtest.engine import (
+        DEFAULT_SLIPPAGE_PER_LEG,
+        DEFAULT_COMMISSION_PER_LEG,
+    )
+except Exception:  # pragma: no cover
+    try:
+        from backtest.engine import (
+            DEFAULT_SLIPPAGE_PER_LEG,
+            DEFAULT_COMMISSION_PER_LEG,
+        )
+    except Exception:
+        DEFAULT_SLIPPAGE_PER_LEG   = 0.05   # per-share adverse fill per leg
+        DEFAULT_COMMISSION_PER_LEG = 0.65   # $ per contract per leg
+
+try:  # pragma: no cover - import shim
+    from alan_trader.backtest.engine import bs_price_skew
+    _HAS_SKEW = True
+except Exception:  # pragma: no cover
+    try:
+        from backtest.engine import bs_price_skew
+        _HAS_SKEW = True
+    except Exception:
+        bs_price_skew = None
+        _HAS_SKEW = False
+
 logger = logging.getLogger(__name__)
 
 _MODEL_DIR = Path(__file__).parent.parent / "saved_models"
@@ -132,6 +171,11 @@ _WARMUP_BARS    = 90
 _RETRAIN_EVERY  = 30
 _LABEL_HORIZON  = 5     # forward-bar horizon for the squeeze label
 _LABEL_MOVE     = 0.15  # +15% high-return bar threshold
+
+# Per-leg round-trip cost in *contract* dollars (slippage × 100 + commission),
+# applied on BOTH entry and exit, scaled by contracts. A long call is a single
+# leg, so the per-contract cost is one _LEG_COST each way.
+_LEG_COST = DEFAULT_SLIPPAGE_PER_LEG * 100.0 + DEFAULT_COMMISSION_PER_LEG
 
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
@@ -149,6 +193,25 @@ def _bs_delta(S: float, K: float, T: float, r: float, sigma: float,
         return (1.0 if S > K else 0.0) if option_type == "call" else (-1.0 if S < K else 0.0)
     d1 = (np.log(S / K) + (r + 0.5 * sigma ** 2) * T) / (sigma * np.sqrt(T))
     return float(norm.cdf(d1)) if option_type == "call" else float(norm.cdf(d1) - 1.0)
+
+
+def _leg_price(S: float, K: float, T: float, r: float, iv: float,
+               option_type: str) -> float:
+    """
+    Price a single option leg. Uses the engine's skew-aware pricer when
+    available so OTM call strikes (this strategy's only structure) reflect the
+    equity-index volatility smirk — OTM calls sit on the LOWER-vol side of the
+    skew, so flat-IV pricing would systematically OVER-pay for them and flatter
+    the lottery payoff. Falls back to flat-IV Black-Scholes when the engine
+    pricer is unavailable. bs_price_skew(S, K, T, r, atm_iv, option_type)
+    applies the moneyness skew internally, so we pass the ATM IV directly.
+    """
+    if _HAS_SKEW:
+        try:
+            return float(bs_price_skew(S, K, T, r, iv, option_type))
+        except Exception:
+            pass
+    return float(bs_price(S, K, T, r, iv, option_type))
 
 
 def _normalise_iv(iv_val: float) -> float:
@@ -267,7 +330,9 @@ class ShortSqueezeDetectorStrategy(BaseStrategy):
         dtc_max:             float = 7.0,    # max days-to-cover when SI provided
         utilization_min:     float = 0.0,    # set 0.80 to enforce — off by default
         volume_ratio_min:    float = 2.5,    # min today/20d-avg volume
-        commission_per_leg:  float = 0.65,
+        commission_per_leg:  float = 0.65,   # retained for back-compat; transaction
+                                             # costs now use engine _LEG_COST
+                                             # (slippage + commission), see backtest()
         absolute_risk_cap:   float = 0.05,   # hard cap on capital risked per trade
     ):
         self.signal_threshold    = signal_threshold
@@ -781,7 +846,6 @@ class ShortSqueezeDetectorStrategy(BaseStrategy):
         vr_min   = volume_ratio_min  if volume_ratio_min  is not None else self.volume_ratio_min
         dte_stop = self.dte_time_stop
         move_ex  = self.stock_move_exit
-        comm     = self.commission_per_leg
         risk_cap = self.absolute_risk_cap
         r        = _RISK_FREE_RATE
 
@@ -887,10 +951,17 @@ class ShortSqueezeDetectorStrategy(BaseStrategy):
             if fi >= _WARMUP_BARS and (
                 current_model is None or (fi - _WARMUP_BARS) % _RETRAIN_EVERY == 0
             ):
-                # Past slice: features and labels for bars [0, fi). We must NOT
-                # look at row fi yet (it's the live decision bar).
-                X_past_df = feature_df[self._feature_cols].iloc[:fi]
-                y_past    = labels.iloc[:fi]
+                # Past slice: features and labels for bars [0, cutoff). We must
+                # NOT look at row fi yet (it's the live decision bar), AND we
+                # must PURGE the last _LABEL_HORIZON bars: each label at row j
+                # peeks at highs[j+1 : j+horizon+1], so a row at j carries
+                # information up to bar j+horizon. Training on rows
+                # j > fi-horizon-1 would leak prices at/after the decision bar fi
+                # into the model (walk-forward look-ahead). cutoff keeps only
+                # rows whose forward label window closed strictly before fi.
+                cutoff    = max(0, fi - _LABEL_HORIZON)
+                X_past_df = feature_df[self._feature_cols].iloc[:cutoff]
+                y_past    = labels.iloc[:cutoff]
                 valid_mask = (y_past >= 0) & ~X_past_df.isna().any(axis=1)
                 X_tr = X_past_df[valid_mask].values.astype(float)
                 y_tr = y_past[valid_mask].values.astype(int)
@@ -913,7 +984,7 @@ class ShortSqueezeDetectorStrategy(BaseStrategy):
                 T_now   = max(dte_rem / 252.0, 1e-6)
                 iv_dec  = max(atm_iv / 100.0, 0.05)
 
-                cur_prem = bs_price(spot, trade["strike"], T_now, r, iv_dec, "call")
+                cur_prem = _leg_price(spot, trade["strike"], T_now, r, iv_dec, "call")
                 pnl_per  = cur_prem - trade["debit"]
                 pnl_tot  = pnl_per * trade["contracts"] * 100
                 stock_move = (spot - trade["entry_spot"]) / trade["entry_spot"] if trade["entry_spot"] > 0 else 0.0
@@ -931,9 +1002,11 @@ class ShortSqueezeDetectorStrategy(BaseStrategy):
                     exit_reason = "end_of_data"
 
                 if exit_reason:
-                    close_comm = comm * trade["contracts"]
-                    net_pnl    = round(pnl_tot - close_comm, 2)
-                    capital   += net_pnl
+                    # Exit-side round-trip cost: 1 leg × contracts (the entry-side
+                    # cost was already deducted from capital at entry).
+                    exit_cost = _LEG_COST * trade["contracts"]
+                    net_pnl   = round(pnl_tot - exit_cost, 2)
+                    capital  += net_pnl
                     closed_trades.append({
                         "entry_date":  trade["entry_date"].date() if hasattr(trade["entry_date"], "date") else trade["entry_date"],
                         "exit_date":   dt.date() if hasattr(dt, "date") else dt,
@@ -993,15 +1066,16 @@ class ShortSqueezeDetectorStrategy(BaseStrategy):
                 T_entry = dte_eff / 252.0
                 iv_dec  = max(atm_iv / 100.0, 0.05)
                 strike  = _round_to_increment(spot * (1.0 + otm_eff), spot)
-                premium = bs_price(spot, strike, T_entry, r, iv_dec, "call")
+                premium = _leg_price(spot, strike, T_entry, r, iv_dec, "call")
 
                 # Premium-at-risk sizing with absolute cap
                 risk_per_contract = premium * 100.0 if premium > 0 else float("inf")
                 desired_contracts  = math.floor(capital * pos_sz   / risk_per_contract) if risk_per_contract > 0 else 0
                 hard_cap_contracts = math.floor(capital * risk_cap / risk_per_contract) if risk_per_contract > 0 else 0
                 contracts = max(0, min(desired_contracts, hard_cap_contracts))
-                entry_comm = comm * contracts
-                cost       = premium * contracts * 100 + entry_comm
+                # Entry-side round-trip cost: 1 leg × contracts.
+                entry_cost = _LEG_COST * contracts
+                cost       = premium * contracts * 100 + entry_cost
 
                 # All entry-side validity checks gathered into one boolean
                 viable = (
@@ -1042,7 +1116,7 @@ class ShortSqueezeDetectorStrategy(BaseStrategy):
             for ot in open_trades:
                 dte_rem = max(ot["expiry_idx"] - fi, 0)
                 T_mtm   = max(dte_rem / 252.0, 1e-6)
-                cv      = bs_price(spot, ot["strike"], T_mtm, r, iv_dec_mtm, "call")
+                cv      = _leg_price(spot, ot["strike"], T_mtm, r, iv_dec_mtm, "call")
                 mtm    += (cv - ot["debit"]) * ot["contracts"] * 100
             equity_list.append(capital + mtm)
 

@@ -235,3 +235,14 @@ A senior-quant audit was performed on the label and feature paths. Findings:
   payoffs distort the Sharpe denominator — a few large winners inflate the ratio. The
   backtest period (2020–2024) over-represents positive labels (GME, AMC, BBBY, meme
   rotation). Live performance on a forward sample will likely be materially below 1.6.
+  This is a target/aspiration, not a measured backtest result.
+
+- **Cost & pricing model hardened (2026-05).** Option legs are now priced with the
+  engine's skew-aware pricer (`bs_price_skew`) instead of flat-IV Black-Scholes —
+  OTM calls sit on the lower-vol wing of the smirk, so this lowers entry premia and
+  is more realistic. Per-leg slippage + commission are now charged on BOTH entry and
+  exit (previously only a commission was applied). The walk-forward training window is
+  now purged by the forward-label horizon (`cutoff = fi - _LABEL_HORIZON`) so rows
+  whose label window had not yet closed can no longer leak into the model.
+  **TODO: re-run the backtest to refresh any quoted performance figures** — prior
+  numbers predate the cost/skew/purge changes and are stale.

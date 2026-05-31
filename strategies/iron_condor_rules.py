@@ -72,7 +72,12 @@ from alan_trader.strategies.base import (
     StrategyStatus,
     StrategyType,
 )
-from alan_trader.backtest.engine import bs_price
+from alan_trader.backtest.engine import (
+    bs_price,
+    bs_price_skew,
+    DEFAULT_SLIPPAGE_PER_LEG,
+    DEFAULT_COMMISSION_PER_LEG,
+)
 from alan_trader.risk.metrics import compute_all_metrics
 
 logger = logging.getLogger(__name__)
@@ -395,19 +400,19 @@ class IronCondorRulesStrategy(BaseStrategy):
         """Walk-forward Iron Condor simulation. No look-ahead bias."""
 
         # ── Resolve params ────────────────────────────────────────────────
-        ivr_min_eff  = ivr_min           or self.ivr_min
-        vix_min_eff  = vix_min           or self.vix_min
-        vix_max_eff  = vix_max           or self.vix_max
-        adx_max_eff  = adx_max           or self.adx_max
-        atr_max_eff  = atr_pct_max       or self.atr_pct_max
-        d_short      = delta_short       or self.delta_short
-        ww_pct       = wing_width_pct    or self.wing_width_pct
-        dte_tgt      = dte_target        or self.dte_target
-        dte_ex       = dte_exit          or self.dte_exit
-        pt           = profit_target_pct or self.profit_target_pct
-        sl_mult      = stop_loss_mult    or self.stop_loss_mult
-        pos_sz       = position_size_pct or self.position_size_pct
-        max_conc     = max_concurrent    or self.max_concurrent
+        ivr_min_eff  = ivr_min           if ivr_min           is not None else self.ivr_min
+        vix_min_eff  = vix_min           if vix_min           is not None else self.vix_min
+        vix_max_eff  = vix_max           if vix_max           is not None else self.vix_max
+        adx_max_eff  = adx_max           if adx_max           is not None else self.adx_max
+        atr_max_eff  = atr_pct_max       if atr_pct_max       is not None else self.atr_pct_max
+        d_short      = delta_short       if delta_short       is not None else self.delta_short
+        ww_pct       = wing_width_pct    if wing_width_pct    is not None else self.wing_width_pct
+        dte_tgt      = dte_target        if dte_target        is not None else self.dte_target
+        dte_ex       = dte_exit          if dte_exit          is not None else self.dte_exit
+        pt           = profit_target_pct if profit_target_pct is not None else self.profit_target_pct
+        sl_mult      = stop_loss_mult    if stop_loss_mult    is not None else self.stop_loss_mult
+        pos_sz       = position_size_pct if position_size_pct is not None else self.position_size_pct
+        max_conc     = max_concurrent    if max_concurrent    is not None else self.max_concurrent
         comm         = self.commission_per_leg
         r            = _RISK_FREE_RATE
 

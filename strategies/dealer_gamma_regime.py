@@ -87,10 +87,13 @@ class DealerGammaRegimeStrategy(BaseStrategy):
         straddle_tp_mult:   float = 0.60,   # close at +60% profit
         straddle_stop_pct:  float = 0.50,   # close at -50% debit
         straddle_dte_exit:  int   = 7,
-        # Costs
-        slippage_per_leg:   float = 0.05,
-        commission_per_leg: float = 0.65,
+        # Costs (default to engine-wide constants so all option strategies agree)
+        slippage_per_leg:   Optional[float] = None,
+        commission_per_leg: Optional[float] = None,
     ):
+        from alan_trader.backtest.engine import (
+            DEFAULT_SLIPPAGE_PER_LEG, DEFAULT_COMMISSION_PER_LEG,
+        )
         self.near_flip_pct      = near_flip_pct / 100.0
         self.min_abs_gex        = min_abs_gex
         self.vix_ceiling        = vix_ceiling
@@ -108,8 +111,14 @@ class DealerGammaRegimeStrategy(BaseStrategy):
         self.straddle_tp_mult   = straddle_tp_mult
         self.straddle_stop_pct  = straddle_stop_pct
         self.straddle_dte_exit  = straddle_dte_exit
-        self.slippage_per_leg   = slippage_per_leg
-        self.commission_per_leg = commission_per_leg
+        self.slippage_per_leg   = (
+            slippage_per_leg if slippage_per_leg is not None
+            else DEFAULT_SLIPPAGE_PER_LEG
+        )
+        self.commission_per_leg = (
+            commission_per_leg if commission_per_leg is not None
+            else DEFAULT_COMMISSION_PER_LEG
+        )
 
     # ═══════════════════════════════════════════════════════════════════════
     # Params
@@ -249,7 +258,18 @@ class DealerGammaRegimeStrategy(BaseStrategy):
         progress_callback = None,
         **kwargs,
     ) -> BacktestResult:
-        from alan_trader.backtest.engine import bs_price as _bs_price
+        from alan_trader.backtest.engine import bs_price_skew as _bs_price_skew
+
+        def _bs_price(S, K, T, r, base_iv, option_type="call"):
+            """Skew-aware leg price (drops the IV the skew helper also returns).
+
+            Pricing every leg at the flat ATM IV understates the cost of OTM
+            wings/short strikes; bs_price_skew applies a conservative linear
+            put-side skew so condor short puts / straddle wings are priced
+            realistically.
+            """
+            price, _ = _bs_price_skew(S, K, T, r, base_iv, option_type)
+            return price
 
         opts = auxiliary_data.get("option_snapshots")
         if opts is None or (isinstance(opts, pd.DataFrame) and opts.empty):
@@ -348,15 +368,20 @@ class DealerGammaRegimeStrategy(BaseStrategy):
                 if open_trade["type"] == "long_straddle":
                     cv = _bs_price(spot, open_trade["call_k"], T, _RISK_FREE, iv, "call")
                     pv = _bs_price(spot, open_trade["put_k"],  T, _RISK_FREE, iv, "put")
-                    curr = (cv + pv) * 100 * open_trade["contracts"]
-                    cost = open_trade["cost"]
-                    pnl  = curr - cost
+                    # Sell to close: cross the spread DOWN by slippage on each leg.
+                    proceeds_per = max(0.0, (cv - _slip) + (pv - _slip)) * 100
+                    proceeds     = proceeds_per * open_trade["contracts"]
+                    cost = open_trade["cost"]            # debit + entry commissions
+                    pnl  = proceeds - cost               # MTM P&L before exit commission
                     tp   = pnl >= self.straddle_tp_mult * cost
                     sl   = pnl <= -self.straddle_stop_pct * cost
                     if tp or sl or dte_rem <= self.straddle_dte_exit:
                         exit_reason = "profit" if tp else ("loss" if sl else "time")
-                        net_pnl = pnl - _comm * open_trade["contracts"] * 2
-                        capital += net_pnl
+                        exit_comm = _comm * open_trade["contracts"] * 2
+                        net_pnl = pnl - exit_comm
+                        # Capital was already debited by `cost` at entry; on exit we
+                        # only receive the sale proceeds net of exit commission.
+                        capital += proceeds - exit_comm
                         closed = True
 
                 elif open_trade["type"] == "iron_condor":
@@ -364,19 +389,21 @@ class DealerGammaRegimeStrategy(BaseStrategy):
                     bp = _bs_price(spot, open_trade["body_put_k"],  T, _RISK_FREE, iv, "put")
                     wc = _bs_price(spot, open_trade["wing_call_k"], T, _RISK_FREE, iv, "call")
                     wp = _bs_price(spot, open_trade["wing_put_k"],  T, _RISK_FREE, iv, "put")
-                    # Cost to close: buy body back, sell wings back
-                    close_cost_per = (bc + _slip + bp + _slip - wc + _slip - wp + _slip) * 100
-                    close_cost = close_cost_per * open_trade["contracts"]
-                    credit = open_trade["credit"]
-                    pnl    = credit - close_cost
+                    # Cost to close: buy body back (pay +slip), sell wings back (receive -slip)
+                    close_cost_per = ((bc + _slip) + (bp + _slip) - (wc - _slip) - (wp - _slip)) * 100
+                    close_cost = max(0.0, close_cost_per) * open_trade["contracts"]
+                    credit = open_trade["credit"]        # already received at entry
+                    pnl    = credit - close_cost         # MTM P&L before exit commission
                     tp     = pnl >= self.condor_profit_tgt * credit
                     sl     = pnl <= -self.condor_stop_mult * credit
                     if tp or sl or dte_rem <= self.condor_dte_exit:
                         exit_reason = "profit" if tp else ("loss" if sl else "time")
-                        net_pnl = pnl - _comm * open_trade["contracts"] * 4
-                        capital += net_pnl
-                        # release margin
-                        capital += open_trade["margin"]
+                        exit_comm = _comm * open_trade["contracts"] * 4
+                        net_pnl = pnl - exit_comm - open_trade.get("entry_comm", 0.0)
+                        # Credit/entry-comm already booked at entry
+                        # (cash_out = margin - credit + entry_comm).
+                        # On exit: release posted margin, pay the close cost + exit comm.
+                        capital += open_trade["margin"] - close_cost - exit_comm
                         closed = True
 
                 if closed:
@@ -528,6 +555,7 @@ class DealerGammaRegimeStrategy(BaseStrategy):
         if margin <= 0:
             return None
         credit_total = credit_per * contracts
+        entry_comm   = self.commission_per_leg * contracts * 4
         return {
             "type":        "iron_condor",
             "regime":      regime,
@@ -541,8 +569,10 @@ class DealerGammaRegimeStrategy(BaseStrategy):
             "contracts":   contracts,
             "cost":        margin,
             "credit":      credit_total,
+            "entry_comm":  entry_comm,
             "margin":      margin,
-            "cash_out":    margin - credit_total,
+            # Post margin, receive credit, pay entry commission up front.
+            "cash_out":    margin - credit_total + entry_comm,
         }
 
     # ── MTM ──────────────────────────────────────────────────────────────
@@ -554,18 +584,26 @@ class DealerGammaRegimeStrategy(BaseStrategy):
         dte_rem   = max(1, trade["entry_dte"] - days_held)
         T         = dte_rem / 365.0
         iv        = trade["entry_iv"]
+        slip = self.slippage_per_leg
         if trade["type"] == "long_straddle":
+            # Debit was paid in full at entry; the open position is worth its
+            # current liquidation value (sell to close, crossing the spread).
             cv = bs_price(spot, trade["call_k"], T, _RISK_FREE, iv, "call")
             pv = bs_price(spot, trade["put_k"],  T, _RISK_FREE, iv, "put")
-            return max(0.0, (cv + pv) * 100 * trade["contracts"])
+            liq = max(0.0, (cv - slip) + (pv - slip)) * 100 * trade["contracts"]
+            return liq
         # iron condor
         bc = bs_price(spot, trade["body_call_k"], T, _RISK_FREE, iv, "call")
         bp = bs_price(spot, trade["body_put_k"],  T, _RISK_FREE, iv, "put")
         wc = bs_price(spot, trade["wing_call_k"], T, _RISK_FREE, iv, "call")
         wp = bs_price(spot, trade["wing_put_k"],  T, _RISK_FREE, iv, "put")
-        close_cost = (bc + bp - wc - wp) * 100 * trade["contracts"]
-        # equity value = margin posted + (credit received - cost to close)
-        return max(0.0, trade["margin"] + trade["credit"] - close_cost - trade["margin"])
+        close_cost = ((bc + slip) + (bp + slip) - (wc - slip) - (wp - slip)) * 100 * trade["contracts"]
+        close_cost = max(0.0, close_cost)
+        # Credit was already booked into capital at entry. The open position's
+        # marginal value to the account = posted margin (refunded at close)
+        # minus the cost to buy it back now. NOT clamped at 0 — a losing condor
+        # must mark below margin so the equity curve reflects open drawdown.
+        return trade["margin"] - close_cost
 
     # ── ATM IV lookup ────────────────────────────────────────────────────
 

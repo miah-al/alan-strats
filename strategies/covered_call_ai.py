@@ -58,6 +58,11 @@ from alan_trader.strategies.base import (
     StrategyType,
 )
 from alan_trader.risk.metrics import compute_all_metrics
+from alan_trader.backtest.engine import (
+    bs_price_skew,
+    DEFAULT_SLIPPAGE_PER_LEG,
+    DEFAULT_COMMISSION_PER_LEG,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -338,6 +343,10 @@ class CoveredCallAIStrategy(BaseStrategy):
         # Capital is entirely in stock; cash tracks cumulative premium P&L
         stock_px_0  = float(close.iloc[0])
         shares      = float(starting_capital) / stock_px_0  # fractional shares
+        # Covered calls are written 1 contract per 100 shares held.
+        contracts   = shares / 100.0
+        # Per-leg friction (commission + slippage), per contract, in BS-mark units.
+        per_leg_cost = DEFAULT_COMMISSION_PER_LEG + DEFAULT_SLIPPAGE_PER_LEG
         cash        = 0.0   # running cash from CC premium gains/losses
         equity_list = []
         trades_list = []
@@ -351,18 +360,26 @@ class CoveredCallAIStrategy(BaseStrategy):
             # Mark-to-market: stock value
             stock_value = shares * spot
 
+            # Unrealized mark-to-market of any open short call (0 when flat or
+            # when the position closes this bar — realized P&L moves to `cash`).
+            open_mtm = 0.0
+
             if open_cc is not None:
                 open_cc["days_held"] += 1
                 iv_now   = float(vix.iloc[i]) / 100.0
                 days_rem = max(0, dte_tgt - open_cc["days_held"])
                 t_yr     = days_rem / 252.0
-                cc_val   = _bs_price(spot, open_cc["strike"], t_yr,
-                                      _RISK_FREE_RATE, iv_now, "call")
+                # Mark the short call with the SAME skew-adjusted vol used at
+                # entry, so an OTM call sits below ATM IV (conservative premium).
+                cc_val   = bs_price_skew(spot, open_cc["strike"], t_yr,
+                                         _RISK_FREE_RATE, iv_now, "call")
                 entry_v  = open_cc["entry_value"]
-                pnl_now  = (entry_v - cc_val) * 100  # short call gains when value drops
+                # Short call P&L scaled by contracts (×100 sh) — gains when the
+                # call value drops below the premium collected.
+                pnl_now  = (entry_v - cc_val) * 100 * contracts
 
                 exit_reason = None
-                if pnl_now >= entry_v * 100 * pt_pct:
+                if pnl_now >= entry_v * 100 * contracts * pt_pct:
                     exit_reason = "profit_target"
                 elif cc_val >= entry_v * sl_mult:
                     exit_reason = "stop_loss"
@@ -370,20 +387,29 @@ class CoveredCallAIStrategy(BaseStrategy):
                     exit_reason = "expiry"
 
                 if exit_reason:
-                    cash += pnl_now  # accumulate premium P&L to cash
+                    # Closing-leg friction. Letting the call expire worthless
+                    # still has no broker fee, but a profit-target/stop buy-back
+                    # pays one leg of commission + slippage per contract.
+                    exit_cost = 0.0 if exit_reason == "expiry" else per_leg_cost * contracts
+                    net_pnl = pnl_now - exit_cost
+                    cash += net_pnl  # accumulate premium P&L to cash
                     trades_list.append({
                         "entry_date":  open_cc["entry_date"].date(),
                         "exit_date":   dt.date(),
                         "spread_type": "covered_call",
-                        "entry_cost":  round(entry_v * 100, 2),
-                        "exit_value":  round(cc_val * 100, 2),
-                        "pnl":         round(pnl_now, 2),
+                        "entry_cost":  round(entry_v * 100 * contracts, 2),
+                        "exit_value":  round(cc_val * 100 * contracts, 2),
+                        "pnl":         round(net_pnl, 2),
                         "exit_reason": exit_reason,
                     })
                     open_cc = None
+                else:
+                    # Still open: carry the unrealized short-call P&L into equity
+                    # so the curve marks to market instead of stepping at exits.
+                    open_mtm = pnl_now
 
-            # Total equity = mark-to-market stock value + running premium cash
-            equity_list.append(stock_value + cash)
+            # Total equity = stock value + realized premium cash + open MTM
+            equity_list.append(stock_value + cash + open_mtm)
 
             if i < _WARMUP_BARS:
                 continue
@@ -439,9 +465,14 @@ class CoveredCallAIStrategy(BaseStrategy):
             iv_entry = float(vix.iloc[i]) / 100.0
             t_yr     = dte_tgt / 252.0
             strike   = _strike_for_delta(spot, t_yr, _RISK_FREE_RATE, iv_entry, delta)
-            premium  = _bs_price(spot, strike, t_yr, _RISK_FREE_RATE, iv_entry, "call")
+            # Skew-adjusted premium: an OTM call (K > S) trades below ATM IV, so
+            # this is a conservative (lower) credit than the flat-VIX price.
+            premium  = bs_price_skew(spot, strike, t_yr, _RISK_FREE_RATE, iv_entry, "call")
             if premium <= 0:
                 continue
+
+            # Opening-leg friction charged immediately when the call is written.
+            cash -= per_leg_cost * contracts
 
             open_cc = {
                 "entry_date": dt,

@@ -59,10 +59,21 @@ from alan_trader.strategies.base import (
     StrategyStatus, StrategyType,
 )
 from alan_trader.risk.metrics import compute_all_metrics
-from alan_trader.backtest.engine import bs_price
+from alan_trader.backtest.engine import (
+    bs_price_skew,
+    DEFAULT_SLIPPAGE_PER_LEG,
+    DEFAULT_COMMISSION_PER_LEG,
+)
 
 
 _RISK_FREE_RATE = 0.045   # 4.5% annual, used for B-S pricing throughout
+
+# Per-leg transaction costs (imported from the shared engine so every strategy
+# uses the same friction assumptions). Both are charged per leg, per contract,
+# on BOTH entry and exit. A bull call spread has 2 legs.
+_SLIPPAGE_PER_LEG   = DEFAULT_SLIPPAGE_PER_LEG     # adverse fill, per share (BS-mark units)
+_COMMISSION_PER_LEG = DEFAULT_COMMISSION_PER_LEG   # $/contract
+_LEGS_PER_SPREAD    = 2
 
 
 class VIXSpikeFadeStrategy(BaseStrategy):
@@ -127,12 +138,20 @@ class VIXSpikeFadeStrategy(BaseStrategy):
     @staticmethod
     def _spread_value(spot: float, k_long: float, k_short: float,
                       t_years: float, iv: float) -> float:
-        """Current B-S value of long call spread (long k_long, short k_short)."""
+        """Current B-S value of long call spread (long k_long, short k_short).
+
+        Legs are priced with the skew-aware pricer (``bs_price_skew``), so the
+        ATM long call and the OTM short call each carry their own moneyness-
+        adjusted IV rather than a single flat VIX/100 number. For an index call
+        spread this *lowers* the value of the OTM short leg relative to flat IV
+        (downside skew => OTM calls cheaper), i.e. it makes the modeled debit
+        slightly richer / more conservative for a debit buyer.
+        """
         if t_years <= 0.0:
             # At expiry: intrinsic value
             return max(0.0, min(spot - k_long, k_short - k_long))
-        long_val  = bs_price(spot, k_long,  t_years, _RISK_FREE_RATE, iv, "call")
-        short_val = bs_price(spot, k_short, t_years, _RISK_FREE_RATE, iv, "call")
+        long_val  = bs_price_skew(spot, k_long,  t_years, _RISK_FREE_RATE, iv, "call")
+        short_val = bs_price_skew(spot, k_short, t_years, _RISK_FREE_RATE, iv, "call")
         return max(0.0, long_val - short_val)
 
     # ── Signal (live) ──────────────────────────────────────────────────────
@@ -273,7 +292,6 @@ class VIXSpikeFadeStrategy(BaseStrategy):
         days_since_exit  = self.min_days_between_trades  # start ready to trade
 
         all_dates = list(price_data.index)
-        N         = len(all_dates)
 
         for i, dt in enumerate(all_dates):
             spot     = float(close.iloc[i])
@@ -307,8 +325,10 @@ class VIXSpikeFadeStrategy(BaseStrategy):
                 if exit_reason:
                     contracts = open_trade["contracts"]
                     gross_pnl = (cur_val - open_trade["entry_debit"]) * 100.0 * contracts
-                    commissions = 2.0 * self.commission_per_leg * contracts  # exit legs
-                    net_pnl   = gross_pnl - commissions
+                    # Exit frictions: commission + slippage, per leg x contracts.
+                    commissions = _LEGS_PER_SPREAD * self.commission_per_leg * contracts
+                    slippage    = _LEGS_PER_SPREAD * _SLIPPAGE_PER_LEG * 100.0 * contracts
+                    net_pnl   = gross_pnl - commissions - slippage
                     capital   += net_pnl
 
                     trades_list.append({
@@ -353,12 +373,13 @@ class VIXSpikeFadeStrategy(BaseStrategy):
                         contracts   = max(1, math.floor(
                             capital * self.position_size_pct / max_loss
                         ))
-                        # Deduct cost from capital
+                        # Deduct cost from capital: debit + commission + slippage,
+                        # both frictions charged per leg x contracts on ENTRY.
                         entry_cost  = entry_debit * 100.0 * contracts
-                        entry_comm  = 2.0 * self.commission_per_leg * contracts  # entry legs
-                        capital    -= (entry_cost + entry_comm)
+                        entry_comm  = _LEGS_PER_SPREAD * self.commission_per_leg * contracts
+                        entry_slip  = _LEGS_PER_SPREAD * _SLIPPAGE_PER_LEG * 100.0 * contracts
+                        capital    -= (entry_cost + entry_comm + entry_slip)
 
-                        import datetime
                         expiry_date = dt + pd.Timedelta(days=self.dte_entry)
 
                         open_trade = {
@@ -402,8 +423,9 @@ class VIXSpikeFadeStrategy(BaseStrategy):
             )
             contracts   = open_trade["contracts"]
             gross_pnl   = (cur_val - open_trade["entry_debit"]) * 100.0 * contracts
-            commissions = 2.0 * self.commission_per_leg * contracts
-            net_pnl     = gross_pnl - commissions
+            commissions = _LEGS_PER_SPREAD * self.commission_per_leg * contracts
+            slippage    = _LEGS_PER_SPREAD * _SLIPPAGE_PER_LEG * 100.0 * contracts
+            net_pnl     = gross_pnl - commissions - slippage
             capital    += net_pnl
             equity_list[-1] = capital
 

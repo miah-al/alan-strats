@@ -31,6 +31,11 @@ Parameters:
   gex_neg_thr   — Net GEX ($B) below which live mode calls negative regime  (default −1.5)
   confirm_days  — Consecutive days in same regime before switching           (default 3)
   cooldown_days — Minimum days between regime changes                         (default 5)
+  slippage_pct  — Proportional slippage on rebalance turnover                 (default 0.0005)
+
+Transaction costs: each rebalance pays proportional slippage on the traded SPY
+notional (|Δweight| × capital × slippage_pct) plus a flat commission ticket
+(DEFAULT_COMMISSION_PER_LEG) for the round trip. Cash earns 0% (conservative).
 """
 
 import numpy as np
@@ -41,6 +46,22 @@ from alan_trader.strategies.base import (
     StrategyStatus, StrategyType,
 )
 from alan_trader.risk.metrics import compute_all_metrics
+
+# Transaction-cost constants live in the backtest engine. This strategy trades a
+# SPY *share* allocation (not option legs), so the per-leg option commission is
+# not the right unit; instead we model a flat per-rebalance commission (one
+# round-trip ticket) on top of proportional slippage applied to the traded
+# notional. Both are charged on every rebalance — there is no separate "entry"
+# vs "exit" event for a continuously-held ETF sleeve; a rebalance IS the round
+# trip (sell some SPY / buy some SPY), so the turnover term captures both sides.
+try:  # pragma: no cover - import shim for both package layouts
+    from alan_trader.backtest.engine import (
+        DEFAULT_SLIPPAGE_PER_LEG, DEFAULT_COMMISSION_PER_LEG,
+    )
+except ImportError:  # pragma: no cover
+    from backtest.engine import (
+        DEFAULT_SLIPPAGE_PER_LEG, DEFAULT_COMMISSION_PER_LEG,
+    )
 
 
 # ── Regime → SPY weight ──────────────────────────────────────────────────────
@@ -258,8 +279,14 @@ class GexPositioningStrategy(BaseStrategy):
 
             # Regime change with cooldown
             if regime != cur_regime and i > 0 and days_since >= cool_days:
-                slip = capital * abs(spy_w - cur_spy_w) * self.slippage
-                capital -= slip
+                # Cost of the rebalance = proportional slippage on the traded
+                # notional (the |Δweight| of SPY bought/sold) PLUS a flat
+                # commission ticket for the round trip. The turnover term covers
+                # both the sell and the buy side of the rebalance.
+                turnover = abs(spy_w - cur_spy_w)
+                slip = capital * turnover * self.slippage
+                commission = DEFAULT_COMMISSION_PER_LEG if turnover > 0 else 0.0
+                capital -= (slip + commission)
                 trades_list.append({
                     "entry_date":  entry_date.date(),
                     "exit_date":   dt.date(),
@@ -373,4 +400,5 @@ class GexPositioningStrategy(BaseStrategy):
             "confirm_days":  self.confirm_days,
             "cooldown_days": self.cooldown_days,
             "slippage_pct":  self.slippage,
+            "commission_per_rebalance": DEFAULT_COMMISSION_PER_LEG,
         }

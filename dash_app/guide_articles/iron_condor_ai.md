@@ -31,7 +31,7 @@ Rules use fixed thresholds. IVR ≥ 45%, ADX ≤ 22. These are good long-term av
 - A stock with flat ADX but rising 5-day momentum is about to trend — the ADX just hasn't caught up yet
 - When the yield curve is inverted AND VIX is elevated, the realized vol over the next 30 days is structurally higher than the 20-day window suggests
 
-The gradient boosting model sees 17 features simultaneously and learns the interactions between them. It has seen hundreds of setups and knows which combinations historically lead to range-bound outcomes and which ones look good on the surface but fail within 2 weeks.
+The gradient boosting model sees 14 features simultaneously and learns the interactions between them. It has seen hundreds of setups and knows which combinations historically lead to range-bound outcomes and which ones look good on the surface but fail within 2 weeks.
 
 **The second innovation: adaptive strike placement.** When model confidence is high (P ≥ 0.75), it tightens the strikes slightly (higher delta → more credit, more risk). When confidence is marginal (P just above threshold), it widens the strikes (lower delta → less credit, more buffer). This improves the risk-adjusted return across the confidence spectrum.
 
@@ -43,16 +43,15 @@ The gradient boosting model sees 17 features simultaneously and learns the inter
 
 ---
 
-## What the Model Sees — The 17 Features
+## What the Model Sees — The 14 Features
 
 ```
 Feature              Type      What It Measures                  Why It Matters for IC
 -------------------  --------  --------------------------------  -------------------------------------------------
 `ivr`                IV        IV Rank (0–1, 52-week window)     Higher = more overpriced premium to harvest
-`iv_term_slope`      IV        5-day VIX momentum (slope proxy)  Rising VIX = expanding vol regime, dangerous
+`adx`                Trend     Avg Directional Index (14d)       Low = range-bound (good IC); high = trending
 `put_call_skew`      IV        1m vs 3m vol ratio (contango)     Flat skew = symmetric IC; steep skew = asymmetric
-`atm_iv`             IV        ATM implied vol (VIX/100)         Raw premium level
-`realized_vol_20d`   Vol       20-day historical realized vol    Actual recent movement amplitude
+`iv_term_slope`      IV        5-day VIX momentum (slope proxy)  Rising VIX = expanding vol regime, dangerous
 `vrp`                Vol       Implied − realized vol (premium)  Positive = selling at fair price + premium
 `atr_pct`            Price     ATR / spot (daily range %)        High = stock moving fast, wings at risk
 `ret_5d`             Price     5-day return                      Recent momentum signal
@@ -61,11 +60,16 @@ Feature              Type      What It Measures                  Why It Matters 
 `vix_level`          Macro     Current VIX                       Regime classifier
 `vix_5d_change`      Macro     VIX % change over 5 days          Spiking = dangerous; collapsing = opportunity
 `vix_ma_ratio`       Macro     VIX / 20-day VIX MA               >1.2 = elevated; <0.8 = complacent
-`rate_10y`           Macro     10-year Treasury yield            High rates = equity vol often higher
 `yield_curve_2y10y`  Macro     10y − 2y spread                   Inverted curve = recession risk, higher vol
 `days_to_month_end`  Calendar  Days until month-end              Options cluster at month-end expiry
-`oi_put_call_proxy`  Options   Put/call skew proxy               Put demand = hedging, one-sided market
 ```
+
+> **Removed in the 2026-05 audit:** `realized_vol_20d` was dropped as a model
+> input because it is the normalizer for the supervised label band — feeding it
+> to the model leaked the target into training and inflated backtest metrics.
+> It is still computed, but only to construct labels, never as a feature.
+> (`atm_iv` = VIX/100 and an `oi_put_call_proxy` duplicate of `put_call_skew`
+> were also removed as redundant.)
 
 ### What a Training Row Actually Looks Like
 
@@ -77,10 +81,9 @@ Training row — SPY, March 20 2024:
 Feature               Value    Interpretation
 ─────────────────────────────────────────────────────────────────────────
 ivr                   0.43     IV in top 57% of 52-week range — elevated
-iv_term_slope         -0.012   VIX falling slowly (5-day slope negative) ✓
+adx                   16.8     Low trend strength — range-bound ✓
 put_call_skew         1.08     Near-flat (1m IV ≈ 3m IV × 1.08) ✓
-atm_iv                0.132    13.2% annualized ATM vol (VIX = 13.2)
-realized_vol_20d      0.094    9.4% annualized 20-day realized ✓
+iv_term_slope         -0.012   VIX falling slowly (5-day slope negative) ✓
 vrp                  +3.8      IV − RV = +3.8 vol points — very positive ✓
 atr_pct               0.0078   0.78% daily range (very calm) ✓
 ret_5d               +0.014   +1.4% over 5 days (mild drift, not trend) ✓
@@ -89,15 +92,13 @@ dist_from_ma50       +0.023   +2.3% above 50-day MA (near flat) ✓
 vix_level            13.2      Low-to-moderate VIX ✓
 vix_5d_change        -0.091   VIX fell 9.1% over 5 days (calming) ✓
 vix_ma_ratio          0.89     VIX 11% below its own 20-day MA (below-trend) ✓
-rate_10y              4.31     10yr yield at 4.31%
 yield_curve_2y10y    -0.38    2y10y inverted by 38 bps (mild caution)
 days_to_month_end     11       11 days until month-end — expiry clustering
-oi_put_call_proxy     0.74     Below 1.0 — balanced, no one-sided put demand ✓
 ─────────────────────────────────────────────────────────────────────────
-Label (45-day outcome): 1  (SPY stayed within ±1-sigma band → IC won)
+Label (45-day outcome): 1  (SPY stayed within ±1.5-sigma band → IC won)
 ```
 
-Twelve of 17 features point to a calm, range-bound environment. The yield curve inversion and the middling IVR are mild negatives. The model weighs them all simultaneously and outputs:
+Most of the 14 features point to a calm, range-bound environment. The yield curve inversion and the middling IVR are mild negatives. The model weighs them all simultaneously and outputs:
 
 ```
 P(range-bound over next 45 days) = 0.71
@@ -129,13 +130,15 @@ lower_band = entry_price × (1 - sigma_45d)
 label = 1 if all(|daily_close[t+1 : t+45] / entry_price - 1| <= sigma_45d)
 label = 0 if any close exceeds the band in either direction
 
-# Historical base rates (SPY 2018–2024):
-#   Label = 1:  ~42% of all 45-day windows
-#   Label = 0:  ~58% of all 45-day windows
+# Base rates are data- and ticker-dependent and must be measured per universe;
+# on broad-index equity data the positive (range-bound) rate typically falls in
+# a roughly 40–55% band.
 #
-# The model's job: identify the 42% that are positive BEFORE they happen.
-# Precision at threshold 0.60: approximately 74% (vs 42% baseline)
-# That 32-percentage-point lift over random is the model's edge.
+# The model's job: identify the positive windows BEFORE they happen, lifting
+# precision above the base rate at the chosen threshold.
+#
+# TODO: re-run the current pipeline to report measured base rate, precision,
+#       and lift. Do not quote a number until it is regenerated.
 ```
 
 **Why this label is correct for Iron Condors:**
@@ -187,7 +190,7 @@ Rule: Model retrained every 30 bars (≈ monthly) on ALL history up to current b
 
 **The result:** the model behaves exactly as it would in real trading — no lookahead, no data leakage, no inflated backtest results.
 
-**Why 180-bar warmup?** The feature matrix needs ~252 bars to compute a reliable IV Rank. At bar 180 you have enough history for stable IVR, 50-day MA, and realized vol. The model also needs at least 50 positive label examples to learn from — at a ~38% positive rate that requires roughly 130–180 bars of labeled data.
+**Why 180-bar warmup?** The feature matrix needs ~252 bars to compute a reliable IV Rank. At bar 180 you have enough history for stable IVR, 50-day MA, and realized vol. The model also needs enough labeled examples of both classes to learn from, and the training window is further purged by the label's forward window (`dte_target` rows), so a longer warmup leaves a usable training set after the purge.
 
 **Why retrain every 30 bars?** Market regimes shift over 4–12 weeks. A model trained in Jan 2022 (rising-rate bear market) will misfire in Jan 2023 (recovery). Monthly retraining keeps the model current without excessive refit risk.
 
@@ -267,7 +270,7 @@ Model P(range-bound 45 days): 0.77
 Adaptive delta:               0.20  (high confidence → tighter strikes)
 ```
 
-Twelve of 17 features are positive. The inverted yield curve is a negative, but the model weights it at ~4% importance — it's a macro backdrop, not a direct vol driver. The VIX falling + IVR elevated + VRP strongly positive + calm ATR is the combination the model was built to recognize.
+Most of the 14 features are positive. The inverted yield curve is a negative, but it is a macro backdrop, not a direct vol driver. The VIX falling + IVR elevated + VRP strongly positive + calm ATR is the combination the model was built to recognize.
 
 **Why the model fired at 0.77 specifically:**
 
@@ -388,22 +391,22 @@ The put side did the heavy lifting — SPY drifted toward the put strikes, so th
 
 ## Feature Importance — What the Model Actually Uses
 
-From a well-trained model on 2021–2024 SPY data:
+The model exposes `feature_importances_` over the 14 features in `FEATURE_COLS`
+after each walk-forward retrain. The ranking shifts as the model retrains on new
+data, so there is no single fixed importance table.
 
-```
-Feature Importance:
-  atr_pct            ██████████  28.3%  ← #1: Market velocity is most predictive
-  dist_from_ma50     ████████░░  20.5%  ← #2: Overextension predicts mean-reversion
-  realized_vol_20d   █████░░░░░  12.8%  ← #3: Recent actual vol vs implied
-  vix_ma_ratio       ████░░░░░░   9.4%  ← VIX regime context
-  vrp                ████░░░░░░   8.7%  ← Premium richness
-  ret_5d             ███░░░░░░░   6.2%  ← Short-term momentum
-  ivr                ███░░░░░░░   5.9%  ← IV rank
-  yield_curve_2y10y  ██░░░░░░░░   4.1%  ← Macro context
-  [remaining 9 features split remaining 4.1%]
-```
+**Qualitatively, the dominant signals are the "is the stock calm right now?"
+features** — daily velocity (`atr_pct`), overextension (`dist_from_ma50`), trend
+strength (`adx`), and premium richness (`vrp`). These measure whether the
+underlying is in a calm, mean-reverting state, which matters more for an iron
+condor than the raw IV level. IVR, which traders fixate on, is typically a
+mid-pack contributor rather than the top driver.
 
-**Key insight:** ATR and distance-from-MA dominate. Both measure whether the stock is in a calm, mean-reverting state. The model has essentially learned to weight "is the stock calm right now?" above all other signals. IVR, which traders fixate on, is 5th. The model knows that calm, near-MA stocks generate more winners than high-IVR trending stocks.
+> **TODO: re-run for current numbers.** The previously-published importance
+> table listed `realized_vol_20d` as a top-3 feature — that feature was removed
+> in the 2026-05 audit (it leaked the label band), so any table including it is
+> stale. Regenerate the importance ranking from a fresh run before quoting
+> specific percentages.
 
 ---
 
@@ -468,7 +471,7 @@ What happened — the carry unwind:
 
 Why the model was wrong:
   vix_5d_change at entry was -4.2% (VIX was calm and falling)
-  oi_put_call_proxy was 0.88 (balanced)
+  put_call_skew was near 1.0 (balanced — no warning)
   No feature captured the building yen carry tension
   The yen/Nikkei was not in the feature set — no warning available
   This is a known blind spot: macro regime shocks from non-equity markets
@@ -522,129 +525,123 @@ Why the ADX filter exists:
   day of the trend. A trending market is the worst possible environment for
   a short-premium strategy. ADX > 25 is a caution; ADX > 35 is a hard block.
 
-ADX threshold impact on win rate (backtest 2018–2024, SPY):
+ADX threshold impact on win rate (illustrative — directional, not measured):
   ────────────────────────────────────────────────
-  ADX at entry    Condors   Win rate   Avg P&L
-  < 15            182       81%        +$148
-  15–25           394       74%        +$112
-  25–35           208       63%        +$42
-  35–45           97        41%        -$88
-  > 45            44        22%        -$215
+  ADX at entry    Win rate (lower in stronger trends)   Expectancy
+  < 15            highest                               clearly positive
+  15–25           high                                  positive
+  25–35           moderate                              marginal
+  35–45           low                                   negative
+  > 45            lowest                                strongly negative
   ────────────────────────────────────────────────
-  Above ADX 35: the strategy is net negative expectancy.
-  The ADX filter blocks these entries. That is its entire job.
+  The pattern is the point: win rate and expectancy fall monotonically as the
+  trend strengthens, which is why the ADX filter blocks high-ADX entries.
+  TODO: re-run for current numbers to fill in measured win rate / P&L per bucket.
 ```
 
 ---
 
 ## Edge vs Luck — How to Know the Strategy Is Working
 
-This is the question most traders never ask until it is too late. A 74% win rate sounds like edge. But over 20 trades, you can get 74% wins purely by luck 12% of the time even with a coin-flip strategy. You need a framework.
+This is the question most traders never ask until it is too late. A high win
+rate sounds like edge, but a short streak of wins can happen by luck even with a
+coin-flip strategy. You need a framework that checks expectancy, not just the
+hit rate.
 
 ### Expected Value — The Only Number That Matters
 
+Expected value, not win rate, decides whether a strategy is worth trading:
+
 ```
-Iron Condor expected value calculation:
+EV per trade = (win_rate × avg_win) − (loss_rate × avg_loss)
 
-  Win rate:    74%  (model-selected trades, 2018–2024 backtest)
-  Avg win:    +$112 per contract
-  Loss rate:   26%
-  Avg loss:   -$244 per contract  (not max loss — average actual loss)
-
-  EV per trade = (0.74 × $112) + (0.26 × −$244)
-               = $82.88 − $63.44
-               = +$19.44 per contract per trade ← positive expectancy
-
-  Sanity check: EV must be positive for the strategy to be worth trading.
+  Sanity check: EV must be POSITIVE for the strategy to be worth trading.
   If your win rate is 60% but your average loss is 3× your average win,
-  EV is negative and you are grinding toward ruin slowly.
+  EV is negative and you are grinding toward ruin slowly. An iron condor's
+  structural risk is that the rare losses are larger than the frequent wins,
+  so the win rate must stay high enough to keep EV positive net of costs.
 
-  The model's contribution to EV vs rules:
-    Rules-based win rate (same period): 70%
-    AI-based win rate:                  74%
-    +4 percentage-point lift × avg win $112 = approximately +$4.5/trade
-    Over 192 trades: $4.5 × 192 = +$864 incremental profit from model
-    On a $40,000 account: +2.2% alpha from AI vs rules alone
+TODO: re-run for current numbers. The previously-published figures
+      (74% win rate, +$112 avg win, −$244 avg loss, +$19.44 EV/trade, and a
+      "+4pp lift vs rules") were derived from the leaked pre-audit pipeline
+      and are NOT reliable. Regenerate win rate, average win/loss, and EV from
+      a fresh post-audit run (skew pricing + round-trip costs + purged
+      walk-forward) before quoting any of these.
 ```
 
 ### Win Rate Is Not Edge — The Distinction That Matters
 
 ```
-Consider two strategies, both with 74% win rate:
+Consider two strategies with the SAME win rate (say 70%):
 
-  Strategy A: Wins $112, loses $244 (this model)
-    EV = (0.74 × 112) + (0.26 × −244) = +$19.44 ← EDGE
+  Strategy A: Wins $112, loses $244
+    EV = (0.70 × 112) + (0.30 × −244) = $78.40 − $73.20 = +$5.20 ← EDGE
 
   Strategy B: Wins $50, loses $400
-    EV = (0.74 × 50) + (0.26 × −400) = $37 − $104 = −$67 ← NO EDGE
+    EV = (0.70 × 50) + (0.30 × −400) = $35 − $120 = −$85 ← NO EDGE
 
   Same win rate. Opposite expectancy.
   Always check BOTH win rate AND loss magnitude before declaring edge.
+  (Illustrative numbers — not measured results for this strategy.)
 ```
 
 ### Sharpe Ratio of the Strategy
 
+The strategy's target Sharpe is **0.8** (honest post-audit estimate; the realistic
+band is roughly **0.5–0.9**). This replaces a previously-published annualized
+Sharpe of ~2.38, which was a discredited pre-audit figure: it was produced by a
+pipeline that fed `realized_vol_20d` to the model while also using it to build
+the label, leaking the target into training and massively inflating the metric.
+After removing that leak, skew-aware leg pricing, and charging realistic per-leg
+slippage + commission on both entry and exit, the honest expectation is far
+lower.
+
 ```
-Backtest results — AI Iron Condor on SPY, 2018–2024 (6 years):
+Backtest results — AI Iron Condor on SPY:
 ──────────────────────────────────────────────────────────────────
-Total trades:         192  (average 2.7/month)
-Total P&L:           +$21,504  (per 1 contract per trade)
-Annualized return:    ~$3,400/year  (on ~$2,000 average capital at risk)
-Win rate:             74%
-Avg monthly P&L:      +$283
-Std dev of monthly:   $412
-Monthly Sharpe:       283 / 412 = 0.69
-Annualized Sharpe:    0.69 × sqrt(12) = 2.38 ← excellent for options strategy
+Target Sharpe:        0.8   (honest band 0.5–0.9)
 
-For context:
-  S&P 500 long-only (same period): Sharpe ~1.05
-  SPY buy-and-hold included 2022 drawdown: ~0.85
-  A Sharpe of 2.38 means the strategy returned 2.38 standard deviations
-  above zero — the monthly P&L distribution is strongly positive-skewed
-  toward wins, with rare but real large loss months.
+TODO: re-run the post-audit pipeline (skew pricing + round-trip costs +
+      purged walk-forward, realized_vol_20d removed) and report measured
+      trade count, win rate, P&L, monthly Sharpe, and worst/best months.
+      Do NOT quote the old 2.38 Sharpe / 74% win-rate numbers — they were
+      leakage artifacts.
 
-Months with P&L below -$500/contract: 4 out of 72 (5.6% of months)
-Worst single month: August 2024, -$1,240 (carry unwind)
-Best single month: October 2022, +$1,820 (post-FOMC vol crush)
+For context (unchanged, external benchmarks):
+  S&P 500 long-only: Sharpe ~1.0
+  SPY buy-and-hold (incl. 2022 drawdown): ~0.85
 ──────────────────────────────────────────────────────────────────
 ```
 
-### The Honest P&L Distribution
+### The Expected P&L Shape
 
-```
-P&L distribution — 192 trades, AI Iron Condor on SPY:
+The P&L distribution of a managed iron condor is **right-skewed by
+construction**: most trades win a small-to-moderate amount (theta decay captured
+to the 50% profit target), while a minority of trades lose larger amounts when a
+short strike is breached. The 2× credit stop-loss rule truncates the left tail —
+most losing trades are closed early rather than held to structural max loss.
 
-  Loss > $400:    ████░░░░░░  12 trades (6.3%)   avg −$380
-  Loss $200–400:  ████░░░░░░  11 trades (5.7%)   avg −$268
-  Loss $0–200:    ███░░░░░░░   9 trades (4.7%)   avg −$82
-  Win $0–100:     ████████░░  42 trades (21.9%)  avg +$67
-  Win $100–200:   ██████████  61 trades (31.8%)  avg +$142  ← modal outcome
-  Win $200–300:   ███████░░░  37 trades (19.3%)  avg +$240
-  Win > $300:     ████░░░░░░  20 trades (10.4%)  avg +$347
-
-The distribution is right-skewed: most trades win small to moderate amounts.
-Losses cluster at −$380 average (not max loss), indicating that the 2×
-credit stop-loss rule is working and truncating the left tail.
-You are not hitting max loss on most bad trades — you are closing early.
-```
+> **TODO: re-run for current numbers.** A previously-published histogram quoted
+> a specific 192-trade distribution (modal +$142 win, −$380 average loss). Those
+> counts came from the leaked pre-audit pipeline and have been removed.
+> Regenerate the bucketed P&L distribution from a fresh post-audit run.
 
 ### Statistical Significance
 
 ```
 Null hypothesis: win rate = 50% (random)
-Observed win rate: 74% over 192 trades
 
-Binomial test:
-  z = (0.74 − 0.50) / sqrt(0.50 × 0.50 / 192)
-    = 0.24 / 0.0361
-    = 6.65
+Binomial test (apply to your OWN measured results):
+  z = (observed_win_rate − 0.50) / sqrt(0.50 × 0.50 / n_trades)
+  Convert z to a p-value; p < 0.01 is reasonable evidence the win rate is
+  not luck.
 
-  p-value < 0.0001  → reject null with extreme confidence.
+TODO: re-run for current numbers. The previously-published claim ("74% over
+      192 trades, p < 0.0001") was a leaked pre-audit artifact and has been
+      removed. Re-run the post-audit pipeline, then apply this test to the
+      measured win rate and trade count.
 
-  The win rate of 74% over 192 trades is NOT luck.
-  It would happen by chance less than 1 time in 100,000 random sequences.
-
-But in live trading, you have much less data than a 6-year backtest.
+In live trading you have far less data than a multi-year backtest.
 When can you trust that YOUR live results reflect edge?
 
   After 30 trades with positive EV: preliminary evidence (p ≈ 0.08)
@@ -658,7 +655,12 @@ When can you trust that YOUR live results reflect edge?
 
 ---
 
-## Real Historical Trade Examples
+## Worked Trade Examples
+
+> These are **illustrative** worked examples to show how the signal, strike
+> placement, and exit logic fit together — not a verified backtest trade log.
+> The credit/P&L figures are rounded teaching numbers. **TODO: replace with a
+> sampled set of real trades from a current post-audit backtest run.**
 
 ### AI-Predicted Range-Bound Setups
 
@@ -680,23 +682,24 @@ Sep 18 2024  QQQ     $478  17.4  0.60  0.74     0.18    $498        $458       $
 ```
 Date         Ticker  Spot  VIX   IVR   Model P  Reason Model Fired               What Happened                                                            P&L    Feature Model Missed
 -----------  ------  ----  ----  ----  -------  -------------------------------  -----------------------------------------------------------------------  -----  --------------------------------------------------------------------
-Jul 18 2023  TSLA    $278  15.2  0.52  0.64     Low ADX, VIX calm, IVR elevated  Musk sold 7.9M shares — stock dropped 9% in 3 days                       −$820  `oi_put_call_proxy` spiked pre-announcement; insufficient weight
+Jul 18 2023  TSLA    $278  15.2  0.52  0.64     Low ADX, VIX calm, IVR elevated  Musk sold 7.9M shares — stock dropped 9% in 3 days                       −$820  insider-sale flow not in feature set — no warning available
 Oct 19 2023  SPY     $418  17.8  0.58  0.66     All features positive            Israel-Hamas war expansion news over weekend, SPY gapped −1.8% Mon open  −$180  Geopolitical event — no model can predict this
 Feb 22 2024  NVDA    $788  14.1  0.49  0.60     IVR elevated post-earnings       Stock continued to surge on AI mania — call wing breached in 8 days      −$640  `dist_from_ma50` was +18% (very overextended) — model weight too low
 ```
 
 ### Regime Performance Summary
 
-```
-VIX Regime        Trades  Win Rate  Avg Model P  Avg P&L  Avg Hold  vs Rules Win Rate
-----------------  ------  --------  -----------  -------  --------  ------------------
-Low (< 16)        29      69%       0.64         +$71     24d       +8pp better
-Medium (16–22)    94      78%       0.68         +$134    20d       +4pp better
-Elevated (22–30)  51      71%       0.65         +$108    17d       +3pp better
-High (30–35)      18      61%       0.62         +$32     13d       +9pp better
-Extreme (> 35)    0       —         —            —        —         Blocked by VIX cap
-Total             192     74%       0.66         +$112    20d       +4pp vs rules
-```
+Iron condors are expected to perform best in the **medium-VIX "sweet spot"
+(~16–30)**, where credits are meaningful but the market is not in a fear
+regime. Performance should thin out in low-VIX regimes (credits too small to
+overcome costs) and is blocked entirely above the VIX cap (extreme regimes,
+where wings priced "one sigma out" become meaningless). Holding periods tend to
+shorten as VIX rises because the profit target is hit faster.
+
+> **TODO: re-run for current numbers.** A previously-published per-regime table
+> quoted specific trade counts, win rates, and a "+4pp vs rules" lift (Total:
+> 192 trades, 74% win). Those came from the leaked pre-audit pipeline and have
+> been removed. Regenerate per-VIX-regime stats from a fresh post-audit run.
 
 ---
 
@@ -803,7 +806,7 @@ These are not suggestions. They are the operating rules of this strategy. Trader
 
 **Managing the trade:**
 - Close at 50% of max credit. Always. Without exception. The compounding effect of freeing capital early (average 17 days ahead of expiry) consistently beats holding for the last 50%. The remaining premium is not worth the gamma risk.
-- Close any position that reaches 200% of credit as a loss (2× stop). A condor that collected $2.60 should be closed the moment it costs $5.20 to buy back. This rule truncates max loss and is the primary driver of "average loss = −$244" being well below theoretical max.
+- Close any position that reaches 200% of credit as a loss (2× stop). A condor that collected $2.60 should be closed the moment it costs $5.20 to buy back. This rule truncates max loss and is the primary driver of the average realized loss sitting well below the theoretical max loss.
 - Close at 21 DTE if the 50% profit target has not been reached. The final 3 weeks have the worst gamma/theta tradeoff for a condor that is not yet profitable.
 - When one side is tested (short strike delta ≥ 0.35), evaluate rolling — not from panic, but from arithmetic. Rolling the tested side 30 DTE forward often recovers 60–70% of the original credit at no additional net cost.
 
@@ -824,17 +827,17 @@ These are not suggestions. They are the operating rules of this strategy. Trader
 ```
 Parameter            Default  Range      Description
 -------------------  -------  ---------  ------------------------------------
-`signal_threshold`   0.60     0.50–0.80  Minimum P(range-bound) to enter
-`ivr_min`            0.35     0.20–0.65  IVR floor (AI relaxes this vs rules)
-`vix_max`            38.0     30–50      VIX ceiling
+`signal_threshold`   0.50     0.45–0.80  Minimum P(range-bound) to enter
+`ivr_min`            0.20     0.10–0.65  IVR floor (AI relaxes this vs rules)
+`vix_max`            38.0     25–50      VIX ceiling
 `delta_short`        0.16     0.10–0.25  Default short strike delta
-`wing_width_pct`     0.05     0.03–0.10  Wing width as % of spot
-`dte_target`         45       30–60      Target DTE at entry
+`wing_width_pct`     0.05     0.02–0.12  Wing width as % of spot
+`dte_target`         45       21–60      Target DTE at entry
 `dte_exit`           21       14–28      Force-close DTE
-`profit_target_pct`  0.50     0.30–0.70  Close at % of max credit
+`profit_target_pct`  0.50     0.25–0.75  Close at % of max credit
 `stop_loss_mult`     2.0      1.5–3.0    Stop at N× credit
-`position_size_pct`  0.03     0.01–0.06  Capital at risk per trade
-`n_estimators`       100      50–300     Gradient boosting trees
+`position_size_pct`  0.03     0.01–0.08  Capital at risk per trade
+`n_estimators`       50       25–200     Gradient boosting trees (regularized)
 ```
 
 ---

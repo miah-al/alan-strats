@@ -21,17 +21,20 @@ The structural defense is that this is a strictly defined-risk trade. The maximu
 
 ## The Three P&L Drivers
 
-### 1. Realized Move Post-Announcement (~70% of total profit)
+The relative contributions below are *directional and qualitative*, not measured
+attributions — they describe the mechanics, not a decomposed backtest.
 
-The dominant payoff source. After the announcement, SPY makes a directional move — sometimes 0.5%, sometimes 2%+ on a hawkish-dovish surprise. The straddle pays $100 × (|move| − implied_move) per contract on the move that exceeds the implied. A 1.4% realized move on a 0.65% implied straddle produces $0.75 per share = $75 per contract of intrinsic gain, roughly 35% on a typical $215 debit.
+### 1. Realized Move Post-Announcement (the dominant payoff source)
 
-### 2. Pre-Announcement IV Expansion (~25% of total profit)
+After the announcement, SPY makes a directional move — sometimes 0.5%, sometimes 2%+ on a hawkish-dovish surprise. The straddle pays $100 × (|move| − implied_move) per contract on the move that exceeds the implied. As an illustrative example, a 1.4% realized move against a 0.65% implied straddle produces roughly $0.75 per share of intrinsic gain on a strike-pinned straddle.
 
-In the 24-48 hours before FOMC, ATM IV typically rises by 1-3 vol points as vol-buyers position for the event. A straddle bought at T-2 with VIX at 17 may see VIX rise to 19-20 by FOMC morning, causing the straddle's vega to add $0.10-0.20 per share to the position. This pre-event IV expansion partially offsets theta decay during the holding period and is a meaningful contribution to expectancy.
+### 2. Pre-Announcement IV Expansion (a secondary tailwind)
 
-### 3. Theta Decay (~−15% — the cost)
+In the 24-48 hours before FOMC, ATM IV typically rises by 1-3 vol points as vol-buyers position for the event. A straddle bought at T-2 with VIX at 17 may see VIX rise to 19-20 by FOMC morning, the long-vega position benefiting. This pre-event IV expansion partially offsets theta decay during the holding period. (Note: the backtest simulator does **not** model the subsequent post-release IV crush — see the Backtest Statistics caveats.)
 
-The long straddle pays daily theta, especially in the 7-14 DTE range used by the strategy. Over a 3-day hold, theta erodes approximately 5-10% of the debit paid. This is the structural cost that the realized move and IV expansion must overcome. The cost is meaningful but bounded — limiting DTE to 7-14 keeps theta manageable while staying close enough to the event to capture the announcement effect.
+### 3. Theta Decay (the structural cost)
+
+The long straddle pays daily theta, especially in the 7-14 DTE range used by the strategy. Over a roughly 3-day hold, theta erodes a portion of the debit paid. This is the structural cost that the realized move and IV expansion must overcome. The cost is meaningful but bounded — limiting DTE to 7-14 keeps theta manageable while staying close enough to the event to capture the announcement effect.
 
 ---
 
@@ -73,9 +76,14 @@ Greek profile at entry (typical 10 DTE ATM straddle, SPY $500, VIX 18):
 
 ---
 
-## Real Trade Walkthrough
+## Illustrative Trade Walkthroughs
 
-### Trade 1 — Win: March 20, 2024 (Hawkish Surprise → Move Exceeds Implied)
+> The two walkthroughs below are **illustrative** mechanics examples constructed
+> to show how the structure behaves in a win and a loss scenario. The prices and
+> P&L figures are hand-built for exposition, not extracted from a verified
+> backtest of these specific dates.
+
+### Trade 1 — Win Scenario: Hawkish Surprise → Move Exceeds Implied (illustrative)
 
 > **March 18, 2024 (Mon) · SPY:** $511.40 · **VIX:** 14.5 · **IVR:** 0.18 · **FOMC:** Wed Mar 20, 2024
 
@@ -123,7 +131,7 @@ Hold: 3 trading days
 
 **What worked:** The realized move (1.06% up on Wed) substantially exceeded the implied move (0.90%), and the directional component overcame the IV crush. This was a textbook FOMC straddle outcome — modest realized > implied, +30-45% return on debit. The +30% profit target *would* have triggered intraday on Wednesday, but the rule-based exit allows holding to T+1 for follow-through.
 
-### Trade 2 — Loss: November 1, 2023 (No-Surprise Hold → IV Crush Dominates)
+### Trade 2 — Loss Scenario: No-Surprise Hold → IV Crush Dominates (illustrative)
 
 > **October 30, 2023 (Mon) · SPY:** $419.60 · **VIX:** 19.8 · **IVR:** 0.41 · **FOMC:** Wed Nov 1, 2023
 
@@ -198,46 +206,66 @@ STATUS: All gates pass. Order: BUY 5x SPY Mar 28 $511 STRADDLE @ $4.58
 
 ## Backtest Statistics
 
-**SPY 2010-2024, 8 FOMC events/year, gates as default:**
+> **TODO — re-run required.** The headline performance figures previously shown
+> here (per-period win-rate / avg-winner / avg-loser tables, "~58% win rate",
+> "~8.5% annualized", "Sharpe ~1.1", "~7% max drawdown", "~92 trades") were not
+> reproducible from the current backtest code and have been removed. They should
+> not be cited until regenerated. To produce honest numbers, run
+> `FOMCEventStraddleStrategy().backtest(...)` over the SPY history with the VIX
+> auxiliary series and the default `default_fomc_calendar()`, then paste the
+> realized metrics (CAGR, Sharpe, max drawdown, trade count, win rate, avg
+> winner/loser) here.
 
-```
-Period                Trades   Win Rate   Avg Winner   Avg Loser    Net P&L (% debit)
---------------------  -------  ---------  -----------  -----------  -----------------
-2010-2014 (calm)      ~32      62%        +33%         -29%         +6.4%/event
-2015-2019 (normal)    ~32      57%        +35%         -32%         +4.2%/event
-2020 (COVID)          5/8      40%        +52%         -41%         -1.0%/event (gates blocked 3)
-2021-2022 (regime ch) ~12      55%        +41%         -34%         +5.1%/event
-2023-2024 (steady)    ~16      63%        +30%         -27%         +5.8%/event
-Total 2010-2024       ~92      ~58%       +34%         -31%         +4.7%/event
-Annualized return     ~8.5% on capital allocated; Sharpe ~1.1; Max DD ~7%
-```
+**Important modelling caveats that bound any honest result:**
 
-**Key observation:** The strategy is positive-expectancy on a per-event basis but with realistic noise. Win rate near 58% paired with winners (+34%) modestly larger than losers (−31%) produces small per-event edge that compounds. The 2020 COVID year is instructive: aggressive VIX expansion correctly triggered the gates and blocked entries during March-May, preserving capital during the regime when the strategy's edge had evaporated.
+- Option prices are simulated with Black-Scholes (`bs_price` / `bs_price_skew`)
+  off the VIX-implied ATM vol, not from a historical FOMC-dated options chain.
+  The single most important real-world driver of this trade — the **post-release
+  IV crush** — is therefore **not** captured by the simulator (VIX/100 is used as
+  a flat term-structure IV that does not collapse intraday on the announcement).
+  As a result the backtest will tend to *overstate* the edge of a long-vol event
+  trade. Treat simulated results as an upper bound, not a forecast.
+- Transaction costs are modelled: per-leg slippage and commission are charged on
+  both entry and exit, scaled by contracts × 2 legs.
+- The downside index skew is applied to the marks once spot drifts from the
+  fixed strike (`bs_price_skew`), so the call/put wings are valued realistically.
+
+**Qualitative expectation (not a measured result):** this is a small-edge,
+high-variance event trade. A meaningful fraction of events are expected to be
+near-maximum losers, and the structure relies on a minority of right-tail wins
+where the realized move exceeds the implied move. Defined risk caps per-trade
+loss at the debit paid. The 2020 COVID regime is illustrative of the gate logic:
+elevated VIX trips the `vix_max` / `ivr_max` gates and suppresses entries when
+the long-vol edge has historically evaporated.
 
 ---
 
 ## The Math
 
-**Per-Event Expected Value Calculation:**
+**Per-Event Expected Value — worked example with ASSUMED inputs.**
+The numbers below are *illustrative assumptions* to show how the expectancy
+arithmetic works; they are **not** measured backtest outputs. Substitute your own
+re-run figures before relying on any of this.
 ```
-Inputs (typical SPY FOMC event under gates):
-  Win rate:             58%
-  Avg winner return:    +34% of debit
-  Avg loser return:     -31% of debit
-  Avg debit/spot:       0.95% (after gate filter)
-  Position size:        2.5% of capital
+ASSUMED inputs (illustrative only — verify against a real backtest):
+  Win rate:             ~58%   (assumed)
+  Avg winner return:    +34% of debit   (assumed)
+  Avg loser return:     -31% of debit   (assumed)
+  Position size:        2.5% of capital (default param)
 
-Per-event expected return on debit:
+Per-event expected return on debit (under the assumptions above):
   = 0.58 × (+34%) + 0.42 × (-31%)
-  = +19.7% + -13.0%
+  = +19.7% - 13.0%
   = +6.7% on debit per event
 
 Per-event return on portfolio capital:
   = 6.7% × 2.5% = +0.17% per event
-  = 0.17% × 8 events = +1.34% annualized from straddle alpha
+  = 0.17% × 8 events ≈ +1.3%/yr from straddle alpha (under the assumptions)
 
-Add 4-5% expected base equity drift; net portfolio return:
-  ~6-7% annual with ~7% max drawdown, Sharpe ~1.0-1.2
+These figures are sensitive to inputs and, critically, the simulator omits the
+post-release IV crush, so a real backtest could be materially lower. Do not quote
+a Sharpe, annualized return, or max drawdown here until measured — see the TODO
+in Backtest Statistics.
 ```
 
 **Defined-Risk Floor:**
@@ -247,7 +275,7 @@ At 2.5% sizing:        max loss = 2.5% of capital per trade
 Max consecutive losers needed to halve capital:
   log(0.5) / log(0.975) = 27 events
   At 8 events/year: ~3.4 years of consecutive max losses
-  Probability under 58% win rate: vanishingly small
+  Probability under any plausible (>50%) win rate: vanishingly small
 ```
 
 ---
@@ -274,7 +302,7 @@ Max consecutive losers needed to halve capital:
 
 **The profit target +30% reflects the empirical right-tail distribution of FOMC straddle returns.** Most winners cluster in the +25-45% range. Holding for outsized gains (+100%+) is extremely rare and not justified by the distribution — closing at +30% captures the bulk of the right-tail consistently.
 
-**Position sizing assumes 35-45% of trades will be near-max-losers.** The 2.5%-of-capital-per-trade default is calibrated so that even a 5-loss streak (probability ~1.4% under 58% win rate) produces only a ~12% drawdown. Increasing position size beyond 3% per trade pushes drawdown risk into uncomfortable territory; decreasing it below 1.5% makes the strategy's per-year contribution to portfolio return immaterial.
+**Position sizing assumes a substantial minority of trades (roughly 35-45%) will be near-max-losers.** The 2.5%-of-capital-per-trade default is calibrated so that even a 5-loss streak produces only a roughly low-double-digit-percent drawdown. Increasing position size beyond 3% per trade pushes drawdown risk into uncomfortable territory; decreasing it below 1.5% makes the strategy's per-year contribution to portfolio return immaterial.
 
 **Liquidity verification before live deployment:** SPY weekly options at 7-14 DTE around FOMC are deeply liquid (bid-ask typically $0.02-$0.05 on $4-6 contracts). QQQ comparable. Single-name straddles (e.g., applying this to AAPL or NVDA) are NOT recommended — single-name IV behavior around FOMC is dominated by stock-specific factors, not the macro announcement.
 
@@ -284,7 +312,7 @@ Max consecutive losers needed to halve capital:
 
 1. **Unscheduled FOMC meetings (emergency Fed actions):** Emergency meetings (March 2020, October 2008) are by definition unscheduled and are typically announced with hours of warning. The strategy's calendar-based entry mechanism cannot be applied. Even if it could, the volatility around emergency announcements is so extreme (VIX 60+) that the gates would block entry anyway. Stay away.
 
-2. **VIX above 28 on entry day:** This is the single most important gate. Backtests on 2020 COVID period and 2008 GFC period show that running the strategy when VIX is elevated produces near-zero or negative expectancy. The IV crush dominates the realized move when starting IV is high. Wait for vol to normalize.
+2. **VIX above 28 on entry day:** This is the single most important gate. The rationale is mechanical: when starting IV is high, the post-release IV crush dominates the realized move, so a long-vol event trade has little or negative expectancy. (The default FOMC calendar covers 2020 onward, so high-vol-regime evidence is limited to the 2020 COVID window; older episodes such as 2008 are outside the shipped calendar.) Wait for vol to normalize.
 
 3. **IVR above 0.7:** Equivalent vol-regime filter. When VIX is in the top 30% of its 252-day range, mean reversion of vol downward acts against the long-vol position. The combination with the post-FOMC IV crush is doubly punishing.
 

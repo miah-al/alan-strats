@@ -29,10 +29,11 @@ form the basis for a long-volatility event trade:
    any event that resolves macro uncertainty. The FOMC press conference resolves
    policy-rate uncertainty, hence the premium.
 
-EMPIRICAL EDGE (SPY 2010-2024, internal):
-  • Median realized intraday range on FOMC days:    0.85% (vs 0.60% non-FOMC)
-  • Median ATM straddle implied move (T-2 entry):    0.65%
-  • Median realized > implied gap:                   ~0.20% per event
+EMPIRICAL EDGE (stylized facts from the literature; illustrative, not a
+backtest of this module — the shipped FOMC calendar covers 2020+):
+  • Realized intraday range on FOMC days is typically higher than non-FOMC days
+  • The ATM straddle implied move (T-2 entry) tends to under-price the realized
+    post-announcement move on average — that gap is the thesis
 
 The trade exploits the fact that the realized post-announcement move tends to
 exceed the IV-priced expected move — but only when the entry is gated. Buying
@@ -43,7 +44,8 @@ dominate.
 STRUCTURE
 ---------
   Long ATM call  + Long ATM put  (same strike, same expiry, debit-paid)
-  DTE: 7-14 days at entry (close to event but not 0DTE — gamma decay too punitive)
+  DTE: 7-14 days at entry preferred (default 10; UI allows 7-21). Close to the
+       event but not 0DTE — gamma/theta decay too punitive at 0DTE.
   Entry: T-2 trading days before scheduled FOMC announcement
   Exit:  T+1 trading day post-FOMC OR profit target +30% OR stop -40%
 
@@ -78,7 +80,10 @@ from alan_trader.strategies.base import (
     BaseStrategy, BacktestResult, SignalResult,
     StrategyStatus, StrategyType,
 )
-from alan_trader.backtest.engine import bs_price
+from alan_trader.backtest.engine import (
+    bs_price, bs_price_skew,
+    DEFAULT_SLIPPAGE_PER_LEG, DEFAULT_COMMISSION_PER_LEG,
+)
 from alan_trader.risk.metrics import compute_all_metrics
 
 logger = logging.getLogger(__name__)
@@ -223,8 +228,8 @@ class FOMCEventStraddleStrategy(BaseStrategy):
         stop_loss_pct:      float = 0.40,
         position_size_pct:  float = 0.025,
         max_concurrent:     int   = 1,
-        slippage_per_leg:   float = 0.05,
-        commission_per_leg: float = 0.65,
+        slippage_per_leg:   float = DEFAULT_SLIPPAGE_PER_LEG,
+        commission_per_leg: float = DEFAULT_COMMISSION_PER_LEG,
     ):
         self.dte_target         = dte_target
         self.days_before_fomc   = days_before_fomc
@@ -341,8 +346,8 @@ class FOMCEventStraddleStrategy(BaseStrategy):
         # Estimate straddle debit (BS, ATM, dte_target). Reject if too expensive.
         iv = vix / 100.0
         T  = self.dte_target / 365.0
-        call_v = bs_price(spot, spot, T, _RISK_FREE, iv, "call")
-        put_v  = bs_price(spot, spot, T, _RISK_FREE, iv, "put")
+        call_v = bs_price_skew(spot, spot, T, _RISK_FREE, iv, "call")
+        put_v  = bs_price_skew(spot, spot, T, _RISK_FREE, iv, "put")
         debit_per_share = call_v + put_v
         if debit_per_share > self.max_debit_pct_spot * spot:
             return SignalResult(
@@ -390,18 +395,27 @@ class FOMCEventStraddleStrategy(BaseStrategy):
           fomc_dates  : list / DatetimeIndex (optional → default_fomc_calendar)
         """
         # ── Resolve params ────────────────────────────────────────────────
-        dte_tgt   = kwargs.get("dte_target",         self.dte_target)
-        d_before  = kwargs.get("days_before_fomc",   self.days_before_fomc)
-        d_after   = kwargs.get("days_after_fomc",    self.days_after_fomc)
-        vix_max   = kwargs.get("vix_max",            self.vix_max)
-        ivr_max   = kwargs.get("ivr_max",            self.ivr_max)
-        debit_max = kwargs.get("max_debit_pct_spot", self.max_debit_pct_spot)
-        pt_pct    = kwargs.get("profit_target_pct",  self.profit_target_pct)
-        sl_pct    = kwargs.get("stop_loss_pct",      self.stop_loss_pct)
-        pos_sz    = kwargs.get("position_size_pct",  self.position_size_pct)
-        max_conc  = kwargs.get("max_concurrent",     self.max_concurrent)
+        # Use "value if not None else default" rather than `kwargs.get(k, dflt)`
+        # alone, so a caller (e.g. the dash UI) that passes an explicit None for
+        # an unset control falls back to the instance default instead of crashing
+        # — and a legitimate 0/0.0 value is never silently dropped.
+        def _resolve(key, default):
+            val = kwargs.get(key, default)
+            return val if val is not None else default
+
+        dte_tgt   = _resolve("dte_target",         self.dte_target)
+        d_before  = _resolve("days_before_fomc",   self.days_before_fomc)
+        d_after   = _resolve("days_after_fomc",    self.days_after_fomc)
+        vix_max   = _resolve("vix_max",            self.vix_max)
+        ivr_max   = _resolve("ivr_max",            self.ivr_max)
+        debit_max = _resolve("max_debit_pct_spot", self.max_debit_pct_spot)
+        pt_pct    = _resolve("profit_target_pct",  self.profit_target_pct)
+        sl_pct    = _resolve("stop_loss_pct",      self.stop_loss_pct)
+        pos_sz    = _resolve("position_size_pct",  self.position_size_pct)
+        max_conc  = _resolve("max_concurrent",     self.max_concurrent)
         slip      = self.slippage_per_leg
         comm      = self.commission_per_leg
+        skew      = 0.15   # equity-index downside skew slope (see engine.effective_iv)
 
         # ── VIX (required) ────────────────────────────────────────────────
         vix_df = auxiliary_data.get("vix")
@@ -470,8 +484,12 @@ class FOMCEventStraddleStrategy(BaseStrategy):
                 days_held = (ts - tr["entry_date"]).days
                 dte_rem   = max(1, tr["entry_dte"] - days_held)
                 T         = dte_rem / 365.0
-                cv = bs_price(spot, tr["strike"], T, _RISK_FREE, iv, "call")
-                pv = bs_price(spot, tr["strike"], T, _RISK_FREE, iv, "put")
+                # Price each leg with skew-adjusted IV: once spot drifts away from
+                # the fixed strike the legs are no longer ATM, and the put leg
+                # (lower strike relative to a risen spot) carries the index
+                # downside smirk. Flat IV would over-value the call wing.
+                cv = bs_price_skew(spot, tr["strike"], T, _RISK_FREE, iv, "call", skew_slope=skew)
+                pv = bs_price_skew(spot, tr["strike"], T, _RISK_FREE, iv, "put",  skew_slope=skew)
                 # Apply close-side slippage
                 cur_value_per = max(0.0, (cv + pv - 2 * slip) * 100)
                 cur_value     = cur_value_per * tr["contracts"]
@@ -532,10 +550,12 @@ class FOMCEventStraddleStrategy(BaseStrategy):
                     gates_pass = False
                     reasons.append(f"ivr {ivr_val:.2f} > {ivr_max}")
 
-                # Price the straddle
+                # Price the straddle. Strike == spot (ATM) so skew is neutral at
+                # entry by construction; use bs_price_skew for path-consistency
+                # with the MTM/exit marks above (bs_price_skew(K==S) == bs_price).
                 T = dte_tgt / 365.0
-                call_v = bs_price(spot, spot, T, _RISK_FREE, iv, "call") + slip
-                put_v  = bs_price(spot, spot, T, _RISK_FREE, iv, "put")  + slip
+                call_v = bs_price_skew(spot, spot, T, _RISK_FREE, iv, "call", skew_slope=skew) + slip
+                put_v  = bs_price_skew(spot, spot, T, _RISK_FREE, iv, "put",  skew_slope=skew) + slip
                 debit_per_share = call_v + put_v
                 debit_per_contract = debit_per_share * 100
 
@@ -578,8 +598,8 @@ class FOMCEventStraddleStrategy(BaseStrategy):
                         # mid-price (without slippage roundtrip) since slippage was
                         # already paid as part of debit_total.
                         T = dte_tgt / 365.0
-                        mid_call = bs_price(spot, spot, T, _RISK_FREE, iv, "call")
-                        mid_put  = bs_price(spot, spot, T, _RISK_FREE, iv, "put")
+                        mid_call = bs_price_skew(spot, spot, T, _RISK_FREE, iv, "call", skew_slope=skew)
+                        mid_put  = bs_price_skew(spot, spot, T, _RISK_FREE, iv, "put",  skew_slope=skew)
                         open_value += max(0.0, (mid_call + mid_put) * 100 * contracts)
 
             # ── 3. Equity mark ───────────────────────────────────────────

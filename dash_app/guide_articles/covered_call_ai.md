@@ -11,7 +11,7 @@ The static 0.30 delta rule:
 - **Over-sells in strong uptrends** — you cap your gain at 0.30 delta above spot, then SPY rips through your strike and you miss the upside
 - **Under-sells in high-IVR environments** — in 2022 when VIX was 35+, selling 0.30 delta gave you 8% annualized premium. A 0.25 delta would have given you 6% and let you hold the stock through more of the rally
 
-The AI optimizer solves this by learning from historical outcomes: which (delta, DTE) combinations actually maximized risk-adjusted premium extraction for each vol regime? The model adapts the strike and DTE to current conditions, using IVR, momentum, earnings proximity, and vol term structure as inputs.
+The AI optimizer learns from historical outcomes whether writing a covered call is likely to be profitable in the current regime. In the shipped backtest this is simplified to a **binary strike-mode choice** — aggressive (≈0.30 delta) vs conservative (≈0.15 delta) — at a fixed target DTE, gated by an IVR floor and an earnings-proximity filter. It does **not** search a continuous (delta, DTE) grid; that broader framing is the design thesis, not the implemented behavior. Inputs are IVR, momentum, earnings proximity, and vol-regime features.
 
 ```
 Static rule:    Always sell 0.30 delta, 30 DTE
@@ -115,15 +115,21 @@ if exit_px <= strike:
 else:
     cc_pnl = premium + (strike - spot[i])      # capped gain
 
-# P&L of just holding:
-hold_pnl = exit_px - spot[i]
+# Label: the covered call "wins" if the position itself made money over the
+# window (premium collected outweighs any capital loss). This is an
+# ABSOLUTE-P&L label, NOT a "beat buy-and-hold" label.
+label[i] = 1 if cc_pnl > 0.0 else 0
 
-# Label: covered call wins if cc_pnl ≥ 90% of hold_pnl
-# (allow 10% slippage — CC doesn't need to beat hold by much to be worth it)
-label[i] = 1 if cc_pnl >= hold_pnl * 0.90 else 0
-
-# Positive rate: ~55-60% (CC wins when stock is flat to slightly up)
+# The positive rate is data-dependent — inspect it on your own training
+# window rather than assuming a fixed figure.
 ```
+
+> Note on backtest realism: the live backtest charges commission + slippage
+> per contract when a call is written and again on a profit-target/stop
+> buy-back (calls left to expire worthless incur no closing fee), prices the
+> short call with a skew-adjusted IV (`bs_price_skew`, so an OTM call sits
+> below the ATM IV implied by VIX — a conservative credit), and marks any open
+> short call to market each bar so the equity curve is not a step function.
 
 ---
 
@@ -142,6 +148,8 @@ Timeline:
 Unlike the other AI strategies, this strategy **always holds the underlying stock**. The AI only controls the covered call overlay — whether to write a call, at which delta, and for which DTE. The stock position runs continuously; the covered call is layered on top.
 
 ---
+
+> The two walkthroughs below are **illustrative scenarios**, not audited backtest trades. The premiums shown are flat-IV approximations and exclude commission/slippage; the live backtest applies skew and both legs of friction, so realized credits are somewhat smaller.
 
 ## Real Trade Walkthrough — Aggressive Mode
 

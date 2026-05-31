@@ -61,6 +61,12 @@ TRADE STRUCTURES (defined risk only)
 - BEAR predicted : bear put debit spread on SPY (long put +0.30 delta, short put 5% lower)
 
 DTE 30, profit target 50% of credit / 100% of debit, stop loss 2x credit / 50% of debit.
+Credit-spread stops are capped at the wing width so they always remain reachable.
+
+COSTS & PRICING REALISM
+-----------------------
+- Legs priced with a linear equity-index vol skew (bs_price_skew), not flat IV.
+- Commission AND slippage charged per leg x contracts on BOTH entry and exit.
 
 ENTRY GATING
 ------------
@@ -88,7 +94,12 @@ from alan_trader.strategies.base import (
     StrategyStatus,
     StrategyType,
 )
-from alan_trader.backtest.engine import bs_price
+from alan_trader.backtest.engine import (
+    bs_price,
+    bs_price_skew,
+    DEFAULT_SLIPPAGE_PER_LEG,
+    DEFAULT_COMMISSION_PER_LEG,
+)
 from alan_trader.risk.metrics import compute_all_metrics
 
 logger = logging.getLogger(__name__)
@@ -96,6 +107,7 @@ logger = logging.getLogger(__name__)
 # ── Constants ────────────────────────────────────────────────────────────────
 _RISK_FREE_RATE   = 0.045
 _FORWARD_DAYS     = 60       # label horizon
+_SKEW_SLOPE       = 0.15     # equity-index downside skew (passed to bs_price_skew)
 _SAVED_MODELS_DIR = Path(__file__).parent.parent / "saved_models"
 
 _LABEL_BULL =  1
@@ -235,6 +247,11 @@ class YieldCurveRegimeStrategy(BaseStrategy):
 
     Walk-forward: 252-bar warmup, retrain every 60 bars, no look-ahead in
     features or labels. Macro auxiliary data is REQUIRED — no synthetic yields.
+
+    Pricing realism: option legs are priced with a linear equity-index volatility
+    skew (bs_price_skew / effective_iv) rather than a single flat IV, so OTM put
+    wings carry a realistic premium. Both commission AND bid/ask slippage are
+    charged per leg × contracts on BOTH entry and exit.
     """
 
     name                 = "yield_curve_regime"
@@ -519,6 +536,7 @@ class YieldCurveRegimeStrategy(BaseStrategy):
         n_est     = n_estimators      if n_estimators      is not None else self.n_estimators
         sl_mult   = self.stop_loss_mult
         comm      = self.commission_per_leg
+        slip      = DEFAULT_SLIPPAGE_PER_LEG   # adverse fill per leg (BS-mark units, per share)
         warmup    = self.warmup_bars
         retrain_every = self.retrain_every
         r         = _RISK_FREE_RATE
@@ -595,7 +613,10 @@ class YieldCurveRegimeStrategy(BaseStrategy):
                 # Compute current value & PnL per spread
                 cur_val, pnl_per = _spread_value_and_pnl(spot, T_now, r, iv_val, trade)
                 pnl_tot   = pnl_per * trade["contracts"] * 100
+                # Exit frictions: commission ($/contract) + slippage (per-share BS-mark × 100).
                 close_comm = trade["legs"] * comm * trade["contracts"]
+                close_slip = trade["legs"] * slip * trade["contracts"] * 100
+                exit_cost  = close_comm + close_slip
 
                 exit_reason = None
                 if struct == "bear_put_spread":
@@ -608,11 +629,15 @@ class YieldCurveRegimeStrategy(BaseStrategy):
                         exit_reason = "stop_loss"
                 else:
                     # Credit structures: PT = capture pt of credit (cost down to 50% credit).
-                    # SL = cur_cost >= sl_mult * credit.
+                    # SL = cur_cost >= sl_mult * credit. The cost to close a vertical/condor
+                    # is bounded above by the wing width, so a naive sl_mult*credit threshold
+                    # can sit ABOVE the wing and never trigger. Cap it at the wing (full max
+                    # loss) so the stop is always reachable.
                     credit = trade["credit"]
+                    stop_level = min(sl_mult * credit, trade["wing"])
                     if pnl_per >= pt * credit:
                         exit_reason = "profit_target"
-                    elif cur_val >= sl_mult * credit:
+                    elif cur_val >= stop_level:
                         exit_reason = "stop_loss"
 
                 if exit_reason is None and dte_rem <= 1:
@@ -621,7 +646,7 @@ class YieldCurveRegimeStrategy(BaseStrategy):
                     exit_reason = "end_of_data"
 
                 if exit_reason is not None:
-                    net_pnl = round(pnl_tot - close_comm, 2)
+                    net_pnl = round(pnl_tot - exit_cost, 2)
                     reserved_margin -= trade["margin_reserved"]
                     capital         += net_pnl
                     closed_trades.append({
@@ -755,7 +780,10 @@ class YieldCurveRegimeStrategy(BaseStrategy):
             if margin_needed + reserved_margin > capital:
                 continue
 
+            # Entry frictions: commission ($/contract) + slippage (per-share BS-mark × 100).
             open_comm = new_trade["legs"] * comm * contracts
+            open_slip = new_trade["legs"] * slip * contracts * 100
+            entry_cost = open_comm + open_slip
             expiry_idx = min(i + dte_tgt, n - 1)
 
             new_trade.update({
@@ -769,7 +797,7 @@ class YieldCurveRegimeStrategy(BaseStrategy):
             })
             open_trades.append(new_trade)
             reserved_margin += margin_needed
-            capital -= open_comm
+            capital -= entry_cost
 
             signal_ledger.append({
                 "date":            dt.date(),
@@ -868,8 +896,8 @@ def _build_spread_trade(*, spot: float, T: float, r: float, iv: float,
         if long_put_K >= short_put_K:
             return None
         credit = (
-            bs_price(spot, short_put_K, T, r, iv, "put")
-            - bs_price(spot, long_put_K,  T, r, iv, "put")
+            bs_price_skew(spot, short_put_K, T, r, iv, "put", skew_slope=_SKEW_SLOPE)
+            - bs_price_skew(spot, long_put_K,  T, r, iv, "put", skew_slope=_SKEW_SLOPE)
         )
         if credit <= 0.05:
             return None
@@ -893,8 +921,8 @@ def _build_spread_trade(*, spot: float, T: float, r: float, iv: float,
         if short_put_K >= long_put_K:
             return None
         debit = (
-            bs_price(spot, long_put_K,  T, r, iv, "put")
-            - bs_price(spot, short_put_K, T, r, iv, "put")
+            bs_price_skew(spot, long_put_K,  T, r, iv, "put", skew_slope=_SKEW_SLOPE)
+            - bs_price_skew(spot, short_put_K, T, r, iv, "put", skew_slope=_SKEW_SLOPE)
         )
         if debit <= 0.05:
             return None
@@ -918,10 +946,10 @@ def _build_spread_trade(*, spot: float, T: float, r: float, iv: float,
     if long_put_K >= short_put_K or short_call_K >= long_call_K:
         return None
     credit = (
-        bs_price(spot, short_call_K, T, r, iv, "call")
-        - bs_price(spot, long_call_K,  T, r, iv, "call")
-        + bs_price(spot, short_put_K,  T, r, iv, "put")
-        - bs_price(spot, long_put_K,   T, r, iv, "put")
+        bs_price_skew(spot, short_call_K, T, r, iv, "call", skew_slope=_SKEW_SLOPE)
+        - bs_price_skew(spot, long_call_K,  T, r, iv, "call", skew_slope=_SKEW_SLOPE)
+        + bs_price_skew(spot, short_put_K,  T, r, iv, "put",  skew_slope=_SKEW_SLOPE)
+        - bs_price_skew(spot, long_put_K,   T, r, iv, "put",  skew_slope=_SKEW_SLOPE)
     )
     if credit <= 0.10:
         return None
@@ -952,24 +980,24 @@ def _spread_value_and_pnl(spot: float, T: float, r: float, iv: float,
     struct = trade["structure"]
     if struct == "bull_put_spread":
         cost = max(
-            bs_price(spot, trade["short_put_K"], T, r, iv, "put")
-            - bs_price(spot, trade["long_put_K"],  T, r, iv, "put"),
+            bs_price_skew(spot, trade["short_put_K"], T, r, iv, "put", skew_slope=_SKEW_SLOPE)
+            - bs_price_skew(spot, trade["long_put_K"],  T, r, iv, "put", skew_slope=_SKEW_SLOPE),
             0.0,
         )
         return cost, trade["credit"] - cost
     if struct == "bear_put_spread":
         val = max(
-            bs_price(spot, trade["long_put_K"],  T, r, iv, "put")
-            - bs_price(spot, trade["short_put_K"], T, r, iv, "put"),
+            bs_price_skew(spot, trade["long_put_K"],  T, r, iv, "put", skew_slope=_SKEW_SLOPE)
+            - bs_price_skew(spot, trade["short_put_K"], T, r, iv, "put", skew_slope=_SKEW_SLOPE),
             0.0,
         )
         return val, val - trade["debit"]
     # iron condor
     cost = max(
-        bs_price(spot, trade["short_call_K"], T, r, iv, "call")
-        - bs_price(spot, trade["long_call_K"],  T, r, iv, "call")
-        + bs_price(spot, trade["short_put_K"],  T, r, iv, "put")
-        - bs_price(spot, trade["long_put_K"],   T, r, iv, "put"),
+        bs_price_skew(spot, trade["short_call_K"], T, r, iv, "call", skew_slope=_SKEW_SLOPE)
+        - bs_price_skew(spot, trade["long_call_K"],  T, r, iv, "call", skew_slope=_SKEW_SLOPE)
+        + bs_price_skew(spot, trade["short_put_K"],  T, r, iv, "put",  skew_slope=_SKEW_SLOPE)
+        - bs_price_skew(spot, trade["long_put_K"],   T, r, iv, "put",  skew_slope=_SKEW_SLOPE),
         0.0,
     )
     return cost, trade["credit"] - cost

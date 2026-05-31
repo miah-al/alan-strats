@@ -254,10 +254,13 @@ alpha-generation strategy.
 SPY had crossed the gamma flip level (~$460) on January 5. By January 18, the regime
 had been confirmed negative for 10 consecutive days. Deep negative.
 
-**Emergency allocation (confirmed deep negative):**
+**Allocation (confirmed deep negative):**
 
-No cooldown override for deep negative — emergency protocol allows immediate rebalance.
-SPY allocation reduced from 60% to 15%.
+By Jan 18 the regime had been DeepNegative for well past the cooldown window, so the
+normal rebalance fired and SPY allocation stepped down toward 15%. (Note: the code has
+**no** special emergency-override that bypasses the cooldown — de-risking into a crash is
+governed by the same `confirm_days` / `cooldown_days` logic as every other transition.
+Acting faster than that is a discretionary decision, not an implemented rule.)
 
 **What the deep negative GEX environment looked like:**
 
@@ -295,11 +298,14 @@ $100,000 portfolio at 15% SPY:
 Buy-and-hold SPY (100% allocation):
   P&L: $100,000 × (−9.9%) = −$9,900    (−9.9% of portfolio)
 
-Protected capital: $8,656 relative to buy-and-hold SPY
+Difference: roughly an order of magnitude smaller loss than buy-and-hold over the window.
 ```
 
-This is the core value proposition of the strategy: in the worst 3-week equity environment
-of 2022, the GEX Positioning strategy lost 1.2% vs buy-and-hold's 9.9%.
+Note: this worked example assumes the strategy was already at 15% SPY for the whole window
+and credits 4.5% T-bill income on cash. The implemented backtest holds cash at 0% and only
+reaches 15% after `confirm_days` / `cooldown_days` are satisfied, so realized protection
+would be somewhat smaller than this stylized example. The qualitative point holds: cutting
+equity weight ahead of a deep-VIX regime sharply reduces drawdown versus buy-and-hold.
 
 ---
 
@@ -364,21 +370,25 @@ for 4 consecutive weeks. 90% SPY allocation captured +2.8% SPY gain for +2.6% po
 Signal Snapshot — SPY, Oct 4 2023:
   SPY Spot:                  ████░░░░░░   $418     [RECENT SELLOFF]
   Estimated Net GEX (VIX):   ██░░░░░░░░   −$1.2B   [BARELY NEGATIVE]
-  GEX Regime (VIX proxy):    ████░░░░░░   Negative
-  VIX:                       ████░░░░░░    19.3    [ABOVE 18 MID-LOW THRESHOLD]
+  GEX Regime (VIX proxy):    ████░░░░░░   Neutral / Flip Zone
+  VIX:                       ████░░░░░░    19.3    [IN THE 18–22 NEUTRAL BAND]
   Confirm Days:              █████░░░░░    5 days  [ABOVE CONFIRM THRESHOLD]
   Cooldown elapsed:          ████████░░    8 days  [OK]
   ─────────────────────────────────────────────────────────────────
-  SPY Allocation Signal:     35%  →  DEFENSIVE (marginally triggered Negative regime)
+  SPY Allocation Signal:     60%  →  MODERATE (ambiguous near-flip regime)
 ```
 
-Regime barely triggered (GEX just below −$1.5B threshold via VIX proxy). Strategy cut
-equity from 60% to 35%. SPY then reversed strongly: +6% over the following 2 weeks
-(CPI beat on Oct 12, rally began). The 35% allocation missed much of the recovery.
+VIX at 19.3 lands in the 18–22 band, which the code classifies as **Neutral / Gamma Flip
+Zone → 60% SPY** (not Negative/35% — that band starts at VIX 22). This is exactly the
+"ambiguous" zone the strategy is most cautious in. SPY then reversed strongly: +6% over the
+following 2 weeks (CPI beat on Oct 12). Trimming from a full 90% to 60% in this zone gave
+up some of the recovery, which is the intended trade-off: less upside for less drawdown
+exposure when the regime is genuinely unclear.
 
 **The lesson:** Near-flip readings (GEX between −$1.5B and +$1.5B, or VIX between 18–22)
-are the hardest to trade. The 7-day confirmation requirement (v2 code) was added precisely
-to avoid hairpin regime flips on borderline GEX readings.
+are the hardest to trade. The default 3-day confirmation requirement (`confirm_days=3`)
+exists precisely to avoid hairpin regime flips on borderline readings; raising it trades
+fewer whipsaws for slower reaction to genuine regime changes.
 
 ---
 
@@ -415,23 +425,29 @@ Real GEX data will signal regime changes earlier than the backtest implies.
 
 ## P&L Attribution — What Drives Returns
 
-```
-Annual attribution across 2019–2024 (estimated):
+The return of this strategy comes from a small number of structural sources. The list
+below is **qualitative** — the percentages that previously appeared here were illustrative
+and not produced by the backtest engine, so they have been removed.
 
-  Return Source                  % of Total Return
-  ──────────────────────────────────────────────────
-  SPY allocation in bull phases     +58%   (riding equity with high allocation)
-  Avoided drawdowns                 +29%   (capital preservation → smaller losses)
-  Cash income during low alloc.     +8%    (T-bill rate on cash)
-  Rebalancing friction              −5%    (transaction costs, timing lag)
-  False regime signals              −8%    (whipsaw in transition periods)
-  ──────────────────────────────────────────────────
-  Net                               +82%   of underlying SPY return, at 30% lower max DD
-
-The strategy does NOT generate alpha vs SPY in strong bull markets.
-It generates alpha relative to SPY on a RISK-ADJUSTED basis:
-  Same return over full cycles, at significantly lower maximum drawdown.
 ```
+  Return Source                 Direction   Notes
+  ────────────────────────────  ──────────  ─────────────────────────────────────────────
+  SPY allocation in calm phases  +          Most of the upside: high weight when VIX is low
+  Avoided drawdowns              +          Capital preserved by cutting weight when VIX spikes
+  Cash income on the cash sleeve  0         Modeled as 0% in the current backtest (conservative)
+  Rebalancing friction           −          Slippage + commission on each regime change
+  False / whipsaw regime signals −          Cost of acting on transient VIX moves
+```
+
+This is a **drawdown-management** overlay, not an alpha-generation strategy. The design
+goal is to track SPY's long-run return while clipping the worst drawdowns by de-risking
+in high-VIX regimes; whether it beats SPY on a risk-adjusted basis depends on the test
+window and must be measured, not assumed.
+
+> **TODO (re-run):** Populate honest full-period figures (CAGR, Sharpe, max drawdown vs
+> buy-and-hold SPY) by running the backtest in the Strategies tab. Cash currently earns
+> 0% in the model, so reported returns are conservative relative to a version that accrues
+> T-bill income on the cash sleeve.
 
 ---
 
@@ -477,9 +493,11 @@ GEX    +$2B ─┤
 - [ ] Net GEX crosses below −$1.5B (or VIX > 22) for 3 consecutive days
 - [ ] Reduce 80% → 60% → then wait for 3 more days before next step
 
-**Emergency de-risk — deep negative GEX:**
-- [ ] VIX > 30 OR GEX < −$3B: move to 15% SPY immediately (no cooldown wait)
-- [ ] This is the "life preserver" — use it without hesitation
+**Deep de-risk — deep negative GEX:**
+- [ ] VIX > 30 OR GEX < −$3B → DeepNegative regime → target 15% SPY
+- [ ] In the code this still passes through `confirm_days` / `cooldown_days`; moving
+      faster than that (a same-day "life preserver" cut) is a discretionary manual action,
+      not an automated rule.
 
 ---
 
@@ -522,25 +540,32 @@ GEX    +$2B ─┤
 
 ## Quick Reference
 
+These are the **actual** parameters and defaults in the code (`strategies/gex_positioning.py`).
+
 ```
-Parameter         Default  Range        Description
-----------------  -------  -----------  ------------------------------------------
-`gex_high_pos`    +$3B     +$2B–+$5B    Threshold for HighPositive regime
-`gex_mild_pos`    +$1.5B   +$0.5B–+$2B  Threshold for MildPositive regime
-`gex_neutral_lo`  −$1.5B   −$0.5B–−$2B  Lower bound of Neutral zone
-`gex_negative`    −$3B     −$2B–−$5B    Threshold for deep Negative regime
-`vix_high_pos`    15       12–17        VIX proxy for HighPositive
-`vix_mild_pos`    18       16–20        VIX proxy for MildPositive
-`vix_neutral_hi`  22       19–25        Upper bound of Neutral zone
-`vix_negative`    30       25–35        VIX proxy for deep Negative
-`alloc_high_pos`  90%      80–100%      SPY allocation in HighPositive
-`alloc_mild_pos`  80%      70–90%       SPY allocation in MildPositive
-`alloc_neutral`   60%      50–70%       SPY allocation in Neutral
-`alloc_negative`  35%      20–50%       SPY allocation in Negative
-`alloc_deep_neg`  15%      5–25%        SPY allocation in DeepNegative
-`confirm_days`    3        2–5          Days required to confirm new regime
-`cooldown_days`   5        3–10         Days between rebalances (except emergency)
+Parameter         Default   Description
+----------------  --------  ---------------------------------------------------------------
+`vix_low`         15        VIX ceiling for HighPositive regime (below → 90% SPY)
+`vix_mid_low`     18        VIX ceiling for MildPositive regime (→ 80% SPY)
+`vix_mid_high`    22        VIX ceiling for Neutral / gamma-flip zone (→ 60% SPY)
+`vix_high`        30        VIX ceiling for Negative regime (→ 35% SPY); above → 15% SPY
+`gex_pos_thr`     +1.5 ($B) Live mode: net GEX above this → positive-leaning regimes
+`gex_neg_thr`     −1.5 ($B) Live mode: net GEX below this → negative-leaning regimes
+`confirm_days`    3         Consecutive days in a new regime before switching allocation
+`cooldown_days`   5         Minimum days between allocation changes (anti-whipsaw)
+`slippage_pct`    0.0005    Proportional slippage charged on rebalance turnover
 ```
+
+Notes:
+- The five **allocations** (90 / 80 / 60 / 35 / 15% SPY) are fixed constants in the
+  code (`_ALLOC`), not tunable parameters.
+- In **live** mode the regime boundaries are derived from `gex_pos_thr` / `gex_neg_thr`:
+  HighPositive above `2×gex_pos_thr` (+$3B), MildPositive above `gex_pos_thr` (+$1.5B),
+  Neutral between the two thresholds, Negative below `gex_neg_thr` (−$1.5B), and
+  DeepNegative below `2×gex_neg_thr` (−$3B). The backtest uses the VIX proxy instead.
+- There is **no automatic "emergency override"** in the code: the cooldown applies to
+  every regime change, including moves into DeepNegative. The override discussed in the
+  walkthroughs below is a discretionary action, not an implemented rule.
 
 ---
 
@@ -601,11 +626,15 @@ Allocation moved from 80% → 60% SPY. Cooldown started.
 Allocation dropped to 35% SPY. By January 24, VIX hit 31, triggering DeepNegative at 15%.
 SPY closed at $428 that day, down 10.5% from Jan 5.
 
-**P&L outcome:** A $100,000 portfolio running GEX allocation:
+**P&L outcome (illustrative — not a backtest result):** A $100,000 portfolio running GEX
+allocation:
 - Jan 5 (80% SPY): $80,000 in SPY, $20,000 cash
-- By Jan 24 (15% SPY): through gradual de-risking, ending exposure was ~$15,000 SPY
-- Total portfolio drawdown: approximately -4.8% vs SPY drawdown of -10.5% over same period
-- Alpha generated: ~5.7 percentage points on a single regime shift cycle
+- By Jan 24 (15% SPY): through gradual de-risking, ending exposure was much lower
+- Because the equity weight was cut as VIX climbed, the portfolio's drawdown over this
+  window was materially smaller than buy-and-hold SPY's ~-10% slide.
+
+The specific point figures shown in earlier versions of this guide were illustrative, not
+engine output. Run the backtest over Jan 2022 to get exact numbers.
 
 **Key mechanic:** The confirmation filter prevented a false flip on the brief VIX spike to
 18.2 on December 20, 2021, which reversed within two days. By requiring 3 days, the strategy
@@ -629,12 +658,13 @@ MildPositive (80% SPY). Cooldown: 5 days.
 territory. After the 5-day cooldown cleared, allocation moved to 90% SPY. SPY rallied
 from $418 to $449 over the same window (+7.4%).
 
-**P&L outcome:** A $100,000 portfolio:
+**P&L outcome (illustrative — not a backtest result):** A $100,000 portfolio:
 - Oct 31 (60% SPY): $60,000 SPY exposure
-- Nov 3 (80% SPY after confirmation): $80,000 SPY exposure, captured the bulk of the rally
-- Nov 14 (90% SPY): $90,000 SPY — fully loaded heading into year-end
-- Total return Nov 1–14: approximately +5.6% (vs SPY +7.4%, slightly behind due to cooldown lag)
-- The cooldown cost was one day's alpha, but prevented whipsaw if the move had reversed
+- Nov 3 (80% SPY after confirmation): added exposure, captured most of the rally
+- Nov 14 (90% SPY): fully loaded heading into year-end
+- Because the strategy ramps weight up only after confirmation, it captures most — but
+  not all — of a fast recovery: it lags buy-and-hold SPY slightly on the way up in
+  exchange for not chasing a one-day reversal. Run the backtest for exact figures.
 
 **Key mechanic:** The regime shift from Neutral to MildPositive to HighPositive happened
 quickly (4 trading days for two step-ups). Without a cooldown, the strategy would have
@@ -653,25 +683,32 @@ year as carry trades piled into high-yield assets. Net GEX was estimated at +$2.
 positions began unwinding globally. VIX jumped from 16 to 23 in a single day (August 2).
 The confirmation filter was immediately relevant: one day does not change the regime.
 
-Day 2 (August 5): VIX hit 65 intraday — the highest reading since March 2020. The GEX
-strategy has a specific rule: even with a cooldown active, a single-day VIX move above
-50% of the vix_high parameter triggers an immediate regime override. VIX at 65 crossed
-the DeepNegative threshold (30) by a factor of 2×. Allocation moved immediately to 15%.
+Day 2 (August 5): VIX hit 65 intraday — the highest reading since March 2020. With VIX
+this far above the DeepNegative threshold (30), the regime classified as DeepNegative.
+The implemented code still applies the `confirm_days` / `cooldown_days` filters before
+changing allocation, so the model would not necessarily flip to 15% on the same day.
+This example illustrates a case where a discretionary manual de-risk ahead of the
+confirmation window is reasonable — but that override is a trader judgement, not an
+automated rule in the strategy.
 
-**P&L outcome:**
+**P&L outcome (illustrative — not a backtest result):**
 - August 1 (90% SPY at $552): $90,000 exposure
-- August 5 intraday: emergency de-risk to 15% — realized exit near $520 on SPY
 - SPY closed August 5 at $513, down 7.1% on the day
-- Portfolio loss on August 2–5: approximately -2.8% (vs SPY -7.1% over same window)
-- Alpha saved: 4.3 percentage points in 4 trading days
+- A discretionary de-risk on Aug 5 would have cut the loss versus staying 90% long; the
+  automated model (confirm/cooldown) would have de-risked more slowly. Either way the
+  loss was smaller than 100% buy-and-hold over the window.
+
+The earlier "-2.8% vs SPY -7.1%" and "4.3pp alpha" figures were illustrative, not engine
+output — run the backtest over early Aug 2024 for exact numbers.
 
 **Recovery note:** By August 8, VIX had fallen back to 24 (still Negative). The cooldown
 prevented chasing back into 80%+ SPY prematurely. Full HighPositive allocation was not
 restored until August 22 when VIX returned to 15.
 
-**Key mechanic:** This example shows both the confirmation filter (avoided a false flip on
-Aug 2 spike) and the emergency override (acted on the extreme Aug 5 spike). The two-layer
-logic — confirm slow moves, override extreme moves — is the core of robust regime following.
+**Key mechanic:** This example shows the confirmation filter avoiding a false flip on the
+Aug 2 spike. The "act immediately on the Aug 5 extreme" step is a discretionary overlay,
+not implemented logic — the code itself would wait for `confirm_days` / `cooldown_days`.
+Confirm slow moves automatically; treat acting ahead of confirmation as a manual call.
 
 ---
 
@@ -729,9 +766,11 @@ the same options. The two are correlated because:
 2. **Low/negative GEX → IV expansion.** When dealers are net short gamma, their hedging
    amplifies moves. Higher realized vol → options sellers demand higher premium → VIX rises.
 
-3. **Historical correlation.** Over 2018–2024, the correlation between daily changes in
-   net SPY GEX and daily changes in VIX was approximately -0.68. The relationship is
-   strongest at extremes (VIX > 25 or GEX < -$2B) where both signals align.
+3. **Historical correlation.** Daily changes in net SPY GEX and daily changes in VIX are
+   negatively correlated — when dealer gamma falls, implied vol tends to rise. The
+   relationship is strongest at extremes (high VIX / deeply negative GEX) where both
+   signals align. (The strategy uses VIX, not GEX, in the backtest, so this correlation
+   is the justification for the proxy rather than a measured input to the model.)
 
 **Where the proxy breaks down:**
 
@@ -900,17 +939,22 @@ Date          VIX Close  Regime        Suggested SPY Wt  Action
 ------------  ---------  ------------  ----------------  ---------------------------------------------
 Oct 3, 2022   33.6       DeepNegative  15%               Hold minimum allocation
 Oct 14, 2022  31.2       DeepNegative  15%               No change (below 30 threshold)
-Oct 21, 2022  29.8       Negative      35%               Day 1 of possible regime shift
+Oct 21, 2022  29.8       Negative      35%               Day 1 of possible regime shift (VIX < 30)
 Oct 24, 2022  28.4       Negative      35%               Day 2
 Oct 25, 2022  27.9       Negative      35%               Day 3 — confirmation met → buy SPY to 35%
-Nov 10, 2022  23.5       Negative      35%               Holding (no 3-day confirmation of next level)
-Nov 14, 2022  22.8       Neutral       60%               Day 1
-Nov 15, 2022  22.4       Neutral       60%               Day 2
-Nov 16, 2022  21.9       Neutral       60%               Day 3 — confirmation → buy SPY to 60%
+Nov 10, 2022  23.5       Negative      35%               Still ≥ 22 → still Negative; holding 35%
+Nov 14, 2022  22.8       Negative      35%               Still ≥ 22 → Negative (NOT Neutral yet)
+Nov 15, 2022  22.4       Negative      35%               Still ≥ 22 → Negative
+Nov 16, 2022  21.9       Neutral?      35%               First close < 22 → Neutral day 1 of 3
 ```
 
-Result: Two allocation increases during the bear market recovery, each triggered only
-after 3 confirmed closes in the new regime. No whipsawing on single-day VIX spikes.
+Key point on the band boundaries: the Neutral band is **18 ≤ VIX < 22**, so a close of
+22.8 or 22.4 is still **Negative (35% SPY)** — only Nov 16's 21.9 close is the *first* day
+in Neutral. Confirmation to 60% would require **three consecutive** closes below 22, which
+had not yet occurred by Nov 16. This is exactly how the `confirm_days=3` filter behaves:
+it deliberately lags band crossings to avoid acting on a single dip below a threshold. The
+two clean step-ups (to 35%, later to 60%) each fire only after three confirmed closes in
+the new band — no whipsawing on single-day VIX moves.
 
 **Why EOD is more practical for most traders:**
 

@@ -28,7 +28,7 @@ The AI layer adds precision: it predicts (1) how much IV will crush and (2) whet
 
 **The gap is the protection.** By entering after the gap, you know the worst-case scenario: the stock already moved X%. You're not predicting whether it will go up or down — that already happened. You're predicting whether it will *stay* near the new price level or extend dramatically further.
 
-**Historical base rate:** Post-earnings credit spreads on large-cap stocks (where the initial gap stays contained ±8%) have positive expectancy ~65% of the time, documented extensively in options strategy literature. The AI layer improves the hit rate by filtering out high-momentum stocks that extend their gaps.
+**Historical base rate:** Options-strategy literature suggests most large-cap earnings gaps are "one and done" — the stock settles near its post-gap level rather than extending. The exact containment rate is universe- and period-dependent and must be measured on your own data, not assumed. The AI layer aims to improve the hit rate by filtering out high-momentum stocks that extend their gaps. **TODO: report the realized containment base rate and post-cost win rate from a walk-forward backtest run.**
 
 ---
 
@@ -98,7 +98,7 @@ for each earnings event i:
     max_extension = max(|close - entry_price|) / entry_price
     label[i] = 1 if max_extension <= 0.08 else 0
 
-# Positive rate: ~65% (most gaps are "one and done")
+# Positive (contained) rate: data-dependent — measure per universe/period.
 # Negative cases: high-momentum stocks, macro events, secondary news
 ```
 
@@ -122,31 +122,36 @@ Note: This strategy uses **event-based training** rather than bar-based. The mod
 
 ---
 
-## Real Trade Walkthrough
+## Illustrative Trade Walkthrough
 
-**Stock:** AAPL | **Date:** February 2024 | **Announcement:** T+0
+> The numbers below are a **hand-constructed illustration** of the mechanics, not
+> an actual backtest result. They show how the features map to a trade decision.
 
-Pre-announcement: IV elevated, stock at $182.
-Earnings gap: +3.8% to $189 (beat on revenue).
+**Stock:** large-cap | **Announcement:** T+0, entry T+1
 
-Entry (T+1 morning): $189, IVR = 0.68 (still elevated)
+Pre-announcement: IV elevated, stock near $182.
+Earnings gap: +3.8% to ~$189 (revenue beat).
 
-Model features:
-- `earnings_gap_pct` = +0.038
-- `abs_gap_pct` = 0.038
-- `ivr` = 0.68 (good crush potential)
-- `gap_vs_rv` = 1.4 (gap = 1.4× recent daily vol — moderate)
-- `adx` = 22 (moderate trend, not strongly trending)
+Entry (T+1): ~$189, IVR ≈ 0.68 (still elevated)
 
-**Model output: P(contained) = 0.73** → enter bear call spread.
+Model features (illustrative):
+- `earnings_gap_pct` ≈ +0.038
+- `abs_gap_pct` ≈ 0.038
+- `ivr` ≈ 0.68 (crush potential)
+- `gap_vs_rv` ≈ 1.4 (gap ≈ 1.4× recent daily vol — moderate)
+- `adx` ≈ 22 (moderate trend)
 
-Trade:
-- Short call: $195 (3% above gap high)
-- Long call: $204 (5% wing)
-- Net credit: $1.40 | Max loss: $7.60 | Hold: 10 days
+**Model output (illustrative): P(contained) ≈ 0.73** → bear call spread.
 
-Outcome: AAPL ranged $186-$193 over next 10 days. Both calls expired worthless.
-**P&L: +$140 per contract.** IV crush from 45% to 28% over 3 days was the driver.
+Trade structure:
+- Short call ≈ 3% above the gap high
+- Long call ≈ a 5%-of-spot wing above the short
+- Hold up to 10 days; size so the defined-risk max loss ≈ `position_size_pct` of equity
+
+If the stock stays contained, the spread decays toward zero and is closed at the
+profit target. The driver is IV crush plus theta. **Realized per-trade P&L,
+including slippage and commissions, is reported by the backtest — see the TODO
+above for honest aggregate figures.**
 
 ---
 
@@ -197,10 +202,30 @@ Model trained (≥ 30 events)      Required
 Exit Trigger        Action
 ------------------  ----------------------------------------
 Profit target       50% of max credit reached → close spread
-Stop loss           2× max credit lost → close spread
+Stop loss           loss = 2× credit received → close spread
+                    (capped at structural max loss)
 Hold days           10 days elapsed → close at market
 End of data         Close at market
 ```
+
+The stop is a multiple of the **credit received**, not of max loss — a
+defined-risk spread cannot lose more than its max loss (1×), so a max-loss
+multiple ≥ 1 could never trigger.
+
+---
+
+## Costs & Pricing Realism
+
+- **Transaction costs** are charged on **both entry and exit**: per-leg slippage
+  + commission × 2 legs × contracts. Credit-spread edges are thin, so ignoring
+  these materially overstates returns.
+- **Volatility skew:** option legs are priced with the engine's skew-aware pricer
+  so OTM short/long strikes reflect the smile, rather than a single flat IV.
+  Falls back to flat-IV Black-Scholes if the skew pricer is unavailable.
+- **Position sizing:** contracts are sized so the defined-risk max loss is
+  approximately `position_size_pct` of current equity; P&L is scaled by the
+  contract count. Open positions are marked to market each day, so the equity
+  curve is not a step function.
 
 ---
 

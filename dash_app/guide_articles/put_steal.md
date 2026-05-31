@@ -109,13 +109,19 @@ By holding large books of deep ITM puts, they are statistically guaranteed to ca
 
 | Leg | Action | Strike | Role |
 |---|---|---|---|
-| Short put | SELL | Spot × (1 − itm_pct/2) | Captures forfeited premium |
-| Long put | BUY | Short strike × 0.96 | Defines max loss |
+| Short put | SELL | Spot × (1 − itm_pct) | Captures forfeited premium |
+| Long put | BUY | Short strike × (1 − wing_pct) | Defines max loss |
 
 - **DTE target:** 21 days
-- **Max profit:** Credit received × 100
-- **Max loss:** (Wing width − credit) × 100
+- **Max profit:** Credit received × 100 (per spread)
+- **Max loss:** (Wing width − credit) × 100 (per spread)
 - **Breakeven:** Short strike − net credit
+
+> **Costs & pricing.** The backtest charges both commission and slippage on
+> every leg, on entry *and* exit, scaled by the number of contracts. Option
+> legs are priced with a downside volatility skew (OTM puts carry higher IV),
+> not a single flat ATM vol — so collected credits and marks are conservative
+> and realistic.
 
 ### Example at Current Rates (~4.3%)
 
@@ -156,7 +162,7 @@ The NII gate identifies *when* the structural edge is open. The GBM classifier p
 
 | Gate | Default | Notes |
 |---|---|---|
-| NII > threshold | 0.01 | Structural edge is open |
+| NII > threshold | 0.05 | Structural edge is open |
 | ATM IV ≤ iv_max | 60% | Avoid panic environments |
 | VIX ≤ vix_max | 40 | Avoid systemic stress |
 | AI confidence ≥ thresh | 55% | Crash risk is low |
@@ -182,8 +188,13 @@ The NII gate identifies *when* the structural edge is open. The GBM classifier p
 | Trigger | Action |
 |---|---|
 | Profit ≥ 50% of max | Close early — capture most of the credit |
-| Loss ≥ 2× max profit | Stop out |
+| Loss ≥ stop_loss_mult × credit (capped at max loss) | Stop out |
 | DTE ≤ 5 | Close — gamma risk near expiry |
+
+> **Note on the stop.** Because a bull put spread is defined-risk, its loss can
+> never exceed max loss; a stop set at a multiple *of max loss* could never
+> fire. The stop therefore triggers when the loss reaches
+> `stop_loss_mult × credit collected`, capped at the spread's max loss.
 
 ---
 
@@ -204,10 +215,19 @@ The NII gate identifies *when* the structural edge is open. The GBM classifier p
 
 | Metric | Value |
 |---|---|
-| Max loss | Defined at entry: (wing − credit) × 100 |
-| Target win rate | ~65–70% |
-| Target Sharpe | 1.5 |
-| Holding period | ~21 days |
+| Max loss | Defined at entry: (wing − credit) × 100 per spread |
+| Win rate | TODO — re-run backtest; high-probability OTM credit spreads typically win often but with asymmetric (small-win / large-loss) payoff |
+| Sharpe | TODO — re-run backtest with current cost/skew model before quoting a figure |
+| Holding period | ~21 days (DTE target), exits by DTE ≤ 5 |
 | Robinhood eligible | ✅ Bull put spread — no naked legs |
+
+> **Honest performance note.** Earlier versions of this page quoted a fixed win
+> rate (~65–70%) and a Sharpe of 1.5. Those figures predate the corrected
+> backtest, which now charges commissions **and** slippage per leg on both entry
+> and exit, prices the OTM legs with a volatility skew, scales P&L by the number
+> of contracts, uses a stop that can actually trigger, and marks open positions
+> to market. All of these reduce headline performance versus the old model, so
+> the previous numbers are not reliable. Re-run the backtest to obtain honest
+> Sharpe / win-rate / return figures (TODO).
 
 > **This is not a directional bet.** You win as long as the stock doesn't crash through the short strike. The edge comes from a structural market microstructure phenomenon — retail non-exercise — not from predicting stock direction.

@@ -12,137 +12,122 @@ other side of that flow charge a premium — a "fear tax" — that shows up as e
 relative to call IV at the same strike. The resulting **IV skew** is not a fair price for
 downside risk; it is an overcharge for retail-demanded protection.
 
-Volatility arbitrage captures this overcharge. The trade is conceptually simple: sell the
-overpriced put, buy the cheap call (same strike — creates a synthetic position), and hedge
-the net delta exposure with short stock. The result is a position that profits when the
-IV skew compresses — when puts get cheaper relative to calls — regardless of whether the
-stock goes up or down. You are not betting on direction. You are betting that a 13-vol-point
-premium in puts over calls will narrow toward its historical 5-8 vol point mean.
+Volatility arbitrage captures this overcharge. The implemented trade is a
+fully defined-risk, Robinhood-Level-3-compliant **5-leg** structure (NOT a
+short-stock hedge):
+
+1. **Sell the overpriced put at K** and **buy a protective put at K − put_spread_width**
+   (a bull put spread → net credit, positive theta).
+2. **Buy the cheap call at K** (low IV relative to the put at the same strike).
+3. **Hedge the net long delta with a bear call spread at the money**
+   (short call ≈ spot, long call ≈ spot + hedge_spread_width).
+
+There is **no short-stock leg** anywhere in the code — the delta hedge is the
+bear call spread, which keeps the position defined-risk and broker-compliant.
+The result profits when the IV skew compresses (puts get cheaper relative to
+calls). You are primarily betting that an elevated put-over-call premium narrows
+toward its mean; the long call and the ATM hedge shape the directional exposure
+around that.
 
 ### The Structural Basis for HOOD Skew
 
-HOOD's options market has a measurable and persistent structural skew. Analysis of 503
-trading days (March 2024 – March 2026) shows:
+High-attention retail names like HOOD tend to show a persistent put-over-call IV skew.
+The shape below is **illustrative intuition, NOT a verified measurement** — run
+`assess_candidate` or the in-app backtest for actual per-ticker figures:
 
 ```
-HOOD IV Skew Statistics:
-  ATM put skew mean (put IV − call IV): +14.2 vol pts
-  Minimum observed:                     +5 vol pts (almost never collapses fully)
-  Maximum observed:                     +48 vol pts (extreme events)
-  90th percentile:                      +28 vol pts
+Illustrative IV-skew profile (high-IV retail name):
+  ATM put skew (put IV − call IV): typically low-double-digit vol pts on average
+  Rarely collapses fully toward 0; can spike to 40+ vp on real events
 
-  Historical skew mean-reversion speed:
-    From skew > 20 vp: mean reverts to 8-10 vp within 3 days, 75% of trades
-    From skew > 35 vp: does NOT revert quickly (often real event risk)
-    Sweet spot: skew 10-25 vp with no known catalyst
+  Mean-reversion intuition:
+    Moderate skew (~10–25 vp): tends to revert on a short hold (the edge)
+    Extreme skew (> ~35 vp):   often real event risk, does NOT revert quickly
+    Sweet spot: ~10–25 vp with no known catalyst
 ```
 
-This is structural — HOOD's retail-heavy investor base perpetually overpays for put
-protection relative to its actual realized volatility distribution.
+This is structural — a retail-heavy investor base tends to overpay for put
+protection relative to the stock's actual realized-volatility distribution.
 
 ---
 
 ## The Three P&L Sources
 
-### 1. Put IV Compression (~60% of winning trades)
+> **Note on examples.** The trade walkthroughs below are **illustrative,
+> hand-constructed scenarios**, not entries pulled from a verified backtest. They
+> exist to explain mechanics. Dollar figures are hypothetical. The delta hedge
+> in the **implemented code is a bear call spread**, not a short-stock position —
+> the older short-stock walkthroughs have been corrected.
+
+### 1. Put IV Compression (primary edge)
 
 The most common win: the IV overpricing corrects naturally as fear subsides. Retail
 attention fades, the sold put loses value faster than expected, and the closing cost
-is far below the initial credit.
+is below the initial credit.
 
-**Example — Trade A (Feb 2025, HOOD at $60.44, +$904):**
-
-```
-Entry:
-  Strike: $69 (OTM put, 14.2% OTM)
-  Put IV:  67.6%    ← overpriced
-  Call IV: 54.5%    ← fair pricing
-  Skew:    13.1 vol pts  ← the structural overpayment
-  DTE:     10
-
-  Sell 6 puts @ $9.20  → credit $5,520
-  Buy 6 calls @ $0.39  → debit  $234
-  Short 565 HOOD shares (delta hedge) @ $60.44 → short $34,149
-
-2 days later (put IV compressed from 67.6% → 54%):
-  Buy back 6 puts @ $7.79 → debit $4,674
-  Sell 6 calls → (expired small) → nominal value
-  Cover short HOOD (roughly flat)
-
-  Put P&L: $5,520 − $4,674 = +$846
-  Call P&L: small, +$58
-  Short stock P&L: roughly flat (stock moved <1%)
-  Total: +$904
-```
-
-### 2. Directional Gain From Delta Hedge (~25% of wins)
-
-When we short stock to delta-hedge, we are not trying to profit from direction.
-But if the stock falls sharply, the short stock position becomes a large profit center —
-sometimes larger than the options P&L.
-
-**Example — Trade B (Feb 2025, HOOD at $56.06, +$2,126 — Best Trade):**
+**Illustrative scenario A (HOOD ~$60, hypothetical):**
 
 ```
-Entry:
-  Strike: $61 (near-ATM put)
-  Put IV:  63.7%
-  Call IV: 51.4%
-  Skew:    12.3 vol pts
-  DTE:     8
+Entry (skew_arb, bull-put-spread + long call + bear-call-spread hedge):
+  Strike K: $61 (near-ATM)
+  Put IV:  ~64%    ← overpriced
+  Call IV: ~51%    ← fairer
+  Skew:    ~13 vol pts  ← the structural overpayment
+  DTE:     ~10
 
-  Sell 7 puts @ $5.75 → credit $4,025
-  Buy 7 calls @ $0.53 → debit  $371
-  Short 661 HOOD shares @ $56.06 → short $37,066
+  Sell put  @K=$61      (overpriced leg)
+  Buy  put  @K-width    (bull-put-spread protection → defined risk)
+  Buy  call @K=$61      (cheap relative to put)
+  Sell call @~spot      (bear-call-spread hedge, short leg)
+  Buy  call @~spot+width (bear-call-spread hedge cap)
 
-  Stock THEN FELL to $49.90 over 2 days (−11.0% move)
+~2 days later, put IV compresses toward call IV:
+  Buy back the short put cheaper than sold  → positive
+  The protective long put loses a little    → small drag
+  The long call and the bear-call hedge net out around a small directional figure
 
-  Decomposition of P&L:
-    Short stock P&L: 661 × ($56.06 − $49.90) = +$4,072 ← dominant
-    Put P&L: Options rose in value (stock moved toward strike), approximately −$1,946
-    Call P&L: Calls nearly worthless (OTM, expiring) = −
-    Net P&L: $4,072 − $1,946 = +$2,126
-
-The short stock hedge that was designed to neutralize direction BECAME a profit source
-when the stock moved significantly.
+  Result: a modest net gain driven by the short-put decay, after per-leg
+          slippage + commission on all five legs (entry and exit).
 ```
 
-### 3. Time Decay (~15% of background contribution)
+### 2. Directional Drift via the Long Call (secondary)
 
-Even if IV doesn't compress and the stock doesn't move, theta works in our favor.
-With DTE 7-15 and a net credit position, every passing day brings the sold put closer
-to worthlessness. This is the "background music" — always playing, rarely the star.
+The long call at K gives the structure net positive delta. The bear-call-spread
+hedge dampens — but does not fully eliminate — that delta. A rising stock therefore
+adds to P&L; a falling stock subtracts from it. This is a **bounded** directional
+contribution, not the unbounded short-stock gain described in earlier drafts.
+
+### 3. Time Decay (background contribution)
+
+The bull put spread is a net-credit, positive-theta position. With short DTE, every
+passing day brings the sold put closer to worthlessness. This is the "background
+music" — always playing, rarely the star, and partly offset by the long call's own
+theta.
 
 ---
 
 ## How the Position Is Constructed
 
-### Delta Calculation and Stock Short
+### The Five Legs and the Delta Hedge
+
+The implemented structure is a fully defined-risk, Robinhood-Level-3-compliant
+5-leg position. **There is no short-stock leg.** Net long delta from the synthetic
+(short put + long call at K) is offset by a **bear call spread at the money**:
 
 ```
-Position logic:
-  Sell put:  creates positive delta (stock-equivalent long) + negative vega
-  Buy call:  creates positive delta (stock-equivalent long) + positive vega
-  Result:    net long delta (we're long the equivalent of stock)
+  ① Short put  @K                  (sell overpriced put)
+  ② Long  put  @K − put_spread_width   (protection → bull put spread, defined risk)
+  ③ Long  call @K                  (buy cheap call)
+  ④ Short call @≈spot              (bear call spread short leg → delta hedge)
+  ⑤ Long  call @≈spot + hedge_spread_width  (bear call spread cap, RH-compliant)
 
-To remain delta-neutral, we SELL SHORT STOCK to offset the positive delta.
-
-Delta calculation:
-  Short stock required = (put_delta + call_delta) × contracts × 100
-
-  Example:
-    Put delta at $61 strike, HOOD at $56:  −0.55 (approximately)
-    Call delta at $61 strike, HOOD at $56: +0.18 (OTM call)
-    Net position delta per spread: (−0.55 + 0.18) × positive = depends on sign
-
-    After selling 7 puts: position delta = 7 × 100 × (−(−0.55)) = +385 (net long)
-    After buying 7 calls: +7 × 100 × 0.18 = +126 additional long delta
-    After buying calls: total delta ≈ +511
-
-    → Short 511 shares to delta-hedge (approximation — exact delta varies)
-
-    The model reports 661 shares short in the example — the exact figure depends on
-    the exact deltas at entry, using Black-Scholes with current IV.
+Why a bear call spread instead of short stock?
+  - The synthetic (① short put + ③ long call) is long ≈ +1 delta per spread.
+  - Selling an ATM call (④) removes a chunk of that positive delta.
+  - Buying the further-OTM call (⑤) caps the short call's tail risk so the whole
+    structure stays defined-risk and broker-compliant.
+  - Net effect: the position keeps a reduced, bounded long-delta tilt while
+    isolating most of the P&L on the put-vs-call skew at strike K.
 ```
 
 ### Why Sell Put AND Buy Call at the Same Strike?
@@ -324,102 +309,80 @@ more likely to reflect informed institutional positioning than retail panic over
 
 ---
 
-## Full HOOD Backtest Statistics (Dec 2024 – Jul 2026)
+## Backtest Statistics
 
-```
-Period: Dec 2024 – Jul 2025 + Feb 2026 – Mar 2026
-Starting Capital: $100,000
+> **TODO — re-run required.** The previously published headline figures (Total
+> Return, Sharpe, Win Rate, Profit Factor, etc.) were internally inconsistent
+> (the win/loss tally did not reconcile with the per-skew-zone breakdown, and
+> the numbers were not reproducible from the current code) and have been
+> **removed rather than left as false precision.** The strategy now charges
+> per-leg slippage **and** commission on both entry and exit, prices
+> reconstructed/exit legs with a realistic volatility skew, marks open positions
+> to market daily, and supports an optional stop-loss — all of which change the
+> P&L versus any earlier run. **Re-run the backtest in the app to populate
+> verified metrics here.**
 
-Performance Metrics:
-  ┌───────────────────────────────────────────────────────┐
-  │ Total Return:      +21.9%                            │
-  │ Sharpe Ratio:       0.32                             │
-  │ Max Drawdown:      −10.1%                            │
-  │ Win Rate:          74.4%  (64W / 22L / 2 no-data)   │
-  │ Avg Win:           $548                              │
-  │ Avg Loss:          −$597                             │
-  │ Profit Factor:      2.67  (key metric)               │
-  │ Avg Hold:          2–4 days                          │
-  │ Total Trades:       88                               │
-  └───────────────────────────────────────────────────────┘
+What the backtest *measures* (qualitatively):
 
-Profit Factor = Sum of wins / Sum of losses
-= (64 × $548) / (22 × $597) = $35,072 / $13,134 = 2.67
+- **Edge source.** The strategy is profitable when elevated put IV at the
+  signal strike mean-reverts toward call IV before the hold window ends. It is
+  a short-skew / positive-theta position, so calm, range-bound tape with a
+  persistent (but not exploding) put skew is the favourable regime.
+- **Cost drag is real.** With a 5-leg structure, per-leg slippage and
+  commission are charged twice (entry + exit). Small-credit trades on
+  low-priced underlyings can have the entire estimated edge consumed by
+  frictions; `_open_trade` already rejects trades whose net-of-cost estimate is
+  ≤ 0.
+- **Tail risk.** A macro shock or informed put-buying event during the hold can
+  blow through the bull-put-spread protection and the long-call debit. Position
+  sizing (`position_size_pct`, default 8%) and the optional `stop_loss_mult`
+  are the mitigations.
 
-Interpretation: For every $1 lost on losing trades, $2.67 was earned on winners.
-Even with similar average win and loss sizes, the 74% win rate creates a decisive edge.
-```
-
-**Skew zone performance breakdown:**
-
-```
-Skew at Entry    Win Rate    Avg P&L     Notes
-────────────────────────────────────────────────────────────
-8–15 vol pts     79%         +$610       Best zone — real overpricing, fast reversion
-15–25 vol pts    72%         +$480       Good zone — still reliable reversion
-25–35 vol pts    58%         +$120       Marginal — risk-adjusted edge getting thin
-35–50 vol pts    31%         −$680       Danger zone — informed hedging, not panic
-> 50 vol pts     18%         −$1,200     Trap — skip entirely
-```
+**Skew-zone intuition (directional, not measured win rates):** larger skew is
+generally a stronger signal *up to a point* — very large skew (roughly > 35 vol
+pts) more often reflects informed hedging or real event risk than retail panic,
+and tends to widen rather than revert. The code does **not** currently enforce a
+maximum-skew cap; if you want that behaviour, gate entries in `_scan_chain` or
+set a tighter `iv_skew_threshold` band. (TODO: replace this paragraph with a
+measured per-zone table once a verified backtest is available.)
 
 ---
 
 ## P&L Diagrams
 
-### Risk Profile — Long Call + Short Put Combo (Before Stock Hedge)
+### Risk Profile — The Defined-Risk 5-Leg Structure
 
 ```
-Combined long call + short put at strike $61 (synthetic long):
+The position combines, at strike K:
+  ① short put  + ② long protective put  → bull put spread (net credit, capped loss)
+  ③ long call  at K                      → upside participation
+  ④ short call + ⑤ long cap call (≈ATM)  → bear call spread (delta hedge, capped)
 
-P&L at expiry (before stock hedge):
-  +$∞ ─┤              ╱   (long call — unlimited upside above $61)
-        │             ╱
-     0 ─┼────────────╱────────────────────
-        │   short put ╲  (short put — limited to premium below $61)
-   −$∞ ─┤              ╲  (in theory; but put was sold for credit, so actually...)
-
-After adding short stock hedge:
-  Upside from call: captures above $61
-  Downside from short stock: captures below entry price
-  Short put: liability if stock falls toward $61
-
-This is WHY the short stock is essential — without it, the short put creates unlimited
-downside exposure on a sharp stock decline.
+Net delta is a reduced, BOUNDED long tilt — the bear call spread trims the synthetic's
+positive delta but does not invert it. Both the downside (bull put spread) and the
+upside (bear call spread) tails are defined-risk, which is what keeps the structure
+Robinhood-Level-3 compliant. There is NO short-stock leg, so there is no unlimited
+downside from a sharp decline — the maximum loss is fixed at entry.
 ```
 
-### The Sweet Spot: Skew 10–25 Vol Points
+### The Sweet Spot: Skew 10–25 Vol Points (directional intuition)
 
-```
-Historical P&L distribution by skew zone (88 HOOD trades):
+> **TODO — re-run required.** A previous draft printed a per-skew-zone win-rate
+> table ("88 HOOD trades") with specific win counts and average P&L. Those numbers
+> were **not reproducible from the current code** and have been removed rather than
+> left as false precision. Re-run the backtest to populate a verified per-zone table.
 
-Skew 10–15 vp (n=28):
-  ────────────────────────────────────────────
-  Wins:  ██████████████████████  22 trades (79%)
-  Losses:███████                  6 trades (21%)
-  Avg P&L: +$610
-  ────────────────────────────────────────────
+Qualitatively, and consistent with the code's signal-strength scaling:
 
-Skew 15–25 vp (n=32):
-  ────────────────────────────────────────────
-  Wins:  ████████████████████████ 23 trades (72%)
-  Losses:█████████                9 trades (28%)
-  Avg P&L: +$480
-  ────────────────────────────────────────────
-
-Skew 25–35 vp (n=18):
-  ────────────────────────────────────────────
-  Wins:  ██████████               10 trades (55%)
-  Losses:████████                  8 trades (45%)
-  Avg P&L: +$120 (marginal after costs)
-  ────────────────────────────────────────────
-
-Skew > 35 vp (n=10):
-  ────────────────────────────────────────────
-  Wins:  ████                      3 trades (30%)
-  Losses:██████████████            7 trades (70%)
-  Avg P&L: −$630 (NEGATIVE — SKIP)
-  ────────────────────────────────────────────
-```
+- **Skew ~10–25 vp** is generally the most favourable band: large enough to be a real
+  overpayment, small enough that it usually reflects retail demand rather than informed
+  hedging.
+- **Skew > ~35 vp** more often reflects informed hedging or genuine event risk and tends
+  to widen rather than revert on a short hold. The code does not enforce a hard cap on
+  this today — see Scenario 3 above.
+- After per-leg slippage **and** commission (charged on all legs, entry and exit),
+  small-credit trades on low-priced underlyings can have their entire estimated edge
+  consumed; `_open_trade` already rejects trades whose net-of-cost estimate is ≤ 0.
 
 ---
 
@@ -454,29 +417,27 @@ Break-even skew compression:
     At skew = 20 vol pts (widened): loss proportional to widening
 ```
 
-### Position Sizing — The 6% Rule
+### Position Sizing — Capital-at-Risk Budget
 
 ```
-Max HOOD position: 6% of capital
+The code sizes by DEFINED max loss, not notional. Default position_size_pct = 0.08 (8%).
 
-Rationale:
-  HOOD has wide bid/ask spreads and high IV → real execution costs are significant
-  At 6%, two concurrent HOOD positions = 12% total exposure
+  budget        = capital × position_size_pct          (e.g. 8% × $100,000 = $8,000)
+  n_contracts   = max(1, int(budget / max_loss_per_contract))
 
-  Calculation:
-    Capital: $100,000
-    Max position: 6% × $100,000 = $6,000
-    This represents the maximum loss if the trade goes to maximum loss
-    (which never happens instantaneously due to the 2-3 day hold)
+  max_loss_per_contract is the conservative bound across the structure's loss
+  scenarios (bull put spread width, bear call spread width, and the long-call debit),
+  × 100 shares — see _open_trade in strategies/vol_arbitrage.py.
 
-  Practical contract count:
-    $6,000 / (strike × 100 × margin rate) or
-    $6,000 / estimated max loss per contract
+  Because the spreads are defined-risk, the per-contract max loss is the spread
+  width (in $) plus the long-call debit — far smaller than a naked put's strike ×
+  100. That lets the same budget support more contracts than an unhedged short put
+  would.
 
-    For a $60 stock, $61 strike put, maximum put loss ≈ $61 × 100 = $6,100 per contract
-    (theoretical maximum if stock goes to zero)
-    Practical max: put IV spikes from 63% to 100% → additional loss ≈ $3,800 per contract
-    → With $6,000 budget: 1-2 contracts maximum
+Lower the default to ~6% for thin, high-IV names with wide bid/ask if you want a
+larger safety margin; raise it for liquid underlyings. The optional stop_loss_mult
+(default 0.0 = disabled) closes early when the mark-to-market loss reaches a multiple
+of capital-at-risk.
 ```
 
 ---
@@ -484,11 +445,13 @@ Rationale:
 ## When This Strategy Works Best
 
 ```
-Condition          Optimal Value     Why
+Condition          Favourable        Why
 -----------------  ----------------  ----------------------------------------------------
-IV Skew            10–25 vol points  Sweet spot for reversion
-DTE                7–15              Fast theta; avoids earnings; quick reversion capture
-IV Rank            ≥ 40              Confirms elevated vol for HOOD specifically
+IV Skew            10–25 vol points  Sweet spot for reversion (vs the 0.08 = 8 vp default
+                                     entry threshold, iv_skew_threshold)
+DTE                14–45 (default)   Liquid, enough time value; tighten toward 7–20 for
+                                     fast-reverting high-IV names
+IV Rank            ≥ 0.30 (default)  Confirms elevated vol; iv_rank_min, range 0–1
 No known catalyst  —                 No earnings, M&A, or sector news within hold period
 Market VIX         < 25              Low macro noise; stock-specific skew dominates
 Put/call OI ratio  1.5–2.5           Confirms retail-driven put OI imbalance
@@ -519,15 +482,15 @@ Put/call OI ratio  1.5–2.5           Confirms retail-driven put OI imbalance
 
 ## Entry Checklist
 
-- [ ] IV Rank ≥ 40 (HOOD-specific — lower rank means smaller violations)
-- [ ] DTE 7–15 — fast theta decay; avoid < 7 (gamma risk) and > 20 (slow reversion)
-- [ ] IV skew ≥ 8 vol points at same strike (sweet spot: 10–25 vp)
-- [ ] Skew < 35 vol points (extreme skew = real event risk, not panic)
+- [ ] IV Rank ≥ iv_rank_min (default 0.30 on the 0–1 scale; raise for high-IV names)
+- [ ] DTE within dte_min..dte_max (default 14–45; tighten toward 7–20 for fast reversion)
+- [ ] IV skew ≥ iv_skew_threshold (default 0.08 = 8 vp; sweet spot 10–25 vp)
+- [ ] Skew not extreme (> ~35 vp = likely real event risk; NOT auto-blocked by code)
 - [ ] No earnings within hold period — binary event destroys the arb
 - [ ] No macro events (CPI, FOMC, NFP) within 2 days
 - [ ] Bid/ask spread < 0.5% of mid price — confirms executable entry
 - [ ] VIX < 25 (macro calm — stock-specific dynamics will dominate)
-- [ ] Short stock delta hedge calculated and ready to enter simultaneously
+- [ ] Bear-call-spread hedge legs available in the chain (delta_hedge=True default)
 
 ---
 
@@ -537,45 +500,54 @@ Put/call OI ratio  1.5–2.5           Confirms retail-driven put OI imbalance
 
 ```
 Failure Mode 1: Macro event during hold → put IV spikes
-  Probability: ~5% of all HOOD trades
-  Magnitude: up to −$3,000 per trade (worst case, Trade 4)
+  Magnitude: bounded by the defined-risk structure, but a bad mark can still hurt
   Mitigation:
     → Check macro calendar BEFORE every entry
-    → 2-3 day hold (reduces exposure window)
-    → 6% max position size contains the portfolio damage
+    → Short hold (default hold_days=3) reduces the exposure window
+    → position_size_pct (default 8%) contains the portfolio damage
+    → optional stop_loss_mult to cut losers early
 
-Failure Mode 2: Stock gaps up through short strike → delta unwind pain
-  Probability: ~8% of trades
-  Magnitude: varies (short stock loss partially offsets put gain)
+Failure Mode 2: Stock gaps through a strike → delta swing
+  Magnitude: bounded — the bear call spread caps upside loss, the bull put
+             spread caps downside loss
   Mitigation:
-    → Delta is hedged — stock gap up causes short stock loss, but sold put gains
-    → Net delta-neutral position means gaps hurt less than unhedged
-    → Stop loss at 2× credit cap prevents holding through extended moves
+    → The bear-call-spread hedge trims (not eliminates) the synthetic's long delta
+    → Defined-risk on both tails means gaps hurt less than an unhedged short put
+    → stop_loss_mult prevents holding through extended adverse moves
 
 Failure Mode 3: Skew widens (informed selling vs retail fear)
-  Probability: ~18% of trades in the 10-25 vp zone
-  Magnitude: 1-2× credit received
   Mitigation:
-    → Strict entry filter: skew < 35 vp
-    → Stop loss at 2× credit (don't hold through continued widening)
-    → Size discipline (6% cap)
+    → Treat skew > ~35 vp as a red flag (NOT auto-blocked; gate manually)
+    → stop_loss_mult to avoid holding through continued widening
+    → Size discipline (position_size_pct)
 ```
 
 ---
 
 ## Strategy Parameters
 
+These are the actual `backtest()` / constructor parameters and their **code defaults**
+(see `get_backtest_ui_params()` and `__init__` in `strategies/vol_arbitrage.py`):
+
 ```
-Parameter           SPY Default  HOOD Default  Description
-------------------  -----------  ------------  ----------------------------------------
-`min_iv_skew`       8 vol pts    8 vol pts     Minimum skew to enter
-`max_iv_skew`       30 vol pts   35 vol pts    Skip above this (event risk likely)
-`min_iv_rank`       30           40            Minimum IV Rank (elevated vol required)
-`dte_range`         14–45 DTE    7–20 DTE      Entry DTE window
-`hold_days`         3            2–3           Maximum hold (exit sooner if target hit)
-`max_position_pct`  8%           6%            Max capital per trade
-`stop_loss_mult`    2× credit    2× credit     Close if loss reaches 2× initial credit
+Parameter             Code Default  Description
+--------------------  ------------  --------------------------------------------------
+iv_skew_threshold     0.08 (8 vp)   Minimum put−call IV skew to enter (decimal)
+iv_rank_min           0.30          Minimum IV Rank, 0–1 scale
+dte_min / dte_max     14 / 45       Entry DTE window (chain scan)
+hold_days             3             Maximum hold before forced close
+position_size_pct     0.08 (8%)     Capital-at-risk budget per trade
+stop_loss_mult        0.0 (off)     Close when MTM loss ≥ mult × capital-at-risk; 0=off
+delta_hedge           True          Enable the bear-call-spread delta hedge
+hedge_spread_width    2.0 ($)       Bear call spread width
+put_spread_width      2.0 ($)       Bull put spread width
+min_violation_pct     0.003         Min put-call parity violation (fraction of S)
 ```
+
+> **There is no `max_iv_skew` parameter in the code.** A maximum-skew cap is NOT
+> currently enforced — if you want to skip extreme skew (> ~35 vp), gate it manually
+> or narrow `iv_skew_threshold`. Tighten `dte_min`/`dte_max` toward 7–20 and lower
+> `position_size_pct` toward 6% for thin, high-IV names.
 
 ---
 
@@ -587,7 +559,7 @@ Data                            Source                           Usage
 Per-contract IV (put and call)  Polygon options chain            Skew calculation (put IV − call IV)
 Strike-level OI and volume      Polygon options chain            Entry filter, skew calculation
 IV Rank                         Derived from 52-week IV history  Entry filter
-OHLCV price history             Polygon                          Delta hedge size, realized vol
+OHLCV price history             Polygon                          Spot, hedge leg placement, realized vol
 VIX                             Polygon `VIXIND`                 Macro vol filter
 Put/call OI ratio               Polygon options chain            Confirms put-heavy positioning
 Earnings calendar               DB                               Avoid earnings within hold period

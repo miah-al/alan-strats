@@ -47,7 +47,6 @@ from typing import Optional
 
 import numpy as np
 import pandas as pd
-from scipy.stats import norm
 
 from alan_trader.strategies.base import (
     BaseStrategy,
@@ -55,6 +54,11 @@ from alan_trader.strategies.base import (
     SignalResult,
     StrategyStatus,
     StrategyType,
+)
+from alan_trader.backtest.engine import (
+    bs_price_skew,
+    DEFAULT_SLIPPAGE_PER_LEG,
+    DEFAULT_COMMISSION_PER_LEG,
 )
 from alan_trader.risk.metrics import compute_all_metrics
 
@@ -69,24 +73,24 @@ _LABEL_CHOP  = 0
 _LABEL_BULL  = 1
 _LABEL_BEAR  = 2
 
+# Two legs per debit spread (long + short). Frictions are applied per leg, on
+# both entry and exit, scaled by the number of contracts.
+_LEGS_PER_SPREAD = 2
+
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
 
-def _bs_price(S, K, T, r, sigma, option_type):
-    if T <= 0 or sigma <= 0 or S <= 0:
-        return max(0.0, (S - K) if option_type == "call" else (K - S))
-    d1 = (np.log(S / K) + (r + 0.5 * sigma ** 2) * T) / (sigma * np.sqrt(T))
-    d2 = d1 - sigma * np.sqrt(T)
-    if option_type == "call":
-        return float(S * norm.cdf(d1) - K * np.exp(-r * T) * norm.cdf(d2))
-    return float(K * np.exp(-r * T) * norm.cdf(-d2) - S * norm.cdf(-d1))
+def _debit_spread_value(S, long_K, short_K, T, r, atm_iv, spread_type):
+    """Per-share value of a debit spread, priced with a realistic equity-index
+    vol skew (downside strikes carry higher IV than upside strikes).
 
-
-def _debit_spread_value(S, long_K, short_K, T, r, iv, spread_type):
-    """Current value of a debit spread."""
-    if spread_type == "bull_call":
-        return _bs_price(S, long_K, T, r, iv, "call") - _bs_price(S, short_K, T, r, iv, "call")
-    return _bs_price(S, long_K, T, r, iv, "put") - _bs_price(S, short_K, T, r, iv, "put")
+    Each leg is priced via :func:`bs_price_skew` so the OTM short wing reflects
+    skew rather than a single flat ATM IV.
+    """
+    opt = "call" if spread_type == "bull_call" else "put"
+    long_v  = bs_price_skew(S, long_K,  T, r, atm_iv, opt)
+    short_v = bs_price_skew(S, short_K, T, r, atm_iv, opt)
+    return float(long_v - short_v)
 
 
 def _build_features(close, high, low, vix):
@@ -325,7 +329,14 @@ class MomentumRegimeSpreadStrategy(BaseStrategy):
         model_      = None
         last_train  = -999
 
+        # Per-spread (per-contract) round-trip friction in per-share BS-mark
+        # units: slippage applied on entry AND exit, on both legs.
+        slip_per_spread = DEFAULT_SLIPPAGE_PER_LEG * _LEGS_PER_SPREAD
+        comm_per_spread = DEFAULT_COMMISSION_PER_LEG * _LEGS_PER_SPREAD
+
         for i, dt in enumerate(all_dates):
+            mtm_value = 0.0  # marked-to-market value of any open position (added to equity)
+
             if open_trade is not None:
                 open_trade["days_held"] += 1
                 spot    = float(close.iloc[i])
@@ -333,12 +344,16 @@ class MomentumRegimeSpreadStrategy(BaseStrategy):
                 days_rem = max(0, dte_tgt - open_trade["days_held"])
                 t_yr    = days_rem / 252.0
                 stype   = open_trade["spread_type"]
+                contracts = open_trade["contracts"]
                 val_now = _debit_spread_value(
                     spot, open_trade["long_strike"], open_trade["short_strike"],
                     t_yr, _RISK_FREE_RATE, iv_now, stype
                 )
                 entry_v   = open_trade["entry_value"]
-                pnl_now   = (val_now - entry_v) * 100
+                # Unrealized P&L if we closed now (net of exit frictions), scaled
+                # by contracts. Exit slippage drags the realizable value down.
+                exit_val_ps = max(0.0, val_now - slip_per_spread)
+                pnl_now   = ((exit_val_ps - entry_v) * 100 - comm_per_spread) * contracts
                 max_gain  = open_trade["max_gain"]
 
                 exit_reason = None
@@ -350,26 +365,37 @@ class MomentumRegimeSpreadStrategy(BaseStrategy):
                     exit_reason = "dte_exit"
 
                 if exit_reason:
-                    capital += pnl_now + open_trade["entry_cost"]  # recover debit basis
+                    # Return the originally-paid debit basis plus realized P&L.
+                    capital += open_trade["entry_cost"] + pnl_now
                     trades_list.append({
                         "entry_date":  open_trade["entry_date"].date(),
                         "exit_date":   dt.date(),
                         "spread_type": stype,
+                        "contracts":   contracts,
                         "entry_cost":  round(open_trade["entry_cost"], 2),
-                        "exit_value":  round(val_now * 100, 2),
+                        "exit_value":  round(exit_val_ps * 100 * contracts, 2),
                         "pnl":         round(pnl_now, 2),
                         "exit_reason": exit_reason,
                     })
                     open_trade = None
+                else:
+                    # Still open: mark the position to market so the equity curve
+                    # is not a step function frozen at the entry debit.
+                    mtm_value = exit_val_ps * 100 * contracts
 
-            equity_list.append(capital)
+            # Equity = free cash + marked value of open position.
+            equity_list.append(capital + mtm_value)
 
             if i < _WARMUP_BARS:
                 continue
 
             if i - last_train >= _RETRAIN_EVERY:
-                # Exclude last n_forward bars: their labels use future data beyond bar i
-                cutoff = max(0, i - 10)
+                # Purge the most recent bars whose labels (10d forward return) or
+                # trade hold window (dte_target) overlap the prediction point i.
+                # cutoff = i - max(label_window, hold_window) prevents both label
+                # look-ahead and hold-period leakage.
+                purge = max(10, dte_tgt)
+                cutoff = max(0, i - purge)
                 X_tr = feats.iloc[:cutoff][self.FEATURE_COLS]
                 y_tr = labels.iloc[:cutoff]
                 valid = y_tr.notna() & X_tr.notna().all(axis=1)
@@ -418,58 +444,79 @@ class MomentumRegimeSpreadStrategy(BaseStrategy):
                 long_K  = round(spot, 0)
                 short_K = round(spot + wing_w, 0)
                 stype   = "bull_call"
-                entry_v = _debit_spread_value(spot, long_K, short_K, t_yr, _RISK_FREE_RATE, iv_entry, stype)
-                if entry_v <= 0:
-                    continue
-                cost    = min(entry_v * 100, max_cost)
-                capital -= cost
-                if capital < 0:
-                    capital += cost
-                    continue
-                open_trade = {
-                    "entry_date": dt, "spread_type": stype,
-                    "long_strike": long_K, "short_strike": short_K,
-                    "entry_value": entry_v, "entry_cost": cost,
-                    "max_gain": (wing_w - entry_v) * 100,
-                    "days_held": 0, "prob": p_bull,
-                }
-
+                p_sel   = p_bull
             elif p_bear >= conf:
                 long_K  = round(spot, 0)
                 short_K = round(spot - wing_w, 0)
                 stype   = "bear_put"
-                entry_v = _debit_spread_value(spot, long_K, short_K, t_yr, _RISK_FREE_RATE, iv_entry, stype)
-                if entry_v <= 0:
-                    continue
-                cost    = min(entry_v * 100, max_cost)
-                capital -= cost
-                if capital < 0:
-                    capital += cost
-                    continue
-                open_trade = {
-                    "entry_date": dt, "spread_type": stype,
-                    "long_strike": long_K, "short_strike": short_K,
-                    "entry_value": entry_v, "entry_cost": cost,
-                    "max_gain": (wing_w - entry_v) * 100,
-                    "days_held": 0, "prob": p_bear,
-                }
+                p_sel   = p_bear
+            else:
+                continue
+
+            entry_v = _debit_spread_value(spot, long_K, short_K, t_yr, _RISK_FREE_RATE, iv_entry, stype)
+            if entry_v <= 0:
+                continue
+
+            # All-in per-contract entry cost = debit (incl. entry slippage) + commissions.
+            entry_v_filled  = entry_v + slip_per_spread
+            cost_per_spread = entry_v_filled * 100 + comm_per_spread
+            if cost_per_spread <= 0:
+                continue
+
+            # Size by integer contracts within the position budget. Skip if we
+            # cannot afford even one spread.
+            contracts = int(max_cost // cost_per_spread)
+            if contracts < 1:
+                continue
+            cost = cost_per_spread * contracts
+            if cost > capital:
+                continue
+            capital -= cost
+
+            open_trade = {
+                "entry_date": dt, "spread_type": stype,
+                "long_strike": long_K, "short_strike": short_K,
+                "entry_value": entry_v_filled, "entry_cost": cost,
+                "contracts": contracts,
+                # Max gain = (wing - net debit paid) per contract, net of the
+                # round-trip exit frictions, scaled by contracts.
+                "max_gain": ((wing_w - entry_v_filled) * 100 - comm_per_spread) * contracts,
+                "days_held": 0, "prob": p_sel,
+            }
 
         if open_trade is not None:
+            # Mark the open spread to market at the final bar instead of
+            # assuming a total loss of the debit.
+            spot     = float(close.iloc[-1])
+            iv_last  = float(vix.iloc[-1]) / 100.0
+            days_rem = max(0, dte_tgt - open_trade["days_held"])
+            t_yr     = days_rem / 252.0
+            contracts = open_trade["contracts"]
+            val_last = _debit_spread_value(
+                spot, open_trade["long_strike"], open_trade["short_strike"],
+                t_yr, _RISK_FREE_RATE, iv_last, open_trade["spread_type"]
+            )
+            exit_val_ps = max(0.0, val_last - slip_per_spread)
+            pnl_eod = ((exit_val_ps - open_trade["entry_value"]) * 100 - comm_per_spread) * contracts
+            capital += open_trade["entry_cost"] + pnl_eod
             trades_list.append({
                 "entry_date":  open_trade["entry_date"].date(),
                 "exit_date":   all_dates[-1].date(),
                 "spread_type": open_trade["spread_type"],
+                "contracts":   contracts,
                 "entry_cost":  round(open_trade["entry_cost"], 2),
-                "exit_value":  0.0,
-                "pnl":         round(-open_trade["entry_cost"], 2),
+                "exit_value":  round(exit_val_ps * 100 * contracts, 2),
+                "pnl":         round(pnl_eod, 2),
                 "exit_reason": "end_of_data",
             })
+            equity_list[-1] = capital
+            open_trade = None
 
         equity    = pd.Series(equity_list, index=price_data.index, dtype=float)
         daily_ret = equity.pct_change().dropna()
         bh_ret    = close.pct_change().reindex(equity.index).dropna()
         trades_df = pd.DataFrame(trades_list) if trades_list else pd.DataFrame(
-            columns=["entry_date", "exit_date", "spread_type",
+            columns=["entry_date", "exit_date", "spread_type", "contracts",
                      "entry_cost", "exit_value", "pnl", "exit_reason"]
         )
         metrics = compute_all_metrics(

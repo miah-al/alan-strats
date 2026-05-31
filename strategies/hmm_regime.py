@@ -63,12 +63,36 @@ State 1 (chop)         : iron condor
 State 2 (bear/crisis)  : long put debit spread
     - Long put at -30 delta, short put 5% lower, defined max-cost
     - DTE 45, profit target 100% of debit, stop 50% of debit
+    - DISABLED by default: state2_size_multiplier defaults to 0.0 after the
+      2026-05 backtest diagnosis (state-2 long-vol trades lost ~85% of the time
+      on 2022-2026 SPY). Set it to 0.5/1.0 from the UI to re-enable.
+
+PRICING
+-------
+All option legs are priced with bs_price_skew / effective_iv (a linear
+IV-vs-log-moneyness smirk, skew_slope default 0.15) so OTM downside strikes
+carry realistic skew rather than a single flat VIX/100 IV. Per-leg commission
+and slippage (DEFAULT_COMMISSION_PER_LEG / DEFAULT_SLIPPAGE_PER_LEG) are
+applied per leg × contracts on BOTH entry and exit. Strike selection still
+inverts delta at the ATM IV (avoids circular skew-in-strike).
 
 ENTRY GATING
 ------------
 - P(dominant state) ≥ regime_confidence_min (default 0.60)
+- Spot and forward (posterior @ Aᴴ) dominant states must agree — suppresses
+  entries at unstable regime boundaries
 - VIX ≤ vix_ceiling (default 40 — skip during dislocation)
+- State-2 only: VIX must be descending from its lookback peak (recovery side)
 - Max 1 concurrent trade — the HMM produces one regime view at a time
+- Reserved-margin accounting: a new trade is opened only if its defined-risk
+  margin fits within free capital (capital − reserved_margin)
+
+DEFENSIVE EXITS (2026-05)
+-------------------------
+- IV-spike close (state 0/1): close short-vol trades when current IV ≥
+  entry_iv × iv_spike_multiplier, before the P&L stop fires
+- Stop-realization cap: on a stop, cap the realized cost-to-close at
+  stop_trigger × stop_realization_cap_mult (models a stop-LIMIT fill)
 
 MODEL CHOICE
 ------------
@@ -95,6 +119,7 @@ from __future__ import annotations
 import logging
 import math
 import pickle
+import warnings
 from pathlib import Path
 from typing import Optional
 
@@ -110,7 +135,12 @@ from alan_trader.strategies.base import (
     StrategyStatus,
     StrategyType,
 )
-from alan_trader.backtest.engine import bs_price
+from alan_trader.backtest.engine import (
+    bs_price_skew,
+    effective_iv,
+    DEFAULT_COMMISSION_PER_LEG,
+    DEFAULT_SLIPPAGE_PER_LEG,
+)
 from alan_trader.risk.metrics import compute_all_metrics
 
 logger = logging.getLogger(__name__)
@@ -122,6 +152,12 @@ _HMM_BACKEND = "none"
 try:                                                                # pragma: no cover
     from hmmlearn.hmm import GaussianHMM as _GaussianHMM            # type: ignore
     _HMM_BACKEND = "hmmlearn"
+    # Suppress the "Model is not converging" log message from hmmlearn 0.3+.
+    # The convergence-monitor check fires on sub-0.001 likelihood deltas — this
+    # is numerical-precision noise at local optimum, not a real training failure.
+    # The message is emitted via Python `logging` (NOT `warnings.warn`), so it
+    # has to be suppressed at the logger level. See hmmlearn/base.py:114.
+    logging.getLogger("hmmlearn").setLevel(logging.ERROR)
 except ImportError:
     try:
         from sklearn.mixture import GaussianMixture as _GaussianMixture
@@ -263,8 +299,14 @@ class _RegimeModel:
                 self.n_components, X.shape[1]
             ):
                 m.means_ = prior_sorted_means.astype(np.float64).copy()
-            # hmmlearn expects 2-D contiguous float64
-            m.fit(np.ascontiguousarray(X, dtype=np.float64))
+            # hmmlearn expects 2-D contiguous float64.
+            # Suppress hmmlearn's "Model is not converging" warning — at our
+            # tolerance the message fires on sub-0.001 likelihood deltas (i.e.
+            # numerical precision noise, not a real convergence failure).
+            with warnings.catch_warnings():
+                warnings.filterwarnings("ignore", message=".*Model is not converging.*")
+                warnings.filterwarnings("ignore", category=UserWarning, module="hmmlearn.*")
+                m.fit(np.ascontiguousarray(X, dtype=np.float64))
             raw_means = m.means_                                    # (k, 3)
         elif self.backend == "sklearn_gmm":
             m = _GaussianMixture(
@@ -443,7 +485,29 @@ class HMMRegimeStrategy(BaseStrategy):
         state2_require_vix_descending: bool  = True,
         state2_vix_descent_pct:        float = 0.15,   # VIX must be >=15% off 5-bar peak
         state2_vix_descent_lookback:   int   = 5,      # bars over which to find the peak
-        state2_size_multiplier:        float = 0.5,    # half-size state 2 entries
+        # Default changed 2026-05 from 0.5 to 0.0 after the backtest scenario sweep:
+        # disabling state-2 entries entirely produced +3.25% return vs -26.91% at
+        # 0.5. State-2 trades (long put debit spread) lose 85% of the time on
+        # 2022-2026 SPY data — the long-vol thesis didn't pan out on V-shaped
+        # vol spikes like Aug 2024. Set this to 0.5 or 1.0 from the UI if you
+        # want to re-enable state-2 (e.g. for sustained-crisis tickers / windows).
+        state2_size_multiplier:        float = 0.0,    # 0 = state-2 disabled (default)
+        # Defensive IV-spike close for state-0 / state-1 (short-vol) trades.
+        # Fires BEFORE the standard P&L stop because IV expansion precedes the
+        # full mark-to-market blow-out. On Aug 2 2024 the IC entered Jul 25 at
+        # IV ≈ 0.15 was at IV ≈ 0.23 (ratio 1.53) — this gate would have closed
+        # 3 days before the Aug 5 spike, saving the difference between the
+        # Aug 2 BS-mark (~$700) and the Aug 5 stop-out price (~$1,300).
+        defensive_close_on_iv_spike:  bool  = True,
+        iv_spike_multiplier:          float = 1.5,    # close when iv > entry_iv × this
+        # Stop-loss realization cap (added 2026-05). The backtest marks-to-market
+        # at EOD only — on gap days the realized close price can be 30%+ past
+        # the configured stop trigger. Real trading with a stop-LIMIT order fills
+        # near the trigger ± slippage. Set this to cap the realized cost-to-close
+        # at `stop_trigger_cost × stop_realization_cap_mult` when the stop fires.
+        # Default 1.10 = realized loss capped 10% past the trigger level.
+        # Set to a large number (e.g. 10.0) to disable the cap (legacy behavior).
+        stop_realization_cap_mult:    float = 1.10,
         # Risk / exits — short-vol structures
         profit_target_pct:   float = 0.50,
         stop_loss_mult:      float = 2.0,
@@ -453,9 +517,15 @@ class HMMRegimeStrategy(BaseStrategy):
         # Position sizing
         position_size_pct:   float = 0.03,
         max_concurrent:      int   = 1,
-        # Costs
-        commission_per_leg:  float = 0.65,
-        slippage_per_leg:    float = 0.05,
+        # Costs (default to the shared engine frictions so the backtest is never
+        # accidentally cost-free; both applied per leg × contracts on entry AND
+        # exit — see _open_*/_evaluate_exit).
+        commission_per_leg:  float = DEFAULT_COMMISSION_PER_LEG,
+        slippage_per_leg:    float = DEFAULT_SLIPPAGE_PER_LEG,
+        # Vol skew: OTM strikes are priced at a moneyness-adjusted IV via
+        # bs_price_skew/effective_iv so downside puts get a realistic smirk.
+        # skew_slope is IV change per unit log-moneyness; 0.0 recovers flat IV.
+        skew_slope:          float = 0.15,
     ):
         self.regime_confidence_min = regime_confidence_min
         self.vix_ceiling           = vix_ceiling
@@ -495,6 +565,10 @@ class HMMRegimeStrategy(BaseStrategy):
         self.state2_vix_descent_lookback   = int(state2_vix_descent_lookback)
         self.state2_size_multiplier        = float(state2_size_multiplier)
 
+        self.defensive_close_on_iv_spike  = bool(defensive_close_on_iv_spike)
+        self.iv_spike_multiplier          = float(iv_spike_multiplier)
+        self.stop_realization_cap_mult    = float(stop_realization_cap_mult)
+
         self.profit_target_pct     = profit_target_pct
         self.stop_loss_mult        = stop_loss_mult
         self.debit_profit_target   = debit_profit_target
@@ -505,6 +579,7 @@ class HMMRegimeStrategy(BaseStrategy):
 
         self.commission_per_leg    = commission_per_leg
         self.slippage_per_leg      = slippage_per_leg
+        self.skew_slope            = float(skew_slope)
 
         self._model: Optional[_RegimeModel] = None
 
@@ -535,6 +610,9 @@ class HMMRegimeStrategy(BaseStrategy):
             "state2_vix_descent_pct":        self.state2_vix_descent_pct,
             "state2_vix_descent_lookback":   self.state2_vix_descent_lookback,
             "state2_size_multiplier":        self.state2_size_multiplier,
+            "defensive_close_on_iv_spike":   self.defensive_close_on_iv_spike,
+            "iv_spike_multiplier":           self.iv_spike_multiplier,
+            "stop_realization_cap_mult":     self.stop_realization_cap_mult,
             "profit_target_pct":     self.profit_target_pct,
             "stop_loss_mult":        self.stop_loss_mult,
             "debit_profit_target":   self.debit_profit_target,
@@ -543,6 +621,7 @@ class HMMRegimeStrategy(BaseStrategy):
             "max_concurrent":        self.max_concurrent,
             "commission_per_leg":    self.commission_per_leg,
             "slippage_per_leg":      self.slippage_per_leg,
+            "skew_slope":            self.skew_slope,
             "dividend_yield":        self.dividend_yield,
             "allow_gmm_fallback":    self.allow_gmm_fallback,
             "use_transition_matrix": self.use_transition_matrix,
@@ -598,10 +677,25 @@ class HMMRegimeStrategy(BaseStrategy):
              "help": "Require VIX to be this far below its 5-bar peak before entering "
                      "state-2 long-vol trades. 0 disables the gate."},
             {"key": "state2_size_multiplier", "label": "State-2: size multiplier",
-             "type": "slider", "min": 0.0, "max": 1.0, "default": 0.5, "step": 0.1,
+             "type": "slider", "min": 0.0, "max": 1.0, "default": 0.0, "step": 0.1,
              "col": 0, "row": 4,
              "help": "Multiplier on position_size_pct for state-2 trades. "
-                     "0 disables state-2 entries entirely (cash in crisis)."},
+                     "Default 0 = state-2 disabled (cash in crisis). Backtest "
+                     "shows state-2 trades have a 15% win rate on 2022-2026 SPY; "
+                     "raise to 0.5 or 1.0 only if you want to re-enable them."},
+            {"key": "iv_spike_multiplier", "label": "IV-spike defensive close (×)",
+             "type": "slider", "min": 1.0, "max": 3.0, "default": 1.5, "step": 0.1,
+             "col": 1, "row": 4,
+             "help": "Close state-0 / state-1 (short-vol) trades when current IV "
+                     "is this × the entry IV. Fires BEFORE the standard P&L stop "
+                     "and captures the realisation gap on vol-spike days. "
+                     "Set to 3.0 or higher to effectively disable."},
+            {"key": "skew_slope", "label": "Vol skew slope",
+             "type": "slider", "min": 0.0, "max": 0.40, "default": 0.15, "step": 0.05,
+             "col": 2, "row": 4,
+             "help": "Linear IV-vs-log-moneyness skew applied to every option leg. "
+                     "Larger = steeper downside smirk (OTM puts richer). "
+                     "0 reverts to flat IV (legacy behaviour)."},
         ]
 
     # ═══════════════════════════════════════════════════════════════════════
@@ -848,6 +942,7 @@ class HMMRegimeStrategy(BaseStrategy):
 
         comm   = p["commission_per_leg"]
         slip   = p["slippage_per_leg"]
+        skew   = float(p.get("skew_slope", 0.15))
         r      = _RISK_FREE_RATE
         q      = float(p.get("dividend_yield", _DEFAULT_DIVIDEND))
         prior_means: Optional[np.ndarray] = None
@@ -866,7 +961,7 @@ class HMMRegimeStrategy(BaseStrategy):
                 iv = max(vix / 100.0, 0.05)
 
             if spot <= 0:
-                equity_curve.append({"date": dt, "equity": capital + self._mtm(open_trade, spot, dt, iv, r, q)})
+                equity_curve.append({"date": dt, "equity": capital + self._mtm(open_trade, spot, dt, iv, r, q, skew)})
                 continue
 
             # ── Retrain at scheduled cadence, no lookahead ────────────────
@@ -905,7 +1000,7 @@ class HMMRegimeStrategy(BaseStrategy):
             # ── 1. Manage open trade (exit checks) ────────────────────────
             if open_trade is not None:
                 exit_now, exit_reason, pnl = self._evaluate_exit(
-                    open_trade, spot, dt, iv, r, q, p, comm, slip, end_of_data=(i == n - 1)
+                    open_trade, spot, dt, iv, r, q, p, comm, slip, skew, end_of_data=(i == n - 1)
                 )
                 if exit_now:
                     capital += pnl
@@ -947,7 +1042,10 @@ class HMMRegimeStrategy(BaseStrategy):
             if posterior is not None and p.get("use_transition_matrix", True):
                 state_now = int(np.argmax(posterior))
                 horizon_default = max(p["dte_bull_put"], p["dte_condor"], p["dte_long_put"]) // 2
-                horizon = int(p.get("forward_horizon_bars") or horizon_default)
+                # Use 'is not None' (not 'or') so an explicit forward_horizon_bars=0
+                # is honoured rather than silently falling back to the default.
+                _fh = p.get("forward_horizon_bars")
+                horizon = int(_fh) if _fh is not None else horizon_default
                 try:
                     X_now = obs_df.iloc[: i + 1].dropna().values.astype(float)
                     fwd_posterior = model.expected_posterior(X_now, horizon)
@@ -992,8 +1090,9 @@ class HMMRegimeStrategy(BaseStrategy):
                                 f"vix {vix:.2f} > peak {vix_peak:.2f} × "
                                 f"(1-{descent_pct:.0%}) = {vix_threshold:.2f}"
                             )
-                # Gate 2: size multiplier == 0 disables state 2 entirely
-                if can_enter and float(p.get("state2_size_multiplier", 0.5)) <= 0.0:
+                # Gate 2: size multiplier == 0 disables state 2 entirely.
+                # Default mirrors __init__ (0.0 = disabled), not 0.5.
+                if can_enter and float(p.get("state2_size_multiplier", 0.0)) <= 0.0:
                     can_enter = False
                     state2_skip_reason = "state2_size_multiplier=0 (state 2 disabled)"
 
@@ -1006,10 +1105,10 @@ class HMMRegimeStrategy(BaseStrategy):
                 # Per-state size multiplier (state 2 is half-sized by default)
                 size_mult = 1.0
                 if state == 2:
-                    size_mult = float(p.get("state2_size_multiplier", 0.5))
+                    size_mult = float(p.get("state2_size_multiplier", 0.0))
                 # Size against free_capital × size_mult
                 sizing_capital = free_capital * size_mult
-                trade = self._open_trade(state, p_st, spot, iv, r, q, dt, sizing_capital, p, comm, slip)
+                trade = self._open_trade(state, p_st, spot, iv, r, q, dt, sizing_capital, p, comm, slip, skew)
                 if trade is not None:
                     # Verify margin fits within free capital before opening
                     margin_needed = float(trade.get("margin", 0.0))
@@ -1025,7 +1124,7 @@ class HMMRegimeStrategy(BaseStrategy):
                         )
 
             # ── MTM ───────────────────────────────────────────────────────
-            equity = capital + self._mtm(open_trade, spot, dt, iv, r, q)
+            equity = capital + self._mtm(open_trade, spot, dt, iv, r, q, skew)
             equity_curve.append({"date": dt, "equity": equity})
 
             if progress_callback and i % 50 == 0:
@@ -1090,25 +1189,29 @@ class HMMRegimeStrategy(BaseStrategy):
     def _open_trade(
         self, state: int, p_state: float, spot: float, iv: float, r: float,
         q: float, dt: pd.Timestamp, capital: float, p: dict, comm: float, slip: float,
+        skew: float = 0.0,
     ) -> Optional[dict]:
         if state == 0:
-            return self._open_bull_put(spot, iv, r, q, dt, capital, p, comm, slip, p_state)
+            return self._open_bull_put(spot, iv, r, q, dt, capital, p, comm, slip, p_state, skew)
         if state == 1:
-            return self._open_iron_condor(spot, iv, r, q, dt, capital, p, comm, slip, p_state)
+            return self._open_iron_condor(spot, iv, r, q, dt, capital, p, comm, slip, p_state, skew)
         if state == 2:
-            return self._open_long_put_spread(spot, iv, r, q, dt, capital, p, comm, slip, p_state)
+            return self._open_long_put_spread(spot, iv, r, q, dt, capital, p, comm, slip, p_state, skew)
         return None
 
-    def _open_bull_put(self, spot, iv, r, q, dt, capital, p, comm, slip, p_state):
+    def _open_bull_put(self, spot, iv, r, q, dt, capital, p, comm, slip, p_state, skew=0.0):
         T = p["dte_bull_put"] / 365.0
         short_K = _strike_for_delta(spot, T, r, iv, p["bull_put_short_delta"], "put", q=q)
         long_K  = short_K * (1 - p["bull_put_wing_pct"])
         if long_K <= 0:
             return None
 
-        # Credit = short put price - long put price (with slippage adverse)
-        sp = bs_price(spot, short_K, T, r, iv, "put", q=q) - slip
-        lp = bs_price(spot, long_K,  T, r, iv, "put", q=q) + slip
+        # Credit = short put price - long put price (with slippage adverse).
+        # Legs priced with bs_price_skew so the OTM long put picks up the
+        # downside smirk (richer than flat IV) — conservative for a credit
+        # spread because it lifts the long-leg cost and trims the net credit.
+        sp = bs_price_skew(spot, short_K, T, r, iv, "put", skew_slope=skew, q=q) - slip
+        lp = bs_price_skew(spot, long_K,  T, r, iv, "put", skew_slope=skew, q=q) + slip
         credit_per = max(0.01, sp - lp)
         max_loss_per = max(0.01, (short_K - long_K) - credit_per)
 
@@ -1128,6 +1231,7 @@ class HMMRegimeStrategy(BaseStrategy):
             "entry_iv":         iv,
             "short_K":          short_K,
             "long_K":           long_K,
+            "entry_skew":       skew,
             "credit":           credit,                 # dollars
             "credit_or_debit":  round(credit, 2),
             "contracts":        contracts,
@@ -1138,7 +1242,7 @@ class HMMRegimeStrategy(BaseStrategy):
             "open_commission":  open_comm,
         }
 
-    def _open_iron_condor(self, spot, iv, r, q, dt, capital, p, comm, slip, p_state):
+    def _open_iron_condor(self, spot, iv, r, q, dt, capital, p, comm, slip, p_state, skew=0.0):
         T = p["dte_condor"] / 365.0
         call_short_K = _strike_for_delta(spot, T, r, iv, p["condor_short_delta"], "call", q=q)
         put_short_K  = _strike_for_delta(spot, T, r, iv, p["condor_short_delta"], "put", q=q)
@@ -1146,10 +1250,10 @@ class HMMRegimeStrategy(BaseStrategy):
         call_long_K = call_short_K + wing
         put_long_K  = max(0.01, put_short_K - wing)
 
-        cs = bs_price(spot, call_short_K, T, r, iv, "call", q=q) - slip
-        cl = bs_price(spot, call_long_K,  T, r, iv, "call", q=q) + slip
-        ps = bs_price(spot, put_short_K,  T, r, iv, "put",  q=q) - slip
-        pl = bs_price(spot, put_long_K,   T, r, iv, "put",  q=q) + slip
+        cs = bs_price_skew(spot, call_short_K, T, r, iv, "call", skew_slope=skew, q=q) - slip
+        cl = bs_price_skew(spot, call_long_K,  T, r, iv, "call", skew_slope=skew, q=q) + slip
+        ps = bs_price_skew(spot, put_short_K,  T, r, iv, "put",  skew_slope=skew, q=q) - slip
+        pl = bs_price_skew(spot, put_long_K,   T, r, iv, "put",  skew_slope=skew, q=q) + slip
         credit_per = max(0.01, (cs - cl) + (ps - pl))
         wing_width = max(call_long_K - call_short_K, put_short_K - put_long_K)
         max_loss_per = max(0.01, wing_width - credit_per)
@@ -1172,6 +1276,7 @@ class HMMRegimeStrategy(BaseStrategy):
             "call_long_K":      call_long_K,
             "put_short_K":      put_short_K,
             "put_long_K":       put_long_K,
+            "entry_skew":       skew,
             "credit":           credit,
             "credit_or_debit":  round(credit, 2),
             "contracts":        contracts,
@@ -1182,13 +1287,13 @@ class HMMRegimeStrategy(BaseStrategy):
             "open_commission":  open_comm,
         }
 
-    def _open_long_put_spread(self, spot, iv, r, q, dt, capital, p, comm, slip, p_state):
+    def _open_long_put_spread(self, spot, iv, r, q, dt, capital, p, comm, slip, p_state, skew=0.0):
         T = p["dte_long_put"] / 365.0
         long_K  = _strike_for_delta(spot, T, r, iv, p["long_put_long_delta"], "put", q=q)
         short_K = max(0.01, long_K * (1 - p["long_put_short_pct"]))
 
-        lp = bs_price(spot, long_K,  T, r, iv, "put", q=q) + slip
-        sp = bs_price(spot, short_K, T, r, iv, "put", q=q) - slip
+        lp = bs_price_skew(spot, long_K,  T, r, iv, "put", skew_slope=skew, q=q) + slip
+        sp = bs_price_skew(spot, short_K, T, r, iv, "put", skew_slope=skew, q=q) - slip
         debit_per = max(0.01, lp - sp)
         max_loss_per = debit_per   # debit spread: max loss = debit paid
 
@@ -1207,6 +1312,7 @@ class HMMRegimeStrategy(BaseStrategy):
             "entry_iv":         iv,
             "long_K":           long_K,
             "short_K":          short_K,
+            "entry_skew":       skew,
             "debit":            debit,
             "credit_or_debit":  round(-debit, 2),
             "contracts":        contracts,
@@ -1223,48 +1329,86 @@ class HMMRegimeStrategy(BaseStrategy):
         }
 
     # ── Exit logic ────────────────────────────────────────────────────────
-    def _evaluate_exit(self, trade, spot, now, iv, r, q, p, comm, slip, end_of_data):
+    def _evaluate_exit(self, trade, spot, now, iv, r, q, p, comm, slip, skew=0.0, end_of_data=False):
         days_held = max(0, (now - trade["entry_date"]).days)
         dte_rem   = max(0, trade["entry_dte"] - days_held)
         T         = max(dte_rem, 1) / 365.0
+        # Price closing legs with the SAME skew used at entry for consistency.
+        skew = float(trade.get("entry_skew", skew))
+
+        # Defensive IV-spike close — applies to state-0 / state-1 (short-vol)
+        # trades. Fires when current IV has expanded by more than the configured
+        # multiplier from entry IV, BEFORE the standard P&L stop trigger.
+        iv_spike = False
+        if p.get("defensive_close_on_iv_spike", True) and trade.get("state") in (0, 1):
+            entry_iv = float(trade.get("entry_iv") or 0.0)
+            iv_mult  = float(p.get("iv_spike_multiplier", 1.5))
+            if entry_iv > 0 and iv >= entry_iv * iv_mult:
+                iv_spike = True
+
+        def _apply_stop_cap(sl_flag: bool, cur_cost_val: float,
+                            credit_val: float, sl_mult: float) -> float:
+            """When the stop fires, cap the realized cost-to-close at
+            `stop_trigger × stop_realization_cap_mult`. Models a stop-LIMIT
+            order filling near the trigger instead of running to the EOD
+            close on a gap day."""
+            if not sl_flag:
+                return cur_cost_val
+            cap_mult = float(p.get("stop_realization_cap_mult", 1.10))
+            trigger_cost = sl_mult * credit_val
+            return min(cur_cost_val, trigger_cost * cap_mult)
 
         if trade["type"] == "bull_put_spread":
-            sp = bs_price(spot, trade["short_K"], T, r, iv, "put", q=q) + slip
-            lp = bs_price(spot, trade["long_K"],  T, r, iv, "put", q=q) - slip
+            sp = bs_price_skew(spot, trade["short_K"], T, r, iv, "put", skew_slope=skew, q=q) + slip
+            lp = bs_price_skew(spot, trade["long_K"],  T, r, iv, "put", skew_slope=skew, q=q) - slip
             cur_cost = max(0.0, sp - lp) * 100 * trade["contracts"]
             credit   = trade["credit_received"]
-            pnl      = credit - cur_cost
             close_comm = 2 * comm * trade["contracts"]
 
-            tp = pnl >= p["profit_target_pct"] * credit
+            tp = (credit - cur_cost) >= p["profit_target_pct"] * credit
             sl = cur_cost >= p["stop_loss_mult"] * credit
             dte_ex = dte_rem <= p["bull_put_dte_exit"]
-            if tp or sl or dte_ex or end_of_data:
-                reason = "profit_target" if tp else "stop_loss" if sl else "dte_exit" if dte_ex else "end_of_data"
-                return True, reason, pnl - close_comm
+            if tp or sl or iv_spike or dte_ex or end_of_data:
+                reason = (
+                    "profit_target" if tp else
+                    "iv_spike"      if iv_spike else
+                    "stop_loss"     if sl else
+                    "dte_exit"      if dte_ex else
+                    "end_of_data"
+                )
+                realized_cost = _apply_stop_cap(sl, cur_cost, credit, p["stop_loss_mult"])
+                realized_pnl  = credit - realized_cost
+                return True, reason, realized_pnl - close_comm
             return False, None, 0.0
 
         if trade["type"] == "iron_condor":
-            cs = bs_price(spot, trade["call_short_K"], T, r, iv, "call", q=q) + slip
-            cl = bs_price(spot, trade["call_long_K"],  T, r, iv, "call", q=q) - slip
-            ps = bs_price(spot, trade["put_short_K"],  T, r, iv, "put",  q=q) + slip
-            pl = bs_price(spot, trade["put_long_K"],   T, r, iv, "put",  q=q) - slip
+            cs = bs_price_skew(spot, trade["call_short_K"], T, r, iv, "call", skew_slope=skew, q=q) + slip
+            cl = bs_price_skew(spot, trade["call_long_K"],  T, r, iv, "call", skew_slope=skew, q=q) - slip
+            ps = bs_price_skew(spot, trade["put_short_K"],  T, r, iv, "put",  skew_slope=skew, q=q) + slip
+            pl = bs_price_skew(spot, trade["put_long_K"],   T, r, iv, "put",  skew_slope=skew, q=q) - slip
             cur_cost = max(0.0, (cs - cl) + (ps - pl)) * 100 * trade["contracts"]
             credit   = trade["credit_received"]
-            pnl      = credit - cur_cost
             close_comm = 4 * comm * trade["contracts"]
 
-            tp = pnl >= p["profit_target_pct"] * credit
+            tp = (credit - cur_cost) >= p["profit_target_pct"] * credit
             sl = cur_cost >= p["stop_loss_mult"] * credit
             dte_ex = dte_rem <= p["condor_dte_exit"]
-            if tp or sl or dte_ex or end_of_data:
-                reason = "profit_target" if tp else "stop_loss" if sl else "dte_exit" if dte_ex else "end_of_data"
-                return True, reason, pnl - close_comm
+            if tp or sl or iv_spike or dte_ex or end_of_data:
+                reason = (
+                    "profit_target" if tp else
+                    "iv_spike"      if iv_spike else
+                    "stop_loss"     if sl else
+                    "dte_exit"      if dte_ex else
+                    "end_of_data"
+                )
+                realized_cost = _apply_stop_cap(sl, cur_cost, credit, p["stop_loss_mult"])
+                realized_pnl  = credit - realized_cost
+                return True, reason, realized_pnl - close_comm
             return False, None, 0.0
 
         if trade["type"] == "long_put_spread":
-            lp = bs_price(spot, trade["long_K"],  T, r, iv, "put", q=q) - slip
-            sp = bs_price(spot, trade["short_K"], T, r, iv, "put", q=q) + slip
+            lp = bs_price_skew(spot, trade["long_K"],  T, r, iv, "put", skew_slope=skew, q=q) - slip
+            sp = bs_price_skew(spot, trade["short_K"], T, r, iv, "put", skew_slope=skew, q=q) + slip
             cur_val = max(0.0, lp - sp) * 100 * trade["contracts"]
             debit   = trade["debit"]
             pnl     = cur_val - debit
@@ -1281,30 +1425,33 @@ class HMMRegimeStrategy(BaseStrategy):
         return False, None, 0.0
 
     # ── Mark-to-market ────────────────────────────────────────────────────
-    def _mtm(self, trade, spot, now, iv, r, q: float = 0.0) -> float:
+    def _mtm(self, trade, spot, now, iv, r, q: float = 0.0, skew: float = 0.0) -> float:
         if trade is None:
             return 0.0
         days_held = max(0, (now - trade["entry_date"]).days)
         dte_rem   = max(1, trade["entry_dte"] - days_held)
         T         = dte_rem / 365.0
+        # Mark with the same skew used at entry so MTM equity is consistent with
+        # the entry/exit leg pricing (no flat-vs-skew jump on the open position).
+        skew = float(trade.get("entry_skew", skew))
 
         if trade["type"] == "bull_put_spread":
-            sp = bs_price(spot, trade["short_K"], T, r, iv, "put", q=q)
-            lp = bs_price(spot, trade["long_K"],  T, r, iv, "put", q=q)
+            sp = bs_price_skew(spot, trade["short_K"], T, r, iv, "put", skew_slope=skew, q=q)
+            lp = bs_price_skew(spot, trade["long_K"],  T, r, iv, "put", skew_slope=skew, q=q)
             cur_cost = max(0.0, sp - lp) * 100 * trade["contracts"]
             return trade["credit_received"] - cur_cost
 
         if trade["type"] == "iron_condor":
-            cs = bs_price(spot, trade["call_short_K"], T, r, iv, "call", q=q)
-            cl = bs_price(spot, trade["call_long_K"],  T, r, iv, "call", q=q)
-            ps = bs_price(spot, trade["put_short_K"],  T, r, iv, "put",  q=q)
-            pl = bs_price(spot, trade["put_long_K"],   T, r, iv, "put",  q=q)
+            cs = bs_price_skew(spot, trade["call_short_K"], T, r, iv, "call", skew_slope=skew, q=q)
+            cl = bs_price_skew(spot, trade["call_long_K"],  T, r, iv, "call", skew_slope=skew, q=q)
+            ps = bs_price_skew(spot, trade["put_short_K"],  T, r, iv, "put",  skew_slope=skew, q=q)
+            pl = bs_price_skew(spot, trade["put_long_K"],   T, r, iv, "put",  skew_slope=skew, q=q)
             cur_cost = max(0.0, (cs - cl) + (ps - pl)) * 100 * trade["contracts"]
             return trade["credit_received"] - cur_cost
 
         if trade["type"] == "long_put_spread":
-            lp = bs_price(spot, trade["long_K"],  T, r, iv, "put", q=q)
-            sp = bs_price(spot, trade["short_K"], T, r, iv, "put", q=q)
+            lp = bs_price_skew(spot, trade["long_K"],  T, r, iv, "put", skew_slope=skew, q=q)
+            sp = bs_price_skew(spot, trade["short_K"], T, r, iv, "put", skew_slope=skew, q=q)
             cur_val = max(0.0, lp - sp) * 100 * trade["contracts"]
             return cur_val - trade["debit"]
 

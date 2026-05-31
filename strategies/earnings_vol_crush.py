@@ -14,8 +14,8 @@ risk is now known (the gap has already happened). The AI layer predicts:
 
 WALK-FORWARD TRAINING
 ---------------------
-  - Warmup: 90 earnings events before first prediction (cycles, not calendar bars)
-  - Retrain every 15 new events
+  - Warmup: 30 earnings events before first prediction (cycles, not calendar bars)
+  - Retrain every 10 new events
   - Label: binary — did the stock stay within ±8% of the gap close over 10 days?
 
 FEATURE SET (10 features)
@@ -35,7 +35,17 @@ LABEL CONSTRUCTION
 ------------------
   contained_10d = 1 if max(|close - gap_close|) / gap_close ≤ 0.08 over next 10 days
   This is the credit spread survival condition: stock must not extend 8% beyond gap.
-  Positive rate: ~65% (most earnings gaps are "one and done").
+  Positive (contained) rate is data-dependent and must be measured per universe.
+
+COSTS & PRICING
+---------------
+  - Per-leg slippage + commission applied on BOTH entry and exit (2 legs ×
+    contracts) via DEFAULT_SLIPPAGE_PER_LEG / DEFAULT_COMMISSION_PER_LEG.
+  - Legs priced with the engine's skew-aware pricer (bs_price_skew) when
+    available so OTM strikes reflect the vol smile; flat-IV BS fallback.
+  - Position sized so worst-case (defined-risk) loss ≈ position_size_pct of
+    equity; all P&L scaled by contract count. Open positions are marked to
+    market in the equity curve (no step-function-only equity).
 """
 
 from __future__ import annotations
@@ -58,12 +68,45 @@ from alan_trader.strategies.base import (
 )
 from alan_trader.risk.metrics import compute_all_metrics
 
+# Transaction-cost constants and skew-aware pricing live in the backtest engine.
+# Import them defensively so the module stays importable even if the engine API
+# drifts; fall back to conservative defaults / flat IV in that case.
+try:  # pragma: no cover - import shim
+    from alan_trader.backtest.engine import (
+        DEFAULT_SLIPPAGE_PER_LEG,
+        DEFAULT_COMMISSION_PER_LEG,
+    )
+except Exception:  # pragma: no cover
+    try:
+        from backtest.engine import (
+            DEFAULT_SLIPPAGE_PER_LEG,
+            DEFAULT_COMMISSION_PER_LEG,
+        )
+    except Exception:
+        DEFAULT_SLIPPAGE_PER_LEG   = 0.05   # per-share adverse fill per leg
+        DEFAULT_COMMISSION_PER_LEG = 0.65   # $ per contract per leg
+
+try:  # pragma: no cover - import shim
+    from alan_trader.backtest.engine import bs_price_skew
+    _HAS_SKEW = True
+except Exception:  # pragma: no cover
+    try:
+        from backtest.engine import bs_price_skew
+        _HAS_SKEW = True
+    except Exception:
+        bs_price_skew = None
+        _HAS_SKEW = False
+
 logger = logging.getLogger(__name__)
 
 _RISK_FREE_RATE   = 0.045
 _WARMUP_EVENTS    = 30      # earnings events before first ML prediction
 _RETRAIN_EVERY    = 10      # events between retrains
 _SAVED_MODELS_DIR = Path(__file__).parent.parent / "saved_models"
+
+# Per-leg round-trip cost in *contract* dollars (slippage×100 + commission),
+# applied on BOTH entry and exit, scaled by number of legs × contracts.
+_LEG_COST = DEFAULT_SLIPPAGE_PER_LEG * 100.0 + DEFAULT_COMMISSION_PER_LEG
 
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
@@ -78,10 +121,28 @@ def _bs_price(S, K, T, r, sigma, option_type):
     return float(K * np.exp(-r * T) * norm.cdf(-d2) - S * norm.cdf(-d1))
 
 
+def _leg_price(S, K, T, r, iv, option_type):
+    """
+    Price a single option leg. Uses the engine's skew-aware pricer when
+    available so OTM short/long strikes reflect the volatility smile rather than
+    a single flat IV; otherwise falls back to flat-IV Black-Scholes. The engine's
+    bs_price_skew(S, K, T, r, atm_iv, option_type) applies the moneyness skew
+    internally, so we pass the ATM (VIX-derived) IV directly.
+    """
+    if _HAS_SKEW:
+        try:
+            return float(bs_price_skew(S, K, T, r, iv, option_type))
+        except Exception:
+            pass
+    return _bs_price(S, K, T, r, iv, option_type)
+
+
 def _spread_credit(S, short_K, long_K, T, r, iv, spread_type):
     if spread_type == "bull_put":
-        return _bs_price(S, short_K, T, r, iv, "put") - _bs_price(S, long_K, T, r, iv, "put")
-    return _bs_price(S, short_K, T, r, iv, "call") - _bs_price(S, long_K, T, r, iv, "call")
+        return (_leg_price(S, short_K, T, r, iv, "put")
+                - _leg_price(S, long_K, T, r, iv, "put"))
+    return (_leg_price(S, short_K, T, r, iv, "call")
+            - _leg_price(S, long_K, T, r, iv, "call"))
 
 
 def _spread_value_at_expiry(spot, short_K, long_K, spread_type):
@@ -324,6 +385,7 @@ class EarningsVolCrushStrategy(BaseStrategy):
         last_train  = -999
 
         for i, dt in enumerate(all_dates):
+            mtm = 0.0  # unrealized P&L of any open position, marked to market today
             if open_trade is not None:
                 open_trade["days_held"] += 1
                 spot    = float(close.iloc[i])
@@ -331,39 +393,58 @@ class EarningsVolCrushStrategy(BaseStrategy):
                 days_rem = max(0, h_days - open_trade["days_held"])
                 t_yr    = days_rem / 252.0
                 st      = open_trade["spread_type"]
+                contracts = open_trade["contracts"]
 
+                # Current cost to buy the spread back.
                 pnl_now = (_spread_value_at_expiry(spot, open_trade["short_strike"],
                              open_trade["long_strike"], st)
                            if days_rem == 0
                            else (_spread_credit(spot, open_trade["short_strike"],
                                   open_trade["long_strike"], t_yr, _RISK_FREE_RATE, iv_now, st)))
 
+                # Credit trade: profit = credit collected − cost to close, scaled
+                # by contracts × 100 shares/contract.
                 entry_v    = open_trade["entry_value"]
-                pnl_dollar = (entry_v - pnl_now) * 100 if True else 0.0  # credit trade
-                max_profit = open_trade["max_profit"]
+                pnl_dollar = (entry_v - pnl_now) * 100.0 * contracts
+                max_profit = open_trade["max_profit"]   # already contract-scaled
+                max_loss   = open_trade["max_loss"]     # already contract-scaled
+
+                # Stop is a multiple of the *credit received* (max_profit), which
+                # is reachable; a multiple of max_loss could never trigger since a
+                # defined-risk spread cannot lose more than max_loss (1×). Cap at
+                # the structural max loss so the threshold stays valid.
+                stop_level = min(max_profit * sl_mult, max_loss)
 
                 exit_reason = None
                 if pnl_dollar >= max_profit * pt_pct:
                     exit_reason = "profit_target"
-                elif pnl_dollar <= -open_trade["max_loss"] * sl_mult:
+                elif pnl_dollar <= -stop_level:
                     exit_reason = "stop_loss"
                 elif open_trade["days_held"] >= h_days:
                     exit_reason = "hold_days"
 
                 if exit_reason:
-                    capital += pnl_dollar
+                    # Round-trip exit cost: 2 legs × contracts (entry cost was
+                    # already deducted from capital at entry).
+                    exit_cost = _LEG_COST * 2.0 * contracts
+                    pnl_net   = pnl_dollar - exit_cost
+                    capital  += pnl_net
                     trades_list.append({
                         "entry_date":  open_trade["entry_date"].date(),
                         "exit_date":   dt.date(),
                         "spread_type": open_trade["spread_type"],
-                        "entry_cost":  round(open_trade["entry_value"] * 100, 2),
-                        "exit_value":  round(pnl_now * 100, 2),
-                        "pnl":         round(pnl_dollar, 2),
+                        "contracts":   contracts,
+                        "entry_cost":  round(open_trade["entry_value"] * 100 * contracts, 2),
+                        "exit_value":  round(pnl_now * 100 * contracts, 2),
+                        "pnl":         round(pnl_net, 2),
                         "exit_reason": exit_reason,
                     })
                     open_trade = None
+                else:
+                    # Still open: mark to market so equity isn't a step function.
+                    mtm = pnl_dollar
 
-            equity_list.append(capital)
+            equity_list.append(capital + mtm)
 
             if not earnings_gaps.iloc[i]:
                 continue
@@ -373,12 +454,18 @@ class EarningsVolCrushStrategy(BaseStrategy):
             if events_seen < _WARMUP_EVENTS:
                 continue
 
-            # Retrain
+            # Retrain — purge the last h_days bars. Each label looks forward
+            # h_days (close[j+1 : j+1+h_days]), so a row at j carries information
+            # up to bar j+h_days. Training on rows j > i-h_days would leak prices
+            # at/after the decision bar i into the model (walk-forward look-ahead).
+            # cutoff = i - h_days keeps only rows whose label window closed before i.
+            # Mirrors the purge already used in rs_credit_spread.
             if events_seen - last_train >= _RETRAIN_EVERY:
-                X_tr = feat_df.iloc[:i][self.FEATURE_COLS]
-                y_tr = labels.iloc[:i]
+                cutoff = max(0, i - h_days)
+                X_tr = feat_df.iloc[:cutoff][self.FEATURE_COLS]
+                y_tr = labels.iloc[:cutoff]
                 # only use earnings event rows
-                ev_mask = earnings_gaps.iloc[:i]
+                ev_mask = earnings_gaps.iloc[:cutoff]
                 X_tr = X_tr[ev_mask]
                 y_tr = y_tr[ev_mask]
                 valid = y_tr.notna() & X_tr.notna().all(axis=1)
@@ -436,32 +523,62 @@ class EarningsVolCrushStrategy(BaseStrategy):
             if entry_v <= 0:
                 continue
 
-            max_loss_  = (wing_w - entry_v) * 100
-            max_profit = entry_v * 100
+            # Per-contract risk = wing − credit (defined-risk spread). Size so the
+            # worst-case loss ≈ position_size_pct of current equity.
+            risk_per_contract = max(1e-9, (wing_w - entry_v) * 100.0)
+            risk_budget       = capital * self.position_size_pct
+            contracts         = int(max(1, np.floor(risk_budget / risk_per_contract)))
+
+            max_loss_  = risk_per_contract * contracts
+            max_profit = entry_v * 100.0 * contracts
+
+            # Entry transaction cost: 2 legs × contracts, deducted immediately.
+            capital -= _LEG_COST * 2.0 * contracts
 
             open_trade = {
                 "entry_date":   dt, "spread_type": stype,
                 "short_strike": short_K, "long_strike": long_K,
                 "entry_value":  entry_v, "max_profit": max_profit, "max_loss": max_loss_,
+                "contracts":    contracts,
                 "days_held": 0, "prob": prob_contained,
             }
 
         if open_trade is not None:
+            # Close the dangling position at the final bar's mark, net of the
+            # exit transaction cost, so the trade log and final equity agree.
+            contracts = open_trade["contracts"]
+            spot      = float(close.iloc[-1])
+            iv_now    = float(vix.iloc[-1]) / 100.0
+            days_rem  = max(0, h_days - open_trade["days_held"])
+            t_yr      = days_rem / 252.0
+            st        = open_trade["spread_type"]
+            close_val = (_spread_value_at_expiry(spot, open_trade["short_strike"],
+                            open_trade["long_strike"], st)
+                         if days_rem == 0
+                         else _spread_credit(spot, open_trade["short_strike"],
+                                open_trade["long_strike"], t_yr, _RISK_FREE_RATE, iv_now, st))
+            pnl_dollar = (open_trade["entry_value"] - close_val) * 100.0 * contracts
+            pnl_net    = pnl_dollar - _LEG_COST * 2.0 * contracts
+            capital   += pnl_net
+            if equity_list:
+                equity_list[-1] = capital  # replace MTM with realized close
             trades_list.append({
                 "entry_date":  open_trade["entry_date"].date(),
                 "exit_date":   all_dates[-1].date(),
                 "spread_type": open_trade["spread_type"],
-                "entry_cost":  round(open_trade["entry_value"] * 100, 2),
-                "exit_value":  0.0,
-                "pnl":         0.0,
+                "contracts":   contracts,
+                "entry_cost":  round(open_trade["entry_value"] * 100 * contracts, 2),
+                "exit_value":  round(close_val * 100 * contracts, 2),
+                "pnl":         round(pnl_net, 2),
                 "exit_reason": "end_of_data",
             })
+            open_trade = None
 
         equity    = pd.Series(equity_list, index=price_data.index, dtype=float)
         daily_ret = equity.pct_change().dropna()
         bh_ret    = close.pct_change().reindex(equity.index).dropna()
         trades_df = pd.DataFrame(trades_list) if trades_list else pd.DataFrame(
-            columns=["entry_date", "exit_date", "spread_type",
+            columns=["entry_date", "exit_date", "spread_type", "contracts",
                      "entry_cost", "exit_value", "pnl", "exit_reason"]
         )
         metrics = compute_all_metrics(
@@ -504,6 +621,10 @@ class EarningsVolCrushStrategy(BaseStrategy):
              "type": "slider", "min": 0.30, "max": 0.75, "default": 0.50, "step": 0.05,
              "col": 2, "row": 1,
              "help": "Close at this fraction of maximum credit received"},
+            {"key": "stop_loss_mult",    "label": "Stop loss (× max credit)",
+             "type": "slider", "min": 1.0, "max": 3.0, "default": 2.0, "step": 0.5,
+             "col": 0, "row": 2,
+             "help": "Close when loss reaches this multiple of credit received"},
         ]
 
     def get_params(self) -> dict:

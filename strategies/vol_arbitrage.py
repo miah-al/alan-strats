@@ -52,13 +52,21 @@ PARAMETERS
   iv_skew_threshold    — min put-call IV gap to trigger skew arb  (default 0.08)
   put_spread_width     — bull put spread width in $               (default 2.0)
   hedge_spread_width   — bear call spread width in $              (default 2.0)
-  iv_rank_min          — min IV rank (0–1) to enter               (default 0.0)
-  dte_min / dte_max    — DTE window for chain scanning            (default 7–60)
+  iv_rank_min          — min IV rank (0–1) to enter               (default 0.30)
+  dte_min / dte_max    — DTE window for chain scanning            (default 14–45)
   hold_days            — max hold before closing                  (default 3)
   position_size_pct    — capital % per trade                      (default 0.08)
 
-EXAMPLE TRADE (HOOD, 2025-06-16 → 2025-06-18)
-----------------------------------------------
+TRANSACTION COSTS
+-----------------
+  Per-leg slippage and commission use the engine constants
+  DEFAULT_SLIPPAGE_PER_LEG / DEFAULT_COMMISSION_PER_LEG and are charged on
+  BOTH entry and exit (per leg × contracts). Reconstructed / exit option marks
+  use bs_price_skew so OTM strikes carry a realistic downside smirk rather than
+  a single flat IV.
+
+EXAMPLE TRADE (ILLUSTRATIVE — hypothetical figures, not a backtest result)
+--------------------------------------------------------------------------
   Signal : IV Put 57.0% >> IV Call 42.7% → skew +14.3 vol pts at K=$65
   Spot   : $76.75    DTE: 11    Contracts: 7
 
@@ -119,7 +127,10 @@ from scipy.stats import norm
 from alan_trader.strategies.base import (
     BaseStrategy, BacktestResult, SignalResult, StrategyStatus, StrategyType,
 )
-from alan_trader.backtest.engine import bs_price
+from alan_trader.backtest.engine import (
+    bs_price, bs_price_skew, effective_iv,
+    DEFAULT_SLIPPAGE_PER_LEG, DEFAULT_COMMISSION_PER_LEG,
+)
 from alan_trader.risk.metrics import compute_all_metrics
 
 logger = logging.getLogger(__name__)
@@ -233,8 +244,10 @@ class VolArbitrageStrategy(BaseStrategy):
         dividend_yield:          float = 0.013,
         position_size_pct:       float = 0.08,
         hold_days:               int   = 3,
-        commission_per_contract: float = 0.65,
-        slippage_pct:            float = 0.001,
+        stop_loss_mult:          float = 0.0,   # 0 = disabled; else close when MTM loss >= mult × cost
+        commission_per_leg:      float | None = None,
+        slippage_per_leg:        float | None = None,
+        skew_slope:              float = 0.15,
         delta_hedge:             bool  = True,
         hedge_spread_width:      float = 2.0,   # dollars above ATM for long call cap
         put_spread_width:        float = 2.0,   # dollars below K for long put cap
@@ -248,8 +261,17 @@ class VolArbitrageStrategy(BaseStrategy):
         self.div_yield          = dividend_yield
         self.pos_size_pct       = position_size_pct
         self.hold_days          = hold_days
-        self.commission         = commission_per_contract
-        self.slippage           = slippage_pct
+        self.stop_loss_mult     = stop_loss_mult
+        # Transaction costs: per-leg slippage + commission from engine defaults.
+        # Charged on BOTH entry and exit, per leg × contracts × 100 shares.
+        # Use 'is not None' so an explicit 0.0 is respected (not silently replaced).
+        self.commission_per_leg = (commission_per_leg
+                                   if commission_per_leg is not None
+                                   else DEFAULT_COMMISSION_PER_LEG)
+        self.slippage_per_leg   = (slippage_per_leg
+                                   if slippage_per_leg is not None
+                                   else DEFAULT_SLIPPAGE_PER_LEG)
+        self.skew_slope         = skew_slope
         self.delta_hedge        = delta_hedge
         self.hedge_spread_width = hedge_spread_width
         self.put_spread_width   = put_spread_width
@@ -258,8 +280,14 @@ class VolArbitrageStrategy(BaseStrategy):
 
     def generate_signal(self, market_snapshot: dict) -> SignalResult:
         chain = market_snapshot.get("options_chain")
-        # Accept 'price' (preferred), then legacy 'spy_price', then a fallback placeholder
-        S     = market_snapshot.get("price") or market_snapshot.get("spy_price") or 500.0
+        # Accept 'price' (preferred), then legacy 'spy_price', then a fallback placeholder.
+        # Use explicit None checks so a genuine 0.0 (unlikely, but correct) isn't masked.
+        S = market_snapshot.get("price")
+        if S is None:
+            S = market_snapshot.get("spy_price")
+        if S is None:
+            S = 500.0
+        S = float(S)
         r     = market_snapshot.get("rate_10y", 0.045)
         vix_hist = market_snapshot.get("vix_history", pd.Series(dtype=float))
         cur_iv   = market_snapshot.get("vix", 0.20)
@@ -306,6 +334,7 @@ class VolArbitrageStrategy(BaseStrategy):
         auxiliary_data:   dict,
         starting_capital: float = 100_000,
         hold_days:        int   | None = None,
+        stop_loss_mult:   float | None = None,
         min_violation_pct:float | None = None,
         iv_skew_threshold:float | None = None,
         iv_rank_min:      float | None = None,
@@ -319,6 +348,7 @@ class VolArbitrageStrategy(BaseStrategy):
     ) -> BacktestResult:
 
         h_days   = hold_days          if hold_days          is not None else self.hold_days
+        stop_mlt = stop_loss_mult     if stop_loss_mult     is not None else self.stop_loss_mult
         min_viol = min_violation_pct  if min_violation_pct  is not None else self.min_viol
         skew_thr = iv_skew_threshold  if iv_skew_threshold  is not None else self.skew_thresh
         ivr_min  = iv_rank_min        if iv_rank_min        is not None else self.iv_rank_min
@@ -378,8 +408,26 @@ class VolArbitrageStrategy(BaseStrategy):
             still_open = []
             for tr in open_trades:
                 days_held = (pd.Timestamp(today) - pd.Timestamp(tr["entry_date"])).days
+                S_exit    = float(price_data.loc[today, "close"])
+
+                # Determine exit reason: hold expiry OR (optional) MTM stop-loss.
+                exit_reason = None
                 if days_held >= h_days:
-                    S_exit            = float(price_data.loc[today, "close"])
+                    exit_reason = "hold_expired"
+                elif stop_mlt and stop_mlt > 0:
+                    # Mark to market today; close if the unrealised loss reaches
+                    # stop_mlt × capital-at-risk. (mark = cost + profit, so
+                    # profit = mark - cost; loss is positive when profit < 0.)
+                    try:
+                        _mark, _ = self._close_trade(tr, S_exit, chains=chains,
+                                                     close_date=today_date)
+                        _loss = tr["cost"] - float(_mark)   # > 0 means losing
+                        if _loss >= stop_mlt * tr["cost"]:
+                            exit_reason = "stop_loss"
+                    except Exception:
+                        pass
+
+                if exit_reason is not None:
                     returned, cl_extra = self._close_trade(tr, S_exit,
                                                            chains=chains, close_date=today_date)
                     pnl       = returned - tr["cost"]
@@ -387,7 +435,7 @@ class VolArbitrageStrategy(BaseStrategy):
                     exit_val  = round(returned / max(tr["contracts"] * 100, 1), 4)
                     trades.append({**tr, **cl_extra, "exit_date": today_date,
                                    "exit_value": exit_val,
-                                   "pnl": round(pnl, 2), "exit_reason": "hold_expired"})
+                                   "pnl": round(pnl, 2), "exit_reason": exit_reason})
                 else:
                     still_open.append(tr)
             open_trades = still_open
@@ -431,7 +479,20 @@ class VolArbitrageStrategy(BaseStrategy):
                             capital -= tr["cost"]
                             open_trades.append(tr)
 
-            equity_pts.append({"date": today, "equity": capital})
+            # Mark-to-market: cash (capital) + current value of any open positions,
+            # so the equity curve reflects unrealised P&L daily instead of being a
+            # step function that only moves on entry/exit. For each open trade we
+            # estimate today's close-out value via _close_trade against the current
+            # chain (this does NOT close the trade — it only reads a mark).
+            mtm = capital
+            for tr in open_trades:
+                try:
+                    mark, _ = self._close_trade(tr, float(price_data.loc[today, "close"]),
+                                                chains=chains, close_date=today_date)
+                    mtm += float(mark)
+                except Exception:
+                    mtm += float(tr.get("cost", 0.0))   # fall back to cost basis
+            equity_pts.append({"date": today, "equity": mtm})
 
         # Close remaining
         if open_trades and len(price_data) > 0:
@@ -647,22 +708,22 @@ class VolArbitrageStrategy(BaseStrategy):
     def get_backtest_ui_params(self) -> list:
         return [
             {"key": "hold_days",          "label": "Max hold days",
-             "type": "slider",  "min": 1,   "max": 10,   "default": 2,    "step": 1,
+             "type": "slider",  "min": 1,   "max": 10,   "default": 3,    "step": 1,
              "col": 0, "row": 0, "help": "Close position after this many days if not expired"},
             {"key": "min_violation_pct",  "label": "Min parity violation (fraction of S)",
              "type": "slider",  "min": 0.001, "max": 0.020, "default": 0.003, "step": 0.001,
              "col": 1, "row": 0, "help": "Minimum violation as fraction of spot (0.003 = 0.3% for large ETFs, 0.005 for high-IV names)"},
-            {"key": "iv_skew_threshold",  "label": "IV skew threshold (fraction, e.g. 0.05 = 5pts)",
-             "type": "slider",  "min": 0.02, "max": 0.20, "default": 0.05, "step": 0.01,
-             "col": 2, "row": 0, "help": "Put minus call IV threshold to trigger skew arb (0.05 = 5 vol pts)"},
+            {"key": "iv_skew_threshold",  "label": "IV skew threshold (fraction, e.g. 0.08 = 8pts)",
+             "type": "slider",  "min": 0.02, "max": 0.20, "default": 0.08, "step": 0.01,
+             "col": 2, "row": 0, "help": "Put minus call IV threshold to trigger skew arb (0.08 = 8 vol pts)"},
             {"key": "iv_rank_min",        "label": "Min IV Rank to enter (0–1)",
-             "type": "slider",  "min": 0.0, "max": 0.80, "default": 0.0,  "step": 0.05,
+             "type": "slider",  "min": 0.0, "max": 0.80, "default": 0.30, "step": 0.05,
              "col": 0, "row": 1, "help": "Only trade when IV rank (0=lowest, 1=highest) exceeds this value"},
             {"key": "dte_min",            "label": "DTE minimum",
-             "type": "slider",  "min": 5,   "max": 30,   "default": 7,    "step": 1,
+             "type": "slider",  "min": 5,   "max": 30,   "default": 14,   "step": 1,
              "col": 1, "row": 1, "help": "Skip contracts with fewer DTE (too much gamma risk)"},
             {"key": "dte_max",            "label": "DTE maximum",
-             "type": "slider",  "min": 20,  "max": 90,   "default": 60,   "step": 5,
+             "type": "slider",  "min": 20,  "max": 90,   "default": 45,   "step": 5,
              "col": 2, "row": 1, "help": "Skip contracts with more DTE (too little premium decay)"},
             {"key": "delta_hedge",        "label": "Bear call spread hedge",
              "type": "checkbox", "default": True,
@@ -673,6 +734,9 @@ class VolArbitrageStrategy(BaseStrategy):
             {"key": "put_spread_width", "label": "Put spread width ($)",
              "type": "slider", "min": 1.0, "max": 10.0, "default": 2.0, "step": 0.5,
              "col": 2, "row": 2, "help": "Width of the bull put spread in dollars (e.g. $2 = short put at K, long put at K-$2). RH-compliant defined risk."},
+            {"key": "stop_loss_mult", "label": "Stop-loss (× capital-at-risk, 0=off)",
+             "type": "slider", "min": 0.0, "max": 2.0, "default": 0.0, "step": 0.25,
+             "col": 0, "row": 3, "help": "Close early when the mark-to-market loss reaches this multiple of capital-at-risk. 0 disables the stop."},
         ]
 
     def get_params(self) -> dict:
@@ -686,7 +750,10 @@ class VolArbitrageStrategy(BaseStrategy):
             "dividend_yield":     self.div_yield,
             "position_size_pct":  self.pos_size_pct,
             "hold_days":          self.hold_days,
-            "slippage_pct":        self.slippage,
+            "stop_loss_mult":     self.stop_loss_mult,
+            "commission_per_leg":  self.commission_per_leg,
+            "slippage_per_leg":    self.slippage_per_leg,
+            "skew_slope":          self.skew_slope,
             "delta_hedge":         self.delta_hedge,
             "hedge_spread_width":  self.hedge_spread_width,
             "put_spread_width":    self.put_spread_width,
@@ -774,12 +841,20 @@ class VolArbitrageStrategy(BaseStrategy):
                                    float(p_ask if p_ask == p_ask else 0) <= 0)
                 both_reconstructed = c_reconstructed and p_reconstructed
 
-                # Reconstruct bid/ask from IV+BS when prices are missing (historical DB data)
+                # Reconstruct bid/ask from IV+BS when prices are missing (historical DB data).
+                # Use bs_price_skew so that if iv_val is an ATM-anchored level, OTM strikes
+                # (K != S) inherit a realistic downside smirk instead of a single flat IV.
+                # When the stored IV is already strike-specific this is conservative: the
+                # extra slope shifts OTM-put marks up (richer, harder to sell) and OTM-call
+                # marks down — both pessimistic for this strategy.
+                _skew_slope = getattr(self, "skew_slope", 0.15)
+
                 def _bs_mid_spread(iv_val, opt_type):
                     if iv_val is None or iv_val != iv_val or float(iv_val) <= 0:
                         return float("nan"), float("nan")
                     try:
-                        mid    = bs_price(S, K, T, r, float(iv_val), opt_type)
+                        mid    = bs_price_skew(S, K, T, r, float(iv_val), opt_type,
+                                               skew_slope=_skew_slope)
                         spread = max(0.01, mid * (0.04 if mid < 1 else 0.02))
                         return mid - spread / 2, mid + spread / 2
                     except Exception:
@@ -887,9 +962,14 @@ class VolArbitrageStrategy(BaseStrategy):
         # full debit on downside scenarios where (a) is firing, so the
         # downside-case max-loss is put_sw + call_price_entry. Take the
         # conservative bound across all scenarios.
+        # Resolve widths from the per-backtest overrides set in backtest()
+        # (_put_spread_width / _hedge_spread_width), falling back to instance
+        # defaults. 'is not None' keeps an explicit 0.0 intact.
+        _ov_put_sw   = getattr(self, "_put_spread_width",   None)
+        _ov_hedge_sw = getattr(self, "_hedge_spread_width", None)
         use_hedge = v.trade_type == "skew_arb" and self.delta_hedge
-        put_sw    = getattr(self, "_tmp_put_spread_width",  self.put_spread_width)
-        hedge_sw  = getattr(self, "_tmp_hedge_spread_width", self.hedge_spread_width)
+        put_sw    = float(_ov_put_sw)   if _ov_put_sw   is not None else float(self.put_spread_width)
+        hedge_sw  = float(_ov_hedge_sw) if _ov_hedge_sw is not None else float(self.hedge_spread_width)
         cap_leg   = float(v.call_price or 0.0) if v.trade_type == "skew_arb" else 0.0
         downside_loss = put_sw + cap_leg
         upside_loss   = (hedge_sw - cap_leg) if use_hedge else 0.0
@@ -926,10 +1006,10 @@ class VolArbitrageStrategy(BaseStrategy):
         # Bull put spread: short put at detection strike K (overpriced vs call at K),
         # long put at K − put_sw (protection, further OTM, cheaper in dollar terms).
         # Net CREDIT — positive theta.  IV edge = put IV at K vs call IV at K (same strike).
+        # Resolve with 'is not None' so an explicit width of 0.0 is honoured (the old
+        # truthiness fallback silently overrode 0.0 with the 2.0 default).
         _raw_put_sw = getattr(self, "_put_spread_width", None)
-        if _raw_put_sw is None or float(_raw_put_sw) == 0.0:
-            _raw_put_sw = getattr(self, "put_spread_width", 2.0)
-        put_sw = float(_raw_put_sw) if _raw_put_sw else 2.0
+        put_sw = float(_raw_put_sw) if _raw_put_sw is not None else float(self.put_spread_width)
         long_put_strike = None
         long_put_entry  = None
 
@@ -947,10 +1027,28 @@ class VolArbitrageStrategy(BaseStrategy):
                 long_put_strike = float(_lp_row["strike"].iloc[0])
                 long_put_entry  = _cmid_put(_lp_row)
 
-        hedge_legs    = 2 if (v.trade_type == "skew_arb" and use_hedge and
-                              hedge_short_strike is not None) else 0
-        slippage_cost = S * self.slippage * n_contracts * 100
-        commission    = self.commission * n_contracts * (3 + hedge_legs)
+        # ── Leg count for transaction costs ───────────────────────────────────
+        # skew_arb base legs: short put @K, long call @K  (2).
+        #   + long put @K-width (bull put spread protection) when present (1).
+        #   + bear call spread hedge (short ATM call + long OTM call) when present (2).
+        # parity (conversion/reversal): 2 option legs (put + call); the stock leg
+        #   carries its own slippage but no per-leg option commission.
+        if v.trade_type == "skew_arb":
+            n_legs = 2
+            if long_put_strike is not None:
+                n_legs += 1
+            if use_hedge and hedge_short_strike is not None:
+                n_legs += 2
+        else:
+            n_legs = 2
+        hedge_legs = 2 if (v.trade_type == "skew_arb" and use_hedge and
+                           hedge_short_strike is not None) else 0
+
+        # Transaction costs: per-leg slippage + commission, on ENTRY here and
+        # again on EXIT in _close_trade. Per leg × contracts × 100 shares.
+        # (slippage_per_leg/commission_per_leg are per-share BS-mark / per-contract.)
+        slippage_cost = self.slippage_per_leg * n_legs * n_contracts * 100
+        commission    = self.commission_per_leg * n_legs * n_contracts
 
         if v.trade_type == "skew_arb":
             # Estimate net credit/debit from the spread structure using vega approximation
@@ -1087,7 +1185,16 @@ class VolArbitrageStrategy(BaseStrategy):
         n          = tr["contracts"]
         _has_hedge = tr.get("hedge_short_strike") is not None
         _has_lp    = tr.get("long_put_strike") is not None
-        commission = self.commission * n * (1 + (1 if _has_lp else 0) + 1 + (2 if _has_hedge else 0))
+        # Number of option legs being closed (must mirror the entry leg count):
+        #   short put + long call (2) + optional long put (1) + optional hedge (2).
+        # Parity trades close 2 option legs.
+        if tr.get("trade_type") == "skew_arb":
+            n_legs = 2 + (1 if _has_lp else 0) + (2 if _has_hedge else 0)
+        else:
+            n_legs = 2
+        # EXIT transaction costs: per-leg slippage + commission (mirrors entry).
+        commission = (self.commission_per_leg * n_legs * n
+                      + self.slippage_per_leg * n_legs * n * 100)
         gross      = tr["expected_pnl"]
 
         # ── Find closest chain snapshot at or near close_date ─────────────────

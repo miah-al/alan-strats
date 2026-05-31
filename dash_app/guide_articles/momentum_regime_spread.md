@@ -134,52 +134,69 @@ Timeline:
                         Standard scaler applied before each fit
 ```
 
-The 3-class GBM is handled with sklearn's `GradientBoostingClassifier` in one-vs-rest mode. Class weights are not adjusted — the chop class is the plurality (~40% of bars) and having the model default to "chop" in uncertain environments is the desired behavior.
+The 3-class GBM is sklearn's `GradientBoostingClassifier` (multinomial), retrained every 15 bars on an expanding window. Class weights are not adjusted — the chop class is the plurality (rolling terciles make it roughly one third of bars) and having the model default to "chop" in uncertain environments is the desired behavior.
+
+**Leakage controls.** Features are forward-filled only (never back-filled, which would pull future values into early NaNs). Labels use a 10-day forward return, so the last 10 bars are masked. At each retrain the training set is purged up to `i − max(10, dte_target)` so neither the label's forward window nor the trade's hold window overlaps the prediction point.
+
+**Modeled frictions.** Every leg pays commission and bid/ask slippage on entry *and* exit. Both legs are priced with a linear equity-index vol skew (downside strikes at higher IV). These costs materially reduce net P&L versus a frictionless, flat-IV model — budget for them.
 
 ---
 
-## Real Trade Walkthrough — Bull Regime Entry
+## Illustrative Trade — Bull Regime Entry
 
-**Date:** January 2024 | **SPY:** $470 | **VIX:** 13.4
+> The figures below are illustrative of the *mechanics*, not a recorded trade.
+> Actual debits, max gain, and P&L depend on the live vol surface and on the
+> modeled frictions (commission + bid/ask slippage on both legs, both sides).
 
-Model inputs:
+**Scenario:** SPY ~$470, VIX ~13, model classifies a confident bull regime.
+
+Model inputs (representative):
 - `ret_5d` = +0.021 (2.1% gain over 5 days)
 - `ret_20d` = +0.038 (3.8% gain over 20 days)
-- `momentum_accel` = +0.021 - 0.038/4 = small acceleration
-- `vix_5d_change` = -0.12 (VIX falling)
+- `momentum_accel` = ret_5d − ret_20d (mild deceleration here)
+- `vix_5d_change` = −0.12 (VIX falling)
 - `dist_from_ma50` = +0.015 (1.5% above 50MA)
 
-**Model output: P(bull) = 0.67** → above 55% threshold → enter bull call spread.
+**Model output: P(bull) ≥ confidence_threshold** → enter bull call spread.
 
-Trade:
-- Long call: $470 strike (ATM)
-- Short call: $482 strike (spot + 2.5%)
-- Debit: $1.85 per share | Max gain: $10.15 | Max loss: $1.85
+Trade structure:
+- Long call: ~$470 strike (ATM)
+- Short call: ~$482 strike (spot + 2.5% wing)
+- DTE: `dte_target` (14d default)
+- Net debit is paid up front (priced with vol skew); **max loss = net debit**,
+  **max gain = wing width − net debit**, both reduced by round-trip frictions.
 
-Outcome: SPY reached $478 by day 8.
-Closed at 80% of max gain → **P&L: +$812 per contract.**
+On a favorable move the position is closed at the profit target (80% of max
+gain) or on the DTE-exit rule. The realized P&L is the marked spread value minus
+the debit paid, net of commission and slippage, scaled by the number of
+contracts sized to `position_size_pct`.
 
 ---
 
-## Real Trade Walkthrough — Bear Regime Entry
+## Illustrative Trade — Bear Regime Entry
 
-**Date:** September 2022 | **SPY:** $382 | **VIX:** 26.8
+> Illustrative mechanics only — see the note above.
 
-Model inputs:
-- `ret_5d` = -0.041 (-4.1% loss over 5 days)
-- `ret_20d` = -0.073 (-7.3% loss over 20 days)
+**Scenario:** SPY ~$382, VIX ~27, model classifies a confident bear regime.
+
+Model inputs (representative):
+- `ret_5d` = −0.041 (−4.1% loss over 5 days)
+- `ret_20d` = −0.073 (−7.3% loss over 20 days)
 - `vix_5d_change` = +0.38 (VIX rising sharply)
-- `dist_from_ma200` = -0.11 (11% below 200MA — deep downtrend)
+- `dist_from_ma200` = −0.11 (11% below 200MA — deep downtrend)
 
-**Model output: P(bear) = 0.71** → above 55% threshold → enter bear put spread.
+**Model output: P(bear) ≥ confidence_threshold** → enter bear put spread.
 
-Trade:
-- Long put: $382 strike (ATM)
-- Short put: $372.50 strike (spot - 2.5%)
-- Debit: $1.95 per share | Max gain: $7.55 | Max loss: $1.95
+Trade structure:
+- Long put: ~$382 strike (ATM)
+- Short put: ~$372.50 strike (spot − 2.5% wing)
+- DTE: `dte_target` (14d default)
+- Max loss = net debit; max gain = wing width − net debit, both net of frictions.
 
-Outcome: SPY fell to $374 by day 10.
-Closed at 80% of max gain → **P&L: +$604 per contract.**
+Note that in a steep equity-index skew the short downside put carries higher IV,
+which the backtest now prices via `bs_price_skew` — this *narrows* the realistic
+net credit you receive from selling the wing and is the conservative, correct
+treatment.
 
 ---
 

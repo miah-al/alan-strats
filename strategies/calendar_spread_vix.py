@@ -90,7 +90,11 @@ from alan_trader.strategies.base import (
     StrategyStatus,
     StrategyType,
 )
-from alan_trader.backtest.engine import bs_price
+from alan_trader.backtest.engine import (
+    bs_price_skew,
+    DEFAULT_SLIPPAGE_PER_LEG,
+    DEFAULT_COMMISSION_PER_LEG,
+)
 from alan_trader.risk.metrics import compute_all_metrics
 
 logger = logging.getLogger(__name__)
@@ -177,8 +181,8 @@ class VIXCalendarSpreadStrategy(BaseStrategy):
         dte_close_at:       int   = 5,
         position_size_pct:  float = 0.02,
         max_concurrent:     int   = 2,
-        slippage_per_leg:   float = 0.05,
-        commission_per_leg: float = 0.65,
+        slippage_per_leg:   float = DEFAULT_SLIPPAGE_PER_LEG,
+        commission_per_leg: float = DEFAULT_COMMISSION_PER_LEG,
     ):
         self.dte_back_target    = dte_back_target
         self.dte_front_target   = dte_front_target
@@ -415,8 +419,8 @@ class VIXCalendarSpreadStrategy(BaseStrategy):
                 T_back  = max(dte_back  / 252.0, 1e-6)
                 T_front = max(dte_front / 252.0, 1e-6)
 
-                back_val  = bs_price(spot, trade["strike"], T_back,  r, iv_proxy, "call")
-                front_val = bs_price(spot, trade["strike"], T_front, r, iv_proxy, "call")
+                back_val  = bs_price_skew(spot, trade["strike"], T_back,  r, iv_proxy, "call")
+                front_val = bs_price_skew(spot, trade["strike"], T_front, r, iv_proxy, "call")
                 cur_value = back_val - front_val   # net spread value (long back, short front)
                 pnl_per   = cur_value - trade["debit"]
                 pnl_tot   = pnl_per * trade["contracts"] * 100
@@ -489,8 +493,8 @@ class VIXCalendarSpreadStrategy(BaseStrategy):
             T_back  = self.dte_back_target  / 252.0
             T_front = self.dte_front_target / 252.0
 
-            back_px  = bs_price(spot, strike, T_back,  r, iv_proxy, "call")
-            front_px = bs_price(spot, strike, T_front, r, iv_proxy, "call")
+            back_px  = bs_price_skew(spot, strike, T_back,  r, iv_proxy, "call")
+            front_px = bs_price_skew(spot, strike, T_front, r, iv_proxy, "call")
             debit    = back_px - front_px
             if debit <= 0.05:
                 continue                                # no edge / pricing noise

@@ -9,35 +9,53 @@ or about to break out. The AI Iron Condor adds two ML layers on top of the rules
 
 LAYER 1 — ENTRY SIGNAL (Gradient Boosting Classifier):
   Predicts P(stock stays within ±σ range over next N days).
-  Features: option chain metrics, momentum, VIX regime, macro context, term structure.
+  Features: vol-regime metrics, momentum, VIX regime, macro context, term structure.
   Only enter when P(range-bound) ≥ threshold.
 
-LAYER 2 — STRIKE OPTIMIZATION (Gradient Boosting Regressor):
-  Predicts optimal strike placement (as delta offset from standard 16-delta) given
-  current regime. In high-skew environments, asymmetric condors outperform symmetric ones.
-  In low-VIX environments, tighter wings (10-delta) are optimal.
+LAYER 2 — CONFIDENCE-DRIVEN STRIKE PLACEMENT (heuristic, not a separate model):
+  The short-strike delta is adapted from the Layer-1 probability — high
+  conviction (P ≥ 0.75) widens the strikes for more room; a marginal signal
+  tightens them for more credit. This is a deterministic rule keyed off the
+  classifier output, not a second trained regressor.
 
 WALK-FORWARD TRAINING
 ---------------------
   - Expanding window: model sees all history up to current bar
-  - Warmup: 180 bars before first prediction
-  - Retrain every 30 bars (monthly equivalent)
+  - Warmup: 180 bars (_WARMUP_BARS) before first prediction
+  - Retrain every 30 bars (_RETRAIN_EVERY, monthly equivalent)
+  - Training window is purged by the label's forward window (dte_target rows)
+    so a label whose forward window overlaps the decision bar never leaks in
   - No future data ever used in feature construction or labels
 
-FEATURE SET (17 features)
--------------------------
-  Option chain:  ivr, iv_term_slope, put_call_skew, atm_iv, oi_put_call_ratio
+FEATURE SET (14 features — see FEATURE_COLS)
+--------------------------------------------
+  IV / regime:   ivr, adx, put_call_skew, iv_term_slope
+  Volatility:    vrp (implied − realized), atr_pct
   Momentum:      ret_5d, ret_20d, dist_from_ma50 (% distance)
-  Volatility:    realized_vol_20d, vrp (implied − realized), atr_pct
   VIX:           vix_level, vix_5d_change, vix_ma_ratio (vix / vix_20d_ma)
-  Macro:         rate_10y, yield_curve_2y10y (spread)
+  Macro:         yield_curve_2y10y (spread)
   Time:          days_to_month_end (options expiry clustering)
+
+  NOTE: realized_vol_20d is intentionally NOT a model feature. It is the
+  normalizer for the supervised label band (see _build_labels), so using it
+  as an input leaked the target into training. The 2026-05 audit removed it;
+  it now lives in the matrix only for label construction.
 
 LABEL CONSTRUCTION
 ------------------
-  range_bound_N = 1 if max(|daily_return|) over next N days ≤ realized_vol_20d
-  This is a binary label: will the stock stay within its own recent vol band?
-  Calibrated at N = dte_target (default 45 days)
+  range_bound_N = 1 if the stock's max N-day excursion stays within ±1.5σ of the
+  N-day move (σ from realized_vol_20d), else 0. A binary label: will the stock
+  stay inside the iron-condor break-even band? Calibrated at N = dte_target.
+
+COSTS & PRICING
+---------------
+  - The 4 condor legs are priced with the engine's skew-aware pricer
+    (bs_price_skew) when available so OTM strikes reflect the vol smile; a
+    flat-IV Black-Scholes fallback is used if the import fails.
+  - Per-leg slippage + commission is charged on BOTH entry and exit
+    (4 legs × contracts) via DEFAULT_SLIPPAGE_PER_LEG / DEFAULT_COMMISSION_PER_LEG.
+  - All P&L is scaled by contract count; open positions are marked to market in
+    the equity curve (no step-function-only equity).
 """
 
 from __future__ import annotations
@@ -60,8 +78,36 @@ from alan_trader.strategies.base import (
     StrategyStatus,
     StrategyType,
 )
-from alan_trader.backtest.engine import bs_price
 from alan_trader.risk.metrics import compute_all_metrics
+
+# Transaction-cost constants and skew-aware pricing live in the backtest engine.
+# Import them defensively so the module stays importable even if the engine API
+# drifts; fall back to conservative defaults / flat-IV Black-Scholes in that case.
+try:  # pragma: no cover - import shim
+    from alan_trader.backtest.engine import (
+        DEFAULT_SLIPPAGE_PER_LEG,
+        DEFAULT_COMMISSION_PER_LEG,
+    )
+except Exception:  # pragma: no cover
+    try:
+        from backtest.engine import (
+            DEFAULT_SLIPPAGE_PER_LEG,
+            DEFAULT_COMMISSION_PER_LEG,
+        )
+    except Exception:
+        DEFAULT_SLIPPAGE_PER_LEG   = 0.05   # per-share adverse fill per leg
+        DEFAULT_COMMISSION_PER_LEG = 0.65   # $ per contract per leg
+
+try:  # pragma: no cover - import shim
+    from alan_trader.backtest.engine import bs_price_skew
+    _HAS_SKEW = True
+except Exception:  # pragma: no cover
+    try:
+        from backtest.engine import bs_price_skew
+        _HAS_SKEW = True
+    except Exception:
+        bs_price_skew = None
+        _HAS_SKEW = False
 
 logger = logging.getLogger(__name__)
 
@@ -76,8 +122,41 @@ _RETRAIN_EVERY   = 30       # bars between model retraining. Frequent retrains o
                             # halves that.
 _SAVED_MODELS_DIR = Path(__file__).parent.parent / "saved_models"
 
+# Per-leg round-trip cost in *contract* dollars (slippage×100 + commission),
+# applied on BOTH entry and exit, scaled by number of legs × contracts. An iron
+# condor is a 4-leg structure, so a full round trip charges 4 × _LEG_COST ×
+# contracts at entry and again at exit.
+_LEG_COST = DEFAULT_SLIPPAGE_PER_LEG * 100.0 + DEFAULT_COMMISSION_PER_LEG
+
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
+
+def _bs_price_flat(S, K, T, r, sigma, option_type):
+    """Flat-IV Black-Scholes — fallback when the engine's skew pricer is absent."""
+    if T <= 0 or sigma <= 0 or S <= 0:
+        return max(0.0, (S - K) if option_type == "call" else (K - S))
+    d1 = (np.log(S / K) + (r + 0.5 * sigma ** 2) * T) / (sigma * np.sqrt(T))
+    d2 = d1 - sigma * np.sqrt(T)
+    if option_type == "call":
+        return float(S * norm.cdf(d1) - K * np.exp(-r * T) * norm.cdf(d2))
+    return float(K * np.exp(-r * T) * norm.cdf(-d2) - S * norm.cdf(-d1))
+
+
+def _leg_price(S, K, T, r, iv, option_type):
+    """
+    Price a single option leg. Uses the engine's skew-aware pricer when
+    available so OTM short/long strikes reflect the volatility smile rather than
+    a single flat ATM IV; otherwise falls back to flat-IV Black-Scholes. The
+    engine's bs_price_skew(S, K, T, r, atm_iv, option_type) applies the moneyness
+    skew internally, so we pass the ATM (VIX-derived) IV directly.
+    """
+    if _HAS_SKEW:
+        try:
+            return float(bs_price_skew(S, K, T, r, iv, option_type))
+        except Exception:
+            pass
+    return _bs_price_flat(S, K, T, r, iv, option_type)
+
 
 def _bs_delta(S, K, T, r, sigma, option_type):
     if T <= 0 or sigma <= 0 or S <= 0:
@@ -136,9 +215,11 @@ def _build_feature_matrix(
     rate2y:  Optional[pd.Series],
 ) -> pd.DataFrame:
     """
-    Constructs the 18-feature matrix used by both the entry classifier and
-    the strike optimizer. All features are computed from available DB data —
-    no option_snapshots required (VIX used as IV proxy).
+    Constructs the feature matrix used by the entry classifier. All features
+    are computed from available DB data — no option_snapshots required (VIX
+    used as IV proxy). The classifier consumes the 14 columns in FEATURE_COLS;
+    realized_vol_20d and close_price are also produced here but only for label
+    construction (they are NOT model inputs — see the FEATURE_COLS note).
     """
     iv_prx = vix / 100.0
 
@@ -171,7 +252,8 @@ def _build_feature_matrix(
     r2y         = rate2y.reindex(close.index).ffill().fillna(0.04)  if rate2y  is not None else pd.Series(0.04, index=close.index)
     yield_curve = r10y - r2y
 
-    # 15 clean, non-redundant features (removed atm_iv=vix/100 and oi_put_call_proxy=put_call_skew)
+    # 14 clean, non-redundant model features (FEATURE_COLS). realized_vol_20d and
+    # close_price are added below for label construction only — not model inputs.
     features = pd.DataFrame({
         "ivr":               ivr,
         "adx":               adx,               # NEW: trend-strength filter
@@ -249,10 +331,12 @@ class IronCondorAIStrategy(BaseStrategy):
     predict whether the stock will remain range-bound over the next N trading days.
     Only enters when P(range-bound) ≥ signal_threshold.
 
-    A secondary regressor predicts the optimal delta for short strikes given current
-    regime — allowing asymmetric condors when the market is directionally biased.
+    A confidence-driven heuristic adapts the short-strike delta (wider strikes on
+    high conviction, tighter on marginal signals) given the model probability.
 
-    Walk-forward: model is retrained every 30 bars on all available history.
+    Walk-forward: the model is retrained every _RETRAIN_EVERY (30) bars on all
+    available history up to a purge gap of dte_target rows, so the label's
+    forward window never overlaps the decision bar.
     """
 
     name                 = "iron_condor_ai"
@@ -261,13 +345,16 @@ class IronCondorAIStrategy(BaseStrategy):
     status               = StrategyStatus.ACTIVE
     description          = (
         "AI-powered Iron Condor. A gradient boosting model predicts range-bound "
-        "conditions using 17 features (IVR, term structure, momentum, VIX regime, macro). "
+        "conditions using 14 features (IVR, ADX, term structure, momentum, VIX regime, macro). "
         "Enters only when P(range-bound) ≥ threshold. Strike placement adapts to regime. "
         "Walk-forward: retrains every 30 bars. Ticker is a parameter."
     )
     asset_class          = "equities_options"
     typical_holding_days = 24
-    target_sharpe        = 1.8
+    # 0.8 = honest post-audit estimate. The prior 1.8 was the discredited
+    # pre-audit number driven by the realized_vol_20d feature/label leak (removed
+    # 2026-05). Honest post-audit band is ~0.5-0.9.
+    target_sharpe        = 0.8
 
     FEATURE_COLS = [
         "ivr", "adx", "put_call_skew", "iv_term_slope",
@@ -465,18 +552,19 @@ class IronCondorAIStrategy(BaseStrategy):
         """Walk-forward AI Iron Condor backtest with inline model retraining."""
 
         # ── Resolve params ────────────────────────────────────────────────
-        thresh  = signal_threshold   or self.signal_threshold
-        ivr_min_eff = ivr_min        or self.ivr_min
-        vix_max_eff = vix_max        or self.vix_max
-        d_short     = delta_short    or self.delta_short
-        ww_pct      = wing_width_pct or self.wing_width_pct
-        dte_tgt     = dte_target     or self.dte_target
-        pt          = profit_target_pct or self.profit_target_pct
-        pos_sz      = position_size_pct or self.position_size_pct
-        n_est       = n_estimators   or self.n_estimators
+        # Use "X if X is not None else self.X" — a plain "X or self.X" would
+        # silently discard a legitimately-falsy override (e.g. threshold 0.0).
+        thresh      = signal_threshold  if signal_threshold  is not None else self.signal_threshold
+        ivr_min_eff = ivr_min           if ivr_min           is not None else self.ivr_min
+        vix_max_eff = vix_max           if vix_max           is not None else self.vix_max
+        d_short     = delta_short       if delta_short       is not None else self.delta_short
+        ww_pct      = wing_width_pct    if wing_width_pct    is not None else self.wing_width_pct
+        dte_tgt     = dte_target        if dte_target        is not None else self.dte_target
+        pt          = profit_target_pct if profit_target_pct is not None else self.profit_target_pct
+        pos_sz      = position_size_pct if position_size_pct is not None else self.position_size_pct
+        n_est       = n_estimators      if n_estimators      is not None else self.n_estimators
         dte_ex      = self.dte_exit
         sl_mult     = self.stop_loss_mult
-        comm        = self.commission_per_leg
         max_conc    = self.max_concurrent
         r           = _RISK_FREE_RATE
 
@@ -549,15 +637,16 @@ class IronCondorAIStrategy(BaseStrategy):
                 dte_rem = trade["expiry_idx"] - i
                 T_now   = max(dte_rem / 252.0, 1e-6)
 
-                call_short_val = bs_price(spot, trade["call_short_K"], T_now, r, iv_val, "call")
-                call_long_val  = bs_price(spot, trade["call_long_K"],  T_now, r, iv_val, "call")
-                put_short_val  = bs_price(spot, trade["put_short_K"],  T_now, r, iv_val, "put")
-                put_long_val   = bs_price(spot, trade["put_long_K"],   T_now, r, iv_val, "put")
+                call_short_val = _leg_price(spot, trade["call_short_K"], T_now, r, iv_val, "call")
+                call_long_val  = _leg_price(spot, trade["call_long_K"],  T_now, r, iv_val, "call")
+                put_short_val  = _leg_price(spot, trade["put_short_K"],  T_now, r, iv_val, "put")
+                put_long_val   = _leg_price(spot, trade["put_long_K"],   T_now, r, iv_val, "put")
 
                 cur_cost = max((call_short_val - call_long_val) + (put_short_val - put_long_val), 0.0)
                 pnl_per  = trade["credit"] - cur_cost
                 pnl_tot  = pnl_per * trade["contracts"] * 100
-                close_comm = 4 * comm * trade["contracts"]
+                # Exit transaction cost: slippage + commission, 4 legs × contracts.
+                close_comm = _LEG_COST * 4.0 * trade["contracts"]
 
                 exit_reason = None
                 if pnl_per >= pt * trade["credit"]:
@@ -692,11 +781,13 @@ class IronCondorAIStrategy(BaseStrategy):
                 call_long_K  = call_short_K + wing_width
                 put_long_K   = put_short_K  - wing_width
 
+                # Skew-aware leg pricing: OTM put short is richer than a flat-IV
+                # model would imply, so the realized credit reflects the smile.
                 credit = (
-                    bs_price(spot, call_short_K, T_entry, r, iv_val, "call")
-                    - bs_price(spot, call_long_K,  T_entry, r, iv_val, "call")
-                    + bs_price(spot, put_short_K,  T_entry, r, iv_val, "put")
-                    - bs_price(spot, put_long_K,   T_entry, r, iv_val, "put")
+                    _leg_price(spot, call_short_K, T_entry, r, iv_val, "call")
+                    - _leg_price(spot, call_long_K,  T_entry, r, iv_val, "call")
+                    + _leg_price(spot, put_short_K,  T_entry, r, iv_val, "put")
+                    - _leg_price(spot, put_long_K,   T_entry, r, iv_val, "put")
                 )
 
                 if credit <= 0.10:
@@ -710,7 +801,8 @@ class IronCondorAIStrategy(BaseStrategy):
                 contracts = min(contracts, 20)
 
                 margin_needed = max_loss_per_spread * contracts * 100
-                open_comm     = 4 * comm * contracts
+                # Entry transaction cost: slippage + commission, 4 legs × contracts.
+                open_comm     = _LEG_COST * 4.0 * contracts
                 expiry_idx    = min(i + dte_tgt, n - 1)
 
                 reserved_margin += margin_needed

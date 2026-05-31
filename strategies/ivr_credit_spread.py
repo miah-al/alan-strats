@@ -23,6 +23,18 @@ Exit conditions (checked daily, first trigger wins):
   4. End of data
 
 IVR = (VIX − VIX_52w_low) / (VIX_52w_high − VIX_52w_low)
+
+Realism notes:
+  • IVR requires 126 bars (6 months) of VIX history before it is valid — a
+    shorter window over-states the rank because the range is too narrow.
+  • Option legs are priced with an equity-index volatility skew (engine
+    bs_price_skew) so the OTM short strike carries realistic IV, not the flat
+    VIX-implied ATM level.
+  • BOTH commission (DEFAULT_COMMISSION_PER_LEG, $/contract) and slippage
+    (DEFAULT_SLIPPAGE_PER_LEG, BS-mark units × 100) are charged per leg ×
+    contracts on entry AND on exit.
+  • Calendar DTE is converted to trading-day bars (× 252/365) so the simulated
+    hold matches the quoted expiry instead of running ~45% too long.
 """
 
 import math
@@ -35,14 +47,23 @@ from alan_trader.strategies.base import (
     BaseStrategy, BacktestResult, SignalResult,
     StrategyStatus, StrategyType,
 )
-from alan_trader.backtest.engine import bs_price
+from alan_trader.backtest.engine import (
+    bs_price, bs_price_skew,
+    DEFAULT_SLIPPAGE_PER_LEG, DEFAULT_COMMISSION_PER_LEG,
+)
 from alan_trader.risk.metrics import compute_all_metrics
 
 
 # ── Constants ─────────────────────────────────────────────────────────────────
 
 _RISK_FREE_RATE = 0.045   # proxy for 3-month T-Bill
-_MIN_IVR_WINDOW = 30      # minimum bars needed to compute a valid IVR
+_SKEW_SLOPE     = 0.15    # equity-index downside skew (see engine.effective_iv)
+
+# Trading-days-per-year vs calendar-days conversion. Option DTE is quoted in
+# *calendar* days but the backtest steps one *trading-day* bar at a time, so a
+# 45-calendar-day option expires after ~45 × 252/365 ≈ 31 trading-day bars.
+_TRADING_DAYS_PER_YEAR = 252.0
+_CAL_TO_TRADING        = _TRADING_DAYS_PER_YEAR / 365.0   # ≈ 0.690
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -92,9 +113,10 @@ _MIN_VALID_IVR_BARS = 126  # 6 months — below this the range is too narrow to 
 def _compute_ivr(vix: pd.Series, window: int = 252) -> pd.Series:
     """
     Rolling IV Rank: (current − 52w_low) / (52w_high − 52w_low).
-    Returns NaN until _MIN_VALID_IVR_BARS of history exist (cold-start protection).
-    Using min_periods=30 would inflate IVR early because the 30-day range is much
-    narrower than the true 52-week range, making every bar look relatively elevated.
+    Returns NaN until _MIN_VALID_IVR_BARS (126 bars ≈ 6 months) of history exist
+    (cold-start protection). A short min_periods would inflate IVR early because
+    a 30-day range is much narrower than the true 52-week range, making every bar
+    look relatively elevated.
     """
     roll_low  = vix.rolling(window, min_periods=_MIN_VALID_IVR_BARS).min()
     roll_high = vix.rolling(window, min_periods=_MIN_VALID_IVR_BARS).max()
@@ -139,7 +161,8 @@ class IVRCreditSpreadStrategy(BaseStrategy):
         profit_target_pct:   float = 0.50,   # close at 50% of max credit
         stop_loss_mult:      float = 2.0,    # stop at 2× credit received
         position_size_pct:   float = 0.03,   # capital fraction per trade
-        commission_per_leg:  float = 0.65,   # $ per contract per leg
+        commission_per_leg:  float = DEFAULT_COMMISSION_PER_LEG,  # $ per contract per leg
+        slippage_per_leg:    float = DEFAULT_SLIPPAGE_PER_LEG,    # adverse fill, BS-mark units/share
     ):
         self.ivr_min            = ivr_min
         self.dte_target         = dte_target
@@ -150,6 +173,7 @@ class IVRCreditSpreadStrategy(BaseStrategy):
         self.stop_loss_mult     = stop_loss_mult
         self.position_size_pct  = position_size_pct
         self.commission_per_leg = commission_per_leg
+        self.slippage_per_leg   = slippage_per_leg
 
     # ── Params / UI ──────────────────────────────────────────────────────────
 
@@ -164,6 +188,7 @@ class IVRCreditSpreadStrategy(BaseStrategy):
             "stop_loss_mult":     self.stop_loss_mult,
             "position_size_pct":  self.position_size_pct,
             "commission_per_leg": self.commission_per_leg,
+            "slippage_per_leg":   self.slippage_per_leg,
         }
 
     def get_backtest_ui_params(self) -> list:
@@ -305,7 +330,12 @@ class IVRCreditSpreadStrategy(BaseStrategy):
         d_short      = self.delta_short
         pos_sz_pct   = self.position_size_pct
         comm         = self.commission_per_leg
+        slip         = self.slippage_per_leg
         r            = _RISK_FREE_RATE
+
+        # Calendar DTE → trading-day bar count (one bar per loop iteration).
+        dte_bars     = max(1, int(round(dte_tgt_eff * _CAL_TO_TRADING)))
+        dte_exit_bars = max(0, int(round(dte_exit_eff * _CAL_TO_TRADING)))
 
         # ── Align data ────────────────────────────────────────────────────
         price_data = price_data.copy()
@@ -347,33 +377,25 @@ class IVRCreditSpreadStrategy(BaseStrategy):
             # ── 1. Check exit conditions on open trades ───────────────────
             still_open: list[dict] = []
             for trade in open_trades:
-                dte_remaining = (trade["expiry_idx"] - i)
+                dte_remaining = (trade["expiry_idx"] - i)   # bars to expiry
 
-                # Current spread value (cost to close = current liability)
-                T_now = max(dte_remaining / 252.0, 0.0)
-                cur_iv = iv_val
-                if trade["spread_type"] == "bull_put":
-                    cur_val = (
-                        bs_price(spot, trade["short_K"], T_now, r, cur_iv, "put")
-                        - bs_price(spot, trade["long_K"],  T_now, r, cur_iv, "put")
-                    )
-                else:  # bear_call
-                    cur_val = (
-                        bs_price(spot, trade["short_K"], T_now, r, cur_iv, "call")
-                        - bs_price(spot, trade["long_K"],  T_now, r, cur_iv, "call")
-                    )
+                # Cost to close the credit spread, with realistic skew.
+                cur_val = self._spread_value(
+                    spot, trade["short_K"], trade["long_K"],
+                    dte_remaining, iv_val, trade["spread_type"],
+                )
 
                 # P&L = credit received − current cost to close (per spread)
                 pnl_per_spread = trade["credit"] - cur_val
                 pnl_total = pnl_per_spread * trade["contracts"] * 100
 
-                # Commission to close (2 legs)
-                close_comm = 2 * comm * trade["contracts"]
+                # Round-trip exit friction: commission + slippage, 2 legs.
+                close_cost = 2 * (comm + slip * 100) * trade["contracts"]
 
                 exit_reason: str | None = None
                 if pnl_per_spread >= pt_eff * trade["credit"]:
                     exit_reason = "profit_target"
-                elif dte_remaining <= dte_exit_eff:
+                elif dte_remaining <= dte_exit_bars:
                     exit_reason = "dte_exit"
                 elif cur_val >= sl_mult * trade["credit"]:
                     exit_reason = "stop_loss"
@@ -381,7 +403,7 @@ class IVRCreditSpreadStrategy(BaseStrategy):
                     exit_reason = "end_of_data"
 
                 if exit_reason:
-                    net_pnl = round(pnl_total - close_comm, 2)
+                    net_pnl = round(pnl_total - close_cost, 2)
                     capital += net_pnl
                     closed_trades.append({
                         "entry_date":  trade["entry_date"].date(),
@@ -395,7 +417,7 @@ class IVRCreditSpreadStrategy(BaseStrategy):
                         "exit_value":  round(capital, 2),
                         "pnl":         net_pnl,
                         "exit_reason": exit_reason,
-                        "dte_held":    trade["dte_entry"] - dte_remaining,
+                        "dte_held":    i - trade["entry_idx"],
                     })
                     # Record pnl addition for equity curve construction
                     pnl_at_exit[dt] = pnl_at_exit.get(dt, 0.0) + net_pnl
@@ -407,7 +429,7 @@ class IVRCreditSpreadStrategy(BaseStrategy):
             # ── 2. Entry check ────────────────────────────────────────────
             # Only enter if IVR ≥ threshold and we have valid IV / MA.
             # Require at least 50 bars of history so the 50-day MA is meaningful
-            # and IVR has some history (ivr_series uses min_periods=30).
+            # (ivr_series itself requires 126 bars before it returns a value).
             can_enter = (
                 i >= 50
                 and ivr_val >= ivr_min_eff
@@ -421,10 +443,13 @@ class IVRCreditSpreadStrategy(BaseStrategy):
             if can_enter:
                 above_ma    = spot > ma_val
                 spread_type = "bull_put" if above_ma else "bear_call"
-                T_entry     = dte_tgt_eff / 252.0
+                T_entry     = dte_tgt_eff / 365.0   # calendar-year fraction to expiry
 
-                # Strike selection: short strike at target delta, long strike spread_width below/above
+                # Strike selection: short strike at target delta, long strike
+                # spread_width below/above. Strikes are derived from the flat ATM
+                # IV (delta inversion); the *pricing* below applies the skew.
                 spread_width = spot * sw_pct
+                opt = "put" if spread_type == "bull_put" else "call"
 
                 if spread_type == "bull_put":
                     short_K = _find_strike_for_delta(spot, T_entry, r, iv_val, d_short, "put")
@@ -436,15 +461,17 @@ class IVRCreditSpreadStrategy(BaseStrategy):
                 long_K  = max(long_K,  0.01)
                 short_K = max(short_K, 0.01)
 
-                # Credit = short premium − long premium (net credit received)
-                if spread_type == "bull_put":
-                    short_prem = bs_price(spot, short_K, T_entry, r, iv_val, "put")
-                    long_prem  = bs_price(spot, long_K,  T_entry, r, iv_val, "put")
-                else:
-                    short_prem = bs_price(spot, short_K, T_entry, r, iv_val, "call")
-                    long_prem  = bs_price(spot, long_K,  T_entry, r, iv_val, "call")
+                # Credit = short premium − long premium, priced with equity-index
+                # skew so the OTM short leg carries higher IV than the flat VIX.
+                short_prem = bs_price_skew(spot, short_K, T_entry, r, iv_val, opt,
+                                           skew_slope=_SKEW_SLOPE)
+                long_prem  = bs_price_skew(spot, long_K,  T_entry, r, iv_val, opt,
+                                           skew_slope=_SKEW_SLOPE)
 
-                credit = short_prem - long_prem
+                # Slippage degrades the entry: filled below mid on the short (sell)
+                # leg and above mid on the long (buy) leg, so the realized net
+                # credit is reduced by 2 legs of per-share slippage.
+                credit = (short_prem - long_prem) - 2 * slip
 
                 # Skip degenerate entries
                 if credit <= 0.01 or spread_width < 0.50:
@@ -457,15 +484,16 @@ class IVRCreditSpreadStrategy(BaseStrategy):
                     capital * pos_sz_pct / max_loss_per_contract
                 ))
 
-                # Entry commission (2 legs)
+                # Entry commission (2 legs × contracts). Slippage is already
+                # baked into `credit` above.
                 entry_comm = 2 * comm * contracts
                 capital   -= entry_comm
 
-                expiry_idx = min(i + dte_tgt_eff, n_dates - 1)
+                expiry_idx = min(i + dte_bars, n_dates - 1)
                 open_trades.append({
                     "entry_date":    dt,
+                    "entry_idx":     i,
                     "expiry_idx":    expiry_idx,
-                    "dte_entry":     dte_tgt_eff,
                     "spread_type":   spread_type,
                     "short_K":       short_K,
                     "long_K":        long_K,
@@ -479,18 +507,10 @@ class IVRCreditSpreadStrategy(BaseStrategy):
             # Mark-to-market: include unrealised P&L of all open trades
             mtm = 0.0
             for ot in open_trades:
-                dte_rem = ot["expiry_idx"] - i
-                T_mtm = max(dte_rem / 252.0, 0.0)
-                if ot["spread_type"] == "bull_put":
-                    ot_val = (
-                        bs_price(spot, ot["short_K"], T_mtm, r, iv_val, "put")
-                        - bs_price(spot, ot["long_K"],  T_mtm, r, iv_val, "put")
-                    )
-                else:  # bear_call
-                    ot_val = (
-                        bs_price(spot, ot["short_K"], T_mtm, r, iv_val, "call")
-                        - bs_price(spot, ot["long_K"],  T_mtm, r, iv_val, "call")
-                    )
+                ot_val = self._spread_value(
+                    spot, ot["short_K"], ot["long_K"],
+                    ot["expiry_idx"] - i, iv_val, ot["spread_type"],
+                )
                 # Unrealised P&L = credit received − current cost to close
                 mtm += (ot["credit"] - ot_val) * ot["contracts"] * 100
             equity_list.append(capital + mtm)
@@ -536,6 +556,26 @@ class IVRCreditSpreadStrategy(BaseStrategy):
                 "open_trades_at_end": len(open_trades),
             },
         )
+
+    # ── Pricing helper ─────────────────────────────────────────────────────────
+
+    def _spread_value(self, spot: float, short_K: float, long_K: float,
+                      bars_to_expiry: int, atm_iv: float,
+                      spread_type: str) -> float:
+        """Cost to close a credit vertical, priced with equity-index skew.
+
+        `bars_to_expiry` is in *trading-day* bars. The option was opened with
+        T_entry = calendar_days / 365 and expires after dte_bars = calendar_days
+        × (252/365) bars, so the calendar-year fraction remaining is bars / 252.
+        """
+        T = max(bars_to_expiry, 0) / _TRADING_DAYS_PER_YEAR
+        opt = "put" if spread_type == "bull_put" else "call"
+        short_v = bs_price_skew(spot, short_K, T, _RISK_FREE_RATE, atm_iv, opt,
+                                skew_slope=_SKEW_SLOPE)
+        long_v  = bs_price_skew(spot, long_K,  T, _RISK_FREE_RATE, atm_iv, opt,
+                                skew_slope=_SKEW_SLOPE)
+        # Credit-spread cost-to-close = short leg − long leg (both same type).
+        return short_v - long_v
 
     # ── Empty result helper ───────────────────────────────────────────────────
 

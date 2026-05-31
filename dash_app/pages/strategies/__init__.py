@@ -18,7 +18,11 @@ import numpy as np
 import pandas as _pd
 from scipy.stats import norm as _scipy_norm
 
-import dash_ag_grid as dag
+from dash_mantine_react_table import DashMantineReactTable as _MRT
+from dash_app.grid_helpers import (
+    mrt_grid as _mrt_grid_shared,
+    clickable_mrt_grid as _mrt_clickable,
+)
 import dash_bootstrap_components as dbc
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
@@ -37,14 +41,14 @@ logger = logging.getLogger(__name__)
 from dash_app.pages.strategies.registry import (
     _STRATEGIES_RULES, _STRATEGIES_AI, _STRATEGIES, _SLUG_TO_LABEL,
     _UNIVERSE_TICKERS, _SPY_ONLY_SLUGS, _SECTOR_ETFS_LIST, _SECTOR_ONLY_SLUGS,
-    _UNIVERSE_OPTIONS, _GUIDE_DIR,
+    _UNIVERSE_OPTIONS, _GUIDE_DIR, _STATUS_COLORS, get_strategy_status,
 )
 
 
 # ── AG Grid column definitions ───────────────────────────────────────────────
 # Extracted to columns.py (pure dict literals, no callbacks).
 from dash_app.pages.strategies.columns import (
-    _col, _VIEW_BTN, _COLS_BY_SLUG,
+    _col, _COLS_BY_SLUG,
     _IC_COLS, _VSF_COLS, _IVR_COLS, _VA_COLS, _GEX_COLS, _BWB_COLS,
     _CAL_COLS, _EARN_COLS, _WHEEL_COLS, _BPS_COLS, _VTS_COLS, _EVC_COLS,
     _MRS_COLS, _CCA_COLS, _RCS_COLS, _PS_COLS, _HMM_COLS, _EMP_COLS,
@@ -58,6 +62,29 @@ from dash_app.pages.strategies.format import (
     _fmt_pct, _fmt2, _fmt_price,
     _vix_banner, _status_pills, _load_guide,
 )
+
+
+# ── Strategy selector option builders (with review-status colour dots) ───────
+
+def _checklist_options_with_status(strategies: list[dict]) -> list[dict]:
+    """Convert a list of `{"label","value"}` entries to dbc.Checklist options
+    where each label is prefixed with a coloured dot reflecting the strategy's
+    review status (ready/reviewed/reviewing/avoid)."""
+    out = []
+    for s in strategies:
+        slug = s["value"]
+        status = get_strategy_status(slug)
+        dot_color = _STATUS_COLORS[status]["dot"]
+        out.append({
+            "label": html.Span([
+                html.Span("●", style={"color": dot_color, "marginRight": "5px",
+                                       "fontSize": "12px",
+                                       "verticalAlign": "middle"}),
+                html.Span(s["label"], style={"verticalAlign": "middle"}),
+            ], title=f"Status: {_STATUS_COLORS[status]['label']}"),
+            "value": slug,
+        })
+    return out
 
 
 # ── Screener filter param specs ───────────────────────────────────────────────
@@ -274,22 +301,16 @@ def _screener_layout(slug: str) -> html.Div:
         # Status pills
         html.Div(id=status_id),
 
-        # Results grid
+        # Results grid — clickable MRT (rows fire JS-bridged callback into
+        # f"{grid_id}-clicked" hidden Dash input; old cellClicked callbacks are
+        # rewritten in _make_signal_callback / _make_ic_chart_callback).
         dcc.Loading(
             html.Div(
-                dag.AgGrid(
-                    id=grid_id,
-                    columnDefs=cols,
-                    rowData=[],
-                    defaultColDef={"resizable": True, "sortable": True, "filter": True,
-                                   "cellStyle": {"fontSize": "12px"}},
-                    dashGridOptions={
-                        "domLayout": "autoHeight", "animateRows": True,
-                        "rowSelection": {"mode": "singleRow", "checkboxes": False,
-                                        "enableClickSelection": True},
-                    },
-                    className=T.AGGRID_THEME,
-                    style={"width": "100%"},
+                _mrt_clickable(
+                    grid_id=grid_id,
+                    aggrid_cols=cols,
+                    data=[],
+                    height=500,
                 ),
                 id=loading_id,
             ),
@@ -1009,14 +1030,11 @@ def _render_sample_data_preview(exists: bool):
                      "minWidth": 60} for c in preview.columns]
         col_defs[0]["width"] = 100  # date column wider
 
-        grid = dag.AgGrid(
-            rowData=preview.to_dict("records"),
-            columnDefs=col_defs,
-            defaultColDef={"resizable": True, "sortable": True},
-            dashGridOptions={"domLayout": "autoHeight",
-                             "suppressColumnVirtualisation": True},
-            className=T.AGGRID_THEME,
-            style={"width": "100%"},
+        grid = _mrt_grid_shared(
+            data=preview.to_dict("records"),
+            aggrid_cols=col_defs,
+            height=400,
+            enable_pagination=False,
         )
 
         return html.Div([
@@ -1312,6 +1330,22 @@ def layout() -> html.Div:
 
             # ── Strategy selector (AI vs Rules-Based) ────────────────────────
             dbc.Card(dbc.CardBody([
+                # Legend row — status colour key
+                html.Div([
+                    html.Span("Review status:", style={
+                        "color": T.TEXT_MUTED, "fontSize": "10px",
+                        "fontWeight": "700", "textTransform": "uppercase",
+                        "letterSpacing": "0.06em", "marginRight": "10px"}),
+                    *[html.Span([
+                        html.Span("●", style={"color": meta["dot"],
+                            "marginRight": "4px", "fontSize": "12px"}),
+                        html.Span(meta["label"], style={
+                            "color": T.TEXT_MUTED, "fontSize": "11px",
+                            "marginRight": "14px"}),
+                    ]) for st, meta in _STATUS_COLORS.items()],
+                ], style={"display": "flex", "alignItems": "center",
+                          "marginBottom": "12px", "flexWrap": "wrap"}),
+
                 # Row: two groups side by side
                 html.Div([
 
@@ -1325,7 +1359,7 @@ def layout() -> html.Div:
                         ], style={"marginBottom": "8px"}),
                         dbc.Checklist(
                             id="str-strategy-select-rules",
-                            options=_STRATEGIES_RULES,
+                            options=_checklist_options_with_status(_STRATEGIES_RULES),
                             value=[],
                             inline=True,
                             inputStyle={"marginRight": "4px", "accentColor": T.ACCENT},
@@ -1354,7 +1388,7 @@ def layout() -> html.Div:
                         ], style={"marginBottom": "8px"}),
                         dbc.Checklist(
                             id="str-strategy-select-ai",
-                            options=_STRATEGIES_AI,
+                            options=_checklist_options_with_status(_STRATEGIES_AI),
                             value=[],
                             inline=True,
                             inputStyle={"marginRight": "4px", "accentColor": "#a78bfa"},
@@ -1781,7 +1815,7 @@ def _hmm_trade_preview(state: int, spot: float, vix: float, ticker: str = "SPY")
     Strikes are computed via BS delta inversion at IV proxy = VIX / 100 (same
     approximation the strategy uses internally). Returns a dict with:
         metrics     : html.Div  — metric cards row
-        legs_table  : dag.AgGrid — leg-by-leg breakdown
+        legs_table  : dash component — leg-by-leg breakdown (MRT)
         chart       : dcc.Graph — payoff diagram (P&L at expiry)
     Or None if inputs are degenerate.
     """
@@ -1987,24 +2021,17 @@ def _hmm_trade_preview(state: int, spot: float, vix: float, ticker: str = "SPY")
         style={"display": "flex", "gap": "10px", "flexWrap": "wrap", "marginBottom": "14px"})
 
     # ── Legs table ─────────────────────────────────────────────────────────
-    legs_table = dag.AgGrid(
-        columnDefs=[
-            {"field": "Leg",        "width": 200,
-             "cellStyle": {"function": "params.data.Leg && params.data.Leg.startsWith('NET') ? {'fontWeight':'700','borderTop':'1px solid #374151'} : {}"}},
-            {"field": "Strike",     "width": 110,
-             "cellStyle": {"function": "params.data.Leg && params.data.Leg.startsWith('NET') ? {'borderTop':'1px solid #374151'} : {}"}},
-            {"field": "Mid",        "width": 110,
-             "cellStyle": {"function": "params.data.Leg && params.data.Leg.startsWith('NET') ? {'borderTop':'1px solid #374151'} : {}"}},
-            {"field": "Action",     "width": 100,
-             "cellStyle": {"function": "params.data.Leg && params.data.Leg.startsWith('NET') ? {'borderTop':'1px solid #374151'} : {}"}},
-            {"field": "$/Contract", "flex": 1, "minWidth": 130,
-             "cellStyle": {"function": "(() => { const v = params.value; const base = params.data.Leg && params.data.Leg.startsWith('NET') ? {'fontWeight':'700','borderTop':'1px solid #374151','fontFamily':'monospace'} : {'fontWeight':'600','fontFamily':'monospace'}; if (!v || v === '—') return base; return {...base, color: v.startsWith('+') ? '#10b981' : '#ef4444'}; })()"}},
+    legs_table = _mrt_grid_shared(
+        data=leg_rows,
+        aggrid_cols=[
+            {"field": "Leg"},
+            {"field": "Strike"},
+            {"field": "Mid"},
+            {"field": "Action"},
+            {"field": "$/Contract"},
         ],
-        rowData=leg_rows,
-        defaultColDef={"resizable": True},
-        dashGridOptions={"domLayout": "autoHeight"},
-        className=T.AGGRID_THEME,
-        style={"width": "100%", "marginBottom": "14px"},
+        height=240,
+        enable_pagination=False,
     )
 
     # ── Payoff figure ──────────────────────────────────────────────────────
@@ -2752,7 +2779,7 @@ def _make_scan_callback(slug: str):
     param_ids    = [{"type": f"str-{slug}-param", "index": p["id"]} for p in params_spec]
 
     @callback(
-        Output(grid_id,   "rowData"),
+        Output(grid_id,   "data"),    # MRT uses `data` (not AgGrid's `rowData`)
         Output(status_id, "children"),
         Output(vix_id,    "children"),
         Input(scan_id,    "n_clicks"),
@@ -2850,6 +2877,7 @@ _STRATEGY_CLASSES_BT = {
     "tail_risk_long_put":    ("strategies.tail_risk_long_put",    "TailRiskLongPutStrategy"),
     "calendar_spread_vix":   ("strategies.calendar_spread_vix",   "VIXCalendarSpreadStrategy"),
     "yield_curve_regime":    ("strategies.yield_curve_regime",    "YieldCurveRegimeStrategy"),
+    "vol_calendar_spread":   ("strategies.vol_calendar_spread",   "VolCalendarSpreadStrategy"),
 }
 
 
@@ -3179,16 +3207,50 @@ def _render_backtest_results(result, slug: str) -> html.Div:
                 cd["cellStyle"] = style
             col_defs.append(cd)
 
-        tbl_height = min(400, 50 + len(trades_df) * 40)
-        trades_grid = dag.AgGrid(
-            rowData=trades_df[display_cols].astype(str).to_dict("records"),
-            columnDefs=col_defs,
-            defaultColDef={"resizable": True, "sortable": True,
-                           "cellStyle": {"fontSize": "12px"}},
-            dashGridOptions={"domLayout": "autoHeight" if tbl_height < 400 else "normal",
-                             "animateRows": True},
-            className=T.AGGRID_THEME,
-            style={"width": "100%", "height": f"{tbl_height}px"},
+        tbl_height = min(500, 80 + len(trades_df) * 38)
+        # Convert AgGrid column defs to MRT format on the fly
+        mrt_cols = [
+            {"accessorKey": c["field"], "header": c.get("headerName", c["field"])}
+            for c in col_defs
+        ]
+        trades_grid = _MRT(
+            data=trades_df[display_cols].astype(str).to_dict("records"),
+            columns=mrt_cols,
+            mrtProps={
+                "enableColumnFilters": True,
+                "enableGlobalFilter":  True,
+                "enableSorting":       True,
+                "enableDensityToggle": True,
+                "enableColumnOrdering":True,
+                "enablePagination":    True,
+                "layoutMode":          "grid",
+                "initialState": {
+                    "density": "xs",
+                    "pagination": {"pageIndex": 0, "pageSize": 25},
+                },
+                "defaultColumn": {"minSize": 80, "maxSize": 400, "size": 130},
+                "mantineTableProps": {
+                    "highlightOnHover": True,
+                    "withTableBorder":  False,
+                    "withColumnBorders":False,
+                    "horizontalSpacing":"md",
+                    "verticalSpacing":  "xs",
+                },
+                "mantineTableContainerProps": {
+                    "style": {"maxHeight": f"{tbl_height}px", "width": "100%"},
+                },
+                "mantinePaperProps": {
+                    "shadow": "0", "withBorder": False,
+                    "style": {"backgroundColor": "transparent", "width": "100%"},
+                },
+            },
+            mantineProviderProps={
+                "theme": {
+                    "colorScheme": "dark",
+                    "primaryColor": "indigo",
+                    "fontFamily": "Inter, system-ui, sans-serif",
+                },
+            },
         )
         trades_card = dbc.Card(dbc.CardBody([
             html.Div("Trades", style={
@@ -3372,22 +3434,29 @@ def _make_ic_chart_callback(slug: str):
     grid_id = f"str-{slug}-grid"
 
     # Step 1: row clicked → open modal immediately + store row data
+    # MRT bridge: row clicks come via the hidden input written by
+    # assets/mrt_row_click.js. The payload is a JSON string with `rowIndex`.
     @callback(
         Output("str-ic-modal",       "is_open",  allow_duplicate=True),
         Output("str-ic-modal-title", "children", allow_duplicate=True),
         Output("str-ic-row-store",   "data",     allow_duplicate=True),
         Output("str-ic-paper-btn",   "disabled", allow_duplicate=True),
-        Input(grid_id,  "cellClicked"),
-        State(grid_id,  "virtualRowData"),
+        Input(f"{grid_id}-clicked",  "value"),
+        State(grid_id,  "data"),
         prevent_initial_call=True,
     )
-    def _open_modal(cell_clicked, virtual_row_data):
-        if not cell_clicked or not virtual_row_data:
+    def _open_modal(click_payload, all_rows):
+        import json as _json
+        if not click_payload or not all_rows:
             return no_update, no_update, no_update, no_update
-        row_index = cell_clicked.get("rowIndex")
-        if row_index is None or row_index >= len(virtual_row_data):
+        try:
+            payload = _json.loads(click_payload)
+        except Exception:
             return no_update, no_update, no_update, no_update
-        row = virtual_row_data[row_index]
+        row_index = int(payload.get("rowIndex", -1))
+        if row_index < 0 or row_index >= len(all_rows):
+            return no_update, no_update, no_update, no_update
+        row = all_rows[row_index]
         if not row:
             return no_update, no_update, no_update, no_update
         row = {**row, "_slug": slug}   # tag the strategy slug for paper trade
@@ -3484,24 +3553,17 @@ def _build_modal_body(row):
          "$/Contract": (f"+${net_cash:.2f}" if net_cash >= 0 else f"-${abs(net_cash):.2f}")
                        if _has_prices else "—"},
     ]
-    leg_table = dag.AgGrid(
-        columnDefs=[
-            {"field": "Leg",        "width": 200,
-             "cellStyle": {"function": "params.data.Leg === 'NET CREDIT' ? {'fontWeight':'700','borderTop':'1px solid #374151'} : {}"}},
-            {"field": "Strike",     "width": 150,
-             "cellStyle": {"function": "params.data.Leg === 'NET CREDIT' ? {'borderTop':'1px solid #374151'} : {}"}},
-            {"field": "Mid",        "width": 150,
-             "cellStyle": {"function": "params.data.Leg === 'NET CREDIT' ? {'borderTop':'1px solid #374151'} : {}"}},
-            {"field": "Action",     "width": 150,
-             "cellStyle": {"function": "params.data.Leg === 'NET CREDIT' ? {'borderTop':'1px solid #374151'} : {}"}},
-            {"field": "$/Contract", "flex": 1, "minWidth": 150,
-             "cellStyle": {"function": "(() => { const v = params.value; const base = params.data.Leg === 'NET CREDIT' ? {'fontWeight':'700','borderTop':'1px solid #374151'} : {'fontWeight':'600'}; if (v === '—') return base; return {...base, color: v.startsWith('+') ? '#10b981' : '#ef4444'}; })()"}},
+    leg_table = _mrt_grid_shared(
+        data=leg_rows,
+        aggrid_cols=[
+            {"field": "Leg"},
+            {"field": "Strike"},
+            {"field": "Mid"},
+            {"field": "Action"},
+            {"field": "$/Contract"},
         ],
-        rowData=leg_rows,
-        defaultColDef={"resizable": True},
-        dashGridOptions={"domLayout": "autoHeight"},
-        className=T.AGGRID_THEME,
-        style={"width": "100%", "marginBottom": "16px"},
+        height=260,
+        enable_pagination=False,
     )
 
     fig = _build_ic_payoff_fig(
@@ -3654,6 +3716,92 @@ def _paper_trade_sig(n_clicks, row, contracts):
                 details["Expiry"]        = ivr_c.get("best_exp")
                 details["DTE"]           = ivr_c.get("dte_used")
 
+        # HMM Regime: compute strikes from the state-specific structure.
+        # State 0 (bull put) and State 2 (long put spread) → 2-leg PUT inserter.
+        # State 1 (iron condor) → routes through the 4-leg IC inserter directly,
+        # returning early to bypass insert_generic_paper_trade.
+        elif slug == "hmm_regime":
+            try:
+                state_val = int(row.get("State", -1))
+            except Exception:
+                state_val = -1
+            try:
+                spot = float(row.get("Price") or 0.0)
+                vix  = float(row.get("VIX") or 0.0)
+                preview = _hmm_trade_preview(state_val, spot, vix, ticker)
+            except Exception:
+                preview = None
+            if state_val not in (0, 1, 2) or preview is None:
+                return html.Span(
+                    "⚠ HMM paper trade unavailable — current state has no entry "
+                    "(VIX too high, or no dominant regime).",
+                    style={"color": T.WARNING, "fontSize": "12px"},
+                )
+            try:
+                from datetime import date, timedelta
+                dte_map = {0: 30, 1: 35, 2: 45}
+                dte_used = dte_map[state_val]
+                expiry   = (date.today() + timedelta(days=dte_used)).isoformat()
+                leg_rows = preview["legs_table"].rowData
+
+                def _strike(r):
+                    return float(str(r["Strike"]).lstrip("$"))
+
+                def _mid(r):
+                    return float(str(r["Mid"]).lstrip("$"))
+
+                if state_val == 1:
+                    # ── Iron Condor (4 legs) — route through insert_open_ic_trade ──
+                    # leg_rows order from _hmm_trade_preview:
+                    #   Long call (wing) BUY  | Short call SELL
+                    #   Short put SELL        | Long put (wing) BUY
+                    rows_by_label = {r["Leg"]: r for r in leg_rows
+                                     if not str(r.get("Leg", "")).startswith("NET")}
+                    chain = {
+                        "best_exp":         expiry,
+                        "long_call_k":      _strike(rows_by_label["Long call (wing)"]),
+                        "short_call_k":     _strike(rows_by_label["Short call"]),
+                        "short_put_k":      _strike(rows_by_label["Short put"]),
+                        "long_put_k":       _strike(rows_by_label["Long put (wing)"]),
+                        "long_call_mid":    _mid(rows_by_label["Long call (wing)"]),
+                        "short_call_mid":   _mid(rows_by_label["Short call"]),
+                        "short_put_mid":    _mid(rows_by_label["Short put"]),
+                        "long_put_mid":     _mid(rows_by_label["Long put (wing)"]),
+                    }
+                    from engine.positions import insert_open_ic_trade
+                    from db.client import get_engine
+                    err = insert_open_ic_trade(
+                        engine=get_engine(),
+                        account_id=1,
+                        ticker=ticker,
+                        chain=chain,
+                        strategy_name=label,
+                        contracts=n,
+                    )
+                    if err:
+                        return html.Span(f"Error: {err}", style={"color": T.DANGER, "fontSize": "12px"})
+                    return html.Span(
+                        f"✓ {ticker} {label} (Iron Condor, state 1) saved ({n} contract(s))",
+                        style={"color": T.SUCCESS, "fontSize": "12px"},
+                    )
+
+                # ── State 0 / State 2 → 2-leg PUT spreads via generic inserter ──
+                short_row = next(r for r in leg_rows if r["Action"] == "SELL")
+                long_row  = next(r for r in leg_rows if r["Action"] == "BUY")
+                short_k, long_k = _strike(short_row), _strike(long_row)
+                short_mid, long_mid = _mid(short_row), _mid(long_row)
+                details["Short Strike"]   = short_k
+                details["Long Strike"]    = long_k
+                details["~Credit"]        = short_mid - long_mid   # +ve for state 0, -ve for state 2
+                details["~Long Premium"]  = long_mid
+                details["Expiry"]         = expiry
+                details["DTE"]            = dte_used
+            except Exception as _e:
+                return html.Span(
+                    f"⚠ HMM paper-trade injection failed: {_e}",
+                    style={"color": T.DANGER, "fontSize": "12px"},
+                )
+
         err = insert_generic_paper_trade(
             engine=engine,
             account_id=1,
@@ -3681,17 +3829,22 @@ def _make_signal_callback(slug: str):
         Output("str-sig-modal",       "is_open",  allow_duplicate=True),
         Output("str-sig-modal-title", "children", allow_duplicate=True),
         Output("str-sig-row-store",   "data",     allow_duplicate=True),
-        Input(grid_id,  "cellClicked"),
-        State(grid_id,  "virtualRowData"),
+        Input(f"{grid_id}-clicked", "value"),
+        State(grid_id,  "data"),
         prevent_initial_call=True,
     )
-    def _open_sig_modal(cell_clicked, virtual_row_data):
-        if not cell_clicked or not virtual_row_data:
+    def _open_sig_modal(click_payload, all_rows):
+        import json as _json
+        if not click_payload or not all_rows:
             return no_update, no_update, no_update
-        row_index = cell_clicked.get("rowIndex")
-        if row_index is None or row_index >= len(virtual_row_data):
+        try:
+            payload = _json.loads(click_payload)
+        except Exception:
             return no_update, no_update, no_update
-        row = virtual_row_data[row_index]
+        row_index = int(payload.get("rowIndex", -1))
+        if row_index < 0 or row_index >= len(all_rows):
+            return no_update, no_update, no_update
+        row = all_rows[row_index]
         if not row:
             return no_update, no_update, no_update
         row    = {**row, "_slug": slug}
@@ -3762,24 +3915,18 @@ def _sig_chart(spots, pnl, spot_price, ticker, title, max_loss, max_profit, targ
                      style={"marginTop": "14px"})
 
 
-def _make_legs_table(rows: list[dict]) -> dag.AgGrid:
+def _make_legs_table(rows: list[dict]):
     """Build a compact legs summary table for strategy modals."""
-    return dag.AgGrid(
-        columnDefs=[
-            {"field": "Leg",        "width": 200,
-             "cellStyle": {"function": "params.data.Leg && params.data.Leg.startsWith('NET') ? {'fontWeight':'700','borderTop':'1px solid #374151'} : {}"}},
-            {"field": "Strike",     "width": 110,
-             "cellStyle": {"function": "params.data.Leg && params.data.Leg.startsWith('NET') ? {'borderTop':'1px solid #374151'} : {}"}},
-            {"field": "Action",     "width": 100,
-             "cellStyle": {"function": "params.data.Leg && params.data.Leg.startsWith('NET') ? {'borderTop':'1px solid #374151'} : {}"}},
-            {"field": "~/Contract", "width": 130,
-             "cellStyle": {"function": "(() => { const v = params.value; const base = params.data.Leg && params.data.Leg.startsWith('NET') ? {'fontWeight':'700','borderTop':'1px solid #374151','fontFamily':'monospace'} : {'fontWeight':'600','fontFamily':'monospace'}; if (!v || v === '—') return base; return {...base, color: v.startsWith('+') ? '#10b981' : '#ef4444'}; })()"}},
+    return _mrt_grid_shared(
+        data=rows,
+        aggrid_cols=[
+            {"field": "Leg"},
+            {"field": "Strike"},
+            {"field": "Action"},
+            {"field": "~/Contract"},
         ],
-        rowData=rows,
-        defaultColDef={"resizable": True},
-        dashGridOptions={"domLayout": "autoHeight"},
-        className=T.AGGRID_THEME,
-        style={"width": "100%", "marginBottom": "14px"},
+        height=240,
+        enable_pagination=False,
     )
 
 
@@ -3890,15 +4037,8 @@ def _build_signal_body(row):
                 html.Div("PUT SPREAD", style={"color": T.TEXT_MUTED, "fontSize": "10px",
                                               "fontWeight": "700", "letterSpacing": "0.07em",
                                               "marginBottom": "6px"}),
-                dag.AgGrid(
-                    columnDefs=[
-                        {"field": "Leg",     "minWidth": 160},
-                        {"field": "Strike",  "width": 90},
-                        {"field": "Mid",     "width": 90},
-                        {"field": "Action",  "width": 80},
-                        {"field": "$/Contract", "width": 110},
-                    ],
-                    rowData=[
+                _mrt_grid_shared(
+                    data=[
                         {"Leg": "Long put (ATM)",  "Strike": f"${c['long_put_k']:.0f}",
                          "Mid": _lpm, "Action": "BUY",
                          "$/Contract": f"-${c['long_put_mid']*100:.2f}" if c.get("long_put_mid") else "—"},
@@ -3908,10 +4048,15 @@ def _build_signal_body(row):
                         {"Leg": "NET DEBIT", "Strike": "", "Mid": "", "Action": "",
                          "$/Contract": f"-${c['net_debit']*100:.2f}" if c.get("net_debit") else "—"},
                     ],
-                    defaultColDef={"resizable": True},
-                    dashGridOptions={"domLayout": "autoHeight"},
-                    className=T.AGGRID_THEME,
-                    style={"width": "100%", "marginBottom": "10px"},
+                    aggrid_cols=[
+                        {"field": "Leg"},
+                        {"field": "Strike"},
+                        {"field": "Mid"},
+                        {"field": "Action"},
+                        {"field": "$/Contract"},
+                    ],
+                    height=200,
+                    enable_pagination=False,
                 ),
                 html.Div(f"Expiry: {c['best_exp']}  ({c['dte_used']} DTE)  ·  "
                          f"Long delta: {c['long_delta']}",
@@ -4093,15 +4238,8 @@ def _build_signal_body(row):
                 html.Div(f"{stype_label} SPREAD", style={"color": T.TEXT_MUTED, "fontSize": "10px",
                                                          "fontWeight": "700", "letterSpacing": "0.07em",
                                                          "marginBottom": "6px"}),
-                dag.AgGrid(
-                    columnDefs=[
-                        {"field": "Leg",       "minWidth": 160},
-                        {"field": "Strike",    "width": 90},
-                        {"field": "Mid",       "width": 90},
-                        {"field": "Action",    "width": 80},
-                        {"field": "$/Contract","width": 110},
-                    ],
-                    rowData=[
+                _mrt_grid_shared(
+                    data=[
                         {"Leg": f"Short {opt_type} (ATM)",  "Strike": _sk, "Mid": _sm, "Action": "SELL",
                          "$/Contract": f"+${(c['short_mid'] or 0)*100:.2f}" if c.get("short_mid") else "—"},
                         {"Leg": f"Long {opt_type} (wing)",  "Strike": _lk, "Mid": _lm, "Action": "BUY",
@@ -4109,10 +4247,15 @@ def _build_signal_body(row):
                         {"Leg": "NET CREDIT", "Strike": "", "Mid": "", "Action": "",
                          "$/Contract": f"+${(c['net_credit'] or 0)*100:.2f}" if c.get("net_credit") else "—"},
                     ],
-                    defaultColDef={"resizable": True},
-                    dashGridOptions={"domLayout": "autoHeight"},
-                    className=T.AGGRID_THEME,
-                    style={"width": "100%", "marginBottom": "6px"},
+                    aggrid_cols=[
+                        {"field": "Leg"},
+                        {"field": "Strike"},
+                        {"field": "Mid"},
+                        {"field": "Action"},
+                        {"field": "$/Contract"},
+                    ],
+                    height=200,
+                    enable_pagination=False,
                 ),
                 html.Div(
                     f"Expiry: {c['best_exp']}  ({c['dte_used']} DTE)  ·  "

@@ -22,7 +22,9 @@ STRATEGY_METADATA: dict[str, dict] = {
         ),
         "asset_class": "equities_options",
         "typical_holding_days": 24,
-        "target_sharpe": 1.8,
+        # 0.8 = honest post-audit estimate. Prior 1.8 reflected the realized_vol_20d
+        # feature/label leak removed in the 2026-05 audit; see iron_condor_ai.py.
+        "target_sharpe": 0.8,
         "class_path": "alan_trader.strategies.iron_condor_ai.IronCondorAIStrategy",
         "requires_training": True,
         "uses_ml": True,

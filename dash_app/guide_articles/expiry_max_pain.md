@@ -81,9 +81,18 @@ Total credit collected:   11 × $520 = $5,720
 
 ---
 
-## Real Trade Examples
+## Illustrative Trade Walk-Throughs
 
-### Example 1 — March 2024 OpEx Win
+> **Note:** The two scenarios below are *stylised, hand-constructed illustrations* of how
+> the structure behaves — they are NOT recorded live fills or backtest output, and the
+> dates/prices are invented for teaching. The dollar figures were computed at a single flat
+> IV; the implemented backtest prices each leg with a volatility-skew model (OTM wings priced
+> off a skew-adjusted IV via the engine's `bs_price_skew`/`effective_iv`), so realised credits
+> and P&L will differ from the numbers shown. Treat these as intuition pumps, not performance
+> claims. **TODO:** replace with a real backtest trade log once an options-snapshot history is
+> run through the engine.
+
+### Example 1 — Stylised OpEx Win
 
 > **Entry:** Tuesday Mar 12 2024, 14:30 ET · **SPY:** $511.40 · **VIX:** 14.8 · **OpEx Friday:** Mar 15 2024 (3 DTE)
 > **Macro calendar:** Quiet — no FOMC/CPI/NFP through expiry
@@ -118,7 +127,7 @@ Contracts: floor(2,000 / 215) = 9    Total credit: $5,265   Max loss: $1,935
 
 The pin worked as advertised: spot drifted from $511.40 (Tue) to $510.92 (Fri close) toward the $507 max-pain strike. Final spot was $3.92 above the pin — far enough from the body that the short call was ITM, but well inside the long call wing.
 
-### Example 2 — January 2024 OpEx Loss (CPI Surprise)
+### Example 2 — Stylised OpEx Loss (Directional Shock)
 
 > **Entry:** Tuesday Jan 16 2024, 13:45 ET · **SPY:** $475.20 · **VIX:** 13.4 · **OpEx Friday:** Jan 19 2024 (3 DTE)
 > **Macro calendar:** No data through expiry — but Wednesday brought an unexpected hawkish Fed speech
@@ -150,8 +159,8 @@ The trade survived only because the long put wing absorbed the move just inside 
 
 ## Entry Checklist
 
-- [ ] Today is Monday, Tuesday, Wednesday, or Thursday of an OpEx week (3rd-Friday-of-month week)
-- [ ] DTE to OpEx Friday is in [2, 5] calendar days
+- [ ] Today is in an OpEx week (3rd-Friday-of-month week)
+- [ ] DTE to OpEx Friday is in [entry_dte_min, entry_dte_max] = [2, 5] calendar days (defaults → roughly Mon–Wed of OpEx week; Thursday/DTE-1 is excluded by the default min of 2)
 - [ ] Computed max-pain strike using full chain expiring on this OpEx Friday only (no future leakage)
 - [ ] Spot–pin distance: 0.5% ≤ |spot − K_mp| / spot ≤ 3.5%
 - [ ] Net dealer GEX is positive (dealers net long gamma, vol-suppressive) — via gex_engine
@@ -170,7 +179,7 @@ The trade survived only because the long put wing absorbed the move just inside 
 
 **Position sizing.** Total max loss (max_loss_per_contract × contracts) must be ≤ position_size_pct × capital. Default 2% per trade caps the per-OpEx drawdown at 2% of equity.
 
-**Stop-loss.** Close when cost-to-close ≥ 2× original credit. This limits the losing-trade tail before maximum loss is realised at expiration. Empirically this stops 70–80% of losing trades at roughly half max loss, materially improving the trade-level risk/reward.
+**Stop-loss.** Close when the unrealised loss reaches `stop_loss_mult` × original credit, *clamped to just inside the structure's bounded max loss*. This clamp matters: a defined-risk butterfly can never lose more than (wing − credit) per share, so an un-clamped "2× credit" stop is frequently unreachable (e.g. a $7 wing with a $5 credit caps the loss at $2/share, while 2× credit = $10/share would never trigger). The implementation therefore stops at `min(stop_loss_mult × credit, 0.95 × max_loss_per_share)`, guaranteeing the stop fires before max loss is realised. **TODO:** the fraction of losing trades the stop actually catches, and the average loss-at-stop, should be reported from a real backtest rather than asserted.
 
 **No averaging-down.** If the market moves against the structure, do not add contracts. The pin either holds or it doesn't — adding size to a broken pin is throwing good money after bad.
 
@@ -184,7 +193,7 @@ The trade survived only because the long put wing absorbed the move just inside 
 
 1. **Macro release on OpEx Friday.** A Fed decision, CPI print, NFP report, or PCE release scheduled for the OpEx Friday morning will easily overwhelm the pin. The 8:30am ET print is in the wrong direction perhaps half the time, and even a "soft" print can cause a 0.5–1.0% gap that puts the structure at maximum loss before the pin has any time to operate.
 
-2. **VIX > 25.** High implied vol means dealers' gamma profiles are flatter, the actual realised range is wider, and the pin force is overwhelmed by realised volatility. Empirically the pin effect documented in Ni/Pearson/Poteshman (2005) collapses above the 75th-percentile VIX regime.
+2. **VIX > 25.** High implied vol means dealers' gamma profiles are flatter, the actual realised range is wider, and the pin force is overwhelmed by realised volatility. Note that Ni/Pearson/Poteshman (2005) is a single-stock expiration-clustering study, not a VIX-percentile result — the VIX ceiling used here is a conservative regime filter layered on top of that intuition, not a number taken from the paper. **TODO:** confirm the VIX threshold at which the index-level pin degrades from a backtest.
 
 3. **Earnings concentration in OpEx week.** When 3+ mega-cap names (AAPL, MSFT, AMZN, NVDA, GOOGL, META) report inside the OpEx week, single-stock moves dominate the index; the index-level pin is unreliable.
 
@@ -212,8 +221,8 @@ The trade survived only because the long put wing absorbed the move just inside 
 | stop_loss_mult        |  2.0    | 1.0–4.0     | 2× credit stops most losing trades at ≤ 50% of max loss                |
 | position_size_pct     |  0.02   | 0.005–0.05  | 2% of capital max per OpEx — caps single-event drawdown                |
 | require_positive_gex  | True    | bool        | Hard gate: dealers must be net long gamma for the pin to operate       |
-| slippage_per_leg      |  0.05   | 0.02–0.10   | $0.05 per share per leg — realistic for $1-wide SPY strikes            |
-| commission_per_leg    |  0.65   | 0.50–1.00   | Per-leg commission; 4 legs at open + 4 at close = $5.20 round trip     |
+| slippage_per_leg      |  0.05*  | 0.02–0.10   | Per-share per-leg slippage. *Default now inherits the engine-wide `DEFAULT_SLIPPAGE_PER_LEG`; the 0.05 shown is the fallback if the engine does not expose it. Applied on BOTH entry and exit, per leg × contracts. |
+| commission_per_leg    |  0.65*  | 0.50–1.00   | Per-leg commission. *Default now inherits the engine-wide `DEFAULT_COMMISSION_PER_LEG` (fallback 0.65). 4 legs at open + 4 at close, scaled by contract count. |
 
 ### Example Parameter Profiles
 

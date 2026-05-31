@@ -58,19 +58,26 @@ WALK-FORWARD TRAINING
   - Warmup: 90 bars
   - Retrain every 20 bars
 
-FEATURE SET (12 features)
+FEATURE SET (13 features)
 --------------------------
-  Regime / NII proxy:  nii_level, nii_to_cred, call_to_put
+  Regime / NII proxy:  nii_level, nii_ma5, nii_to_cred, call_to_put
   Rate:                risk_free_rate (proxy: 3m T-bill)
   Stock:               ret_5d, ret_20d, dist_from_ma50, atr_pct
   Vol:                 iv_level, ivr_20d, iv_5d_change
   Market:              vix_level
 
+TRANSACTION COSTS & PRICING
+---------------------------
+  Commissions + slippage are charged per leg × contracts on BOTH entry and
+  exit (DEFAULT_COMMISSION_PER_LEG / DEFAULT_SLIPPAGE_PER_LEG from the engine).
+  Option legs are priced with a volatility skew (bs_price_skew/effective_iv)
+  so the OTM short/long puts reflect a realistic smile, not a flat ATM IV.
+
 LABEL CONSTRUCTION
 ------------------
   1 if spot > short_strike (= spot × (1 - itm_pct)) for ALL n_forward days
   i.e., the bull put spread expires fully profitable.
-  Positive rate observed in backtest: ~65-70%.
+  (Empirical positive-label rate is data-dependent; do not assume a fixed value.)
 """
 
 from __future__ import annotations
@@ -93,6 +100,30 @@ from alan_trader.strategies.base import (
 )
 from alan_trader.risk.metrics import compute_all_metrics
 
+# Transaction-cost and skew-aware pricing helpers from the shared engine.
+# Imported defensively so the module still loads in environments where the
+# engine package layout differs (the helpers all have safe fallbacks below).
+try:  # pragma: no cover - import shim
+    from alan_trader.backtest.engine import (
+        DEFAULT_SLIPPAGE_PER_LEG,
+        DEFAULT_COMMISSION_PER_LEG,
+        bs_price_skew,
+        effective_iv,
+    )
+except Exception:  # pragma: no cover
+    try:
+        from backtest.engine import (
+            DEFAULT_SLIPPAGE_PER_LEG,
+            DEFAULT_COMMISSION_PER_LEG,
+            bs_price_skew,
+            effective_iv,
+        )
+    except Exception:
+        DEFAULT_SLIPPAGE_PER_LEG = 0.05
+        DEFAULT_COMMISSION_PER_LEG = 0.65
+        bs_price_skew = None
+        effective_iv = None
+
 logger = logging.getLogger(__name__)
 
 _RISK_FREE_RATE   = 0.045
@@ -114,6 +145,46 @@ def _bs_price(S: float, K: float, T: float, r: float, sigma: float,
     if option_type == "call":
         return float(S * norm.cdf(d1) - K * np.exp(-r * T) * norm.cdf(d2))
     return float(K * np.exp(-r * T) * norm.cdf(-d2) - S * norm.cdf(-d1))
+
+
+def _put_price_skew(S: float, K: float, T: float, r: float, sigma: float) -> float:
+    """
+    Skew-aware European put price.
+
+    Uses the shared engine's bs_price_skew/effective_iv when available so that
+    OTM put strikes (where this strategy lives) are priced with a realistic
+    volatility smile rather than a single flat ATM IV. Falls back to flat-IV
+    Black-Scholes if the engine helpers are not importable.
+    """
+    if bs_price_skew is not None:
+        try:
+            return float(bs_price_skew(S, K, T, r, sigma, "put"))
+        except Exception:
+            pass
+    sig = sigma
+    if effective_iv is not None:
+        try:
+            # engine signature: effective_iv(S, K, atm_iv, skew_slope=0.15)
+            sig = float(effective_iv(S, K, sigma))
+        except Exception:
+            sig = sigma
+    return _bs_price(S, K, T, r, sig, "put")
+
+
+def _spread_transaction_cost(n_contracts: int) -> float:
+    """
+    Round-trip transaction cost for ONE vertical spread leg-set entry OR exit.
+
+    A bull put spread has 2 legs. This returns the cost for one side (entry or
+    exit) so callers must apply it on BOTH entry and exit. Cost is in dollars:
+    (slippage + commission) per leg × 2 legs × contracts × 100-multiplier note:
+    slippage is quoted per share, commission per contract.
+    """
+    n = max(1, int(n_contracts))
+    legs = 2
+    slippage = DEFAULT_SLIPPAGE_PER_LEG * legs * n * 100.0
+    commission = DEFAULT_COMMISSION_PER_LEG * legs * n
+    return float(slippage + commission)
 
 
 def _compute_nii(S: float, X: float, T: float, r: float, sigma: float) -> float:
@@ -157,7 +228,7 @@ def _build_features(
         if S <= 0 or sigma <= 0:
             continue
         # Hypothetical ITM strike (itm_pct ABOVE spot) — used purely as a
-        # regime-signal lens. The actual trade entered at line 597 uses an
+        # regime-signal lens. The actual trade entered in backtest() uses an
         # OTM strike (itm_pct BELOW spot). See module docstring NAMING CAVEAT.
         X = S * (1.0 + itm_pct)
         nii_series.iloc[i] = _compute_nii(S, X, T, r, sigma)
@@ -546,44 +617,61 @@ class PutStealStrategy(BaseStrategy):
                         model = None
 
             # ── Manage open trade ──────────────────────────────────────────────
+            #
+            # mark_to_mkt holds the running mark of any open position so the
+            # equity curve reflects unrealised P&L (no step-function-only
+            # equity). It is reset to 0 once a position is closed/realised.
+            mark_to_mkt = 0.0
             if open_trade is not None:
                 bars_held = i - open_trade["entry_bar"]
-                current_spread_val = _bs_price(
-                    spot, open_trade["short_K"], (dte_tgt - bars_held) / 365.0,
-                    r, max(iv, 0.01), "put"
-                ) - _bs_price(
-                    spot, open_trade["long_K"], (dte_tgt - bars_held) / 365.0,
-                    r, max(iv, 0.01), "put"
+                n_sp      = open_trade["n_spread"]
+                rem_T     = max(0.0, dte_tgt - bars_held) / 365.0
+                # Skew-aware mark of the short put spread value.
+                current_spread_val = _put_price_skew(
+                    spot, open_trade["short_K"], rem_T, r, max(iv, 0.01)
+                ) - _put_price_skew(
+                    spot, open_trade["long_K"], rem_T, r, max(iv, 0.01)
                 )
-                pnl_now = (open_trade["credit"] - current_spread_val) * 100
+                # Per-spread P&L scaled by contracts (× 100 multiplier).
+                pnl_now = (open_trade["credit"] - current_spread_val) * 100 * n_sp
+                # Exit cost is charged when (and only when) we actually close.
+                exit_cost = _spread_transaction_cost(n_sp)
 
                 # Profit target
                 if pnl_now >= open_trade["max_profit"] * pt_pct:
-                    capital += pnl_now
+                    realised = pnl_now - exit_cost
+                    capital += realised
                     n_wins  += 1
                     trade_log.append({
                         "entry": str(close.index[open_trade["entry_bar"]].date()),
                         "exit":  str(close.index[i].date()),
-                        "pnl":   round(pnl_now, 2),
+                        "pnl":   round(realised, 2),
                         "result": "profit_target",
                     })
                     open_trade = None
 
-                # Stop loss
-                elif pnl_now <= -open_trade["max_loss"] * sl_mult:
-                    capital += pnl_now
+                # Stop loss. A defined-risk spread can never lose more than
+                # max_loss, so a "sl_mult × max_loss" stop would NEVER trigger.
+                # Convention: stop when the loss reaches sl_mult × credit
+                # collected (total across contracts), capped at max_loss.
+                elif pnl_now <= -min(
+                    open_trade["max_profit"] * sl_mult, open_trade["max_loss"]
+                ):
+                    realised = pnl_now - exit_cost
+                    capital += realised
                     n_losses += 1
                     trade_log.append({
                         "entry": str(close.index[open_trade["entry_bar"]].date()),
                         "exit":  str(close.index[i].date()),
-                        "pnl":   round(pnl_now, 2),
+                        "pnl":   round(realised, 2),
                         "result": "stop_loss",
                     })
                     open_trade = None
 
                 # DTE exit
                 elif bars_held >= dte_tgt - dte_ex:
-                    pnl_exit = (open_trade["credit"] - max(0.0, current_spread_val)) * 100
+                    pnl_exit = ((open_trade["credit"] - max(0.0, current_spread_val))
+                                * 100 * n_sp) - exit_cost
                     capital += pnl_exit
                     if pnl_exit >= 0:
                         n_wins  += 1
@@ -596,8 +684,12 @@ class PutStealStrategy(BaseStrategy):
                         "result": "dte_exit",
                     })
                     open_trade = None
+                else:
+                    # Still open: mark to market (net of the exit cost we would
+                    # incur to unwind) so the equity curve is continuous.
+                    mark_to_mkt = pnl_now - exit_cost
 
-            equity_list.append(capital)
+            equity_list.append(capital + mark_to_mkt)
 
             # ── Entry logic ────────────────────────────────────────────────────
             if open_trade is not None:
@@ -623,30 +715,39 @@ class PutStealStrategy(BaseStrategy):
             else:
                 continue  # no model yet
 
-            # Size & strikes
+            # Size & strikes (skew-aware leg pricing — OTM puts get smile)
             short_K  = spot * (1.0 - itm_p)          # short put = itm_p below spot
             long_K   = short_K * (1.0 - wing_p)       # long put  = wing_p below short
             credit   = (
-                _bs_price(spot, short_K, T, r, iv, "put") -
-                _bs_price(spot, long_K,  T, r, iv, "put")
+                _put_price_skew(spot, short_K, T, r, iv) -
+                _put_price_skew(spot, long_K,  T, r, iv)
             )
             wing_w   = short_K - long_K
-            max_loss  = max(0.01, (wing_w - credit) * 100)
-            max_prof  = credit * 100
-            n_spread  = max(1, int((capital * pos_pct) / max_loss))
+            # Per-spread risk in dollars (× 100 multiplier).
+            per_spread_loss = max(0.01, (wing_w - credit) * 100)
+            n_spread = max(1, int((capital * pos_pct) / per_spread_loss))
 
-            if credit < 0.05 or max_loss <= 0:
+            if credit < 0.05 or per_spread_loss <= 0:
                 continue
 
+            # Charge entry transaction costs up front, scaled by contracts.
+            entry_cost = _spread_transaction_cost(n_spread)
+            capital -= entry_cost
+            # Account the entry cost in the equity mark for THIS bar too.
+            equity_list[-1] -= entry_cost
+
             open_trade = {
-                "entry_bar": i,
-                "short_K":   short_K,
-                "long_K":    long_K,
-                "credit":    credit,
-                "max_profit": max_prof,
-                "max_loss":   max_loss,
+                "entry_bar":  i,
+                "short_K":    short_K,
+                "long_K":     long_K,
+                "credit":     credit,
+                # Totals across all contracts so exit comparisons are consistent
+                # with the contract-scaled pnl_now used in trade management.
+                "max_profit": credit * 100 * n_spread,
+                "max_loss":   per_spread_loss * n_spread,
                 "n_spread":   n_spread,
                 "nii":        nii,
+                "entry_cost": entry_cost,
             }
 
         # ── Close any open position at end ─────────────────────────────────────
@@ -654,13 +755,15 @@ class PutStealStrategy(BaseStrategy):
             last_spot = float(close.iloc[-1])
             last_r    = float(rfr.iloc[-1])
             last_iv   = float(feats["iv_level"].iloc[-1]) if "iv_level" in feats.columns else 0.20
+            n_sp      = open_trade["n_spread"]
             bars_held = len(close) - 1 - open_trade["entry_bar"]
             rem_T     = max(0, dte_tgt - bars_held) / 365.0
             final_val = (
-                _bs_price(last_spot, open_trade["short_K"], rem_T, last_r, max(last_iv, 0.01), "put") -
-                _bs_price(last_spot, open_trade["long_K"],  rem_T, last_r, max(last_iv, 0.01), "put")
+                _put_price_skew(last_spot, open_trade["short_K"], rem_T, last_r, max(last_iv, 0.01)) -
+                _put_price_skew(last_spot, open_trade["long_K"],  rem_T, last_r, max(last_iv, 0.01))
             )
-            pnl_final = (open_trade["credit"] - max(0.0, final_val)) * 100
+            pnl_final = ((open_trade["credit"] - max(0.0, final_val)) * 100 * n_sp
+                         - _spread_transaction_cost(n_sp))
             capital += pnl_final
             equity_list[-1] = capital
             trade_log.append({

@@ -61,13 +61,15 @@ BULL  (+1)        Bull put credit spread   Short put -0.20Δ; long put 5% lower
 CHOP   (0)        Iron condor              16Δ short call + put; 5% wide wings
 BEAR  (-1)        Bear put debit spread    Long put +0.30Δ; short put 5% lower
 ```
-Black-Scholes pricing through the project's bs_price helper. Strikes solved by Brent's method on the delta target. Zero-delta divergence not chased; if the strike search fails the trade is skipped.
+Black-Scholes pricing through the project's `bs_price_skew` helper, which applies a linear equity-index volatility skew (downside puts priced at higher IV than upside calls) rather than a single flat IV — so the OTM put wings carry a realistic premium. Strikes are solved by Brent's method on the flat-IV delta target. Zero-delta divergence not chased; if the strike search fails the trade is skipped.
 
 **Trade management:**
 - DTE 30 at entry
-- Credit spreads: take profit at 50% of credit captured; stop loss when buyback cost reaches 2× credit
+- Credit spreads: take profit at 50% of credit captured; stop loss when buyback cost reaches 2× credit, capped at the wing width (the cost to close a vertical/condor can never exceed the wing, so the stop threshold is clamped there to stay reachable)
 - Debit spread: take profit when value reaches 2× debit (+100%); stop loss when value falls to 0.5× debit (-50%)
 - Time-stop at 1 day to expiry
+
+**Transaction costs (modeled in the backtest):** every leg is charged both a broker commission ($0.65/contract) AND bid/ask slippage (an adverse-fill haircut per leg) on BOTH entry and exit, scaled by leg count × contracts. A 4-leg iron condor therefore pays 8 legs of friction over its round-trip. These frictions are deducted from realized P&L, so the equity curve reflects net-of-cost performance.
 
 **Entry gates:**
 ```
@@ -81,7 +83,9 @@ Critical features (yield_2y10y_spread, vix_level) must not be NaN
 
 ## Real Trade Examples
 
-### Win — Bear put debit spread, August 2019 (curve inversion regime)
+> **Note:** The walkthroughs below are ILLUSTRATIVE scenarios constructed to show how the regime → structure mapping behaves around documented macro events. The strike, premium, and P&L figures are representative, not exact backtest fills. Net-of-cost P&L in a live backtest will be lower because both commission and slippage are charged on entry and exit (see Transaction costs above). Headline performance statistics (Sharpe, win rate, CAGR) are not quoted here pending a fresh end-to-end backtest run with the current cost and skew model. **TODO: populate verified headline stats after a cost-and-skew-inclusive backtest re-run.**
+
+### Illustrative — Bear put debit spread, August 2019 (curve inversion regime)
 
 > **Date:** August 14, 2019 | **SPY:** $283.48 | **2y10y spread:** -1 bp (first inversion since 2007) | **VIX:** 22.10 | **Predicted regime:** BEAR (P=0.62)
 
@@ -109,7 +113,7 @@ Critical features (yield_2y10y_spread, vix_level) must not be NaN
 
 **Lesson built into the strategy:** The 30-day DTE is intentional — longer dates would dilute the macro signal with noise. The strategy compensates by opening multiple spreads over the inversion window (max_concurrent=2), so the cumulative position eventually catches the move when it materialises.
 
-### Win — Bull put credit spread, March 2021 (steepening curve regime)
+### Illustrative — Bull put credit spread, March 2021 (steepening curve regime)
 
 > **Date:** March 22, 2021 | **SPY:** $392.59 | **2y10y spread:** +159 bp (steepest in 5 years) | **VIX:** 18.88 | **Predicted regime:** BULL (P=0.71)
 
@@ -132,7 +136,7 @@ Critical features (yield_2y10y_spread, vix_level) must not be NaN
 - April 9: SPY rallies to $411; spread cost $0.25; +$0.70 profit per spread captured
 - Profit target $0.70 = 50% of credit hit; closed all 6 contracts
 
-**Result:** +$420 net of commissions. Held 17 calendar days, +4.2% capital-at-risk return.
+**Result (illustrative):** roughly +$420 gross; net P&L is lower after commission and slippage on both the 2-leg entry and exit. Held ~17 calendar days. The exact net figure depends on fill quality and is not a verified backtest result.
 
 The steepening curve correctly forecast continued reflation upside; the credit spread captured premium decay efficiently as SPY drifted higher with no near-strike test.
 
@@ -160,7 +164,7 @@ The steepening curve correctly forecast continued reflation upside; the credit s
 
 **Profit targets.** Credit spreads close at 50% of max credit. The remaining 50% of theoretical premium has the worst risk-reward of the trade lifecycle (collecting marginal premium while gamma risk increases into expiry). Debit spreads close at +100% of debit (value doubled) — this is the natural take-profit for a defined-risk directional trade and matches the standard bear put management.
 
-**Stop losses.** Credit spreads stop when buyback cost reaches 2× credit (i.e. equivalent to losing 1× the credit capital, with the other 1× absorbed by remaining intrinsic). Debit spreads stop at -50% of debit value — preserves half the debit when the directional thesis breaks.
+**Stop losses.** Credit spreads stop when buyback cost reaches 2× credit (i.e. equivalent to losing 1× the credit capital, with the other 1× absorbed by remaining intrinsic). Because the cost to close a vertical or condor can never exceed the wing width, this 2× threshold is clamped at the wing — otherwise, on trades where the collected credit is large relative to the wing, the stop level would sit above the maximum possible spread value and could never trigger. Debit spreads stop at -50% of debit value — preserves half the debit when the directional thesis breaks.
 
 **Time stops.** All trades close at 1 DTE if no other exit triggered. Avoids assignment risk and gamma-blowup at the open of expiry day.
 

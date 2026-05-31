@@ -9,9 +9,11 @@ Selling premium into earnings is one of the oldest setups in equity options. The
 
 Patell and Wolfson (1979, 1981) were the first to formally measure the IV expansion-and-crush pattern. They showed that the run-up in implied volatility before earnings is large, statistically reliable, and concentrated in the front-month contract; the back-month barely moves. Dubinsky and Johannes (2006), in *Earnings Announcements and Equity Options*, refined the picture by studying the entire IV term structure: the kink between front-month (loaded with event vol) and back-month (which only sees the residual diffusion vol) is the cleanest visible signature of an upcoming announcement. Critically, they also document that the *option-implied move* — the size of the move the market is paying for via the ATM straddle — systematically overstates the actual realised move by 15–25% on average. That gap is the trader's edge. Barth and So (2014), in *Non-Diversifiable Volatility Risk and Risk Premiums*, formalised the earnings volatility-risk premium and showed it is largest, in risk-adjusted terms, for liquid large-caps that consistently deliver small post-earnings moves.
 
-But the average is not what kills the strategy. The right tail does. For every twenty earnings releases that pin tightly to the open price, one of them — the unexpected guidance miss, the runaway AI-demand beat, the surprise patent-litigation announcement — sends the stock 8–15% the wrong way and the short straddle takes a max-loss hit that erases months of credit collection. The naive "sell straddle on every earnings" strategy has a Sharpe ratio close to zero once the long tail is accounted for; the average return is positive but the variance is so wide that the trader is effectively running a slow-motion casino against themselves.
+But the average is not what kills the strategy. The right tail does. For roughly every twenty earnings releases that pin tightly, one — the unexpected guidance miss, the runaway AI-demand beat, the surprise patent-litigation announcement — sends the stock 8–15% the wrong way and the short straddle takes a max-loss hit that can erase months of credit collection. A naive "sell a straddle on every earnings" rule has a wide, fat-tailed return distribution: the average outcome is positive but the variance is large enough that risk-adjusted performance is weak.
 
-The Earnings Pin Risk strategy addresses this directly. Instead of treating every release as a tradable event, it learns — from the ticker's own historical earnings events — which upcoming releases are likely to *pin* (move less than 50% of the option-implied move) and which are likely to *run* (move more). A gradient-boosting classifier estimates the conditional probability of a pin event from a small set of pre-event features: the implied volatility regime, the stock's recent realised vol, its three-quarter rolling average post-earnings move, the option-market implied move, a market-cap proxy, the five-day pre-event momentum, and the broad VIX level. Only when the model's pin probability clears a threshold (default 0.60) and the IV regime is reasonable (IVR ≤ 0.85, VIX ≤ 30) does the strategy enter — and even then, the structure is a *defined-risk* iron butterfly with long wings 5% out-of-the-money, capping the maximum loss at (wing width − credit) per spread regardless of how badly the move surprises. This combination — event selection by a learned model, hard gates on regime, and a defined-risk structure — is what turns a flat-Sharpe naive strategy into a positive-edge one.
+The Earnings Pin Risk strategy addresses this directly. Instead of treating every release as a tradable event, it learns — from the ticker's own historical earnings events — which upcoming releases are likely to *pin* (move less than 50% of the option-implied move) and which are likely to *run* (move more). A gradient-boosting classifier estimates the conditional probability of a pin event from a small set of pre-event features: the implied volatility regime, the stock's recent realised vol, its three-quarter rolling average post-earnings move, the option-market implied move, a market-cap proxy, the five-day pre-event momentum, and the broad VIX level. Only when the model's pin probability clears a threshold (default 0.60) and the IV regime is reasonable (IVR ≤ 0.85, VIX ≤ 30) does the strategy enter — and even then, the structure is a *defined-risk* iron butterfly with long wings 5% out-of-the-money, capping the maximum loss at (wing width − credit) per spread regardless of how badly the move surprises. The intended effect of this combination — learned event selection, hard regime gates, and a defined-risk structure — is to improve risk-adjusted returns over the naive sell-every-straddle rule.
+
+> **Performance note (honesty):** This guide does not quote a backtested Sharpe, win rate, or return for this strategy. The backtest models per-leg commissions *and* slippage on entry and exit and prices the OTM wings on a skewed implied-vol surface, so any headline figure must come from a fresh run on real earnings-calendar data. **TODO:** populate honest headline metrics after a walk-forward run with the production data loader.
 
 ---
 
@@ -92,9 +94,14 @@ Max loss   (per spread) = wing_width - credit  (stock through either wing)
 
 ---
 
-## Real Trade Examples
+## Illustrative Trade Examples
 
-### Win — AAPL, August 2023 quarterly print
+> The two scenarios below are **hand-constructed illustrations** of the win and loss
+> cases, not records of executed trades. Prices, credits, and P&L are stylised to show
+> how the structure behaves. Real fills are reduced by commissions and slippage on every
+> leg (both entry and exit), which the backtest models explicitly.
+
+### Win (illustrative) — AAPL-style, low-IVR quarterly print
 
 > **Entry:** July 28, 2023 (4 trading days before the August 3 release) | **AAPL spot:** $193 | **VIX:** 13.6 | **IVR:** 0.42
 
@@ -124,11 +131,12 @@ Max loss   (per spread) = wing_width - credit  (stock through either wing)
 - Realised post-earnings move: 0.93% — **well inside** 0.5 × 3.4% = 1.7% pin band → label = 1
 - IV crush from 33 → 21 (vol surface)
 - Spread bought back Friday close at $1.40
-- P&L: ($6.70 − $1.40) × 5 × 100 = **+$2,650** (79% of max profit)
+- Gross P&L: ($6.70 − $1.40) × 5 × 100 = **+$2,650** before frictions; net of the
+  4-leg commission and slippage on both entry and exit, the realised figure is modestly lower.
 
 The model's high pin probability was driven by the combination of low IVR (straddle reasonably priced means model trusts the implied-move estimate) and AAPL's well-known 1.5–2% historical move signature. This is the dead-centre case for the strategy.
 
-### Loss — NVDA, August 2024 quarterly print
+### Loss (illustrative) — NVDA-style, wide-implied-move print
 
 > **Entry:** August 26, 2024 (3 trading days before the August 28 release) | **NVDA spot:** $129 | **VIX:** 17.6 | **IVR:** 0.74
 
@@ -145,21 +153,29 @@ The model's high pin probability was driven by the combination of low IVR (strad
 
 This was a marginal signal — the high history-of-big-moves feature should have dragged probability lower, but the size_premium and modest VIX both pushed up. The classifier is not infallible; threshold 0.60 was clearing.
 
-**Trade construction:**
-- Short ATM call $129 → credit $5.30
-- Short ATM put $129 → credit $4.95
-- Long $135.50 call wing → debit $2.10
-- Long $122.50 put wing → debit $1.80
-- Net credit: **$6.35 per spread**
-- Max loss: ($6.50 wing − $6.35) × 100 = $15? **No — wing too narrow given credit.** This event illustrates a real-world failure: when the implied move ≈ wing width, the credit consumes nearly the entire wing, max loss collapses to zero on paper but realised stops trigger. **In practice, the strategy widened wings to ±10% (≈$13 width) and collected $6.35 against a $6.65 max loss per spread.** 4 contracts at 2% sizing.
+**Trade construction (default 5% wings):**
+- Short ATM call $129, short ATM put $129
+- Long $135.50 call wing (+5%), long $122.50 put wing (−5%) → wing width ≈ $6.50
+- Net credit collected: **$3.20 per spread** (after the wings are bought)
+- Max loss per spread: (wing width − credit) = ($6.50 − $3.20) × 100 = **$330**
+- Contracts sized so total max loss ≈ 2% of capital
 
-**Outcome:** NVDA beat aggressively; CEO guidance hinted at sustained AI capex strength; Blackwell GPU shipments confirmed. Pre-market: +6%. Open: $138.10. Friday close: $137.40 (+6.5% from entry close).
+Note the structural tension this case highlights: when the implied move (here 9.8%) is much
+wider than the 5% wings, the wings sit *inside* the market's expected move, so the credit is a
+small fraction of the wing width and the reward-to-risk is poor. This is exactly the kind of
+event the model is supposed to *filter out* — and why the `When to Avoid` section recommends a
+hard implied-move ceiling.
+
+**Outcome:** NVDA beats aggressively, guidance confirms sustained AI capex. Friday close +6.5% from entry close.
 
 - Realised post-earnings move: 6.5% — well above the 0.5 × 9.8% = 4.9% pin band → label = 0
-- Stock through the upper wing ($135.50). Spread closed at $6.50 (max loss).
-- P&L: ($6.35 − $6.50) × 4 × 100 = **−$60** (essentially flat, saved by the defined-risk structure)
+- Stock through the upper wing ($135.50). The spread is bought back near its max-loss value.
+- P&L ≈ **−(max loss) per spread** — capped by the long wings, not catastrophic, but a full loser.
 
-In a bigger move (8–10%) NVDA would have hit the −$2,660 max loss on this 4-contract sizing. The 5–10% gap range is the worst case for an iron butterfly: the stock breaks through one wing but doesn't run far enough for the other wing to recover anything. **Lesson: the model's borderline 0.62 probability was a yellow flag. The post-mortem suggests adding a "max implied-move skip" filter: skip events with implied_move > 7% regardless of model output, since the 2% sizing × 6× max loss arithmetic is rough even with the wings.**
+The 5–10% gap range is the worst case for an iron butterfly: the stock breaks through one wing
+but does not run far enough for anything to be recovered. **Lesson: a borderline 0.62 probability
+plus a 9.8% implied move is a yellow flag. The `When to Avoid` checklist therefore recommends an
+implied-move ceiling regardless of the model output.**
 
 ---
 
@@ -230,6 +246,12 @@ n_estimators           120               80               60
 max_depth              2                 3                4
 retrain_every          15                30               45
 ```
+
+**Transaction-cost parameters** (not regime knobs — leave at defaults unless modelling a
+specific broker): `commission_per_leg` (default $0.65/contract) and `slippage_per_leg`
+(default $0.05 in BS-mark units) are applied on **all four legs** on **both entry and exit**.
+The OTM wings are priced on a skewed IV surface, so downside-put wings cost more and
+upside-call wings cost less than a flat-IV mark would suggest.
 
 ---
 
