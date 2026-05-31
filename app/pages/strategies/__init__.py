@@ -1352,14 +1352,17 @@ def _inner_tabs(slug: str) -> dbc.Tabs:
 def layout() -> html.Div:
     return html.Div(
         [
-            html.H2("Strategies", style={
-                "color": T.TEXT_PRIMARY, "fontSize": "1.35rem",
-                "fontWeight": "700", "marginBottom": "4px",
-            }),
-            html.P(
-                "Select strategies to screen opportunities, run backtests, and read guides.",
-                style={"color": T.TEXT_MUTED, "fontSize": "13px", "marginBottom": "16px"},
-            ),
+            html.Div([
+                html.H1("Strategies", style={
+                    "color": T.TEXT_PRIMARY, "fontSize": "26px",
+                    "fontWeight": "800", "letterSpacing": "-0.02em", "margin": "0",
+                }),
+                html.P(
+                    "Select strategies to screen opportunities, run backtests, and read guides.",
+                    style={"color": T.TEXT_MUTED, "fontSize": "13px",
+                           "margin": "2px 0 0 0"},
+                ),
+            ], style={"marginBottom": "18px"}),
 
             # ── Strategy selector (AI vs Rules-Based) ────────────────────────
             dbc.Card(dbc.CardBody([

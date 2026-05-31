@@ -335,3 +335,34 @@ body, .dash-table-container, .Select, p, span, div, label, td, th, li, a {
 #page-content h1, #page-content h2:first-of-type {
   font-size: 26px !important; font-weight: 800 !important; letter-spacing: -.02em !important;
 }
+
+/* =============================================================================
+   STRATEGIES SELECTOR — pack the sprawling inline checklists into tidy columns
+   The two dbc.Checklist(inline=True) lists sprawl with 18px gaps and wrap
+   raggedly, leaving big dead space. Grid-pack them into neat aligned columns.
+   ============================================================================= */
+#str-strategy-select-rules,
+#str-strategy-select-ai {
+  display: grid !important;
+  grid-template-columns: repeat(auto-fill, minmax(186px, 1fr));
+  gap: 3px 10px !important;
+  align-content: start;
+}
+#str-strategy-select-rules .form-check,
+#str-strategy-select-ai .form-check {
+  margin-right: 0 !important;
+  margin-bottom: 0 !important;
+  padding: 4px 8px;
+  border-radius: 7px;
+  transition: background var(--dur) var(--ease);
+}
+#str-strategy-select-rules .form-check:hover,
+#str-strategy-select-ai .form-check:hover {
+  background: rgba(99,102,241,.07);
+}
+/* The checkbox labels inside — comfortable line height, no nowrap overflow */
+#str-strategy-select-rules .form-check label,
+#str-strategy-select-ai .form-check label {
+  white-space: normal !important;
+  line-height: 1.3;
+}
