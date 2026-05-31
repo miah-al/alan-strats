@@ -16,6 +16,7 @@ import dash_bootstrap_components as dbc
 from dash import html, dcc
 
 from dash_app import theme as T
+from dash_app.ui import tokens as D
 
 from dash_app.pages.paper_trading.data import (
     _ACCOUNT_ID, _get_engine, _net_entry, bs_val,
@@ -455,19 +456,23 @@ def _render_alert_badges(alerts: list[dict]) -> html.Div:
 # ── Metric card helper ────────────────────────────────────────────────────────
 
 def _metric_card(label: str, value: str, color: str = T.TEXT_PRIMARY) -> html.Div:
+    # KPI tile styled to match C.metric_card (uppercase label over a large
+    # value). Signature kept — incl. the explicit `color` override that
+    # refresh_all passes for tone-coloured values — so callbacks stay identical.
     return html.Div([
         html.Div(label, style={
-            "color": T.TEXT_MUTED, "fontSize": "10px", "fontWeight": "600",
-            "textTransform": "uppercase", "letterSpacing": "0.07em",
-            "marginBottom": "4px",
+            "color": D.COLOR.text_muted, "fontSize": D.TEXT_XS,
+            "fontWeight": D.WEIGHT_MED, "textTransform": "uppercase",
+            "letterSpacing": "0.05em", "marginBottom": D.SPACE_1,
         }),
         html.Div(value, style={
-            "color": color, "fontSize": "1.1rem", "fontWeight": "700",
+            "color": color, "fontSize": D.TEXT_XL, "fontWeight": D.WEIGHT_BOLD,
+            "lineHeight": "1.1",
         }),
-    ], style={
-        **T.STYLE_CARD,
+    ], className="ui-card", style={
+        **D.CARD,
         "flex": "1", "minWidth": "110px",
-        "padding": "10px 14px",
+        "padding": f"{D.SPACE_3} {D.SPACE_4}",
     })
 
 
@@ -970,11 +975,9 @@ def _build_equity_curve():
     fig_eq.add_hline(y=100_000, line=dict(color=T.BORDER_BRT, width=1, dash="dash"),
                      annotation_text="Starting $100k",
                      annotation_font_color=T.TEXT_MUTED)
+    fig_eq.update_layout(D.plotly_layout())
     fig_eq.update_layout(
         title=dict(text="Portfolio — Net Liquidation (Cash Balance)", font=dict(size=12, color=T.TEXT_SEC)),
-        template="plotly_dark",
-        paper_bgcolor=T.BG_CARD, plot_bgcolor=T.BG_CARD,
-        font=dict(color=T.TEXT_SEC, size=11),
         height=260, margin=dict(l=0, r=0, t=40, b=0),
         yaxis=dict(tickformat="$,.0f", gridcolor=T.BORDER, zeroline=False),
         xaxis=dict(gridcolor=T.BORDER),
@@ -994,11 +997,9 @@ def _build_equity_curve():
         fill="tozeroy", fillcolor="rgba(239,68,68,0.15)",
         hovertemplate="%{x|%Y-%m-%d}<br>DD: %{y:.1f}%<extra></extra>",
     ))
+    fig_dd.update_layout(D.plotly_layout())
     fig_dd.update_layout(
         title=dict(text="Drawdown %", font=dict(size=12, color=T.TEXT_SEC)),
-        template="plotly_dark",
-        paper_bgcolor=T.BG_CARD, plot_bgcolor=T.BG_CARD,
-        font=dict(color=T.TEXT_SEC, size=11),
         height=160, margin=dict(l=0, r=0, t=40, b=0),
         yaxis=dict(tickformat=".1f", ticksuffix="%", gridcolor=T.BORDER, zeroline=False),
         xaxis=dict(gridcolor=T.BORDER),
@@ -1188,11 +1189,8 @@ def _build_perf_chart(closed_rows: list[dict]):
                     xref="x", yref="y",
                 ))
 
+    fig_hm.update_layout(D.plotly_layout())
     fig_hm.update_layout(
-        template="plotly_dark",
-        paper_bgcolor=T.BG_CARD,
-        plot_bgcolor=T.BG_CARD,
-        font=dict(color=T.TEXT_SEC, size=11),
         title=dict(text="Monthly Returns ($)", font=dict(size=12, color=T.TEXT_SEC)),
         height=max(120, 60 + len(years) * 52),
         margin=dict(l=0, r=0, t=40, b=10),
@@ -1221,11 +1219,8 @@ def _build_perf_chart(closed_rows: list[dict]):
         hovertemplate="%{x}<br>Cumulative: $%{y:+,.2f}<extra></extra>",
     ))
     fig_bar.add_hline(y=0, line=dict(color=T.BORDER_BRT, width=1))
+    fig_bar.update_layout(D.plotly_layout())
     fig_bar.update_layout(
-        template="plotly_dark",
-        paper_bgcolor=T.BG_CARD,
-        plot_bgcolor=T.BG_CARD,
-        font=dict(color=T.TEXT_SEC, size=11),
         title=dict(text="Per-Trade P&L", font=dict(size=12, color=T.TEXT_SEC)),
         height=320,
         margin=dict(l=0, r=0, t=40, b=0),
@@ -1260,9 +1255,8 @@ def _build_perf_chart(closed_rows: list[dict]):
         hovertemplate="%{x}<br>Total: $%{y:+,.2f}<extra></extra>",
     ))
     fig_s.add_hline(y=0, line=dict(color=T.BORDER_BRT, width=1))
+    fig_s.update_layout(D.plotly_layout())
     fig_s.update_layout(
-        template="plotly_dark", paper_bgcolor=T.BG_CARD, plot_bgcolor=T.BG_CARD,
-        font=dict(color=T.TEXT_SEC, size=11),
         title=dict(text="P&L by Strategy", font=dict(size=12, color=T.TEXT_SEC)),
         height=300, margin=dict(l=0, r=0, t=40, b=60),
         xaxis=dict(gridcolor=T.BORDER, tickangle=-20),

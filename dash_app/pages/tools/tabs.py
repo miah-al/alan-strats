@@ -31,17 +31,17 @@ _BROKER_GUIDE = Path(__file__).parent.parent.parent / "guide_articles" / "broker
 
 def _card_header(txt: str) -> html.Span:
     return html.Span(txt, style={
-        "fontSize": "11px", "fontWeight": "700",
+        "fontSize": D.TEXT_XS, "fontWeight": D.WEIGHT_BOLD,
         "textTransform": "uppercase", "letterSpacing": "0.08em",
-        "color": "#6366f1",
+        "color": D.COLOR.accent,
     })
 
 
 def _section_label(txt: str) -> html.Div:
     return html.Div(txt, style={
-        "color": T.TEXT_SEC, "fontSize": "11px", "fontWeight": "600",
+        "color": D.COLOR.text_sec, "fontSize": D.TEXT_XS, "fontWeight": D.WEIGHT_MED,
         "letterSpacing": "0.05em", "textTransform": "uppercase",
-        "marginBottom": "8px", "marginTop": "4px",
+        "marginBottom": D.SPACE_2, "marginTop": D.SPACE_1,
     })
 
 
@@ -120,94 +120,61 @@ def _data_manager_tab() -> html.Div:
 
         # ── Sync cards ────────────────────────────────────────────────────────
         dbc.Row([
-            dbc.Col([
-                dbc.Card([
-                    dbc.CardHeader(
-                        dbc.CardHeader(_card_header("POLYGON"),
-                                       style={"backgroundColor": T.BG_ELEVATED,
-                                              "borderBottom": f"1px solid {T.BORDER}",
-                                              "padding": "8px 14px"}),
-                        style={"backgroundColor": T.BG_ELEVATED,
-                               "borderBottom": f"1px solid {T.BORDER}",
-                               "padding": "8px 14px"},
-                    ),
-                    dbc.CardBody([
-                        _sync_row("Sync Price Bars",   "tools-dm-btn-price",    "tools-dm-st-price",    "tools-dm-cap-price"),
-                        _sync_row("Sync News",          "tools-dm-btn-news",     "tools-dm-st-news",     "tools-dm-cap-news"),
-                        _sync_row("Sync Options",       "tools-dm-btn-options",  "tools-dm-st-options",  "tools-dm-cap-options"),
-                        _sync_row("Sync Dividends",     "tools-dm-btn-divs",     "tools-dm-st-divs",     "tools-dm-cap-divs"),
-                        _sync_row("Sync Earnings",      "tools-dm-btn-earnings", "tools-dm-st-earnings", "tools-dm-cap-earnings"),
-                    ], style={"padding": "12px 14px"}),
-                ], style={**T.STYLE_CARD, "marginBottom": "0", "padding": "0"}),
-            ], width=6),
-            dbc.Col([
-                dbc.Card([
-                    dbc.CardHeader(
-                        dbc.CardHeader(_card_header("FREE SOURCES (FRED / CBOE)"),
-                                       style={"backgroundColor": T.BG_ELEVATED,
-                                              "borderBottom": f"1px solid {T.BORDER}",
-                                              "padding": "8px 14px"}),
-                        style={"backgroundColor": T.BG_ELEVATED,
-                               "borderBottom": f"1px solid {T.BORDER}",
-                               "padding": "8px 14px"},
-                    ),
-                    dbc.CardBody([
-                        _sync_row("Sync Treasury Yields — FRED", "tools-dm-btn-treasury", "tools-dm-st-treasury", "tools-dm-cap-treasury"),
-                        _sync_row("Sync VIX Bars — CBOE",        "tools-dm-btn-vix",      "tools-dm-st-vix",      "tools-dm-cap-vix"),
-                        _sync_row("Sync Macro — FRED",            "tools-dm-btn-macro",    "tools-dm-st-macro",    "tools-dm-cap-macro"),
-                        _sync_row("Sync CPI — FRED",              "tools-dm-btn-cpi",      "tools-dm-st-cpi",      "tools-dm-cap-cpi"),
-                        _sync_row("Sync FOMC Calendar",           "tools-dm-btn-fomc",     "tools-dm-st-fomc",     "tools-dm-cap-fomc"),
-                    ], style={"padding": "12px 14px"}),
-                ], style={**T.STYLE_CARD, "marginBottom": "0", "padding": "0"}),
-            ], width=6),
-        ], className="g-3", style={"marginBottom": "12px"}),
-
-        dbc.Card([
-            dbc.CardHeader(
-                dbc.CardHeader(_card_header("ALPHA VANTAGE"),
-                               style={"backgroundColor": T.BG_ELEVATED,
-                                      "borderBottom": f"1px solid {T.BORDER}",
-                                      "padding": "8px 14px"}),
-                style={"backgroundColor": T.BG_ELEVATED,
-                       "borderBottom": f"1px solid {T.BORDER}",
-                       "padding": "8px 14px"},
-            ),
-            dbc.CardBody([
-                dbc.Input(
-                    id="tools-dm-av-key",
-                    placeholder="Alpha Vantage API key (free at alphavantage.co)",
-                    type="password",
-                    style={"backgroundColor": T.BG_ELEVATED, "color": T.TEXT_PRIMARY,
-                           "border": f"1px solid {T.BORDER}", "fontSize": "12px",
-                           "marginBottom": "10px"},
-                    debounce=True,
-                ),
-                dbc.Row([
-                    dbc.Col(_sync_row("Sync EPS Estimates", "tools-dm-btn-eps",
-                                      "tools-dm-st-eps", "tools-dm-cap-eps"), width=4),
+            dbc.Col(
+                C.section("Polygon", [
+                    _sync_row("Sync Price Bars",   "tools-dm-btn-price",    "tools-dm-st-price",    "tools-dm-cap-price"),
+                    _sync_row("Sync News",          "tools-dm-btn-news",     "tools-dm-st-news",     "tools-dm-cap-news"),
+                    _sync_row("Sync Options",       "tools-dm-btn-options",  "tools-dm-st-options",  "tools-dm-cap-options"),
+                    _sync_row("Sync Dividends",     "tools-dm-btn-divs",     "tools-dm-st-divs",     "tools-dm-cap-divs"),
+                    _sync_row("Sync Earnings",      "tools-dm-btn-earnings", "tools-dm-st-earnings", "tools-dm-cap-earnings"),
                 ]),
-            ], style={"padding": "12px 14px"}),
-        ], style={**T.STYLE_CARD, "marginBottom": "20px", "padding": "0"}),
+                width=6),
+            dbc.Col(
+                C.section("Free Sources (FRED / CBOE)", [
+                    _sync_row("Sync Treasury Yields — FRED", "tools-dm-btn-treasury", "tools-dm-st-treasury", "tools-dm-cap-treasury"),
+                    _sync_row("Sync VIX Bars — CBOE",        "tools-dm-btn-vix",      "tools-dm-st-vix",      "tools-dm-cap-vix"),
+                    _sync_row("Sync Macro — FRED",            "tools-dm-btn-macro",    "tools-dm-st-macro",    "tools-dm-cap-macro"),
+                    _sync_row("Sync CPI — FRED",              "tools-dm-btn-cpi",      "tools-dm-st-cpi",      "tools-dm-cap-cpi"),
+                    _sync_row("Sync FOMC Calendar",           "tools-dm-btn-fomc",     "tools-dm-st-fomc",     "tools-dm-cap-fomc"),
+                ]),
+                width=6),
+        ], className="g-3", style={"marginBottom": D.SPACE_3}),
 
-        html.Hr(style={"borderColor": T.BORDER}),
+        C.section("Alpha Vantage", [
+            dbc.Input(
+                id="tools-dm-av-key",
+                placeholder="Alpha Vantage API key (free at alphavantage.co)",
+                type="password",
+                style={"backgroundColor": T.BG_ELEVATED, "color": T.TEXT_PRIMARY,
+                       "border": f"1px solid {T.BORDER}", "fontSize": "12px",
+                       "marginBottom": "10px"},
+                debounce=True,
+            ),
+            dbc.Row([
+                dbc.Col(_sync_row("Sync EPS Estimates", "tools-dm-btn-eps",
+                                  "tools-dm-st-eps", "tools-dm-cap-eps"), width=4),
+            ]),
+        ]),
+
+        html.Hr(style={"borderColor": D.COLOR.border}),
 
         # ── Coverage ──────────────────────────────────────────────────────────
-        html.H5("Coverage", style={"color": T.TEXT_PRIMARY, "fontSize": "14px",
-                                    "fontWeight": "600", "marginBottom": "12px"}),
+        html.H5("Coverage", style={"color": D.COLOR.text, "fontSize": D.TEXT_LG,
+                                    "fontWeight": D.WEIGHT_MED, "marginBottom": D.SPACE_3}),
         dbc.Button("Refresh Coverage", id="tools-dm-refresh-cov", color="secondary",
-                   size="sm", style={"fontSize": "12px", "marginBottom": "12px"}),
+                   size="sm", style={"fontSize": D.TEXT_SM, "marginBottom": D.SPACE_3}),
         dcc.Loading(
             html.Div(id="tools-dm-coverage-tables"),
             type="circle", color=T.ACCENT,
         ),
 
-        html.Hr(style={"borderColor": T.BORDER}),
+        html.Hr(style={"borderColor": D.COLOR.border}),
 
         # ── Training validation ───────────────────────────────────────────────
-        html.H5("Training Data Validation", style={"color": T.TEXT_PRIMARY,
-                                                     "fontSize": "14px",
-                                                     "fontWeight": "600",
-                                                     "marginBottom": "12px"}),
+        html.H5("Training Data Validation", style={"color": D.COLOR.text,
+                                                    "fontSize": D.TEXT_LG,
+                                                    "fontWeight": D.WEIGHT_MED,
+                                                    "marginBottom": D.SPACE_3}),
         html.Div([
             dbc.Input(
                 id="tools-dm-val-ticker",
@@ -323,10 +290,8 @@ def _guide_tab() -> html.Div:
             ),
         ], style={"marginBottom": "16px"}),
         html.Div(id="tools-guide-content", style={
-            "backgroundColor": T.BG_CARD,
-            "border": f"1px solid {T.BORDER}",
-            "borderRadius": "10px",
-            "padding": "24px",
+            **D.CARD,
+            "padding": D.SPACE_6,
         }),
     ], style={"padding": "16px 0"})
 
@@ -361,29 +326,23 @@ def _polygon_explorer_tab() -> html.Div:
 
     return html.Div([
         # ── API key test ──────────────────────────────────────────────────────
-        dbc.Card([
-            dbc.CardHeader(_card_header("API KEY"), style={
-                "backgroundColor": T.BG_ELEVATED,
-                "borderBottom": f"1px solid {T.BORDER}", "padding": "8px 14px",
-            }),
-            dbc.CardBody([
-                html.Div([
-                    dbc.Input(
-                        id="tools-px-api-key",
-                        placeholder="Leave blank to use .env POLYGON_API_KEY",
-                        type="password",
-                        style={"backgroundColor": T.BG_ELEVATED, "color": T.TEXT_PRIMARY,
-                               "border": f"1px solid {T.BORDER}", "fontSize": "12px",
-                               "flex": "1"},
-                        debounce=True,
-                    ),
-                    dbc.Button("Test Key", id="tools-px-test-btn", color="secondary",
-                               outline=True, size="sm", style={"fontSize": "12px"}),
-                ], style={"display": "flex", "gap": "8px", "alignItems": "center"}),
-                html.Div(id="tools-px-test-result",
-                         style={"marginTop": "8px", "fontSize": "12px"}),
-            ], style={"padding": "12px 14px"}),
-        ], style={**T.STYLE_CARD, "marginBottom": "12px", "padding": "0"}),
+        C.section("API Key", [
+            html.Div([
+                dbc.Input(
+                    id="tools-px-api-key",
+                    placeholder="Leave blank to use .env POLYGON_API_KEY",
+                    type="password",
+                    style={"backgroundColor": T.BG_ELEVATED, "color": T.TEXT_PRIMARY,
+                           "border": f"1px solid {T.BORDER}", "fontSize": "12px",
+                           "flex": "1"},
+                    debounce=True,
+                ),
+                dbc.Button("Test Key", id="tools-px-test-btn", color="secondary",
+                           outline=True, size="sm", style={"fontSize": "12px"}),
+            ], style={"display": "flex", "gap": D.SPACE_2, "alignItems": "center"}),
+            html.Div(id="tools-px-test-result",
+                     style={"marginTop": D.SPACE_2, "fontSize": D.TEXT_SM}),
+        ]),
 
         # ── Ticker input ──────────────────────────────────────────────────────
         html.Div([
@@ -708,33 +667,23 @@ def _risk_tab() -> html.Div:
     def _val(m, key, fmt):
         return fmt.format(m[key]) if m else "—"
 
-    def _risk_card(label, value, accent):
-        return dbc.Col(dbc.Card(dbc.CardBody([
-            html.Div(label, style={"color": T.TEXT_MUTED, "fontSize": "10px",
-                                   "fontWeight": "700", "textTransform": "uppercase",
-                                   "letterSpacing": "0.07em", "marginBottom": "4px"}),
-            html.Div(value, style={"color": accent, "fontSize": "1.3rem",
-                                   "fontWeight": "700",
-                                   "fontFamily": "JetBrains Mono, monospace"}),
-        ], style={"padding": "14px 16px"}), style=T.STYLE_CARD), width="auto")
-
     var_str    = _val(metrics, "var_95",  "{:.2f}%")
     cvar_str   = _val(metrics, "cvar_95", "{:.2f}%")
     maxdd_str  = _val(metrics, "max_dd",  "{:.1f}%")
     sharpe_str = _val(metrics, "sharpe",  "{:.2f}")
     sort_str   = _val(metrics, "sortino", "{:.2f}")
 
-    cards = dbc.Row([
-        _risk_card("VaR 95% (daily)",  var_str,    T.DANGER   if metrics else T.TEXT_MUTED),
-        _risk_card("CVaR 95% (daily)", cvar_str,   T.DANGER   if metrics else T.TEXT_MUTED),
-        _risk_card("Max Drawdown",     maxdd_str,  T.WARNING if metrics else T.TEXT_MUTED),
-        _risk_card("Sharpe Ratio", sharpe_str,
-                   T.SUCCESS if metrics and metrics["sharpe"] >= 1 else
-                   (T.WARNING if metrics else T.TEXT_MUTED)),
-        _risk_card("Sortino Ratio", sort_str,
-                   T.SUCCESS if metrics and metrics["sortino"] >= 1.5 else
-                   (T.WARNING if metrics else T.TEXT_MUTED)),
-    ], className="g-3 mb-4")
+    cards = C.kpi_row([
+        ("VaR 95% (daily)",  var_str,  "danger"  if metrics else "muted"),
+        ("CVaR 95% (daily)", cvar_str, "danger"  if metrics else "muted"),
+        ("Max Drawdown",     maxdd_str,"warning" if metrics else "muted"),
+        ("Sharpe Ratio", sharpe_str,
+         "success" if metrics and metrics["sharpe"] >= 1 else
+         ("warning" if metrics else "muted")),
+        ("Sortino Ratio", sort_str,
+         "success" if metrics and metrics["sortino"] >= 1.5 else
+         ("warning" if metrics else "muted")),
+    ])
 
     charts_section = html.Div()
     if series is not None:
@@ -742,45 +691,37 @@ def _risk_tab() -> html.Div:
         fig_eq = go.Figure()
         fig_eq.add_trace(go.Scatter(
             x=list(equity.index), y=list(equity.values),
-            name="Portfolio Equity", line=dict(color=T.ACCENT, width=2),
-            fill="tozeroy", fillcolor="rgba(99,102,241,0.08)",
+            name="Portfolio Equity", line=dict(color=D.COLOR.accent, width=2),
+            fill="tozeroy", fillcolor=D.COLOR.accent_soft,
         ))
-        fig_eq.update_layout(
-            paper_bgcolor=T.BG_BASE, plot_bgcolor=T.BG_ELEVATED,
-            font=dict(color=T.TEXT_PRIMARY, family="Inter, sans-serif"),
+        fig_eq.update_layout(**D.plotly_layout(
             height=260, margin=dict(l=50, r=20, t=30, b=40),
             title=dict(text="Portfolio Equity Curve", font=dict(size=13)),
-            xaxis=dict(gridcolor=T.BORDER),
-            yaxis=dict(gridcolor=T.BORDER, tickprefix="$", tickformat=",.0f"),
+            yaxis=dict(gridcolor=D.COLOR.border, tickprefix="$", tickformat=",.0f"),
             showlegend=False,
-        )
+        ))
 
         fig_dd = go.Figure()
         fig_dd.add_trace(go.Scatter(
             x=list(drawdowns.index), y=(drawdowns * 100).tolist(),
-            name="Drawdown", line=dict(color=T.DANGER, width=1.5),
+            name="Drawdown", line=dict(color=D.COLOR.danger, width=1.5),
             fill="tozeroy", fillcolor="rgba(239,68,68,0.12)",
         ))
-        fig_dd.update_layout(
-            paper_bgcolor=T.BG_BASE, plot_bgcolor=T.BG_ELEVATED,
-            font=dict(color=T.TEXT_PRIMARY, family="Inter, sans-serif"),
+        fig_dd.update_layout(**D.plotly_layout(
             height=200, margin=dict(l=50, r=20, t=30, b=40),
             title=dict(text="Drawdown (%)", font=dict(size=13)),
-            xaxis=dict(gridcolor=T.BORDER),
-            yaxis=dict(gridcolor=T.BORDER, ticksuffix="%"),
+            yaxis=dict(gridcolor=D.COLOR.border, ticksuffix="%"),
             showlegend=False,
-        )
+        ))
 
-        charts_section = dbc.Card(dbc.CardBody([
-            _card_header("Equity & Drawdown"),
-            html.Hr(style={"borderColor": T.BORDER, "margin": "8px 0 12px"}),
-            dcc.Graph(figure=fig_eq, config={"displayModeBar": False}),
-            dcc.Graph(figure=fig_dd, config={"displayModeBar": False}),
-        ]), style={**T.STYLE_CARD, "marginBottom": "16px"})
+        charts_section = C.section("Equity & Drawdown", [
+            dcc.Graph(figure=fig_eq, config=D.PLOTLY_CONFIG),
+            dcc.Graph(figure=fig_dd, config=D.PLOTLY_CONFIG),
+        ])
 
     no_data = dbc.Alert(
         "No portfolio history yet. Paper-trade some positions to generate risk metrics.",
-        color="warning", style={"fontSize": "13px"},
+        color="warning", style={"fontSize": D.TEXT_MD},
     ) if not metrics else html.Div()
 
     ref_rows = [
@@ -792,38 +733,37 @@ def _risk_tab() -> html.Div:
     ]
     ref_table = dbc.Table([
         html.Thead(html.Tr([
-            html.Th(h, style={"color": T.TEXT_SEC, "fontSize": "11px", "fontWeight": "700",
-                              "textTransform": "uppercase"})
+            html.Th(h, style={"color": D.COLOR.text_sec, "fontSize": D.TEXT_XS,
+                              "fontWeight": D.WEIGHT_BOLD, "textTransform": "uppercase"})
             for h in ["Metric", "Definition", "Good Range"]
         ])),
         html.Tbody([
             html.Tr([
-                html.Td(m, style={"color": T.ACCENT, "fontWeight": "600", "fontSize": "13px"}),
-                html.Td(d, style={"color": T.TEXT_PRIMARY, "fontSize": "12px"}),
-                html.Td(g, style={"color": T.TEXT_SEC, "fontSize": "12px",
-                                   "fontFamily": "JetBrains Mono, monospace"}),
+                html.Td(m, style={"color": D.COLOR.accent, "fontWeight": D.WEIGHT_MED,
+                                  "fontSize": D.TEXT_MD}),
+                html.Td(d, style={"color": D.COLOR.text, "fontSize": D.TEXT_SM}),
+                html.Td(g, style={"color": D.COLOR.text_sec, "fontSize": D.TEXT_SM,
+                                  "fontFamily": D.FONT_MONO}),
             ]) for m, d, g in ref_rows
         ]),
     ], bordered=False, hover=True, size="sm",
-        style={"borderColor": T.BORDER, "--bs-table-bg": T.BG_ELEVATED,
-               "--bs-table-color": T.TEXT_PRIMARY,
+        style={"borderColor": D.COLOR.border, "--bs-table-bg": D.COLOR.elevated,
+               "--bs-table-color": D.COLOR.text,
                "--bs-table-hover-bg": "#1a2235"})
 
     return html.Div([
         no_data,
         cards,
         charts_section,
-        dbc.Card(dbc.CardBody([
-            _card_header("Risk Metric Reference"),
-            html.Hr(style={"borderColor": T.BORDER, "margin": "8px 0 12px"}),
+        C.section("Risk Metric Reference", [
             ref_table,
             html.P([
-                html.Strong("Kelly fraction tip: ", style={"color": T.TEXT_PRIMARY}),
+                html.Strong("Kelly fraction tip: ", style={"color": D.COLOR.text}),
                 "Use 0.10–0.25× full Kelly. VaR caveat: historical VaR assumes tomorrow "
                 "looks like history — tail events are systematically underestimated.",
-            ], style={"color": T.TEXT_SEC, "fontSize": "12px", "lineHeight": "1.6",
-                      "marginTop": "12px", "marginBottom": "0"}),
-        ]), style=T.STYLE_CARD),
+            ], style={"color": D.COLOR.text_sec, "fontSize": D.TEXT_SM,
+                      "lineHeight": "1.6", "marginTop": D.SPACE_3, "marginBottom": "0"}),
+        ]),
     ], style={"padding": "16px 0"})
 
 
@@ -839,38 +779,27 @@ def _registry_tab() -> html.Div:
     ai     = sum(1 for m in STRATEGY_METADATA.values() if m.get("type") == "ai")
     rule   = sum(1 for m in STRATEGY_METADATA.values() if m.get("type") == "rule")
 
-    def _counter_card(label, value, accent):
-        return dbc.Col(dbc.Card(dbc.CardBody([
-            html.Div(label, style={"color": T.TEXT_MUTED, "fontSize": "10px",
-                                   "fontWeight": "700", "textTransform": "uppercase",
-                                   "letterSpacing": "0.07em", "marginBottom": "4px"}),
-            html.Div(str(value), style={"color": accent, "fontSize": "1.6rem",
-                                        "fontWeight": "700",
-                                        "fontFamily": "JetBrains Mono, monospace"}),
-        ], style={"padding": "14px 16px"}),
-            style={**T.STYLE_CARD, "borderTop": f"2px solid {accent}"}), width="auto")
-
-    counter_row = dbc.Row([
-        _counter_card("Total Strategies", total,  T.ACCENT),
-        _counter_card("Implemented",      active, T.SUCCESS),
-        _counter_card("Roadmap (Stubs)",  stub,   T.WARNING),
-        _counter_card("AI / ML",          ai,     "#a78bfa"),
-        _counter_card("Rules-Based",      rule,   "#38bdf8"),
-    ], className="g-3 mb-4")
+    counter_row = C.kpi_row([
+        ("Total Strategies", str(total),  "accent"),
+        ("Implemented",      str(active), "success"),
+        ("Roadmap (Stubs)",  str(stub),   "warning"),
+        ("AI / ML",          str(ai),     "accent"),
+        ("Rules-Based",      str(rule),   "default"),
+    ])
 
     pct = active / total * 100 if total else 0
-    progress_bar = dbc.Card(dbc.CardBody([
+    progress_bar = C.card([
         dbc.Row([
             dbc.Col(html.Span("Strategies implemented",
-                              style={"color": T.TEXT_SEC, "fontSize": "13px"}), width="auto"),
+                              style={"color": D.COLOR.text_sec, "fontSize": D.TEXT_MD}),
+                    width="auto"),
             dbc.Col(html.Span(f"{active} / {total} · {pct:.0f}%",
-                              style={"color": T.SUCCESS, "fontWeight": "700",
-                                     "fontFamily": "JetBrains Mono, monospace",
-                                     "fontSize": "14px"}),
+                              style={"color": D.COLOR.success, "fontWeight": D.WEIGHT_BOLD,
+                                     "fontFamily": D.FONT_MONO, "fontSize": D.TEXT_LG}),
                     width="auto", style={"marginLeft": "auto"}),
         ], align="center", className="mb-2"),
         dbc.Progress(value=pct, color="success", style={"height": "8px"}),
-    ]), style={**T.STYLE_CARD, "marginBottom": "16px"})
+    ])
 
     rows = [
         {
@@ -914,19 +843,13 @@ def _registry_tab() -> html.Div:
     return html.Div([
         counter_row,
         progress_bar,
-        dbc.Card(dbc.CardBody([
-            _card_header("All Strategies"),
-            html.Hr(style={"borderColor": T.BORDER, "margin": "8px 0 12px"}),
-            grid,
-        ]), style={**T.STYLE_CARD, "marginBottom": "16px"}),
-        dbc.Card(dbc.CardBody([
-            _card_header("Strategy Detail"),
-            html.Hr(style={"borderColor": T.BORDER, "margin": "8px 0 12px"}),
+        C.section("All Strategies", grid),
+        C.section("Strategy Detail", [
             dbc.Select(options=detail_options, value=first_slug,
                        id="reg-detail-select",
-                       style={**T.STYLE_DROPDOWN, "marginBottom": "16px"}),
+                       style={**T.STYLE_DROPDOWN, "marginBottom": D.SPACE_4}),
             html.Div(id="reg-detail-body"),
-        ]), style=T.STYLE_CARD),
+        ]),
     ], style={"padding": "16px 0"})
 
 
@@ -934,11 +857,9 @@ def _broker_tab() -> html.Div:
     if _BROKER_GUIDE.exists():
         content = _BROKER_GUIDE.read_text(encoding="utf-8")
         return html.Div([
-            dbc.Card(dbc.CardBody([
-                _card_header("Broker Integration Guide"),
-                html.Hr(style={"borderColor": T.BORDER, "margin": "8px 0 16px"}),
-                dcc.Markdown(content, className="guide-md", style={"color": T.TEXT_PRIMARY,
-                                             "fontSize": "13px", "lineHeight": "1.7"}),
-            ]), style=T.STYLE_CARD),
+            C.section("Broker Integration Guide",
+                      dcc.Markdown(content, className="guide-md",
+                                   style={"color": D.COLOR.text, "fontSize": D.TEXT_MD,
+                                          "lineHeight": "1.7"})),
         ], style={"padding": "16px 0"})
     return dbc.Alert("Broker integration guide not found.", color="warning")

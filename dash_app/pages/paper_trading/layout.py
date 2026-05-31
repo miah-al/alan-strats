@@ -11,6 +11,7 @@ import dash_bootstrap_components as dbc
 from dash import html, dcc
 
 from dash_app import theme as T
+from dash_app.ui import tokens as D, components as C
 
 from dash_app.pages.paper_trading.builders import (
     _grid, _OPEN_COLS, _CLOSED_COLS, _TXNS_COLS,
@@ -45,21 +46,19 @@ def layout() -> html.Div:
     ], id="pt-modal", size="xl", is_open=False, scrollable=True)
 
     return html.Div([
-        html.Div([
-            html.Div([
-                html.H2("Paper Trading", style={
-                    "color": T.TEXT_PRIMARY, "fontSize": "1.35rem",
-                    "fontWeight": "700", "marginBottom": "0",
-                }),
-            ]),
-            dbc.Button(
-                "Refresh", id="pt-refresh-btn", size="sm", outline=True,
-                style={"borderColor": T.BORDER, "color": T.TEXT_SEC, "fontSize": "12px"},
-            ),
-        ], style={"display": "flex", "justifyContent": "space-between",
-                  "alignItems": "center", "marginBottom": "16px"}),
+        C.page_header(
+            "Paper Trading",
+            "Simulated execution against live strategy signals.",
+            actions=[
+                dbc.Button(
+                    "Refresh", id="pt-refresh-btn", size="sm", outline=True,
+                    style={"borderColor": T.BORDER, "color": T.TEXT_SEC,
+                           "fontSize": D.TEXT_SM},
+                ),
+            ],
+        ),
 
-        html.Div(id="pt-metric-row", style={"marginBottom": "16px"}),
+        html.Div(id="pt-metric-row", style={"marginBottom": D.SPACE_4}),
 
         dbc.Tabs([
             dbc.Tab(label="Open Positions", tab_id="open", children=[
@@ -307,4 +306,4 @@ def layout() -> html.Div:
 
         dcc.Interval(id="pt-refresh", interval=60_000, n_intervals=0),
         dcc.Location(id="pt-url", refresh=False),
-    ], style=T.STYLE_PAGE)
+    ], style=D.PAGE)

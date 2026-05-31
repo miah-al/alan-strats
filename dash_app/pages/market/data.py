@@ -22,6 +22,7 @@ import dash_bootstrap_components as dbc
 import dash_ag_grid as dag
 
 from dash_app import theme as T, get_polygon_api_key
+from dash_app.ui import tokens as D, components as C
 from engine.screener import UNIVERSES
 
 logger = logging.getLogger(__name__)
@@ -122,32 +123,47 @@ def _fetch_intraday(ticker: str, api_key: str) -> pd.DataFrame:
 # ── UI helpers ─────────────────────────────────────────────────────────────────
 
 def _hint(text: str) -> html.P:
-    return html.P(text, style={"color": T.TEXT_MUTED, "fontSize": "12px",
-                               "fontStyle": "italic", "margin": "4px 0"})
+    # Delegates to the shared design-system hint (same italic-muted treatment).
+    return C.hint(text)
 
 
 def _section(title: str, content) -> html.Div:
-    return html.Div([
-        html.Div(title, style={
-            "color": T.TEXT_SEC, "fontSize": "11px", "fontWeight": "600",
-            "textTransform": "uppercase", "letterSpacing": "0.07em",
-            "borderBottom": f"1px solid {T.BORDER}",
-            "paddingBottom": "8px", "marginBottom": "12px",
-        }),
-        content,
-    ], style={**T.STYLE_CARD, "marginBottom": "16px"})
+    # Thin wrapper over the shared C.section so every Market card gets the same
+    # uppercase header, radius and spacing as the rest of the app. Signature is
+    # unchanged so callbacks.py keeps working.
+    return C.section(title, content)
 
 
 def _pill(label: str, value: str, color: str = T.TEXT_PRIMARY) -> html.Div:
+    # KPI tile matching C.metric_card. `color` is preserved as a free-form value
+    # colour so existing callers can pass any hex (success/danger/etc.).
     return html.Div([
-        html.Div(label, style={"color": T.TEXT_MUTED, "fontSize": "10px", "fontWeight": "600",
-                               "textTransform": "uppercase", "marginBottom": "3px"}),
-        html.Div(value, style={"color": color, "fontSize": "1rem", "fontWeight": "700"}),
-    ], style={**T.STYLE_CARD, "flex": "1", "minWidth": "90px", "padding": "8px 12px"})
+        html.Div(label, style={
+            "color": D.COLOR.text_muted, "fontSize": D.TEXT_XS,
+            "fontWeight": D.WEIGHT_MED, "textTransform": "uppercase",
+            "letterSpacing": "0.05em", "marginBottom": D.SPACE_1,
+        }),
+        html.Div(value, style={
+            "color": color, "fontSize": D.TEXT_XL, "fontWeight": D.WEIGHT_BOLD,
+            "lineHeight": "1.1",
+        }),
+    ], className="ui-card", style={
+        **D.CARD, "flex": "1", "minWidth": "90px",
+        "padding": f"{D.SPACE_2} {D.SPACE_3}",
+    })
 
 
-_DARK = dict(template="plotly_dark", paper_bgcolor=T.BG_CARD, plot_bgcolor=T.BG_CARD,
-             font=dict(color=T.TEXT_SEC, size=11))
+# Canonical dark Plotly base for this page. Kept to the same keys the original
+# `_DARK` exposed (template / bg / font) so call sites that also pass height,
+# margin, legend, xaxis, yaxis as kwargs don't collide with **_DARK. Sourced
+# from the design-system layout so colours/fonts stay app-consistent.
+_PLOTLY_BASE = D.plotly_layout()
+_DARK = dict(
+    template=_PLOTLY_BASE["template"],
+    paper_bgcolor=_PLOTLY_BASE["paper_bgcolor"],
+    plot_bgcolor=_PLOTLY_BASE["plot_bgcolor"],
+    font=_PLOTLY_BASE["font"],
+)
 
 
 # ── Screener: universe + sector map ───────────────────────────────────────────
@@ -171,11 +187,11 @@ _SECTOR = {
     "ARKK": "Innovation", "SOXL": "Semiconductors (3x)", "TQQQ": "Technology (3x)",
 }
 
-_SCR_PLOT_BG  = "#111827"
-_SCR_PAPER_BG = "#111827"
-_SCR_GRID     = "#1f2937"
-_SCR_FONT     = dict(family="Inter, sans-serif", color="#9ca3af", size=11)
-_SCR_CFG      = {"displayModeBar": False, "responsive": True}
+_SCR_PLOT_BG  = D.COLOR.card
+_SCR_PAPER_BG = D.COLOR.card
+_SCR_GRID     = D.COLOR.border
+_SCR_FONT     = dict(family=D.FONT_SANS, color=D.COLOR.text_sec, size=11)
+_SCR_CFG      = D.PLOTLY_CONFIG
 
 
 def _fmt_vol(n: float) -> str:
@@ -190,7 +206,7 @@ def _scr_empty_fig(msg: str = "") -> dict:
     if msg:
         fig.add_annotation(text=msg, xref="paper", yref="paper",
                            x=0.5, y=0.5, showarrow=False,
-                           font=dict(color="#6b7280", size=13))
+                           font=dict(color=D.COLOR.text_muted, size=13))
     fig.update_layout(paper_bgcolor=_SCR_PAPER_BG, plot_bgcolor=_SCR_PLOT_BG,
                       font=_SCR_FONT, height=300, margin=dict(l=10, r=10, t=10, b=10),
                       xaxis=dict(visible=False), yaxis=dict(visible=False))
@@ -293,7 +309,7 @@ def _build_movers_fig(rows: list[dict]):
         x=changes, y=tickers, orientation="h",
         marker_color=colors,
         text=[f"{c:+.2f}%" for c in changes],
-        textposition="outside", textfont=dict(size=11, color="#f9fafb"),
+        textposition="outside", textfont=dict(size=11, color=D.COLOR.text),
         hovertemplate="%{y}: %{x:+.2f}%<extra></extra>",
     ))
     fig.update_layout(
@@ -301,8 +317,8 @@ def _build_movers_fig(rows: list[dict]):
         height=max(260, len(tickers) * 28),
         margin=dict(l=10, r=60, t=10, b=10),
         xaxis=dict(showgrid=True, gridcolor=_SCR_GRID, zeroline=True,
-                   zerolinecolor="#374151", ticksuffix="%", color="#9ca3af"),
-        yaxis=dict(showgrid=False, color="#f9fafb", autorange="reversed"),
+                   zerolinecolor=D.COLOR.border_brt, ticksuffix="%", color=D.COLOR.text_sec),
+        yaxis=dict(showgrid=False, color=D.COLOR.text, autorange="reversed"),
         bargap=0.3,
     )
     return fig
@@ -330,9 +346,9 @@ def _build_momentum_fig(rows: list[dict]):
         paper_bgcolor=_SCR_PAPER_BG, plot_bgcolor=_SCR_PLOT_BG, font=_SCR_FONT,
         height=420, barmode="group", bargap=0.2, bargroupgap=0.05,
         margin=dict(l=10, r=10, t=10, b=60),
-        xaxis=dict(showgrid=False, color="#9ca3af", tickangle=-30),
+        xaxis=dict(showgrid=False, color=D.COLOR.text_sec, tickangle=-30),
         yaxis=dict(showgrid=True, gridcolor=_SCR_GRID, zeroline=True,
-                   zerolinecolor="#374151", ticksuffix="%", color="#9ca3af"),
+                   zerolinecolor=D.COLOR.border_brt, ticksuffix="%", color=D.COLOR.text_sec),
         legend=dict(orientation="h", x=0, y=1.06, font=dict(size=11)),
     )
     return fig
@@ -360,8 +376,8 @@ def _build_vol_fig(rows: list[dict]):
         paper_bgcolor=_SCR_PAPER_BG, plot_bgcolor=_SCR_PLOT_BG, font=_SCR_FONT,
         height=420, barmode="group", bargap=0.2, bargroupgap=0.05,
         margin=dict(l=10, r=10, t=10, b=60),
-        xaxis=dict(showgrid=False, color="#9ca3af", tickangle=-30),
-        yaxis=dict(showgrid=True, gridcolor=_SCR_GRID, ticksuffix="%", color="#9ca3af"),
+        xaxis=dict(showgrid=False, color=D.COLOR.text_sec, tickangle=-30),
+        yaxis=dict(showgrid=True, gridcolor=_SCR_GRID, ticksuffix="%", color=D.COLOR.text_sec),
         legend=dict(orientation="h", x=0, y=1.06, font=dict(size=11)),
     )
     return fig
@@ -372,7 +388,7 @@ def _build_volalert_fig(rows: list[dict]):
         fig = go.Figure()
         fig.add_annotation(text="No tickers with volume > 2× average",
                            xref="paper", yref="paper", x=0.5, y=0.5,
-                           showarrow=False, font=dict(color="#6b7280", size=13))
+                           showarrow=False, font=dict(color=D.COLOR.text_muted, size=13))
         fig.update_layout(paper_bgcolor=_SCR_PAPER_BG, plot_bgcolor=_SCR_PLOT_BG,
                           font=_SCR_FONT, height=160, margin=dict(l=10,r=10,t=10,b=10),
                           xaxis=dict(visible=False), yaxis=dict(visible=False))
@@ -383,16 +399,16 @@ def _build_volalert_fig(rows: list[dict]):
         x=tickers, y=ratios,
         marker_color=[T.DANGER if r >= 3 else T.WARNING for r in ratios],
         text=[f"{r:.1f}×" for r in ratios],
-        textposition="outside", textfont=dict(size=11, color="#f9fafb"),
+        textposition="outside", textfont=dict(size=11, color=D.COLOR.text),
         hovertemplate="%{x}: %{y:.1f}× avg volume<extra></extra>",
     ))
-    fig.add_hline(y=2, line_dash="dot", line_color="#374151",
+    fig.add_hline(y=2, line_dash="dot", line_color=D.COLOR.border_brt,
                   annotation_text="2× threshold", annotation_font_size=10)
     fig.update_layout(
         paper_bgcolor=_SCR_PAPER_BG, plot_bgcolor=_SCR_PLOT_BG, font=_SCR_FONT,
         height=220, margin=dict(l=10, r=10, t=10, b=30),
-        xaxis=dict(showgrid=False, color="#9ca3af"),
-        yaxis=dict(showgrid=True, gridcolor=_SCR_GRID, ticksuffix="×", color="#9ca3af"),
+        xaxis=dict(showgrid=False, color=D.COLOR.text_sec),
+        yaxis=dict(showgrid=True, gridcolor=_SCR_GRID, ticksuffix="×", color=D.COLOR.text_sec),
     )
     return fig
 
@@ -618,8 +634,7 @@ def _render_intraday(ticker: str, api_key: str):
 
     last_time = df["datetime"].iloc[-1].strftime("%H:%M")
     fig.update_layout(
-        template="plotly_dark", paper_bgcolor=T.BG_CARD, plot_bgcolor=T.BG_CARD,
-        font=dict(color=T.TEXT_SEC, size=11),
+        **_DARK,
         title=dict(
             text=f"{ticker} Today  ·  {len(df)} bars  ·  last {last_time} ET",
             font=dict(size=13, color=T.TEXT_SEC),

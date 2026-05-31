@@ -21,6 +21,7 @@ import plotly.graph_objects as go
 from dash import html, dcc, callback, Input, Output, State, no_update
 
 from dash_app import theme as T, get_polygon_api_key
+from dash_app.ui import tokens as D, components as C
 
 logger = logging.getLogger(__name__)
 
@@ -42,22 +43,17 @@ def _col(field: str, flex: int = 1, width: int | None = None,
     return d
 
 
-def _metric_card(label: str, value: str) -> dbc.Card:
-    return dbc.Card(dbc.CardBody([
-        html.Div(label, style={"color": T.TEXT_MUTED, "fontSize": "11px",
-                                "fontWeight": "600", "textTransform": "uppercase",
-                                "letterSpacing": "0.05em", "marginBottom": "4px"}),
-        html.Div(value, style={"color": T.TEXT_PRIMARY, "fontSize": "18px",
-                                "fontWeight": "700"}),
-    ], style={"padding": "12px 16px"}),
-    style={**T.STYLE_CARD, "minWidth": "100px"})
+def _metric_card(label: str, value: str) -> html.Div:
+    """KPI tile — delegates to the shared design-system metric card so every
+    counter/metric tile in the app matches."""
+    return C.metric_card(label, value)
 
 
 def _status_badge(txt: str, color: str) -> html.Span:
     return html.Span(txt, style={
-        "backgroundColor": color, "color": "#fff",
-        "borderRadius": "4px", "padding": "1px 7px",
-        "fontSize": "11px", "fontWeight": "600",
+        "backgroundColor": color, "color": D.COLOR.text,
+        "borderRadius": D.RADIUS_SM, "padding": "1px 7px",
+        "fontSize": D.TEXT_XS, "fontWeight": D.WEIGHT_MED,
     })
 
 
@@ -235,17 +231,19 @@ def _build_coverage_tables() -> html.Div:
         ]
 
         return html.Div([
-            html.P("Per-ticker", style={"color": T.TEXT_MUTED, "fontSize": "12px",
-                                        "marginBottom": "6px"}),
+            html.P("Per-ticker", style={"color": D.COLOR.text_muted,
+                                        "fontSize": D.TEXT_SM,
+                                        "marginBottom": D.SPACE_2}),
             dag.AgGrid(
                 rowData=ticker_data,
                 columnDefs=ticker_cols,
                 defaultColDef={"resizable": True},
                 className=T.AGGRID_THEME,
-                style={"height": "260px", "width": "100%", "marginBottom": "16px"},
+                style={"height": "260px", "width": "100%", "marginBottom": D.SPACE_4},
             ),
-            html.P("Global datasets", style={"color": T.TEXT_MUTED, "fontSize": "12px",
-                                              "marginBottom": "6px"}),
+            html.P("Global datasets", style={"color": D.COLOR.text_muted,
+                                             "fontSize": D.TEXT_SM,
+                                             "marginBottom": D.SPACE_2}),
             dag.AgGrid(
                 rowData=global_data,
                 columnDefs=global_cols,
@@ -341,11 +339,12 @@ def _running_badge() -> html.Span:
         [
             html.Span(className="app-busy-dot",
                       style={"display": "inline-block", "width": "8px", "height": "8px",
-                             "borderRadius": "50%", "backgroundColor": "#a78bfa",
-                             "marginRight": "6px", "verticalAlign": "middle"}),
+                             "borderRadius": D.RADIUS_PILL,
+                             "backgroundColor": D.COLOR.purple,
+                             "marginRight": D.SPACE_2, "verticalAlign": "middle"}),
             html.Span("Running…"),
         ],
-        style={"color": "#a78bfa", "fontWeight": "600"},
+        style={"color": D.COLOR.purple, "fontWeight": D.WEIGHT_MED},
     )
 
 

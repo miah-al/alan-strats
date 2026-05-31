@@ -104,6 +104,8 @@ def layout() -> html.Div:
     return html.Div([
         C.page_header(
             "Market Data",
+            "Quotes, options chains, dealer gamma, vol surface, rates and a "
+            "cross-sectional screener.",
             actions=[
                 dbc.Input(
                     id="mkt-apikey", type="password",
@@ -127,69 +129,34 @@ def layout() -> html.Div:
         html.Div(style={"height": "12px"}),
 
         # Charts — all rendered on Load click
-        html.Div([
-            html.Div([
-                html.Div("Price Chart", style={
-                    "color": T.TEXT_SEC, "fontSize": "11px", "fontWeight": "600",
-                    "textTransform": "uppercase", "letterSpacing": "0.07em",
-                }),
-                dbc.Switch(
-                    id="mkt-eod-toggle",
-                    label="EOD History",
-                    value=False,
-                    style={"color": T.TEXT_MUTED, "fontSize": "12px"},
-                ),
-            ], style={"display": "flex", "justifyContent": "space-between",
-                      "alignItems": "center", "borderBottom": f"1px solid {T.BORDER}",
-                      "paddingBottom": "8px", "marginBottom": "12px"}),
+        C.section(
+            "Price Chart",
             dcc.Loading(html.Div(id="mkt-candle-content",
                                  children=_hint("Loading…")),
                         type="circle", color=T.ACCENT),
-        ], style={**T.STYLE_CARD, "marginBottom": "16px"}),
-        html.Div([
+            right=dbc.Switch(
+                id="mkt-eod-toggle",
+                label="EOD History",
+                value=False,
+                style={"color": T.TEXT_MUTED, "fontSize": D.TEXT_SM},
+            ),
+        ),
+        C.section(
+            "Dealer GEX — Gamma Exposure by Strike",
             html.Div([
-                html.Div("Dealer GEX — Gamma Exposure by Strike", style={
-                    "color": T.TEXT_SEC, "fontSize": "11px", "fontWeight": "600",
-                    "textTransform": "uppercase", "letterSpacing": "0.07em",
-                }),
-                dbc.Button("How to read this chart",
-                           id="mkt-gex-guide-toggle",
-                           size="sm", color="link",
-                           style={"color": T.ACCENT, "fontSize": "11px",
-                                  "padding": "0", "fontWeight": "500"}),
-            ], style={"display": "flex", "justifyContent": "space-between",
-                      "alignItems": "center", "borderBottom": f"1px solid {T.BORDER}",
-                      "paddingBottom": "8px", "marginBottom": "12px"}),
-            dcc.Loading(html.Div(id="mkt-gex-content", children=_hint("Loading…")),
-                        type="circle", color=T.ACCENT),
-            dbc.Collapse(_gex_guide(), id="mkt-gex-guide-collapse", is_open=False),
-        ], style={**T.STYLE_CARD, "marginBottom": "16px"}),
-        html.Div([
+                dcc.Loading(html.Div(id="mkt-gex-content", children=_hint("Loading…")),
+                            type="circle", color=T.ACCENT),
+                dbc.Collapse(_gex_guide(), id="mkt-gex-guide-collapse", is_open=False),
+            ]),
+            right=dbc.Button("How to read this chart",
+                             id="mkt-gex-guide-toggle",
+                             size="sm", color="link",
+                             style={"color": T.ACCENT, "fontSize": D.TEXT_XS,
+                                    "padding": "0", "fontWeight": D.WEIGHT_NORMAL}),
+        ),
+        C.section(
+            "Volatility Surface",
             html.Div([
-                html.Div([
-                    html.Div("Volatility Surface", style={
-                        "color": T.TEXT_SEC, "fontSize": "11px", "fontWeight": "600",
-                        "textTransform": "uppercase", "letterSpacing": "0.07em",
-                        "marginRight": "10px",
-                    }),
-                    html.Div([
-                        dbc.Button("3D Surface", id="mkt-vol-3d-btn", size="sm",
-                                   color="secondary", outline=True,
-                                   style={"fontSize": "11px", "padding": "2px 10px",
-                                          "borderRadius": "4px 0 0 4px"}),
-                        dbc.Button("Chain Table", id="mkt-vol-chain-btn", size="sm",
-                                   color="primary",
-                                   style={"fontSize": "11px", "padding": "2px 10px",
-                                          "borderRadius": "0 4px 4px 0"}),
-                    ], style={"display": "flex"}),
-                ], style={"display": "flex", "alignItems": "center"}),
-                dbc.Button("How to read this chart", id="mkt-vol-guide-toggle",
-                           size="sm", color="link",
-                           style={"color": T.ACCENT, "fontSize": "11px",
-                                  "padding": "0", "fontWeight": "500"}),
-            ], style={"display": "flex", "justifyContent": "space-between",
-                      "alignItems": "center", "borderBottom": f"1px solid {T.BORDER}",
-                      "paddingBottom": "8px", "marginBottom": "8px"}),
             # Expiry + moneyness controls — shown only in chain view
             html.Div([
                 html.Label("Expiry:", style={"color": T.TEXT_MUTED, "fontSize": "12px",
@@ -224,28 +191,40 @@ def layout() -> html.Div:
             dcc.Loading(html.Div(id="mkt-vol-content", children=_hint("Loading…")),
                         type="circle", color=T.ACCENT),
             dbc.Collapse(_vol_surface_guide(), id="mkt-vol-guide-collapse", is_open=False),
-        ], style={**T.STYLE_CARD, "marginBottom": "16px"}),
+            ]),
+            right=html.Div([
+                html.Div([
+                    dbc.Button("3D Surface", id="mkt-vol-3d-btn", size="sm",
+                               color="secondary", outline=True,
+                               style={"fontSize": D.TEXT_XS, "padding": "2px 10px",
+                                      "borderRadius": "4px 0 0 4px"}),
+                    dbc.Button("Chain Table", id="mkt-vol-chain-btn", size="sm",
+                               color="primary",
+                               style={"fontSize": D.TEXT_XS, "padding": "2px 10px",
+                                      "borderRadius": "0 4px 4px 0"}),
+                ], style={"display": "flex"}),
+                dbc.Button("How to read this chart", id="mkt-vol-guide-toggle",
+                           size="sm", color="link",
+                           style={"color": T.ACCENT, "fontSize": D.TEXT_XS,
+                                  "padding": "0", "fontWeight": D.WEIGHT_NORMAL}),
+            ], style={"display": "flex", "alignItems": "center", "gap": D.SPACE_3}),
+        ),
         _section("Market Activity — Top Movers & Dealer GEX",
                  dcc.Loading(html.Div(id="mkt-activity-content",
                                       children=_hint("Loading…")),
                              type="circle", color=T.ACCENT)),
-        html.Div([
+        C.section(
+            "Momentum Indicators — RSI & MACD",
             html.Div([
-                html.Div("Momentum Indicators — RSI & MACD", style={
-                    "color": T.TEXT_SEC, "fontSize": "11px", "fontWeight": "600",
-                    "textTransform": "uppercase", "letterSpacing": "0.07em",
-                }),
-                dbc.Button("How to read this chart", id="mkt-momentum-guide-toggle",
-                           size="sm", color="link",
-                           style={"color": T.ACCENT, "fontSize": "11px",
-                                  "padding": "0", "fontWeight": "500"}),
-            ], style={"display": "flex", "justifyContent": "space-between",
-                      "alignItems": "center", "borderBottom": f"1px solid {T.BORDER}",
-                      "paddingBottom": "8px", "marginBottom": "12px"}),
-            dcc.Loading(html.Div(id="mkt-momentum-content", children=_hint("Loading…")),
-                        type="circle", color=T.ACCENT),
-            dbc.Collapse(_momentum_guide(), id="mkt-momentum-guide-collapse", is_open=False),
-        ], style={**T.STYLE_CARD, "marginBottom": "16px"}),
+                dcc.Loading(html.Div(id="mkt-momentum-content", children=_hint("Loading…")),
+                            type="circle", color=T.ACCENT),
+                dbc.Collapse(_momentum_guide(), id="mkt-momentum-guide-collapse", is_open=False),
+            ]),
+            right=dbc.Button("How to read this chart", id="mkt-momentum-guide-toggle",
+                             size="sm", color="link",
+                             style={"color": T.ACCENT, "fontSize": D.TEXT_XS,
+                                    "padding": "0", "fontWeight": D.WEIGHT_NORMAL}),
+        ),
         _section("Correlation Analysis", html.Div([
             html.Div([
                 html.Label("Compare with:", style={"color": T.TEXT_SEC, "fontSize": "12px",
@@ -261,82 +240,43 @@ def layout() -> html.Div:
             dcc.Loading(html.Div(id="mkt-corr-content"), type="circle", color=T.ACCENT),
         ])),
 
-        html.Div([
+        C.section(
+            "Treasury Term Structure — Yield Curve & 3D Surface (FRED, free)",
             html.Div([
-                html.Div("Treasury Term Structure — Yield Curve & 3D Surface (FRED, free)", style={
-                    "color": T.TEXT_SEC, "fontSize": "11px", "fontWeight": "600",
-                    "textTransform": "uppercase", "letterSpacing": "0.07em",
-                }),
-                dbc.Button("How to read this chart", id="mkt-yield-guide-toggle",
-                           size="sm", color="link",
-                           style={"color": T.ACCENT, "fontSize": "11px",
-                                  "padding": "0", "fontWeight": "500"}),
-            ], style={"display": "flex", "justifyContent": "space-between",
-                      "alignItems": "center", "borderBottom": f"1px solid {T.BORDER}",
-                      "paddingBottom": "8px", "marginBottom": "12px"}),
-            dcc.Loading(html.Div(id="mkt-yield-content", children=_hint("Loading…")),
-                        type="circle", color=T.ACCENT),
-            dbc.Collapse(_yield_guide(), id="mkt-yield-guide-collapse", is_open=False),
-        ], style={**T.STYLE_CARD, "marginBottom": "16px"}),
+                dcc.Loading(html.Div(id="mkt-yield-content", children=_hint("Loading…")),
+                            type="circle", color=T.ACCENT),
+                dbc.Collapse(_yield_guide(), id="mkt-yield-guide-collapse", is_open=False),
+            ]),
+            right=dbc.Button("How to read this chart", id="mkt-yield-guide-toggle",
+                             size="sm", color="link",
+                             style={"color": T.ACCENT, "fontSize": D.TEXT_XS,
+                                    "padding": "0", "fontWeight": D.WEIGHT_NORMAL}),
+        ),
 
         # ── Global Futures ───────────────────────────────────────────────────────
-        html.Div([
-            html.Div([
-                html.Div("Global Futures — Performance Overview", style={
-                    "color": T.TEXT_SEC, "fontSize": "11px", "fontWeight": "600",
-                    "textTransform": "uppercase", "letterSpacing": "0.07em",
-                }),
-                html.Div(
-                    html.Small("via Yahoo Finance · delayed", style={
-                        "color": T.TEXT_MUTED, "fontSize": "10px",
-                    }),
-                    style={"display": "flex", "alignItems": "center", "gap": "10px"},
-                ),
-                dbc.Button("↻ Refresh", id="mkt-futures-refresh-btn", size="sm",
-                           color="secondary",
-                           style={"fontSize": "11px", "padding": "2px 10px",
-                                  "border": f"1px solid {T.BORDER}",
-                                  "backgroundColor": T.BG_ELEVATED}),
-            ], style={"display": "flex", "justifyContent": "space-between",
-                      "alignItems": "center", "borderBottom": f"1px solid {T.BORDER}",
-                      "paddingBottom": "8px", "marginBottom": "12px"}),
+        C.section(
+            "Global Futures — Performance Overview",
             dcc.Loading(
                 html.Div(id="mkt-futures-content", children=_hint("Click ↻ Refresh to load futures data.")),
                 type="circle", color=T.ACCENT,
             ),
-        ], style={**T.STYLE_CARD, "marginBottom": "16px"}),
+            right=html.Div([
+                html.Small("via Yahoo Finance · delayed", style={
+                    "color": T.TEXT_MUTED, "fontSize": "10px",
+                }),
+                dbc.Button("↻ Refresh", id="mkt-futures-refresh-btn", size="sm",
+                           color="secondary",
+                           style={"fontSize": D.TEXT_XS, "padding": "2px 10px",
+                                  "border": f"1px solid {T.BORDER}",
+                                  "backgroundColor": T.BG_ELEVATED}),
+            ], style={"display": "flex", "alignItems": "center", "gap": D.SPACE_3}),
+        ),
 
         # ── Market Screener ───────────────────────────────────────────────────────
-        html.Div([
+        C.section(
+            "Market Screener",
             html.Div([
-                html.Div("Market Screener", style={
-                    "color": T.TEXT_SEC, "fontSize": "11px", "fontWeight": "600",
-                    "textTransform": "uppercase", "letterSpacing": "0.07em",
-                }),
-                html.Div(
-                    [dbc.Button(
-                        opt["label"],
-                        id={"type": "scr-univ-btn", "index": opt["value"]},
-                        size="sm",
-                        style={
-                            "fontSize": "12px", "fontWeight": "500",
-                            "padding": "4px 12px",
-                            "backgroundColor": T.ACCENT if opt["value"] == _SCR_DEFAULT_UNIVERSE else T.BG_ELEVATED,
-                            "border": f"1px solid {T.ACCENT if opt['value'] == _SCR_DEFAULT_UNIVERSE else T.BORDER}",
-                            "color": T.TEXT_PRIMARY,
-                            "borderRadius": "6px",
-                        },
-                    ) for opt in _SCR_UNIVERSE_OPTIONS],
-                    style={"display": "flex", "gap": "6px"},
-                ),
-                dcc.Store(id="mkt-scr-universe", data=_SCR_DEFAULT_UNIVERSE),
-            ], style={
-                "display": "flex", "justifyContent": "space-between",
-                "alignItems": "center",
-                "borderBottom": f"1px solid {T.BORDER}",
-                "paddingBottom": "8px", "marginBottom": "16px",
-            }),
-
+            dcc.Store(id="mkt-scr-universe", data=_SCR_DEFAULT_UNIVERSE),
             dcc.Loading(type="circle", color=T.ACCENT, children=html.Div([
                 # Row 1: Movers full width
                 html.Div([
@@ -386,4 +326,4 @@ def layout() -> html.Div:
         dcc.Store(id="mkt-apikey-store",    data=get_polygon_api_key()),
         dcc.Store(id="mkt-vol-view-store",  data="chain"),
         dcc.Store(id="mkt-chain-data-store"),
-    ], style=T.STYLE_PAGE)
+    ], style=D.PAGE)

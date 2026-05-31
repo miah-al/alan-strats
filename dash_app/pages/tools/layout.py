@@ -10,20 +10,22 @@ import dash_bootstrap_components as dbc
 from dash import html
 
 from dash_app import theme as T
+from dash_app.ui import tokens as D, components as C
 
 from dash_app.pages.tools.tabs import _data_manager_tab
 
 
-_TAB_STYLE     = {"fontSize": "13px", "padding": "6px 14px"}
-_TAB_ACT_STYLE = {**_TAB_STYLE, "borderTop": f"2px solid {T.ACCENT}"}
+_TAB_STYLE     = {"fontSize": D.TEXT_MD, "padding": "6px 14px"}
+_TAB_ACT_STYLE = {**_TAB_STYLE, "borderTop": f"2px solid {D.COLOR.accent}"}
 
 
 def layout() -> html.Div:
     return html.Div([
-        html.H2("Tools", style={
-            "color": T.TEXT_PRIMARY, "fontSize": "1.35rem",
-            "fontWeight": "700", "marginBottom": "16px",
-        }),
+        C.page_header(
+            "Tools",
+            "Data syncing, IV metrics, portfolio risk, the strategy registry, "
+            "models, the quant course, guides, and the Polygon explorer.",
+        ),
         dbc.Tabs(
             [
                 dbc.Tab(label="Data Manager",     tab_id="data-manager",
