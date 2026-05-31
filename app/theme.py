@@ -29,8 +29,8 @@ AGGRID_THEME = "ag-theme-quartz-dark"
 STYLE_CARD = {
     "backgroundColor": BG_CARD,
     "border":          f"1px solid {BORDER}",
-    "borderRadius":    "10px",
-    "padding":         "16px",
+    "borderRadius":    "14px",
+    "padding":         "22px",
 }
 
 STYLE_DROPDOWN = {
@@ -45,5 +45,7 @@ STYLE_PAGE = {
     "minHeight":       "100vh",
     "color":           TEXT_PRIMARY,
     "fontFamily":      "'Inter', -apple-system, BlinkMacSystemFont, sans-serif",
-    "padding":         "24px 32px",
+    "padding":         "32px 40px",
+    "maxWidth":        "1640px",
+    "margin":          "0 auto",
 }

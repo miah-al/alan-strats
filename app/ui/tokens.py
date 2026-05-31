@@ -91,8 +91,8 @@ PAGE_PAD      = "24px 32px"
 CARD = {
     "backgroundColor": COLOR.card,
     "border":          f"1px solid {COLOR.border}",
-    "borderRadius":    RADIUS_MD,
-    "padding":         SPACE_4,
+    "borderRadius":    "14px",
+    "padding":         "22px",
 }
 
 CARD_FLUSH = {**CARD, "padding": "0", "overflow": "hidden"}
