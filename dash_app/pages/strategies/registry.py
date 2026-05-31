@@ -104,6 +104,51 @@ def get_status_color(slug: str, key: str = "border") -> str:
     """Return the colour value for a slug's status. `key` is one of border / dot / tint."""
     return _STATUS_COLORS[get_strategy_status(slug)][key]
 
+
+# ── Hardening score (2026-05-30) ──────────────────────────────────────────────
+# CREDIBILITY score (0-100) + letter grade from the post-hardening review. This
+# ranks "is the edge real + can the backtest see it", NOT realized P&L — no live
+# returns exist yet. See docs/reviews/2026-05-30_strategy_hardening.md.
+# Scores are pre-re-run; expect shifts once honest backtests are recorded.
+_STRATEGY_SCORE: dict[str, tuple[int, str]] = {
+    "ivr_credit_spread":      (88, "A"),
+    "iron_condor_rules":      (86, "A"),
+    "hmm_regime":             (84, "A-"),
+    "vol_arbitrage":          (82, "A-"),
+    "earnings_pin_risk":      (80, "A-"),
+    "vol_calendar_spread":    (78, "B+"),
+    "yield_curve_regime":     (77, "B+"),
+    "momentum_regime_spread": (76, "B+"),
+    "short_squeeze_detector": (75, "B+"),
+    "covered_call_ai":        (74, "B+"),
+    "calendar_spread_vix":    (73, "B+"),
+    "fomc_event_straddle":    (71, "B"),
+    "iron_condor_ai":         (70, "B"),
+    "vix_term_structure":     (69, "B"),
+    "put_steal":              (66, "B-"),
+    "dealer_gamma_regime":    (64, "B-"),
+    "gex_positioning":        (63, "B-"),
+    "vix_spike_fade":         (60, "C+"),
+    "earnings_vol_crush":     (58, "C+"),
+    "expiry_max_pain":        (55, "C"),
+}
+
+
+def get_strategy_score(slug: str):
+    """Return (score:int, grade:str) for a slug, or None if not scored."""
+    return _STRATEGY_SCORE.get(slug)
+
+
+def get_score_color(score: int) -> str:
+    """Map a 0-100 credibility score to a band colour (green/yellow/peach/red)."""
+    if score >= 80:
+        return _STATUS_COLORS["ready"]["dot"]       # green  — deploy candidate
+    if score >= 70:
+        return _STATUS_COLORS["reviewed"]["dot"]    # yellow — paper-trade
+    if score >= 62:
+        return _STATUS_COLORS["reviewing"]["dot"]   # peach  — needs work
+    return _STATUS_COLORS["avoid"]["dot"]           # red    — thin/weak edge
+
 # ── Universe options ──────────────────────────────────────────────────────────
 
 _UNIVERSE_TICKERS: dict[str, list[str]] = {

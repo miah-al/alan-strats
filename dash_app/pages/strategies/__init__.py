@@ -42,6 +42,7 @@ from dash_app.pages.strategies.registry import (
     _STRATEGIES_RULES, _STRATEGIES_AI, _STRATEGIES, _SLUG_TO_LABEL,
     _UNIVERSE_TICKERS, _SPY_ONLY_SLUGS, _SECTOR_ETFS_LIST, _SECTOR_ONLY_SLUGS,
     _UNIVERSE_OPTIONS, _GUIDE_DIR, _STATUS_COLORS, get_strategy_status,
+    get_strategy_score, get_score_color,
 )
 
 
@@ -319,9 +320,41 @@ def _screener_layout(slug: str) -> html.Div:
     ])
 
 
+def _score_badge(slug: str) -> html.Div:
+    """Credibility score/grade banner shown above a strategy's guide article.
+
+    Reflects the 2026-05-30 hardening review (edge realism + implementation
+    quality), NOT realized P&L. Renders nothing for unscored slugs.
+    """
+    sc = get_strategy_score(slug)
+    if not sc:
+        return html.Div()
+    score, grade = sc
+    color = get_score_color(score)
+    return html.Div([
+        html.Div([
+            html.Span(grade, style={"fontSize": "20px", "fontWeight": "700",
+                                    "color": color, "marginRight": "10px"}),
+            html.Span(f"{score}/100", style={"fontSize": "13px", "fontWeight": "600",
+                                             "color": T.TEXT_PRIMARY, "marginRight": "8px"}),
+            html.Span("credibility score", style={"fontSize": "11px", "color": T.TEXT_MUTED,
+                                                  "textTransform": "uppercase",
+                                                  "letterSpacing": "0.05em"}),
+        ], style={"display": "flex", "alignItems": "baseline"}),
+        html.Div("Edge realism + implementation quality (post-hardening review). "
+                 "Not realized P&L — pending clean backtest re-run.",
+                 style={"fontSize": "11px", "color": T.TEXT_MUTED, "marginTop": "4px"}),
+    ], style={
+        "padding": "10px 14px", "marginBottom": "16px",
+        "borderLeft": f"3px solid {color}",
+        "background": "rgba(255,255,255,0.03)", "borderRadius": "4px",
+    })
+
+
 def _guide_layout(slug: str) -> html.Div:
     content = _load_guide(slug)
     return html.Div([
+        _score_badge(slug),
         html.Div([
             dcc.Markdown(
                 content,
