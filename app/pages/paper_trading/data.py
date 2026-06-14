@@ -287,6 +287,77 @@ def _compute_risk_matrix(
     }
 
 
+def live_market_value(open_groups: dict) -> tuple[float, bool, int, int]:
+    """Live mark-to-market *liquidation* value of all open positions.
+
+    Returns (market_value, is_live, n_legs_priced, n_legs_total).
+
+    Convention: a position's market value is what you'd realise on liquidation.
+    LONG legs are assets (+mark); SHORT legs are liabilities (-mark — you must
+    buy them back to close). So a short-premium position has a NEGATIVE market
+    value, and Account Value = cash + market_value correctly nets the premium
+    already collected (sitting in cash) against the cost to close.
+
+    Live option/stock marks are used where available; any leg without a live
+    quote falls back to its entry price so the figure is always complete.
+    `is_live` is True only when every leg got a live quote.
+    """
+    api_key = None
+    try:
+        from app import get_polygon_api_key
+        api_key = get_polygon_api_key()
+    except Exception:
+        pass
+
+    from engine.positions import fetch_option_prices, fetch_stock_price
+
+    mv = 0.0
+    n_priced = 0
+    n_total  = 0
+    for _tgid, grp in open_groups.items():
+        live_opt: dict = {}
+        if api_key:
+            try:
+                live_opt = fetch_option_prices(api_key, grp)
+            except Exception:
+                live_opt = {}
+        spots: dict[str, float | None] = {}
+        for _, r in grp.iterrows():
+            stype = str(r.get("SecurityType", "")).lower()
+            if stype == "cash":
+                continue
+            dirn     = str(r.get("Direction", "")).upper()
+            qty      = abs(float(r.get("Quantity") or 0))
+            mult     = float(r.get("Multiplier") or (100 if stype == "option" else 1))
+            liq_sign = 1.0 if dirn == "BUY" else -1.0   # long = +asset, short = -liability
+            entry_px = float(r.get("TransactionPrice") or 0)
+            sym      = str(r.get("Symbol", ""))
+
+            cur = None
+            if stype == "option":
+                live = live_opt.get(sym, {})
+                cur  = live.get("price") if isinstance(live, dict) else None
+            elif api_key:
+                und = str(r.get("Underlying") or sym)
+                if und not in spots:
+                    try:
+                        spots[und] = fetch_stock_price(api_key, und)
+                    except Exception:
+                        spots[und] = None
+                cur = spots.get(und)
+
+            n_total += 1
+            if cur is not None:
+                n_priced += 1
+                px = float(cur)
+            else:
+                px = entry_px
+            mv += liq_sign * px * qty * mult
+
+    is_live = n_total > 0 and n_priced == n_total
+    return round(mv, 2), is_live, n_priced, n_total
+
+
 def get_open_trade_groups_simple(txns_df: "pd.DataFrame") -> dict:
     """Return {tgid: {underlying, strategy, open_date, grp}} for open positions only."""
     from engine.positions import get_open_trade_groups

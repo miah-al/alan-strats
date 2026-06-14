@@ -13,6 +13,7 @@ from dash import html, dcc
 from app import theme as T
 from app.ui import tokens as D, components as C
 
+from app.grid_helpers import clickable_mrt_grid
 from app.pages.paper_trading.builders import (
     _grid, _OPEN_COLS, _CLOSED_COLS, _TXNS_COLS,
 )
@@ -67,8 +68,10 @@ def layout() -> html.Div:
                     "Click a row to view position detail and payoff chart.",
                     style={"color": T.TEXT_MUTED, "fontSize": "12px", "marginBottom": "4px"},
                 ),
-                dcc.Loading(_grid("pt-open-grid", _OPEN_COLS),
-                            type="circle", color=T.ACCENT),
+                dcc.Loading(
+                    clickable_mrt_grid(grid_id="pt-open-grid",
+                                       aggrid_cols=_OPEN_COLS, height=480),
+                    type="circle", color=T.ACCENT),
             ]),
             dbc.Tab(label="Closed Positions", tab_id="closed", children=[
                 html.Div(style={"height": "12px"}),

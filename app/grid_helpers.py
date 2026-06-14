@@ -23,10 +23,19 @@ def aggrid_cols_to_mrt(cols: list) -> list:
 
     Drops `width` / `minWidth` so MRT can flex columns to container width
     (no horizontal scroll). Numeric columns get right-aligned in body+head.
+
+    Columns marked `hide: True` are skipped entirely — MRT has no `hide` prop, so
+    a hidden AG-Grid column would otherwise become a VISIBLE MRT column. That is
+    fatal for columns whose value is a dict (e.g. `_chain`): React throws
+    "Objects are not valid as a React child". The row `data` still carries those
+    keys (data is independent of columns), so row-click callbacks that read
+    `_chain` from the row keep working — the value just isn't displayed.
     """
     out = []
     for c in cols:
         if "field" not in c:
+            continue
+        if c.get("hide"):
             continue
         mc = {
             "accessorKey": c["field"],

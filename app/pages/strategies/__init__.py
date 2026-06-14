@@ -311,7 +311,7 @@ def _screener_layout(slug: str) -> html.Div:
                     grid_id=grid_id,
                     aggrid_cols=cols,
                     data=[],
-                    height=500,
+                    height=340,
                 ),
                 id=loading_id,
             ),

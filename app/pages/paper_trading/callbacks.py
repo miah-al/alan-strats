@@ -12,15 +12,16 @@ import datetime
 import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
-import dash_ag_grid as dag
 import dash_bootstrap_components as dbc
 from dash import html, dcc, callback, Input, Output, State, no_update, ctx, ALL
 
 from app import theme as T
+from app.grid_helpers import mrt_grid
 
 from app.pages.paper_trading.data import (
     _ACCOUNT_ID, _pretty_strategy, _get_engine, _load_data, _net_entry,
     bs_val, _bs_full, _compute_risk_matrix, get_open_trade_groups_simple,
+    live_market_value,
 )
 from app.pages.paper_trading.builders import (
     _grid, _OPEN_COLS, _CLOSED_COLS, _TXNS_COLS,
@@ -35,10 +36,10 @@ from app.pages.paper_trading.builders import (
 
 @callback(
     Output("pt-metric-row",        "children"),
-    Output("pt-open-grid",         "rowData"),
-    Output("pt-closed-grid",       "rowData"),
+    Output("pt-open-grid",         "data"),
+    Output("pt-closed-grid",       "data"),
     Output("pt-closed-chart",      "children"),
-    Output("pt-txns-grid",         "rowData"),
+    Output("pt-txns-grid",         "data"),
     Output("pt-perf-chart",        "children"),
     Output("pt-equity-curve",      "children"),
     Output("pt-txn-filter-type",   "options"),
@@ -111,7 +112,8 @@ def refresh_all(_n, _btn):
         acct = {"AccountName": "Default", "AccountType": "Paper",
                 "Currency": "USD", "Status": "Active"}
 
-    cash_bal = 0.0
+    # Deposited / baseline cash (deposits & withdrawals only — Balance table).
+    deposit_cash = 0.0
     try:
         from sqlalchemy import text as _text
         with engine.connect() as conn:
@@ -121,16 +123,41 @@ def refresh_all(_n, _btn):
                 ORDER BY BusinessDate DESC
             """), {"aid": _ACCOUNT_ID}).fetchone()
             if row:
-                cash_bal = float(row[0])
+                deposit_cash = float(row[0])
     except Exception:
         pass
+
+    # Cash moves on every trade: opening a short-premium position credits cash,
+    # closing debits it. The transaction ledger is the source of truth, so live
+    # cash = deposited cash + net cash flow of every (non-cash) trade.
+    trade_cf = 0.0
+    if not txns_df.empty:
+        for _, r in txns_df.iterrows():
+            if str(r.get("SecurityType", "")).lower() == "cash":
+                continue
+            dirn = str(r.get("Direction", "")).upper()
+            qty  = float(r.get("Quantity") or 0)
+            px   = float(r.get("TransactionPrice") or 0)
+            mult = float(r.get("Multiplier") or 1)
+            trade_cf += (1.0 if dirn == "SELL" else -1.0) * qty * px * mult
+    cash_bal = deposit_cash + trade_cf
+
+    # Live market value of open positions (negative for short premium) and the
+    # resulting true account value.
+    market_value, _mv_live, _mv_priced, _mv_total = live_market_value(open_groups)
+    account_value = cash_bal + market_value
 
     # ── Metrics ───────────────────────────────────────────────────────────────
     n_open       = len(open_data)
     total_entry  = sum(r["_net"] for r in open_data)
     total_closed = sum(r["P&L $"] for r in closed_rows) if closed_rows else 0.0
     n_wins       = sum(1 for r in closed_rows if r.get("P&L $", 0) > 0) if closed_rows else 0
-    ytd_return   = total_closed / 100_000 * 100
+    # Total return vs starting capital (net deposits) — includes BOTH realized
+    # P&L (already folded into cash) and unrealized P&L (via market value), so it
+    # is non-zero whenever open positions have moved, not just on closed trades.
+    starting_capital = deposit_cash if deposit_cash else (account_value or 0.0)
+    ytd_return   = ((account_value - starting_capital) / starting_capital * 100) \
+                   if starting_capital else 0.0
 
     today_str  = datetime.date.today().isoformat()
     today_pnl  = sum(
@@ -142,7 +169,9 @@ def refresh_all(_n, _btn):
     win_rate     = (n_wins / n_closed * 100) if n_closed > 0 else None
     gross_wins   = sum(r.get("P&L $", 0) for r in closed_rows if r.get("P&L $", 0) > 0) if closed_rows else 0.0
     gross_losses = abs(sum(r.get("P&L $", 0) for r in closed_rows if r.get("P&L $", 0) < 0)) if closed_rows else 0.0
-    net_premium  = sum(r["_net"] for r in open_data)
+    # Unrealized P&L on OPEN positions = entry premium (received/paid) + live market value.
+    # e.g. short credit collected minus current cost to close.
+    unrealized_pnl = total_entry + market_value
 
     def _metric(label, value, color=T.TEXT_PRIMARY):
         return html.Div([
@@ -157,22 +186,26 @@ def refresh_all(_n, _btn):
     status_color = T.SUCCESS if acct.get("Status") == "Active" else T.WARNING
     win_rate_str = f"{win_rate:.0f}%" if win_rate is not None else "—"
     win_rate_color = (T.SUCCESS if win_rate and win_rate >= 50 else T.DANGER) if win_rate is not None else T.TEXT_MUTED
-    net_prem_str = f"{'+'if net_premium>=0 else ''}${net_premium:,.2f}"
+    mkt_val_str = f"{'-' if market_value < 0 else ''}${abs(market_value):,.2f}"
 
     row1 = html.Div([
-        _metric("Account",      str(acct.get("AccountName", "—"))),
-        _metric("Type",         str(acct.get("AccountType", "—"))),
-        _metric("Status",       str(acct.get("Status", "—")), status_color),
-        _metric("Cash Balance", f"${cash_bal:,.0f}",
+        _metric("Account",       str(acct.get("AccountName", "—"))),
+        _metric("Type",          str(acct.get("AccountType", "—"))),
+        _metric("Status",        str(acct.get("Status", "—")), status_color),
+        _metric("Cash Balance",  f"${cash_bal:,.2f}",
                 T.SUCCESS if cash_bal >= 0 else T.DANGER),
+        _metric("Account Value", f"${account_value:,.2f}",
+                T.SUCCESS if account_value >= 0 else T.DANGER),
     ], style={"display": "flex", "gap": "10px", "flexWrap": "wrap"})
 
     row2 = html.Div([
         _metric("Open Trades",   str(n_open)),
-        _metric("Net Premium",   net_prem_str,
-                T.SUCCESS if net_premium > 0 else T.DANGER if net_premium < 0 else T.TEXT_MUTED),
+        _metric("Market Value",  mkt_val_str,
+                T.SUCCESS if market_value > 0 else T.DANGER if market_value < 0 else T.TEXT_MUTED),
         _metric("Today's P&L",  f"{'+'if today_pnl>=0 else ''}${today_pnl:,.2f}",
                 T.SUCCESS if today_pnl > 0 else T.DANGER if today_pnl < 0 else T.TEXT_MUTED),
+        _metric("Unrealized P&L", f"{'+'if unrealized_pnl>=0 else ''}${unrealized_pnl:,.2f}",
+                T.SUCCESS if unrealized_pnl > 0 else T.DANGER if unrealized_pnl < 0 else T.TEXT_MUTED),
         _metric("Realized P&L", f"{'+'if total_closed>=0 else ''}${total_closed:,.2f}",
                 T.SUCCESS if total_closed >= 0 else T.DANGER),
         _metric("Win Rate",     win_rate_str, win_rate_color),
@@ -292,26 +325,36 @@ def refresh_all(_n, _btn):
     Output("pt-modal-title",   "children", allow_duplicate=True),
     Output("pt-modal-body",    "children", allow_duplicate=True),
     Output("pt-selected-tgid", "data"),
-    Input("pt-open-grid",      "selectedRows"),
+    Input("pt-open-grid-clicked", "value"),
     Input("pt-url",            "search"),
+    State("pt-open-grid",      "data"),
     prevent_initial_call=True,
 )
-def open_position_modal(selected_rows, url_search):
+def open_position_modal(clicked_json, url_search, all_rows):
     from dash import ctx
     _loading = html.Div("Loading…", style={"color": T.TEXT_MUTED, "padding": "20px"})
     # Deep-link from blotter: /paper-trading?tgid=xxx
     if ctx.triggered_id == "pt-url" and url_search:
-        from urllib.parse import parse_qs, urlparse
+        from urllib.parse import parse_qs
         qs = parse_qs(url_search.lstrip("?"))
         tgid = (qs.get("tgid") or [""])[0].strip()
         if tgid:
             return True, "Position Detail", _loading, tgid
         return no_update, no_update, no_update, no_update
 
-    if not selected_rows:
+    if not clicked_json or not all_rows:
         return no_update, no_update, no_update, no_update
 
-    row = selected_rows[0]
+    import json
+    try:
+        payload = json.loads(clicked_json)
+    except Exception:
+        return no_update, no_update, no_update, no_update
+    row_index = payload.get("rowIndex", -1)
+    if not (0 <= row_index < len(all_rows)):
+        return no_update, no_update, no_update, no_update
+
+    row  = all_rows[row_index]
     tgid = str(row.get("_tgid", "") or "").strip()
     if not tgid:
         return no_update, no_update, no_update, no_update
@@ -374,14 +417,13 @@ def build_modal_body(tgid):
 
 @callback(
     Output("pt-modal",      "is_open",      allow_duplicate=True),
-    Output("pt-open-grid",  "selectedRows", allow_duplicate=True),
     Input("pt-modal-dismiss", "n_clicks"),
     prevent_initial_call=True,
 )
 def dismiss_modal(n_clicks):
     if n_clicks:
-        return False, []
-    return no_update, no_update
+        return False
+    return no_update
 
 
 # ── Cash Record callback ──────────────────────────────────────────────────────
@@ -432,13 +474,13 @@ def record_cash(n_clicks, direction, amount, notes, current_n):
 # ── Transaction filter callback ───────────────────────────────────────────────
 
 @callback(
-    Output("pt-txns-grid",  "rowData",   allow_duplicate=True),
+    Output("pt-txns-grid",  "data",      allow_duplicate=True),
     Output("pt-txn-count",  "children"),
     Input("pt-txn-search",       "value"),
     Input("pt-txn-filter-type",  "value"),
     Input("pt-txn-filter-dir",   "value"),
     Input("pt-txn-filter-strat", "value"),
-    State("pt-txns-grid",        "rowData"),
+    State("pt-txns-grid",        "data"),
     prevent_initial_call=True,
 )
 def filter_transactions(search, ftype, fdir, fstrat, all_rows):
@@ -583,20 +625,18 @@ def open_close_confirm(n_clicks, tgid):
             "Close (est)": f"${float(px):,.4f}" if px is not None else "—",
         })
 
-    table = dag.AgGrid(
-        columnDefs=[
-            {"field": "Leg",         "flex": 1},
-            {"field": "Symbol",      "flex": 1},
-            {"field": "Dir",         "width": 70},
-            {"field": "Qty",         "width": 70, "type": "numericColumn"},
-            {"field": "Entry",       "width": 110},
-            {"field": "Close (est)", "width": 110},
+    table = mrt_grid(
+        aggrid_cols=[
+            {"field": "Leg"},
+            {"field": "Symbol"},
+            {"field": "Dir"},
+            {"field": "Qty",         "type": "numericColumn"},
+            {"field": "Entry"},
+            {"field": "Close (est)"},
         ],
-        rowData=rows,
-        defaultColDef={"resizable": True},
-        dashGridOptions={"domLayout": "autoHeight"},
-        className=T.AGGRID_THEME,
-        style={"width": "100%"},
+        data=rows,
+        enable_pagination=False,
+        height=240,
     )
     return True, table
 
@@ -661,19 +701,26 @@ def populate_risk_pills(active_tab, _n, _pill_clicks, current_sel):
 
     def _pill(label, tgid):
         selected = tgid == new_sel
+        # rgb() (not the #6366f1 hex) so z_polish.css's broad
+        # `button[style*="6366f1"]` gradient rule doesn't hijack the pill;
+        # color="link" keeps it off `.btn-primary`. Inline styles then win,
+        # so selected (filled) vs unselected (outline) stays readable.
+        accent_rgb = "rgb(99,102,241)"
         return dbc.Button(
             label,
             id={"type": "pt-risk-pill", "tgid": tgid},
             n_clicks=0,
             size="sm",
+            color="link",
             style={
                 "display": "inline-block",
                 "padding": "4px 12px", "borderRadius": "16px",
                 "fontSize": "12px", "fontWeight": "600",
                 "marginRight": "6px", "marginBottom": "6px",
-                "border": f"1px solid {T.ACCENT}",
-                "backgroundColor": T.ACCENT if selected else "transparent",
-                "color": "#fff" if selected else T.ACCENT,
+                "textDecoration": "none",
+                "border": f"1px solid {accent_rgb}",
+                "backgroundColor": accent_rgb if selected else "transparent",
+                "color": "#fff" if selected else accent_rgb,
                 "cursor": "pointer",
             },
         )
@@ -728,10 +775,12 @@ def populate_leg_pills(position_tgid, _leg_clicks, current_leg):
             label,
             id={"type": "pt-risk-leg-pill", "sid": sid},
             n_clicks=0, size="sm",
+            color="link",
             style={
                 "padding": "3px 10px", "borderRadius": "12px",
                 "fontSize": "11px", "fontWeight": "600",
                 "marginRight": "5px", "marginBottom": "5px",
+                "textDecoration": "none",
                 "border": f"1px solid {T.BORDER_BRT}",
                 "backgroundColor": T.BG_ELEVATED if selected else "transparent",
                 "color": "#e5e7eb" if selected else T.TEXT_MUTED,
@@ -803,6 +852,16 @@ def compute_risk(n_clicks, step, vol_up, vol_dn, iv_default, rate, position_filt
         return html.P(
             "No priceable option legs found. Legs may have Strike=0 (incomplete entry data).",
             style={"color": T.TEXT_MUTED, "padding": "20px", "fontSize": "12px"},
+        )
+
+    # If no live underlying price was obtained, every leg was skipped and the
+    # whole matrix is $0.00 — say so instead of showing silent zeros.
+    if not mx.get("ref_spots"):
+        return dbc.Alert(
+            "Couldn't fetch a live underlying price (Polygon returned nothing). "
+            "The risk matrix needs a live spot price to value the options — "
+            "check that POLYGON_API_KEY is set and that the market is open.",
+            color="warning", style={"fontSize": "13px"},
         )
 
     if position_filter == "__all__":

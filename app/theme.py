@@ -45,7 +45,5 @@ STYLE_PAGE = {
     "minHeight":       "100vh",
     "color":           TEXT_PRIMARY,
     "fontFamily":      "'Inter', -apple-system, BlinkMacSystemFont, sans-serif",
-    "padding":         "32px 40px",
-    "maxWidth":        "1640px",
-    "margin":          "0 auto",
+    "padding":         "28px 36px",
 }

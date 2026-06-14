@@ -11,12 +11,12 @@ import datetime
 import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
-import dash_ag_grid as dag
 import dash_bootstrap_components as dbc
 from dash import html, dcc
 
 from app import theme as T
 from app.ui import tokens as D
+from app.grid_helpers import mrt_grid
 
 from app.pages.paper_trading.data import (
     _ACCOUNT_ID, _get_engine, _net_entry, bs_val,
@@ -40,11 +40,6 @@ _OPEN_COLS = [
          "cell-neutral":  {"function": "params.data._net === 0"},
      }},
     {"field": "Alerts",      "minWidth": 80,  "width": 90},
-    {"field": "View", "width": 90, "sortable": False, "filter": False,
-     "pinned": "right", "suppressSizeToFit": True,
-     "cellStyle": {"textAlign": "center", "cursor": "pointer"},
-     "valueGetter": {"function": "'📊 View'"},
-     "cellClass": "ic-chart-btn"},
     {"field": "_tgid",       "hide": True},
 ]
 
@@ -80,22 +75,13 @@ _TXNS_COLS = [
 ]
 
 
-def _grid(id: str, cols: list, height: int = 400) -> dag.AgGrid:
-    return dag.AgGrid(
-        id=id,
-        columnDefs=cols,
-        rowData=[],
-        defaultColDef={"resizable": True, "sortable": True, "filter": True},
-        dashGridOptions={
-            "animateRows": True,
-            "domLayout": "autoHeight",
-            "rowSelection": {"mode": "singleRow", "checkboxes": False,
-                             "enableClickSelection": True},
-        },
-        columnSize="sizeToFit",
-        className=T.AGGRID_THEME,
-        style={"width": "100%"},
-    )
+def _grid(id: str, cols: list, height: int = 480):
+    """Plain (non-clickable) Mantine-React-Table for the closed/txns blotters.
+
+    The open-positions grid is built with grid_helpers.clickable_mrt_grid in
+    layout.py so its rows open the detail modal. AG-Grid is no longer used.
+    """
+    return mrt_grid(id=id, aggrid_cols=cols, height=height, page_size=25)
 
 
 # ── Payoff chart (matches Streamlit _plot_payoff) ─────────────────────────────
@@ -476,9 +462,9 @@ def _metric_card(label: str, value: str, color: str = T.TEXT_PRIMARY) -> html.Di
     })
 
 
-# ── Legs table (AgGrid) ───────────────────────────────────────────────────────
+# ── Legs table (MRT) ──────────────────────────────────────────────────────────
 
-def _build_legs_table(grp: pd.DataFrame, live_prices: dict | None = None) -> dag.AgGrid:
+def _build_legs_table(grp: pd.DataFrame, live_prices: dict | None = None):
     legs = []
     for _, r in grp.iterrows():
         stype = str(r.get("SecurityType", "")).lower()
@@ -507,22 +493,20 @@ def _build_legs_table(grp: pd.DataFrame, live_prices: dict | None = None) -> dag
             "Mkt Value": f"${mkt_val:,.2f}" if mkt_val is not None else "—",
         })
 
-    return dag.AgGrid(
-        columnDefs=[
-            {"field": "Symbol",    "flex": 1},
-            {"field": "Type",      "width": 80},
-            {"field": "Strike",    "width": 90},
-            {"field": "Expiry",    "width": 110},
-            {"field": "Dir",       "width": 70},
-            {"field": "Qty",       "width": 60, "type": "numericColumn"},
-            {"field": "Entry Px",  "width": 95},
-            {"field": "Mkt Value", "width": 105},
+    return mrt_grid(
+        aggrid_cols=[
+            {"field": "Symbol"},
+            {"field": "Type"},
+            {"field": "Strike"},
+            {"field": "Expiry"},
+            {"field": "Dir"},
+            {"field": "Qty",       "type": "numericColumn"},
+            {"field": "Entry Px"},
+            {"field": "Mkt Value"},
         ],
-        rowData=legs,
-        defaultColDef={"resizable": True},
-        dashGridOptions={"domLayout": "autoHeight"},
-        className=T.AGGRID_THEME,
-        style={"width": "100%"},
+        data=legs,
+        enable_pagination=False,
+        height=280,
     )
 
 
@@ -1275,19 +1259,17 @@ def _build_perf_chart(closed_rows: list[dict]):
         }
         for i, s in enumerate(strat_names)
     ]
-    summary_grid = dag.AgGrid(
-        columnDefs=[
-            {"field": "Strategy",  "flex": 1},
-            {"field": "# Trades",  "width": 90,  "type": "numericColumn"},
-            {"field": "Win Rate",  "width": 90},
-            {"field": "Avg P&L",   "width": 110},
-            {"field": "Total P&L", "width": 120},
+    summary_grid = mrt_grid(
+        aggrid_cols=[
+            {"field": "Strategy"},
+            {"field": "# Trades",  "type": "numericColumn"},
+            {"field": "Win Rate"},
+            {"field": "Avg P&L"},
+            {"field": "Total P&L"},
         ],
-        rowData=summary_rows,
-        defaultColDef={"resizable": True, "sortable": True},
-        dashGridOptions={"domLayout": "autoHeight"},
-        className=T.AGGRID_THEME,
-        style={"width": "100%"},
+        data=summary_rows,
+        enable_pagination=False,
+        height=300,
     )
 
     _section_label = lambda txt: html.Div(txt, style={
