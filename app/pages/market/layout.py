@@ -24,6 +24,17 @@ from app.pages.market.guides import (
 )
 
 
+def _load_btn(btn_id: str, label: str = "Load") -> "dbc.Button":
+    """Small per-section Load button. Each heavy section loads on demand so a
+    single page open never bursts past the 5-req/min Polygon plan."""
+    return dbc.Button(
+        label, id=btn_id, size="sm", n_clicks=0,
+        style={"fontSize": "11px", "padding": "2px 14px",
+               "backgroundColor": T.ACCENT, "border": "none",
+               "color": "#fff", "borderRadius": "6px", "fontWeight": "600"},
+    )
+
+
 def _build_futures_table(data: dict[str, dict]) -> html.Div:
     """Render the 4-category futures performance table."""
     _col_w = {"name": "180px", "last": "90px", "pct": "80px"}
@@ -113,11 +124,11 @@ def layout() -> html.Div:
                            "border": f"1px solid {'#10b981' if key_loaded else T.BORDER}",
                            "color": T.TEXT_PRIMARY},
                 ),
-                dbc.Input(id="mkt-ticker", type="text", value="F",
+                dbc.Input(id="mkt-ticker", type="text", value="SPY",
                           style={"fontSize": "12px", "width": "80px",
                                  "backgroundColor": T.BG_ELEVATED,
                                  "border": f"1px solid {T.BORDER}", "color": T.TEXT_PRIMARY}),
-                dbc.Button("Load", id="mkt-load-btn", color="primary", size="sm",
+                dbc.Button("Set Ticker", id="mkt-load-btn", color="primary", size="sm",
                            style={"backgroundColor": T.ACCENT, "border": "none", "fontSize": "12px"}),
             ],
         ),
@@ -126,41 +137,56 @@ def layout() -> html.Div:
         dcc.Loading(html.Div(id="mkt-quote-strip"), type="circle", color=T.ACCENT),
         html.Div(style={"height": "12px"}),
 
-        # Charts — all rendered on Load click
+        # Sections grouped into tabs to cut scrolling. dbc renders every tab pane
+        # into the DOM (just hidden), so all component ids / callbacks stay wired.
+        dbc.Tabs(id="mkt-tabs", children=[
+          dbc.Tab(label="Price", children=[
         html.Div([
             html.Div([
                 html.Div("Price Chart", style={
                     "color": T.TEXT_SEC, "fontSize": "11px", "fontWeight": "600",
                     "textTransform": "uppercase", "letterSpacing": "0.07em",
                 }),
-                dbc.Switch(
-                    id="mkt-eod-toggle",
-                    label="EOD History",
-                    value=False,
-                    style={"color": T.TEXT_MUTED, "fontSize": "12px"},
-                ),
+                html.Div([
+                    html.Div([
+                        dbc.Button("Intraday", id="mkt-candle-intraday-btn", size="sm",
+                                   color="secondary", outline=True,
+                                   style={"fontSize": "11px", "padding": "2px 12px",
+                                          "borderRadius": "6px 0 0 6px"}),
+                        dbc.Button("EOD", id="mkt-candle-eod-btn", size="sm",
+                                   color="primary",
+                                   style={"fontSize": "11px", "padding": "2px 12px",
+                                          "borderRadius": "0 6px 6px 0"}),
+                    ], style={"display": "flex"}),
+                    _load_btn("mkt-candle-load"),
+                ], style={"display": "flex", "alignItems": "center", "gap": "14px"}),
             ], style={"display": "flex", "justifyContent": "space-between",
                       "alignItems": "center", "borderBottom": f"1px solid {T.BORDER}",
                       "paddingBottom": "8px", "marginBottom": "12px"}),
             dcc.Loading(html.Div(id="mkt-candle-content",
-                                 children=_hint("Loading…")),
+                                 children=_hint("Click Load to fetch data.")),
                         type="circle", color=T.ACCENT),
         ], style={**T.STYLE_CARD, "marginBottom": "16px"}),
+          ]),
+          dbc.Tab(label="Options · GEX · Vol", children=[
         html.Div([
             html.Div([
                 html.Div("Dealer GEX — Gamma Exposure by Strike", style={
                     "color": T.TEXT_SEC, "fontSize": "11px", "fontWeight": "600",
                     "textTransform": "uppercase", "letterSpacing": "0.07em",
                 }),
-                dbc.Button("How to read this chart",
-                           id="mkt-gex-guide-toggle",
-                           size="sm", color="link",
-                           style={"color": T.ACCENT, "fontSize": "11px",
-                                  "padding": "0", "fontWeight": "500"}),
+                html.Div([
+                    _load_btn("mkt-gex-load"),
+                    dbc.Button("How to read this chart",
+                               id="mkt-gex-guide-toggle",
+                               size="sm", color="link",
+                               style={"color": T.ACCENT, "fontSize": "11px",
+                                      "padding": "0", "fontWeight": "500"}),
+                ], style={"display": "flex", "alignItems": "center", "gap": "14px"}),
             ], style={"display": "flex", "justifyContent": "space-between",
                       "alignItems": "center", "borderBottom": f"1px solid {T.BORDER}",
                       "paddingBottom": "8px", "marginBottom": "12px"}),
-            dcc.Loading(html.Div(id="mkt-gex-content", children=_hint("Loading…")),
+            dcc.Loading(html.Div(id="mkt-gex-content", children=_hint("Click Load to fetch data.")),
                         type="circle", color=T.ACCENT),
             dbc.Collapse(_gex_guide(), id="mkt-gex-guide-collapse", is_open=False),
         ], style={**T.STYLE_CARD, "marginBottom": "16px"}),
@@ -183,10 +209,13 @@ def layout() -> html.Div:
                                           "borderRadius": "0 4px 4px 0"}),
                     ], style={"display": "flex"}),
                 ], style={"display": "flex", "alignItems": "center"}),
-                dbc.Button("How to read this chart", id="mkt-vol-guide-toggle",
-                           size="sm", color="link",
-                           style={"color": T.ACCENT, "fontSize": "11px",
-                                  "padding": "0", "fontWeight": "500"}),
+                html.Div([
+                    _load_btn("mkt-vol-load"),
+                    dbc.Button("How to read this chart", id="mkt-vol-guide-toggle",
+                               size="sm", color="link",
+                               style={"color": T.ACCENT, "fontSize": "11px",
+                                      "padding": "0", "fontWeight": "500"}),
+                ], style={"display": "flex", "alignItems": "center", "gap": "14px"}),
             ], style={"display": "flex", "justifyContent": "space-between",
                       "alignItems": "center", "borderBottom": f"1px solid {T.BORDER}",
                       "paddingBottom": "8px", "marginBottom": "8px"}),
@@ -221,28 +250,43 @@ def layout() -> html.Div:
             ], id="mkt-chain-expiry-row",
                style={"display": "flex", "alignItems": "center",
                       "marginBottom": "10px"}),
-            dcc.Loading(html.Div(id="mkt-vol-content", children=_hint("Loading…")),
+            dcc.Loading(html.Div(id="mkt-vol-content", children=_hint("Click Load to fetch data.")),
                         type="circle", color=T.ACCENT),
             dbc.Collapse(_vol_surface_guide(), id="mkt-vol-guide-collapse", is_open=False),
         ], style={**T.STYLE_CARD, "marginBottom": "16px"}),
-        _section("Market Activity — Top Movers & Dealer GEX",
-                 dcc.Loading(html.Div(id="mkt-activity-content",
-                                      children=_hint("Loading…")),
-                             type="circle", color=T.ACCENT)),
+        html.Div([
+            html.Div([
+                html.Div("Market Activity — Top Movers & Dealer GEX", style={
+                    "color": T.TEXT_SEC, "fontSize": "11px", "fontWeight": "600",
+                    "textTransform": "uppercase", "letterSpacing": "0.07em",
+                }),
+                _load_btn("mkt-activity-load"),
+            ], style={"display": "flex", "justifyContent": "space-between",
+                      "alignItems": "center", "borderBottom": f"1px solid {T.BORDER}",
+                      "paddingBottom": "8px", "marginBottom": "12px"}),
+            dcc.Loading(html.Div(id="mkt-activity-content",
+                                 children=_hint("Click Load to fetch data.")),
+                        type="circle", color=T.ACCENT),
+        ], style={**T.STYLE_CARD, "marginBottom": "16px"}),
+          ]),
+          dbc.Tab(label="Technicals", children=[
         html.Div([
             html.Div([
                 html.Div("Momentum Indicators — RSI & MACD", style={
                     "color": T.TEXT_SEC, "fontSize": "11px", "fontWeight": "600",
                     "textTransform": "uppercase", "letterSpacing": "0.07em",
                 }),
-                dbc.Button("How to read this chart", id="mkt-momentum-guide-toggle",
-                           size="sm", color="link",
-                           style={"color": T.ACCENT, "fontSize": "11px",
-                                  "padding": "0", "fontWeight": "500"}),
+                html.Div([
+                    _load_btn("mkt-momentum-load"),
+                    dbc.Button("How to read this chart", id="mkt-momentum-guide-toggle",
+                               size="sm", color="link",
+                               style={"color": T.ACCENT, "fontSize": "11px",
+                                      "padding": "0", "fontWeight": "500"}),
+                ], style={"display": "flex", "alignItems": "center", "gap": "14px"}),
             ], style={"display": "flex", "justifyContent": "space-between",
                       "alignItems": "center", "borderBottom": f"1px solid {T.BORDER}",
                       "paddingBottom": "8px", "marginBottom": "12px"}),
-            dcc.Loading(html.Div(id="mkt-momentum-content", children=_hint("Loading…")),
+            dcc.Loading(html.Div(id="mkt-momentum-content", children=_hint("Click Load to fetch data.")),
                         type="circle", color=T.ACCENT),
             dbc.Collapse(_momentum_guide(), id="mkt-momentum-guide-collapse", is_open=False),
         ], style={**T.STYLE_CARD, "marginBottom": "16px"}),
@@ -260,21 +304,25 @@ def layout() -> html.Div:
             ], style={"display": "flex", "alignItems": "center", "marginBottom": "12px"}),
             dcc.Loading(html.Div(id="mkt-corr-content"), type="circle", color=T.ACCENT),
         ])),
-
+          ]),
+          dbc.Tab(label="Macro", children=[
         html.Div([
             html.Div([
                 html.Div("Treasury Term Structure — Yield Curve & 3D Surface (FRED, free)", style={
                     "color": T.TEXT_SEC, "fontSize": "11px", "fontWeight": "600",
                     "textTransform": "uppercase", "letterSpacing": "0.07em",
                 }),
-                dbc.Button("How to read this chart", id="mkt-yield-guide-toggle",
-                           size="sm", color="link",
-                           style={"color": T.ACCENT, "fontSize": "11px",
-                                  "padding": "0", "fontWeight": "500"}),
+                html.Div([
+                    _load_btn("mkt-yield-load"),
+                    dbc.Button("How to read this chart", id="mkt-yield-guide-toggle",
+                               size="sm", color="link",
+                               style={"color": T.ACCENT, "fontSize": "11px",
+                                      "padding": "0", "fontWeight": "500"}),
+                ], style={"display": "flex", "alignItems": "center", "gap": "14px"}),
             ], style={"display": "flex", "justifyContent": "space-between",
                       "alignItems": "center", "borderBottom": f"1px solid {T.BORDER}",
                       "paddingBottom": "8px", "marginBottom": "12px"}),
-            dcc.Loading(html.Div(id="mkt-yield-content", children=_hint("Loading…")),
+            dcc.Loading(html.Div(id="mkt-yield-content", children=_hint("Click Load to fetch data.")),
                         type="circle", color=T.ACCENT),
             dbc.Collapse(_yield_guide(), id="mkt-yield-guide-collapse", is_open=False),
         ], style={**T.STYLE_CARD, "marginBottom": "16px"}),
@@ -292,19 +340,17 @@ def layout() -> html.Div:
                     }),
                     style={"display": "flex", "alignItems": "center", "gap": "10px"},
                 ),
-                dbc.Button("↻ Refresh", id="mkt-futures-refresh-btn", size="sm",
-                           color="secondary",
-                           style={"fontSize": "11px", "padding": "2px 10px",
-                                  "border": f"1px solid {T.BORDER}",
-                                  "backgroundColor": T.BG_ELEVATED}),
+                _load_btn("mkt-futures-refresh-btn"),
             ], style={"display": "flex", "justifyContent": "space-between",
                       "alignItems": "center", "borderBottom": f"1px solid {T.BORDER}",
                       "paddingBottom": "8px", "marginBottom": "12px"}),
             dcc.Loading(
-                html.Div(id="mkt-futures-content", children=_hint("Click ↻ Refresh to load futures data.")),
+                html.Div(id="mkt-futures-content", children=_hint("Click Load to fetch futures data.")),
                 type="circle", color=T.ACCENT,
             ),
         ], style={**T.STYLE_CARD, "marginBottom": "16px"}),
+          ]),
+          dbc.Tab(label="Screener", children=[
 
         # ── Market Screener ───────────────────────────────────────────────────────
         html.Div([
@@ -344,7 +390,9 @@ def layout() -> html.Div:
                                               "fontWeight": "600", "marginBottom": "6px",
                                               "borderLeft": f"3px solid {T.ACCENT}",
                                               "paddingLeft": "8px"}),
-                    dcc.Graph(id="mkt-scr-movers-fig", figure=_scr_empty_fig(),
+                    dcc.Graph(id="mkt-scr-movers-fig",
+                              figure=_scr_empty_fig("Click a universe button above to run "
+                                                    "(throttled to 5 calls/min on this plan)"),
                               config=_SCR_CFG),
                 ], style={"marginBottom": "16px"}),
                 # Row 2: Momentum | Volatility
@@ -381,9 +429,12 @@ def layout() -> html.Div:
                 ]),
             ])),
         ], style={**T.STYLE_CARD, "marginBottom": "16px"}),
+          ]),
+        ]),
 
-        dcc.Store(id="mkt-ticker-store",    data="F"),
-        dcc.Store(id="mkt-apikey-store",    data=get_polygon_api_key()),
-        dcc.Store(id="mkt-vol-view-store",  data="chain"),
+        dcc.Store(id="mkt-ticker-store",     data="SPY"),
+        dcc.Store(id="mkt-apikey-store",     data=get_polygon_api_key()),
+        dcc.Store(id="mkt-vol-view-store",   data="chain"),
         dcc.Store(id="mkt-chain-data-store"),
+        dcc.Store(id="mkt-candle-view-store", data=True),   # True = EOD, False = intraday
     ], style=T.STYLE_PAGE)

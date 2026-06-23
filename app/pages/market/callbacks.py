@@ -26,10 +26,11 @@ from engine.screener import UNIVERSES
 
 from app.pages.market.data import (
     _load_yield_curve, _polygon_client, _fetch_bars, _fetch_intraday,
-    _hint, _section, _pill, _DARK,
+    _fetch_quote, _fetch_grouped_movers,
+    _hint, _section, _pill, _DARK, _GRAPH_CFG,
     _SCR_UNIVERSE_OPTIONS, _SCR_DEFAULT_UNIVERSE, _SECTOR,
     _SCR_PLOT_BG, _SCR_PAPER_BG, _SCR_GRID, _SCR_FONT, _SCR_CFG,
-    _fmt_vol, _scr_empty_fig, _scr_batch_snapshot, _scr_fetch_bars,
+    _fmt_vol, _scr_empty_fig, _scr_fetch_bars,
     _scr_fetch_iv, _scr_hv, _scr_rsi,
     _build_movers_fig, _build_momentum_fig, _build_vol_fig, _build_volalert_fig,
     _FUTURES_CATEGORIES, _FUT_CAPS, _fetch_futures_data, _fut_cell_style, _fmt_pct,
@@ -46,61 +47,76 @@ logger = logging.getLogger(__name__)
 @callback(
     Output("mkt-ticker-store", "data"),
     Output("mkt-apikey-store", "data"),
-    Output("mkt-quote-strip",  "children"),
     Input("mkt-load-btn",      "n_clicks"),
     State("mkt-ticker",        "value"),
     State("mkt-apikey",        "value"),
     prevent_initial_call=True,
 )
-def store_and_quote(n_clicks, ticker, user_key):
+def set_ticker(n_clicks, ticker, user_key):
+    """Load button: just publish the ticker + key to the stores. The quote and
+    each section then load from those (the quote auto-refreshes; sections wait
+    for their own Load button) — so one click never fans out into a 30-call
+    burst against the 5-req/min plan."""
     ticker  = (ticker or "SPY").upper().strip()
     api_key = get_polygon_api_key(user_key or "")
-
-    if not api_key:
-        return ticker, "", html.P("No Polygon API key found. Set POLYGON_API_KEY in .env or enter above.",
-                                  style={"color": T.DANGER, "fontSize": "13px"})
-
-    try:
-        c = _polygon_client(api_key)
-        snap = c._get(f"/v2/snapshot/locale/us/markets/stocks/tickers/{ticker}", {})
-        q    = snap.get("ticker", {})
-        day  = q.get("day") or {}
-        prev = q.get("prevDay") or {}
-        price   = day.get("c") or 0
-        open_p  = day.get("o") or 0
-        chg     = price - open_p if price and open_p else 0
-        chg_pct = chg / open_p * 100 if open_p else 0
-        hi      = day.get("h") or 0
-        lo      = day.get("l") or 0
-        vol     = int(day.get("v") or 0)
-        vwap    = day.get("vw") or 0
-        prev_c  = prev.get("c") or 0
-        chg_prev = (price - prev_c) if price and prev_c else 0
-
-        strip = html.Div([
-            _pill("Price",     f"${price:,.2f}" if price else "—",
-                  T.SUCCESS if chg_prev >= 0 else T.DANGER),
-            _pill("Change",    f"{chg_prev:+.2f} ({chg_prev/prev_c*100:+.1f}%)" if prev_c else "—",
-                  T.SUCCESS if chg_prev >= 0 else T.DANGER),
-            _pill("Volume",    f"{vol:,}" if vol else "—"),
-            _pill("VWAP",      f"${vwap:,.2f}" if vwap else "—"),
-            _pill("Day High",  f"${hi:,.2f}" if hi else "—"),
-            _pill("Day Low",   f"${lo:,.2f}" if lo else "—"),
-            _pill("Prev Close",f"${prev_c:,.2f}" if prev_c else "—"),
-        ], style={"display": "flex", "gap": "10px", "flexWrap": "wrap", "marginBottom": "4px"})
-    except Exception as e:
-        strip = html.P(f"Quote error: {e}", style={"color": T.WARNING, "fontSize": "12px"})
-
-    return ticker, api_key, strip
+    return ticker, api_key
 
 
 @callback(
-    Output("mkt-candle-content", "children"),
-    Input("mkt-ticker-store",    "data"),
-    Input("mkt-eod-toggle",      "value"),
-    State("mkt-apikey-store",    "data"),
+    Output("mkt-quote-strip", "children"),
+    Input("mkt-ticker-store", "data"),
+    State("mkt-apikey-store", "data"),
 )
-def render_candle(ticker, eod_mode, api_key):
+def render_quote(ticker, api_key):
+    """Auto-loads on page open (default ticker) and whenever the ticker changes.
+    One cheap call, so it's safe to run without a button."""
+    if not ticker:
+        return no_update
+    if not api_key:
+        return html.P("No Polygon API key found. Set POLYGON_API_KEY in .env or enter above.",
+                      style={"color": T.DANGER, "fontSize": "13px"})
+    try:
+        q = _fetch_quote(ticker, api_key)
+        if not q:
+            return html.P(f"No price data for {ticker} from Polygon.",
+                          style={"color": T.WARNING, "fontSize": "12px"})
+
+        price, prev_c = q["close"], q["prev_close"]
+        chg, chg_pct  = q["change"], q["change_pct"]
+        up = chg >= 0
+
+        pills = [
+            _pill("Price",      f"${price:,.2f}" if price else "—",
+                  T.SUCCESS if up else T.DANGER),
+            _pill("Change",     f"{chg:+.2f} ({chg_pct:+.2f}%)" if prev_c else "—",
+                  T.SUCCESS if up else T.DANGER),
+            _pill("Volume",     f"{q['volume']:,}" if q["volume"] else "—"),
+            _pill("VWAP",       f"${q['vwap']:,.2f}" if q["vwap"] else "—"),
+            _pill("Day High",   f"${q['high']:,.2f}" if q["high"] else "—"),
+            _pill("Day Low",    f"${q['low']:,.2f}" if q["low"] else "—"),
+            _pill("Prev Close", f"${prev_c:,.2f}" if prev_c else "—"),
+        ]
+        # Honest provenance: "Live" vs "last close (date)" so a flat/closed market
+        # never looks like a data failure.
+        tag = "Live" if q.get("live") else f"Last close · {q.get('asof','')}"
+        return html.Div([
+            html.Div(pills, style={"display": "flex", "gap": "10px",
+                                   "flexWrap": "wrap", "marginBottom": "4px"}),
+            html.Small(tag, style={"color": T.TEXT_MUTED, "fontSize": "10px"}),
+        ])
+    except Exception as e:
+        return html.P(f"Quote error: {e}", style={"color": T.WARNING, "fontSize": "12px"})
+
+
+@callback(
+    Output("mkt-candle-content",   "children"),
+    Input("mkt-candle-load",       "n_clicks"),
+    Input("mkt-candle-view-store", "data"),
+    State("mkt-ticker-store",      "data"),
+    State("mkt-apikey-store",      "data"),
+    prevent_initial_call=True,
+)
+def render_candle(_n, eod_mode, ticker, api_key):
     if not ticker:
         return _hint("Loading…")
     if not api_key:
@@ -230,11 +246,10 @@ def render_candle(ticker, eod_mode, api_key):
 
 @callback(
     Output("mkt-yield-content", "children"),
-    Input("mkt-ticker-store",   "data"),
+    Input("mkt-yield-load",     "n_clicks"),
+    prevent_initial_call=True,
 )
-def render_yield(_ticker):
-    if _ticker is None:
-        return _hint("Click Load to fetch from FRED")
+def render_yield(_n):
     try:
         return _render_yield_inner()
     except Exception as e:
@@ -258,15 +273,34 @@ def toggle_vol_view(_n3d, _nchain):
 
 
 @callback(
+    Output("mkt-candle-view-store",   "data"),
+    Output("mkt-candle-eod-btn",      "color"),
+    Output("mkt-candle-eod-btn",      "outline"),
+    Output("mkt-candle-intraday-btn", "color"),
+    Output("mkt-candle-intraday-btn", "outline"),
+    Input("mkt-candle-eod-btn",       "n_clicks"),
+    Input("mkt-candle-intraday-btn",  "n_clicks"),
+    prevent_initial_call=True,
+)
+def toggle_candle_view(_neod, _nintra):
+    # store data is the eod flag: True = EOD daily, False = intraday
+    if ctx.triggered_id == "mkt-candle-intraday-btn":
+        return False, "secondary", True, "primary", False
+    return True, "primary", False, "secondary", True
+
+
+@callback(
     Output("mkt-chain-expiry",     "options"),
     Output("mkt-chain-expiry",     "value"),
     Output("mkt-chain-expiry-row", "style"),
     Output("mkt-chain-data-store", "data"),
+    Input("mkt-vol-load",          "n_clicks"),
     Input("mkt-vol-view-store",    "data"),
-    Input("mkt-ticker-store",      "data"),
+    State("mkt-ticker-store",      "data"),
     State("mkt-apikey-store",      "data"),
+    prevent_initial_call=True,
 )
-def update_chain_expiry(view, ticker, api_key):
+def update_chain_expiry(_n, view, ticker, api_key):
     _hidden  = {"display": "none"}
     _visible = {"display": "flex", "alignItems": "center", "marginBottom": "10px"}
     if view != "chain" or not ticker or not api_key:
@@ -289,26 +323,27 @@ def update_chain_expiry(view, ticker, api_key):
 
 @callback(
     Output("mkt-vol-content",       "children"),
-    Input("mkt-ticker-store",       "data"),
+    Input("mkt-vol-load",           "n_clicks"),
     Input("mkt-vol-view-store",     "data"),
     Input("mkt-chain-data-store",   "data"),
     Input("mkt-chain-expiry",       "value"),
     Input("mkt-chain-moneyness",    "value"),
+    State("mkt-ticker-store",       "data"),
     State("mkt-apikey-store",       "data"),
+    prevent_initial_call=True,
 )
-def render_vol_surface(ticker, view, chain_json, expiry, moneyness, api_key):
+def render_vol_surface(_n, view, chain_json, expiry, moneyness, ticker, api_key):
     if not ticker:
         return _hint("Loading…")
     if not api_key:
         return _hint("No API key — enter above and click Load")
     try:
         import datetime as _dt
+        from data.stock_data import yf_stock_price
         c     = _polygon_client(api_key)
-        agg   = c._get(f"/v2/aggs/ticker/{ticker}/prev", {"adjusted": "true"})
-        res   = agg.get("results", [])
-        if not res:
+        spot  = yf_stock_price(ticker)
+        if not spot:
             return html.P(f"Could not fetch spot price for {ticker}.", style={"color": T.WARNING})
-        spot  = float(res[0]["c"])
 
         # ── Chain table view ──────────────────────────────────────────────
         if view == "chain":
@@ -327,39 +362,37 @@ def render_vol_surface(ticker, view, chain_json, expiry, moneyness, api_key):
         if surf_df is None or surf_df.empty:
             return html.P("No vol surface data.", style={"color": T.WARNING})
 
-        strikes = np.array(sorted(surf_df["strike"].unique()))
-        dtes    = np.array(sorted(surf_df["dte"].unique()))
-        iv_z    = np.full((len(dtes), len(strikes)), np.nan)
-        s_idx   = {s: i for i, s in enumerate(strikes)}
-        d_idx   = {d: i for i, d in enumerate(dtes)}
-        for _, row in surf_df.iterrows():
-            iv = row.get("iv")
-            if iv and float(iv) > 0:
-                iv_z[d_idx[row["dte"]], s_idx[row["strike"]]] = float(iv)
-
         from scipy.interpolate import griddata
-        di, si = np.meshgrid(np.arange(len(dtes)), np.arange(len(strikes)), indexing="ij")
-        valid   = ~np.isnan(iv_z)
-        if valid.sum() >= 4:
-            pts    = np.column_stack([di[valid], si[valid]])
-            all_pt = np.column_stack([di.ravel(), si.ravel()])
-            iv_z   = griddata(pts, iv_z[valid], all_pt, method="nearest").reshape(iv_z.shape)
+        pts  = surf_df[["strike", "dte"]].to_numpy(dtype=float)
+        vals = surf_df["iv"].to_numpy(dtype=float) * 100.0
 
-        # ── Wireframe mesh (matches Streamlit version) ──────────────────────
+        # Resample onto a regular, evenly-spaced grid so the wireframe is uniform.
+        # Raw strikes ($1 near ATM, $5 in the wings) and clustered expiries make the
+        # mesh look jagged otherwise.
+        s_lo, s_hi = float(surf_df["strike"].min()), float(surf_df["strike"].max())
+        d_lo, d_hi = float(surf_df["dte"].min()),    float(surf_df["dte"].max())
+        strikes = np.linspace(s_lo, s_hi, 28)
+        dtes    = np.linspace(d_lo, d_hi, 14)
+        Sg, Dg  = np.meshgrid(strikes, dtes)          # (len(dtes), len(strikes))
+
+        z_lin = griddata(pts, vals, (Sg, Dg), method="linear")
+        z_nn  = griddata(pts, vals, (Sg, Dg), method="nearest")
+        z_pct = np.where(np.isnan(z_lin), z_nn, z_lin)
+
+        # ── Wireframe mesh ──────────────────────────────────────────────────
         WIRE  = "#3a5a8a"
         ATM_C = "#69f0ae"
-        z_pct = iv_z * 100
         atm_j = int(np.argmin(np.abs(strikes - spot))) if spot else None
 
         fig = go.Figure()
-        # Lines along strike axis (one per DTE row)
+        # Lines along the strike axis (one per DTE row)
         for i, dte in enumerate(dtes):
             fig.add_trace(go.Scatter3d(
                 x=strikes.tolist(), y=[float(dte)]*len(strikes), z=z_pct[i].tolist(),
                 mode="lines", line=dict(color=WIRE, width=2), showlegend=False,
-                hovertemplate=f"DTE {int(dte)}d — Strike $%{{x:.0f}} — IV %{{z:.1f}}%<extra></extra>",
+                hovertemplate=f"DTE {dte:.0f}d — Strike $%{{x:.0f}} — IV %{{z:.1f}}%<extra></extra>",
             ))
-        # Lines along DTE axis (one per strike column)
+        # Lines along the DTE axis (one per strike column)
         for j, strike in enumerate(strikes):
             is_atm = (atm_j is not None and j == atm_j)
             fig.add_trace(go.Scatter3d(
@@ -368,24 +401,25 @@ def render_vol_surface(ticker, view, chain_json, expiry, moneyness, api_key):
                 line=dict(color=ATM_C if is_atm else WIRE, width=5 if is_atm else 2),
                 showlegend=False,
                 hovertemplate=(("⚡ ATM — " if is_atm else "") +
-                               f"Strike ${strike:.0f} — DTE %{{y}}d — IV %{{z:.1f}}%<extra></extra>"),
+                               f"Strike ${strike:.0f} — DTE %{{y:.0f}}d — IV %{{z:.1f}}%<extra></extra>"),
             ))
-        # ATM column markers only
-        axv, ayv, azv = [], [], []
-        for i in range(len(dtes)):
-            if atm_j is not None:
-                axv.append(float(strikes[atm_j])); ayv.append(float(dtes[i])); azv.append(float(z_pct[i, atm_j]))
-        if axv:
+        # ATM column markers
+        if atm_j is not None:
             fig.add_trace(go.Scatter3d(
-                x=axv, y=ayv, z=azv, mode="markers",
-                marker=dict(size=5, color=ATM_C, symbol="circle"),
-                showlegend=False,
-                hovertemplate="⚡ ATM $%{x:.0f} — DTE %{y}d — IV %{z:.1f}%<extra></extra>",
+                x=[float(strikes[atm_j])]*len(dtes), y=dtes.tolist(),
+                z=z_pct[:, atm_j].tolist(), mode="markers",
+                marker=dict(size=4, color=ATM_C, symbol="circle"), showlegend=False,
+                hovertemplate="⚡ ATM $%{x:.0f} — DTE %{y:.0f}d — IV %{z:.1f}%<extra></extra>",
             ))
 
         _ax = dict(gridcolor="#2a3050", backgroundcolor="#0c1020",
                    color="#e0e0e0", showbackground=True,
                    tickfont=dict(color="#c0c8d8", size=13))
+        # Cap the IV axis to the bulk of the data so a stray spike can't flatten
+        # the real smile (belt-and-suspenders alongside the upstream outlier filter).
+        _finite = z_pct[np.isfinite(z_pct)]
+        z_max = float(np.nanpercentile(_finite, 98)) * 1.15 if _finite.size else 100.0
+        z_max = max(10.0, min(z_max, 150.0))
         atm_label = f"  ATM ≈ ${spot:.2f}" if spot else ""
         fig.update_layout(
             paper_bgcolor="#0e1117", font=dict(color="#e0e0e0", family="monospace", size=13),
@@ -395,7 +429,8 @@ def render_vol_surface(ticker, view, chain_json, expiry, moneyness, api_key):
                 domain=dict(x=[0, 0.9], y=[0, 1]),
                 xaxis=dict(**_ax, title=dict(text="Strike ($)", font=dict(color="#e0e0e0", size=13))),
                 yaxis=dict(**_ax, title=dict(text="DTE (days)", font=dict(color="#e0e0e0", size=13))),
-                zaxis=dict(**_ax, title=dict(text="IV (%)",     font=dict(color="#e0e0e0", size=13))),
+                zaxis=dict(**_ax, title=dict(text="IV (%)",     font=dict(color="#e0e0e0", size=13)),
+                           range=[0, z_max]),
                 bgcolor="#0c1020",
                 camera=dict(eye=dict(x=1.6, y=-1.6, z=0.9)),
                 aspectmode="manual", aspectratio=dict(x=2.0, y=1.0, z=0.6),
@@ -409,37 +444,39 @@ def render_vol_surface(ticker, view, chain_json, expiry, moneyness, api_key):
 
 @callback(
     Output("mkt-activity-content", "children"),
-    Input("mkt-ticker-store",      "data"),
+    Input("mkt-activity-load",     "n_clicks"),
+    State("mkt-ticker-store",      "data"),
     State("mkt-apikey-store",      "data"),
+    prevent_initial_call=True,
 )
-def render_activity(ticker, api_key):
+def render_activity(_n, ticker, api_key):
     if not ticker:
         return _hint("Loading…")
     if not api_key:
         return _hint("No API key — enter above and click Load")
     try:
         c = _polygon_client(api_key)
-        gainers = c._get("/v2/snapshot/locale/us/markets/stocks/gainers").get("tickers", [])
-        losers  = c._get("/v2/snapshot/locale/us/markets/stocks/losers").get("tickers", [])
-        rows = []
-        for snap in gainers + losers:
-            rows.append({
-                "ticker":     snap.get("ticker", ""),
-                "price":      snap.get("day", {}).get("c") or 0,
-                "change_pct": snap.get("todaysChangePerc", 0),
-                "volume":     snap.get("day", {}).get("v") or 0,
-            })
-        movers_df = pd.DataFrame(rows) if rows else pd.DataFrame()
+    except Exception as e:
+        return html.P(f"Client error: {e}", style={"color": T.DANGER, "fontSize": "12px"})
+
+    movers_asof = ""
+    try:
+        mv = _fetch_grouped_movers(api_key, top_n=12)
+        if mv:
+            movers_asof = mv["asof"]
+            top = mv["gainers"] + mv["losers"]
+            movers_df = pd.DataFrame(top)
+            all_df    = pd.DataFrame(mv["all"])
+        else:
+            movers_df, all_df = pd.DataFrame(), pd.DataFrame()
     except Exception as e:
         return html.P(f"Movers error: {e}", style={"color": T.DANGER, "fontSize": "12px"})
 
     # GEX
     try:
         import datetime as _dt
-        agg  = c._get(f"/v2/aggs/ticker/{ticker}/range/1/day",
-                      {"from": str(_dt.date.today()), "to": str(_dt.date.today()), "limit": 1})
-        res  = agg.get("results", [])
-        spot = float(res[0]["c"]) if res else 500.0
+        from data.stock_data import yf_stock_price
+        spot = yf_stock_price(ticker) or 500.0
 
         exp_to = (_dt.date.today() + _dt.timedelta(days=60)).strftime("%Y-%m-%d")
         results, url = [], f"/v3/snapshot/options/{ticker}"
@@ -489,17 +526,21 @@ def render_activity(ticker, api_key):
         hovertemplate="%{y}: %{x:+.2f}%<extra></extra>",
     ))
     fig_m.add_vline(x=0, line=dict(color=T.BORDER_BRT, width=1))
-    fig_m.update_layout(**_DARK, height=320,
-                        title=dict(text="Top Movers (Polygon)", font=dict(size=13, color=T.TEXT_SEC)),
+    fig_m.update_layout(**_DARK, height=480,
+                        title=dict(text=f"Top Movers · liquid names · {movers_asof}",
+                                   font=dict(size=13, color=T.TEXT_SEC)),
                         xaxis=dict(ticksuffix="%", gridcolor=T.BORDER),
                         yaxis=dict(gridcolor=T.BORDER), showlegend=False)
 
+    adv = int((all_df["change_pct"] > 0).sum()) if not all_df.empty else 0
+    dec = int((all_df["change_pct"] < 0).sum()) if not all_df.empty else 0
     children = [
         html.Div([
-            _pill("Advancers", str(int((movers_df["change_pct"]>0).sum())), T.SUCCESS),
-            _pill("Decliners", str(int((movers_df["change_pct"]<0).sum())), T.DANGER),
+            _pill("Advancers", f"{adv:,}", T.SUCCESS),
+            _pill("Decliners", f"{dec:,}", T.DANGER),
+            _pill("Universe",  f"{len(all_df):,}"),
         ], style={"display": "flex", "gap": "10px", "marginBottom": "12px"}),
-        dcc.Graph(figure=fig_m, config={"displayModeBar": False}),
+        dcc.Graph(figure=fig_m, config=_GRAPH_CFG),
     ]
 
     if not gex_df.empty:
@@ -515,7 +556,7 @@ def render_activity(ticker, api_key):
         fig_g.add_vline(x=spot, line=dict(color=T.WARNING, width=1.5, dash="dash"),
                         annotation_text=f"Spot ${spot:.0f}", annotation_font_color=T.WARNING)
         fig_g.add_hline(y=0, line=dict(color=T.BORDER_BRT, width=1))
-        fig_g.update_layout(**_DARK, height=300, barmode="relative",
+        fig_g.update_layout(**_DARK, height=420, barmode="relative",
                             title=dict(text=f"Dealer GEX — {ticker} ($B)",
                                        font=dict(size=13, color=T.TEXT_SEC)),
                             xaxis=dict(tickprefix="$", gridcolor=T.BORDER),
@@ -525,7 +566,7 @@ def render_activity(ticker, api_key):
             html.Div(style={"height": "12px"}),
             _pill("Net GEX ($B)", f"{net:+.3f}", T.SUCCESS if net >= 0 else T.DANGER),
             html.Div(style={"height": "8px"}),
-            dcc.Graph(figure=fig_g, config={"displayModeBar": False}),
+            dcc.Graph(figure=fig_g, config=_GRAPH_CFG),
         ]
 
     return html.Div(children)
@@ -533,10 +574,12 @@ def render_activity(ticker, api_key):
 
 @callback(
     Output("mkt-gex-content",   "children"),
-    Input("mkt-ticker-store",   "data"),
+    Input("mkt-gex-load",       "n_clicks"),
+    State("mkt-ticker-store",   "data"),
     State("mkt-apikey-store",   "data"),
+    prevent_initial_call=True,
 )
-def render_gex(ticker, api_key):
+def render_gex(_n, ticker, api_key):
     if not ticker:
         return _hint("Loading…")
     if not api_key:
@@ -544,12 +587,11 @@ def render_gex(ticker, api_key):
     try:
         import datetime as _dt
         from collections import defaultdict
+        from data.stock_data import yf_stock_price
         c    = _polygon_client(api_key)
-        agg  = c._get(f"/v2/aggs/ticker/{ticker}/prev", {"adjusted": "true"})
-        res  = agg.get("results", [])
-        if not res:
+        spot = yf_stock_price(ticker)
+        if not spot:
             return html.P(f"Could not fetch spot price for {ticker}.", style={"color": T.WARNING})
-        spot = float(res[0]["c"])
 
         exp_to = (_dt.date.today() + _dt.timedelta(days=60)).strftime("%Y-%m-%d")
         results, url = [], f"/v3/snapshot/options/{ticker}"
@@ -648,23 +690,21 @@ def render_gex(ticker, api_key):
         # ── GEX by strike chart ───────────────────────────────────────────────
         fig = go.Figure()
 
-        # Dealer cluster zones (shaded bands)
-        y_rng = max(gex_df[["call_gex","put_gex","net_gex"]].abs().max()) * 1.3
-        if g1 is not None and sig_hi is not None:
-            fig.add_hrect(y0=-y_rng, y1=y_rng,
-                          x0=min(g1, sig_hi), x1=max(g1, sig_hi),
+        # Dealer cluster zones — VERTICAL x-bands between the gamma wall and the σ
+        # edge (add_vrect, not add_hrect: hrect ignores x0/x1 and spans full width,
+        # which dumped the label at the chart's right edge).
+        if g1 is not None and sig_hi is not None and g1 != sig_hi:
+            fig.add_vrect(x0=min(g1, sig_hi), x1=max(g1, sig_hi),
                           fillcolor="rgba(239,68,68,0.07)", line_width=0,
-                          annotation_text="DEALER CLUSTER",
-                          annotation_font_color="rgba(239,68,68,0.5)",
+                          annotation_text="cluster", annotation_position="top left",
+                          annotation_font_color="rgba(239,68,68,0.6)",
                           annotation_font_size=9)
-        if g2 is not None and sig_lo is not None:
-            fig.add_hrect(y0=-y_rng, y1=y_rng,
-                          x0=min(g2, sig_lo), x1=max(g2, sig_lo),
+        if g2 is not None and sig_lo is not None and g2 != sig_lo:
+            fig.add_vrect(x0=min(g2, sig_lo), x1=max(g2, sig_lo),
                           fillcolor="rgba(16,185,129,0.07)", line_width=0,
-                          annotation_text="DEALER CLUSTER",
-                          annotation_font_color="rgba(16,185,129,0.5)",
-                          annotation_font_size=9,
-                          annotation_position="bottom right")
+                          annotation_text="cluster", annotation_position="bottom left",
+                          annotation_font_color="rgba(16,185,129,0.6)",
+                          annotation_font_size=9)
 
         fig.add_trace(go.Bar(x=gex_df["strike"], y=gex_df["call_gex"],
                              name="Call GEX", marker_color=T.SUCCESS, opacity=0.8,
@@ -679,25 +719,30 @@ def render_gex(ticker, api_key):
                              opacity=0.55,
                              hovertemplate="$%{x:.0f}  Net: %{y:+.4f}B<extra></extra>"))
 
-        # Vertical reference lines
-        def _vl(x, color, text, pos="top left", width=1.5, dash="dot"):
+        # Vertical reference lines. These levels (spot/G1/G2/ZERO-G/σ) all cluster
+        # within a few dollars, so on-chart text labels would overlap — they're
+        # already named in the colour-matched pills above. Only Spot gets a label.
+        def _vl(x, color, text=None, width=1.5, dash="dot"):
             fig.add_vline(x=x, line=dict(color=color, width=width, dash=dash),
-                          annotation_text=text, annotation_font_color=color,
-                          annotation_font_size=10, annotation_position=pos)
+                          annotation_text=(text or ""), annotation_font_color=color,
+                          annotation_font_size=10, annotation_position="top")
 
-        _vl(spot,  T.WARNING,  f"Spot ${spot:.0f}", "top right", dash="dash")
-        if zero_g: _vl(zero_g, "#fb923c", f"ZERO G  ${zero_g:.0f}", "bottom left")
-        if g1:     _vl(g1,     "#ef4444", f"G1  ${g1:.0f}", "top left")
-        if g2:     _vl(g2,     "#10b981", f"G2  ${g2:.0f}", "bottom left")
-        if sig_hi: _vl(sig_hi, "#8b5cf6", f"σ  ${sig_hi:.0f}", "top right")
-        if sig_lo: _vl(sig_lo, "#8b5cf6", f"σ  ${sig_lo:.0f}", "bottom right")
+        _vl(spot,  T.WARNING,  f"Spot ${spot:.0f}", dash="dash")
+        if zero_g: _vl(zero_g, "#fb923c")
+        if g1:     _vl(g1,     "#ef4444")
+        if g2:     _vl(g2,     "#10b981")
+        if sig_hi: _vl(sig_hi, "#8b5cf6")
+        if sig_lo: _vl(sig_lo, "#8b5cf6")
 
         fig.add_hline(y=0, line=dict(color=T.BORDER_BRT, width=1))
         fig.update_layout(
             **_DARK, height=400, barmode="overlay",
-            title=dict(text=f"{ticker} — GEX by Strike  ·  ±15% spot  ·  next 60 DTE",
+            title=dict(text=f"{ticker} — GEX by Strike  ·  zoomed to ±8% spot  ·  next 60 DTE",
                        font=dict(size=13, color=T.TEXT_SEC)),
-            xaxis=dict(tickprefix="$", gridcolor=T.BORDER),
+            # Fetch is ±15% but GEX concentrates at the money — zoom in so the bars
+            # are legible instead of squished into the centre of a wide axis.
+            xaxis=dict(tickprefix="$", gridcolor=T.BORDER,
+                       range=[spot * 0.92, spot * 1.08]),
             yaxis=dict(title="GEX ($B)", gridcolor=T.BORDER, zeroline=False),
             legend=dict(orientation="h", x=0, y=1.08, bgcolor="rgba(0,0,0,0)"),
             margin=dict(l=0, r=0, t=50, b=0),
@@ -730,7 +775,8 @@ def render_gex(ticker, api_key):
                        font=dict(size=13, color=T.TEXT_SEC)),
             xaxis=dict(title="OI (contracts)", gridcolor=T.BORDER,
                        tickformat=",", color="#9ca3af"),
-            yaxis=dict(tickprefix="$", gridcolor=T.BORDER, color="#9ca3af"),
+            yaxis=dict(tickprefix="$", gridcolor=T.BORDER, color="#9ca3af",
+                       range=[spot * 0.92, spot * 1.08]),
             legend=dict(orientation="h", x=0, y=1.08, bgcolor="rgba(0,0,0,0)"),
             margin=dict(l=0, r=0, t=50, b=0),
         )
@@ -754,8 +800,8 @@ def render_gex(ticker, api_key):
             html.Div(pills, style={"display": "flex", "gap": "8px",
                                    "flexWrap": "wrap", "marginBottom": "12px"}),
             dbc.Row([
-                dbc.Col(dcc.Graph(figure=fig,    config={"displayModeBar": False}), width=8),
-                dbc.Col(dcc.Graph(figure=fig_oi, config={"displayModeBar": False}), width=4),
+                dbc.Col(dcc.Graph(figure=fig,    config=_GRAPH_CFG), width=8),
+                dbc.Col(dcc.Graph(figure=fig_oi, config=_GRAPH_CFG), width=4),
             ], className="g-2"),
         ])
     except Exception as e:
@@ -764,10 +810,12 @@ def render_gex(ticker, api_key):
 
 @callback(
     Output("mkt-momentum-content", "children"),
-    Input("mkt-ticker-store",      "data"),
+    Input("mkt-momentum-load",     "n_clicks"),
+    State("mkt-ticker-store",      "data"),
     State("mkt-apikey-store",      "data"),
+    prevent_initial_call=True,
 )
-def render_momentum(ticker, api_key):
+def render_momentum(_n, ticker, api_key):
     if not ticker:
         return _hint("Loading…")
     if not api_key:
@@ -811,7 +859,7 @@ def render_momentum(ticker, api_key):
             fig.update_xaxes(gridcolor=T.BORDER, row=i, col=1)
             fig.update_yaxes(gridcolor=T.BORDER, row=i, col=1)
         fig.update_layout(template="plotly_dark", paper_bgcolor=T.BG_CARD, plot_bgcolor=T.BG_CARD,
-                          font=dict(color=T.TEXT_SEC, size=11), height=500,
+                          font=dict(color=T.TEXT_SEC, size=11), height=680,
                           margin=dict(l=0, r=0, t=10, b=0),
                           legend=dict(orientation="h", y=-0.05, bgcolor="rgba(0,0,0,0)"))
 
@@ -828,7 +876,7 @@ def render_momentum(ticker, api_key):
                 _pill("Signal",  f"{ls:.3f}"),
                 _pill("Cross",   cross, T.SUCCESS if cross == "Bullish" else T.DANGER),
             ], style={"display": "flex", "gap": "10px", "marginBottom": "12px"}),
-            dcc.Graph(figure=fig, config={"displayModeBar": False}),
+            dcc.Graph(figure=fig, config=_GRAPH_CFG),
         ])
     except Exception as e:
         return html.P(f"Error: {e}", style={"color": T.DANGER, "fontSize": "12px"})
@@ -878,7 +926,7 @@ def render_corr(n_clicks, ticker_a, ticker_b, api_key):
                                name=ticker_a, line=dict(color=T.SUCCESS, width=2)))
     fig_c.add_trace(go.Scatter(x=cum_b.index.astype(str), y=cum_b,
                                name=ticker_b, line=dict(color=T.ACCENT, width=2)))
-    fig_c.update_layout(**_DARK, height=280,
+    fig_c.update_layout(**_DARK, height=380,
                         title=dict(text="Cumulative Return", font=dict(size=12, color=T.TEXT_SEC)),
                         legend=dict(orientation="h", y=-0.2, bgcolor="rgba(0,0,0,0)"))
 
@@ -888,7 +936,7 @@ def render_corr(n_clicks, ticker_a, ticker_b, api_key):
     fig_s.add_trace(go.Scatter(x=xl, y=m[0]*xl+m[1], mode="lines",
                                line=dict(color=T.DANGER, width=2, dash="dash"),
                                name=f"β={beta:.2f}"))
-    fig_s.update_layout(**_DARK, height=280,
+    fig_s.update_layout(**_DARK, height=380,
                         title=dict(text=f"{ticker_a} vs {ticker_b}", font=dict(size=12, color=T.TEXT_SEC)),
                         xaxis=dict(title=ticker_b, gridcolor=T.BORDER),
                         yaxis=dict(title=ticker_a, gridcolor=T.BORDER))
@@ -902,8 +950,8 @@ def render_corr(n_clicks, ticker_a, ticker_b, api_key):
             _pill(f"{ticker_b} Vol", f"{rets[ticker_b].std()*np.sqrt(252):.1%}"),
         ], style={"display": "flex", "gap": "10px", "marginBottom": "12px"}),
         dbc.Row([
-            dbc.Col(dcc.Graph(figure=fig_c, config={"displayModeBar": False}), width=6),
-            dbc.Col(dcc.Graph(figure=fig_s, config={"displayModeBar": False}), width=6),
+            dbc.Col(dcc.Graph(figure=fig_c, config=_GRAPH_CFG), width=6),
+            dbc.Col(dcc.Graph(figure=fig_s, config=_GRAPH_CFG), width=6),
         ], className="g-3"),
     ])
 
@@ -970,6 +1018,7 @@ def _select_universe(n_clicks_list, ids):
     Output("mkt-scr-volalert-fig", "figure"),
     Input("mkt-scr-universe",      "data"),
     State("mkt-apikey-store",      "data"),
+    prevent_initial_call=True,
 )
 def run_screener(universe, api_key):
     _ef = _scr_empty_fig()
@@ -988,21 +1037,24 @@ def run_screener(universe, api_key):
     except Exception:
         return _ef, _ef, _ef, _ef
 
-    # Batch snapshot
-    snap = _scr_batch_snapshot(tickers, client)
+    # Daily bars for the whole universe in ONE yfinance download (free, includes
+    # today's bar, no 5/min cap) instead of N throttled Polygon calls.
+    from data.stock_data import yf_batch_daily
+    bars = yf_batch_daily(tickers, 60)
 
-    # Daily bars in parallel
-    bars: dict[str, pd.DataFrame] = {}
-    with ThreadPoolExecutor(max_workers=8) as ex:
-        fut_map = {ex.submit(_scr_fetch_bars, t, client, 60): t for t in tickers}
-        for fut in as_completed(fut_map):
-            t = fut_map[fut]
-            try:
-                df = fut.result()
-                if not df.empty:
-                    bars[t] = df
-            except Exception:
-                pass
+    # Per-ticker last-session snapshot derived from daily bars:
+    # close, volume, and day-over-day % change.
+    snap: dict[str, dict] = {}
+    for t, df in bars.items():
+        last = df.iloc[-1]
+        close = float(last["close"])
+        vol   = float(last.get("volume", 0) or 0)
+        chg   = 0.0
+        if len(df) >= 2:
+            prev_c = float(df["close"].iloc[-2])
+            if prev_c > 0:
+                chg = round((close - prev_c) / prev_c * 100, 2)
+        snap[t] = {"close": close, "volume": vol, "change_pct": chg}
 
     # ── Movers ────────────────────────────────────────────────────────────────
     mover_rows = []

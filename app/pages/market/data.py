@@ -89,35 +89,107 @@ def _polygon_client(api_key: str):
 
 
 def _fetch_bars(ticker: str, api_key: str, n_days: int = 504) -> pd.DataFrame:
-    import datetime as _dt
-    from data.loader import _fetch_polygon_aggs
-    c    = _polygon_client(api_key)
-    to   = _dt.date.today()
-    frm  = to - _dt.timedelta(days=int(n_days * 1.4))
-    return _fetch_polygon_aggs(c, ticker, frm.strftime("%Y-%m-%d"), to.strftime("%Y-%m-%d"))
+    # Stock OHLCV via yfinance (free, includes today's bar). api_key kept for
+    # signature compatibility; not used for stock data anymore.
+    from data.stock_data import yf_daily_bars
+    return yf_daily_bars(ticker, n_days)
+
+
+# Session-scoped record of which real-time endpoints this API key's plan allows.
+# Probed lazily on first use; once a 403 is seen we stop hammering the endpoint
+# and fall straight to the authorized daily-aggregate paths. None = not yet probed.
+_PLAN_ALLOWS: dict[str, bool | None] = {
+    "stock_snapshot": None,   # /v2/snapshot/locale/us/markets/stocks/...
+    "intraday":       None,   # /v2/aggs/.../range/1/minute/...
+}
+
+
+def _is_not_authorized(exc: Exception) -> bool:
+    """True if a Polygon request failed specifically because the plan forbids it."""
+    resp = getattr(exc, "response", None)
+    return resp is not None and resp.status_code == 403
 
 
 def _fetch_intraday(ticker: str, api_key: str) -> pd.DataFrame:
-    """Fetch 1-minute bars for today from Polygon. Returns df with 'datetime' column."""
+    """Today's 1-minute bars via yfinance (df with 'datetime' column).
+    api_key kept for signature compatibility; not used for stock data."""
+    from data.stock_data import yf_intraday
+    return yf_intraday(ticker)
+
+
+def _fetch_quote(ticker: str, api_key: str) -> dict | None:
+    """Normalized stock quote via yfinance (free, intraday-aware, ≈15-min delay).
+    api_key kept for signature compatibility; not used for stock data."""
+    from data.stock_data import yf_quote
+    return yf_quote(ticker)
+
+
+def _fetch_grouped_movers(api_key: str, top_n: int = 12,
+                          min_price: float = 5.0,
+                          min_dollar_vol: float = 2e7) -> dict | None:
+    """Top gainers/losers for the most recent completed session, computed from
+    grouped daily aggregates. The dedicated gainers/losers snapshot endpoint is
+    not authorized on EOD/options plans, but grouped daily is — this gives a
+    genuine market-wide movers board (filtered to liquid names).
+
+    Change is measured vs the prior session's close when available, else the
+    session's own open. Returns {"asof", "gainers", "losers", "all"} or None.
+    """
     import datetime as _dt
     c = _polygon_client(api_key)
-    today = _dt.date.today().strftime("%Y-%m-%d")
-    results = []
-    url = f"/v2/aggs/ticker/{ticker}/range/1/minute/{today}/{today}"
-    params = {"adjusted": "true", "sort": "asc", "limit": 50000}
-    while url:
-        data = c._get(url, params)
-        results.extend(data.get("results", []))
-        url = data.get("next_url", "").replace(c.BASE, "") or None
-        params = {}
-    if not results:
-        return pd.DataFrame()
-    df = pd.DataFrame(results)
-    df["datetime"] = pd.to_datetime(df["t"], unit="ms", utc=True).dt.tz_convert("America/New_York")
-    df = df.rename(columns={"o": "open", "h": "high", "l": "low",
-                             "c": "close", "v": "volume", "vw": "vwap"})
-    cols = [c for c in ["datetime", "open", "high", "low", "close", "volume", "vwap"] if c in df.columns]
-    return df[cols].reset_index(drop=True)
+
+    def _grouped(day: _dt.date) -> list[dict]:
+        try:
+            d = c._get(f"/v2/aggs/grouped/locale/us/market/stocks/{day}",
+                       {"adjusted": "true"})
+            return d.get("results", []) or []
+        except Exception:
+            return []
+
+    # Walk back to the two most recent sessions that actually have data
+    # (skips weekends, holidays, and today — usually not yet available intraday).
+    sessions: list[tuple[_dt.date, list[dict]]] = []
+    day = _dt.date.today()
+    for _ in range(8):
+        day -= _dt.timedelta(days=1)
+        if day.weekday() >= 5:
+            continue
+        res = _grouped(day)
+        if res:
+            sessions.append((day, res))
+        if len(sessions) == 2:
+            break
+    if not sessions:
+        return None
+
+    cur_day, cur = sessions[0]
+    prev_close = {b.get("T"): b.get("c") for b in sessions[1][1]} if len(sessions) > 1 else {}
+
+    rows = []
+    for b in cur:
+        t, cl, o, v = b.get("T"), b.get("c"), b.get("o"), b.get("v")
+        if not t or not cl or cl < min_price:
+            continue
+        if cl * (v or 0) < min_dollar_vol:
+            continue
+        base = prev_close.get(t) or o
+        if not base:
+            continue
+        rows.append({
+            "ticker": t, "price": float(cl),
+            "change_pct": round((cl - base) / base * 100, 2),
+            "volume": int(v or 0),
+        })
+    if not rows:
+        return None
+
+    rows.sort(key=lambda r: r["change_pct"])
+    return {
+        "asof":    cur_day.isoformat(),
+        "gainers": rows[-top_n:][::-1],
+        "losers":  rows[:top_n],
+        "all":     rows,
+    }
 
 
 # ── UI helpers ─────────────────────────────────────────────────────────────────
@@ -164,6 +236,17 @@ _DARK = dict(
     plot_bgcolor=_PLOTLY_BASE["plot_bgcolor"],
     font=_PLOTLY_BASE["font"],
 )
+
+# Graph config WITH the Plotly toolbar (zoom / pan / autoscale / PNG export),
+# minus the rarely-used select/lasso buttons and the Plotly logo. Used for the
+# analytical Market charts so they have interactive controls.
+_GRAPH_CFG = {
+    "displayModeBar": True,
+    "displaylogo": False,
+    "responsive": True,
+    "modeBarButtonsToRemove": ["select2d", "lasso2d"],
+    "toImageButtonOptions": {"format": "png", "scale": 2},
+}
 
 
 # ── Screener: universe + sector map ───────────────────────────────────────────
@@ -573,9 +656,8 @@ def _render_intraday(ticker: str, api_key: str):
     df = _fetch_intraday(ticker, api_key)
     if df.empty:
         return html.P(
-            "No intraday data yet — market may be closed or pre-market.",
-            style={"color": T.WARNING, "fontSize": "12px"},
-        )
+            "No intraday data — market may be closed, or try EOD History.",
+            style={"color": T.WARNING, "fontSize": "12px"})
 
     close   = pd.to_numeric(df["close"], errors="coerce")
     open_px = pd.to_numeric(df["open"],  errors="coerce")
@@ -660,7 +742,7 @@ def _render_intraday(ticker: str, api_key: str):
             style={"color": line_color, "fontSize": "13px",
                    "fontWeight": "600", "marginBottom": "8px"},
         ),
-        dcc.Graph(figure=fig, config={"displayModeBar": False}),
+        dcc.Graph(figure=fig, config=_GRAPH_CFG),
     ])
 
 
@@ -803,8 +885,8 @@ def _render_yield_inner():
     return html.Div([
         metrics,
         dbc.Row([
-            dbc.Col(dcc.Graph(figure=fig_c, config={"displayModeBar": False}), width=6),
-            dbc.Col(dcc.Graph(figure=fig_h, config={"displayModeBar": False}), width=6),
+            dbc.Col(dcc.Graph(figure=fig_c, config=_GRAPH_CFG), width=6),
+            dbc.Col(dcc.Graph(figure=fig_h, config=_GRAPH_CFG), width=6),
         ], className="g-3", style={"marginBottom": "16px"}),
         html.Div("3D Yield Surface (2y lookback, weekly)",
                  style={"color": T.TEXT_SEC, "fontSize": "11px", "fontWeight": "600",
@@ -815,9 +897,33 @@ def _render_yield_inner():
     ])
 
 
+from statistics import NormalDist as _NormalDist
+_NORM_CDF  = _NormalDist().cdf
+_RISK_FREE = 0.043   # ~3M T-bill; dividends ignored — indicative model price
+
+
+def _bs_price(S: float, K: float, T: float, sigma: float, is_call: bool) -> float | None:
+    """Black-Scholes theoretical option price (no dividends). Falls back to
+    intrinsic value when inputs are degenerate. sigma is decimal (0.20 = 20%)."""
+    if not S or not K or S <= 0 or K <= 0:
+        return None
+    if T <= 0 or not sigma or sigma <= 0:
+        return max(0.0, (S - K) if is_call else (K - S))
+    srt = sigma * math.sqrt(T)
+    d1  = (math.log(S / K) + (_RISK_FREE + 0.5 * sigma * sigma) * T) / srt
+    d2  = d1 - srt
+    if is_call:
+        return S * _NORM_CDF(d1) - K * math.exp(-_RISK_FREE * T) * _NORM_CDF(d2)
+    return K * math.exp(-_RISK_FREE * T) * _NORM_CDF(-d2) - S * _NORM_CDF(-d1)
+
+
 def _build_chain_table(df: "pd.DataFrame", expiry: str, spot: float,
                        moneyness: str = "all") -> "dag.AgGrid":
-    """Returns an AG Grid in OMON style: calls left | strike centre | puts right."""
+    """Returns an AG Grid in OMON style: calls left | strike centre | puts right.
+
+    No live NBBO on this plan, so each side shows the delayed traded mark (Last)
+    and a Black-Scholes Model price computed from the contract's IV, spot and DTE.
+    """
     exp = df[df["expiration"] == expiry].copy()
     calls = exp[exp["type"] == "call"].set_index("strike")
     puts  = exp[exp["type"] == "put"].set_index("strike")
@@ -840,6 +946,15 @@ def _build_chain_table(df: "pd.DataFrame", expiry: str, spot: float,
     def _vol(v):
         return f"{int(v):,}" if v and float(v) > 0 else "—"
 
+    def _model_px(leg: dict, strike: float, is_call: bool):
+        iv, dte = leg.get("iv"), leg.get("dte")
+        if not iv or dte is None:
+            return None
+        try:
+            return _bs_price(spot, float(strike), float(dte) / 365.0, float(iv), is_call)
+        except Exception:
+            return None
+
     atm_dist = min(abs(s - spot) for s in strikes) if strikes else 0
     rows = []
     for k in strikes:
@@ -848,12 +963,12 @@ def _build_chain_table(df: "pd.DataFrame", expiry: str, spot: float,
         is_atm = abs(k - spot) == atm_dist
         rows.append({
             "c_iv":      _pct(c.get("iv")),
-            "c_bid":     _px( c.get("bid")),
-            "c_ask":     _px( c.get("ask")),
+            "c_last":    _px( c.get("last")),
+            "c_model":   _px(_model_px(c, k, True)),
             "c_vol":     _vol(c.get("volume")),
             "strike":    f"${k:.0f}",
-            "p_bid":     _px( p.get("bid")),
-            "p_ask":     _px( p.get("ask")),
+            "p_model":   _px(_model_px(p, k, False)),
+            "p_last":    _px( p.get("last")),
             "p_iv":      _pct(p.get("iv")),
             "p_vol":     _vol(p.get("volume")),
             "_atm":      is_atm,
@@ -872,44 +987,45 @@ def _build_chain_table(df: "pd.DataFrame", expiry: str, spot: float,
             f"params.data._atm ? {_atm_base} : "
             f"(params.data.{itm_key} ? {_bright} : {_dim_call})"}
 
-    # Bloomberg mirror: Vol | IV | Bid | Ask  ·  STRIKE  ·  Bid | Ask | IV | Vol
-    c_vol = {"field": "c_vol", "headerName": "Vol",   "width": 85,
-             "cellStyle": _cs("c_vol", "_itm_call"),
-             "headerClass": "ag-right-aligned-header"}
-    c_iv  = {"field": "c_iv",  "headerName": "IV",    "width": 80,
-             "cellStyle": _cs("c_iv",  "_itm_call"),
-             "headerClass": "ag-right-aligned-header"}
-    c_bid = {"field": "c_bid", "headerName": "Bid",   "width": 75,
-             "cellStyle": _cs("c_bid", "_itm_call"),
-             "headerClass": "ag-right-aligned-header"}
-    c_ask = {"field": "c_ask", "headerName": "Ask",   "width": 75,
-             "cellStyle": _cs("c_ask", "_itm_call"),
-             "headerClass": "ag-right-aligned-header"}
+    # Bloomberg mirror: Vol | IV | Last | Model  ·  STRIKE  ·  Model | Last | IV | Vol
+    # (no live NBBO on this plan — Last is the delayed mark, Model is Black-Scholes)
+    c_vol   = {"field": "c_vol",   "headerName": "Vol",   "width": 85,
+               "cellStyle": _cs("c_vol",   "_itm_call"),
+               "headerClass": "ag-right-aligned-header"}
+    c_iv    = {"field": "c_iv",    "headerName": "IV",    "width": 80,
+               "cellStyle": _cs("c_iv",    "_itm_call"),
+               "headerClass": "ag-right-aligned-header"}
+    c_last  = {"field": "c_last",  "headerName": "Last",  "width": 75,
+               "cellStyle": _cs("c_last",  "_itm_call"),
+               "headerClass": "ag-right-aligned-header"}
+    c_model = {"field": "c_model", "headerName": "Model", "width": 80,
+               "cellStyle": _cs("c_model", "_itm_call"),
+               "headerClass": "ag-right-aligned-header"}
     strike_col = {"field": "strike", "headerName": "Strike", "width": 90,
                   "cellStyle": {"function":
                       "params.data._atm "
                       "? {'backgroundColor':'#0d2b1a','fontWeight':'700','color':'#69f0ae','textAlign':'center'} "
                       ": {'textAlign':'center','color':'#e0e0e0'}"}}
-    p_bid = {"field": "p_bid", "headerName": "Bid",   "width": 75,
-             "cellStyle": _cs("p_bid", "_itm_put"),
-             "headerClass": "ag-right-aligned-header"}
-    p_ask = {"field": "p_ask", "headerName": "Ask",   "width": 75,
-             "cellStyle": _cs("p_ask", "_itm_put"),
-             "headerClass": "ag-right-aligned-header"}
-    p_iv  = {"field": "p_iv",  "headerName": "IV",    "width": 80,
-             "cellStyle": _cs("p_iv",  "_itm_put"),
-             "headerClass": "ag-right-aligned-header"}
-    p_vol = {"field": "p_vol", "headerName": "Vol",   "width": 85,
-             "cellStyle": _cs("p_vol", "_itm_put"),
-             "headerClass": "ag-right-aligned-header"}
+    p_model = {"field": "p_model", "headerName": "Model", "width": 80,
+               "cellStyle": _cs("p_model", "_itm_put"),
+               "headerClass": "ag-right-aligned-header"}
+    p_last  = {"field": "p_last",  "headerName": "Last",  "width": 75,
+               "cellStyle": _cs("p_last",  "_itm_put"),
+               "headerClass": "ag-right-aligned-header"}
+    p_iv    = {"field": "p_iv",    "headerName": "IV",    "width": 80,
+               "cellStyle": _cs("p_iv",    "_itm_put"),
+               "headerClass": "ag-right-aligned-header"}
+    p_vol   = {"field": "p_vol",   "headerName": "Vol",   "width": 85,
+               "cellStyle": _cs("p_vol",   "_itm_put"),
+               "headerClass": "ag-right-aligned-header"}
 
     # Column group headers (calls | strike | puts)
     col_groups = [
         {"headerName": "Calls", "headerClass": "calls-header",
-         "children": [c_vol, c_iv, c_bid, c_ask]},
+         "children": [c_vol, c_iv, c_last, c_model]},
         {"headerName": "", "children": [strike_col]},
         {"headerName": "Puts",  "headerClass": "puts-header",
-         "children": [p_bid, p_ask, p_iv, p_vol]},
+         "children": [p_model, p_last, p_iv, p_vol]},
     ]
 
     return dag.AgGrid(

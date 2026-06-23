@@ -4,7 +4,10 @@ Polygon.io data fetching: OHLCV, options chains, news, indices.
 
 import os
 import time
+import json
 import logging
+import threading
+from collections import deque
 from datetime import datetime, timedelta
 from typing import Optional
 
@@ -13,9 +16,53 @@ import requests
 
 logger = logging.getLogger(__name__)
 
+# Polygon plans are per-asset-class. On this account the *stock* endpoints are
+# the free Basic tier (5 req/min) while the *options* endpoints are paid
+# (Options Starter — effectively unthrottled). So we keep two separate buckets:
+# stock calls stay capped; options calls run fast. Override either via env.
+_RPM         = int(os.environ.get("POLYGON_RPM", "5") or "5")
+_OPTIONS_RPM = int(os.environ.get("POLYGON_OPTIONS_RPM", "100") or "100")
+
+
+class RateLimitExceeded(Exception):
+    """Raised when a slot can't be obtained within the caller's max_wait budget."""
+
+
+class _RateLimiter:
+    """Process-wide sliding-window limiter shared by every PolygonClient."""
+    def __init__(self, max_calls: int, window: float = 60.0):
+        self.max_calls = max(1, max_calls)
+        self.window    = window
+        self._times: deque[float] = deque()
+        self._lock     = threading.Lock()
+
+    def acquire(self, max_wait: float | None = None) -> None:
+        """Block until a request slot is free. If max_wait is set and the next
+        slot is further away than that, raise RateLimitExceeded instead of
+        blocking — lets latency-sensitive callers fail fast and fall back."""
+        while True:
+            with self._lock:
+                now = time.monotonic()
+                while self._times and now - self._times[0] >= self.window:
+                    self._times.popleft()
+                if len(self._times) < self.max_calls:
+                    self._times.append(now)
+                    return
+                wait = self.window - (now - self._times[0]) + 0.05
+            if max_wait is not None and wait > max_wait:
+                raise RateLimitExceeded(f"rate limit: next slot in {wait:.0f}s")
+            time.sleep(min(wait, self.window))
+
 
 class PolygonClient:
     BASE = "https://api.polygon.io"
+
+    # Shared across all instances (callbacks create a fresh client per call).
+    _stock_limiter   = _RateLimiter(_RPM)
+    _options_limiter = _RateLimiter(_OPTIONS_RPM)
+    _cache: dict[str, tuple[float, dict]] = {}
+    _cache_lock = threading.Lock()
+    CACHE_TTL = 45.0   # seconds; idempotent GETs are deduped within this window
 
     def __init__(self, api_key: Optional[str] = None):
         self.api_key = api_key or os.environ.get("POLYGON_API_KEY", "")
@@ -24,20 +71,64 @@ class PolygonClient:
         self.session = requests.Session()
         self.session.params = {"apiKey": self.api_key}
 
-    def _get(self, path: str, params: dict = None) -> dict:
+    @classmethod
+    def _cache_get(cls, key: str):
+        with cls._cache_lock:
+            hit = cls._cache.get(key)
+            if hit and time.monotonic() < hit[0]:
+                return hit[1]
+            if hit:
+                cls._cache.pop(key, None)
+        return None
+
+    @classmethod
+    def _cache_put(cls, key: str, value: dict) -> None:
+        with cls._cache_lock:
+            cls._cache[key] = (time.monotonic() + cls.CACHE_TTL, value)
+
+    def _get(self, path: str, params: dict = None, retries: int = 3,
+             use_cache: bool = True, max_wait: float | None = None) -> dict:
         url = self.BASE + path
-        for attempt in range(3):
+        cache_key = path + "?" + json.dumps(params or {}, sort_keys=True)
+        if use_cache:
+            cached = self._cache_get(cache_key)
+            if cached is not None:
+                return cached
+
+        # Options endpoints are on the paid tier — use the fast bucket; everything
+        # else (stock aggregates/snapshots/grouped) uses the 5/min stock bucket.
+        # Note options *aggregates* are /v2/aggs/ticker/O:... (no "/options/"), so
+        # match the O: ticker too, else historical option bars hit the stock cap.
+        is_options = ("/options/" in path) or ("/ticker/O:" in path)
+        limiter = self._options_limiter if is_options else self._stock_limiter
+
+        last_exc: Exception | None = None
+        for attempt in range(retries):
+            # max_wait lets latency-sensitive callers (e.g. live P&L on page load)
+            # fail fast instead of blocking when the per-minute budget is spent.
+            limiter.acquire(max_wait=max_wait)
             try:
                 resp = self.session.get(url, params=params or {}, timeout=30)
                 if resp.status_code == 429:
+                    # Throttled despite the limiter — back off and retry.
                     time.sleep(12)
+                    last_exc = requests.HTTPError("429 Too Many Requests", response=resp)
                     continue
                 resp.raise_for_status()
-                return resp.json()
+                data = resp.json()
+                if use_cache:
+                    self._cache_put(cache_key, data)
+                return data
             except requests.RequestException as e:
-                if attempt == 2:
+                last_exc = e
+                # Don't waste retries on an authorization failure — it won't change.
+                if getattr(e, "response", None) is not None and e.response.status_code == 403:
+                    raise
+                if attempt == retries - 1:
                     raise
                 time.sleep(2 ** attempt)
+        # Loop exhausted (e.g. persistent 429) — surface it instead of returning None.
+        raise last_exc or RuntimeError(f"Polygon request failed: {path}")
 
     def get_aggregates(
         self,
@@ -76,6 +167,7 @@ class PolygonClient:
         expiration_date_lte: str = None,
         strike_price_gte: float = None,
         strike_price_lte: float = None,
+        max_wait: float | None = None,
     ) -> pd.DataFrame:
         """
         Fetch options chain.
@@ -101,7 +193,7 @@ class PolygonClient:
         if strike_price_lte is not None:
             params["strike_price.lte"] = strike_price_lte
         while url:
-            data = self._get(url, params)
+            data = self._get(url, params, max_wait=max_wait)
             results.extend(data.get("results", []))
             url = (data.get("next_url") or "").replace(self.BASE, "") or None
             params = {}

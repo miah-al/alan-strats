@@ -202,8 +202,10 @@ def fetch_live_vol_surface(
     from datetime import date, timedelta
 
     today     = date.today()
-    strike_lo = round(spot_price * 0.70, 2)
-    strike_hi = round(spot_price * 1.30, 2)
+    # Near-the-money only: deep-ITM call IV from Polygon is unreliable (illiquid,
+    # wide spreads) and produces a nonsense vol spike. Keep ±18% of spot.
+    strike_lo = round(spot_price * 0.82, 2)
+    strike_hi = round(spot_price * 1.18, 2)
     exp_from  = (today + timedelta(days=min_dte)).strftime("%Y-%m-%d")
     exp_to    = (today + timedelta(days=max_dte)).strftime("%Y-%m-%d")
 
@@ -219,7 +221,6 @@ def fetch_live_vol_surface(
         "expiration_date.lte": exp_to,
         "strike_price.gte":    strike_lo,
         "strike_price.lte":    strike_hi,
-        "contract_type":       "call",
         "limit":               250,
     }
     while url:
@@ -248,7 +249,6 @@ def fetch_live_vol_surface(
         params = {
             "expiration_date.gte": exp_from,
             "expiration_date.lte": exp_to,
-            "contract_type": "call",
             "limit": 250,
         }
         url = f"/v3/snapshot/options/{ticker}"
@@ -271,6 +271,7 @@ def fetch_live_vol_surface(
         iv = r.get("implied_volatility")
         strike = d.get("strike_price")
         exp    = d.get("expiration_date", "")
+        ctype  = (d.get("contract_type") or "").lower()
         if not strike or not exp:
             continue
         dte = (pd.to_datetime(exp).date() - today).days
@@ -280,7 +281,8 @@ def fetch_live_vol_surface(
         if not iv or float(iv) < 0.01:
             no_iv_count += 1
             continue
-        rows.append({"strike": float(strike), "dte": int(dte), "iv": float(iv)})
+        rows.append({"strike": float(strike), "dte": int(dte),
+                     "iv": float(iv), "type": ctype})
 
     if not rows:
         if no_iv_count > 0 and dte_miss == 0:
@@ -300,8 +302,22 @@ def fetch_live_vol_surface(
             f"({no_iv_count} missing IV, {dte_miss} outside DTE range)."
         )
 
-    df = pd.DataFrame(rows)
+    df_all = pd.DataFrame(rows)
+    # Build the surface from OUT-OF-THE-MONEY options only: puts below spot, calls
+    # at/above spot. ITM IV (e.g. low-strike calls) is illiquid and noisy; the OTM
+    # wings are the liquid, meaningful smile/skew. (SPY has both legs at every
+    # strike, so OTM coverage is complete.)
+    otm_mask = (((df_all["strike"] <  spot_price) & (df_all["type"] == "put")) |
+                ((df_all["strike"] >= spot_price) & (df_all["type"] == "call")))
+    df = df_all[otm_mask] if otm_mask.any() else df_all
     df = df.groupby(["strike", "dte"])["iv"].median().reset_index()
+
+    # Reject IV outliers per expiry — any remaining illiquid garbage that sits far
+    # above the expiry's median would otherwise dominate the z-axis. Drop points
+    # > 3× the per-DTE median, plus a hard cap.
+    if not df.empty:
+        med = df.groupby("dte")["iv"].transform("median")
+        df = df[(df["iv"] <= med * 3.0) & (df["iv"] <= 2.0)].reset_index(drop=True)
 
     if df is not None and not df.empty:
         _save_cache(cache_key, df)
@@ -357,9 +373,13 @@ def fetch_options_snapshot(client, ticker: str,
     for r in results:
         d   = r.get("details",    {})
         g   = r.get("greeks",     {})
-        q   = r.get("last_quote", {})
+        q   = r.get("last_quote") or {}
+        day = r.get("day")        or {}
         bid = q.get("bid") or 0
         ask = q.get("ask") or 0
+        # No live NBBO on this plan (last_quote=null). Keep the delayed traded mark;
+        # the chain computes a Black-Scholes model price from IV + spot + DTE.
+        last = day.get("close") or day.get("vwap") or 0
         exp = d.get("expiration_date", "")
         dte = (pd.to_datetime(exp).date() - today).days if exp else None
         rows.append({
@@ -370,6 +390,7 @@ def fetch_options_snapshot(client, ticker: str,
             "bid":           round(bid, 3),
             "ask":           round(ask, 3),
             "mid":           round((bid + ask) / 2, 3),
+            "last":          round(float(last), 3) if last else 0,  # delayed traded mark
             "iv":            r.get("implied_volatility"),           # already computed by Polygon
             "delta":         g.get("delta"),
             "gamma":         g.get("gamma"),
