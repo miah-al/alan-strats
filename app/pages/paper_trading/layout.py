@@ -49,7 +49,7 @@ def layout() -> html.Div:
     return html.Div([
         C.page_header(
             "Paper Trading",
-            "Simulated execution against live strategy signals.",
+            "Your portfolio — positions are opened from the Strategy screens; review and close them here.",
             actions=[
                 dbc.Button(
                     "Refresh", id="pt-refresh-btn", size="sm", outline=True,
@@ -184,6 +184,21 @@ def layout() -> html.Div:
                     type="circle", color=T.ACCENT,
                 ),
                 html.Div(style={"height": "16px"}),
+                # Date range for the mark-to-market equity curve (default 1M).
+                html.Div([
+                    html.Label("Range", style={"color": T.TEXT_SEC, "fontSize": "11px",
+                                               "fontWeight": "600", "marginRight": "10px"}),
+                    dbc.RadioItems(
+                        id="pt-perf-range",
+                        options=[{"label": l, "value": v} for l, v in
+                                 [("1W", "1W"), ("1M", "1M"), ("3M", "3M"),
+                                  ("6M", "6M"), ("1Y", "1Y"), ("All", "ALL")]],
+                        value="1M", inline=True,
+                        inputStyle={"marginRight": "4px"},
+                        labelStyle={"marginRight": "14px", "fontSize": "12px",
+                                    "color": T.TEXT_SEC, "cursor": "pointer"},
+                    ),
+                ], style={"display": "flex", "alignItems": "center", "marginBottom": "10px"}),
                 dcc.Loading(
                     html.Div(id="pt-equity-curve"),
                     type="circle", color=T.ACCENT,
@@ -271,9 +286,10 @@ def layout() -> html.Div:
             ),
             dbc.ModalBody([
                 dbc.Alert(
-                    "Each leg will close at its entry price (no live prices loaded). "
-                    "Refresh live prices first for accurate fills.",
-                    color="warning",
+                    "Each leg closes at its current live mark (options via the chain, "
+                    "stocks via Yahoo). Any leg without a live quote falls back to its "
+                    "entry price.",
+                    color="info",
                     style={"fontSize": "12px", "marginBottom": "12px"},
                 ),
                 html.Div(id="pt-close-confirm-body"),

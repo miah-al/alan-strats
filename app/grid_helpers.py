@@ -58,6 +58,8 @@ def mrt_grid(
     enable_pagination: bool = True,
     page_size: int = 25,
     density: str = "xs",
+    layout_mode: str = "grid",
+    header_menu: bool = True,
 ):
     """Build a DashMantineReactTable wrapped with the app's dark theme.
 
@@ -84,11 +86,13 @@ def mrt_grid(
             "enableGlobalFilter":    True,
             "enableSorting":         True,
             "enableDensityToggle":   True,
-            "enableColumnOrdering":  True,
+            "enableColumnOrdering":  header_menu,
+            "enableColumnActions":   header_menu,
+            "enableColumnDragging":  header_menu,
             "enableColumnResizing":  True,
             "enablePagination":      bool(enable_pagination),
             "enableStickyHeader":    True,   # header pinned while body scrolls
-            "layoutMode":            "grid",
+            "layoutMode":            layout_mode,
             "initialState": {
                 "density": density,
                 "pagination": {"pageIndex": 0, "pageSize": page_size},

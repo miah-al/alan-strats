@@ -165,6 +165,28 @@ button:not(:disabled):active { transform: translateY(.5px); }
 ::placeholder { color: var(--text-muted); opacity: 1; }
 input[type="checkbox"], input[type="radio"] { accent-color: var(--accent); cursor: pointer; }
 
+/* Render radios and (non-switch) checkboxes as NORMAL native controls. Bootstrap
+   sets appearance:none + an SVG background, which renders as faint, odd circles on
+   the dark theme — restore the browser's native checkbox/radio so accent-color
+   actually applies. Switches (.form-switch) are left as Bootstrap toggles. */
+input[type="radio"],
+.form-check-input[type="radio"],
+.form-check:not(.form-switch) input[type="checkbox"],
+.form-check:not(.form-switch) .form-check-input[type="checkbox"] {
+  -webkit-appearance: auto !important;
+  appearance: auto !important;
+  background-image: none !important;
+  background-color: initial !important;
+  border: initial !important;
+  border-radius: revert !important;
+  width: 14px !important;
+  height: 14px !important;
+  margin-top: 0.15em;
+  vertical-align: middle;
+  accent-color: var(--accent);
+  box-shadow: none !important;
+}
+
 /* dcc.Dropdown menu */
 .Select-menu-outer {
   background: var(--bg-elev) !important; border: 1px solid var(--border-brt) !important;

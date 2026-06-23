@@ -209,12 +209,12 @@ def load_balance_history(engine, account_id: int = 1) -> pd.DataFrame:
 
 # ── Polygon price helpers ─────────────────────────────────────────────────────
 
-def fetch_stock_price(api_key: str, symbol: str) -> float | None:
+def fetch_stock_price(api_key: str, symbol: str, max_wait: float | None = 3.0) -> float | None:
+    """Latest available price for a stock/ETF via yfinance (free, no 5/min cap).
+    api_key / max_wait kept for signature compatibility with the option path."""
     try:
-        from data.polygon_client import PolygonClient
-        c = PolygonClient(api_key=api_key)
-        snap = c.get_snapshot(symbol)
-        return snap.get("day", {}).get("c") or snap.get("lastTrade", {}).get("p")
+        from data.stock_data import yf_stock_price
+        return yf_stock_price(symbol)
     except Exception:
         return None
 
@@ -227,10 +227,15 @@ def fetch_stock_prices_bulk(api_key: str, symbols: list[str]) -> dict[str, float
     return prices
 
 
-def fetch_option_prices(api_key: str, legs_df: pd.DataFrame) -> dict[str, dict]:
+def fetch_option_prices(api_key: str, legs_df: pd.DataFrame,
+                        max_wait: float | None = 3.0) -> dict[str, dict]:
     """
     Fetch current mid prices and IV for option legs using exact strike/expiry/type match.
     Returns {Symbol: {"price": float|None, "iv": float|None}}.
+
+    `max_wait` bounds how long each chain fetch will block under the rate limit;
+    on the page-load path this keeps the dashboard responsive (legs that can't be
+    priced in time fall back to entry price).
     """
     if not api_key:
         return {}
@@ -252,6 +257,7 @@ def fetch_option_prices(api_key: str, legs_df: pd.DataFrame) -> dict[str, dict]:
                 expiration_date_lte=str(max(exp_dates)),
                 strike_price_gte=float(min(strikes)) - 0.5,
                 strike_price_lte=float(max(strikes)) + 0.5,
+                max_wait=max_wait,
             )
             if chain is None or chain.empty:
                 continue

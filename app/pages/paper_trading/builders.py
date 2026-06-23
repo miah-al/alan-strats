@@ -18,6 +18,16 @@ from app import theme as T
 from app.ui import tokens as D
 from app.grid_helpers import mrt_grid
 
+# Graph config WITH the Plotly toolbar (zoom/pan/autoscale/PNG), matching the
+# Market Data screens. Minus the lasso/select buttons and the Plotly logo.
+_GRAPH_CFG = {
+    "displayModeBar": True,
+    "displaylogo": False,
+    "responsive": True,
+    "modeBarButtonsToRemove": ["select2d", "lasso2d"],
+    "toImageButtonOptions": {"format": "png", "scale": 2},
+}
+
 from app.pages.paper_trading.data import (
     _ACCOUNT_ID, _get_engine, _net_entry, bs_val,
 )
@@ -38,6 +48,18 @@ _OPEN_COLS = [
          "cell-positive": {"function": "params.data._net > 0"},
          "cell-negative": {"function": "params.data._net < 0"},
          "cell-neutral":  {"function": "params.data._net === 0"},
+     }},
+    {"field": "_pnl",        "hide": True},
+    {"field": "P&L",         "headerName": "P&L (open)", "minWidth": 100, "flex": 1,
+     "cellClassRules": {
+         "cell-positive": {"function": "params.data._pnl > 0"},
+         "cell-negative": {"function": "params.data._pnl < 0"},
+         "cell-neutral":  {"function": "params.data._pnl === 0"},
+     }},
+    {"field": "P&L %",       "minWidth": 80, "width": 90,
+     "cellClassRules": {
+         "cell-positive": {"function": "params.data._pnl > 0"},
+         "cell-negative": {"function": "params.data._pnl < 0"},
      }},
     {"field": "Alerts",      "minWidth": 80,  "width": 90},
     {"field": "_tgid",       "hide": True},
@@ -477,36 +499,58 @@ def _build_legs_table(grp: pd.DataFrame, live_prices: dict | None = None):
         sign = 1.0 if dirn == "SELL" else -1.0
         sym  = str(r.get("Symbol", ""))
 
-        # Current mark price → live MKT VALUE; fall back to entry price
         live    = (live_prices or {}).get(sym, {})
         cur_px  = live.get("price") if isinstance(live, dict) else None
         mkt_val = sign * cur_px * abs(qty) * mult if cur_px is not None else None
 
+        # Per-leg P&L since open: long = (mark − entry), short = (entry − mark).
+        entry = float(px) if px is not None else None
+        leg_pnl = None
+        if cur_px is not None and entry is not None:
+            ds = 1.0 if dirn == "BUY" else -1.0
+            leg_pnl = ds * (float(cur_px) - entry) * abs(qty) * mult
+
+        try:
+            strike_txt = f"{float(r.get('Strike')):.0f}"
+        except Exception:
+            strike_txt = "—"
+
         legs.append({
             "Symbol":    sym,
             "Type":      str(r.get("OptionType") or stype).upper(),
-            "Strike":    str(r.get("Strike") or "—"),
+            "Strike":    strike_txt,
             "Expiry":    str(r.get("Expiration") or "—")[:10],
             "Dir":       dirn,
-            "Qty":       qty,
-            "Entry Px":  f"${float(px):,.2f}" if px is not None else "—",
+            "Qty":       f"{qty:.0f}",
+            "Entry":     f"${float(px):,.2f}" if px is not None else "—",
             "Mkt Value": f"${mkt_val:,.2f}" if mkt_val is not None else "—",
+            "P&L":       (f"{'+' if leg_pnl >= 0 else '-'}${abs(leg_pnl):,.2f}"
+                         if leg_pnl is not None else "—"),
         })
 
+    def _col(key, hdr, size, num=False):
+        c = {"accessorKey": key, "header": hdr, "size": size}
+        if num:
+            c["mantineTableBodyCellProps"] = {"align": "right"}
+            c["mantineTableHeadCellProps"] = {"align": "right"}
+        return c
+
     return mrt_grid(
-        aggrid_cols=[
-            {"field": "Symbol"},
-            {"field": "Type"},
-            {"field": "Strike"},
-            {"field": "Expiry"},
-            {"field": "Dir"},
-            {"field": "Qty",       "type": "numericColumn"},
-            {"field": "Entry Px"},
-            {"field": "Mkt Value"},
+        columns=[
+            _col("Symbol",    "Symbol",    180),
+            _col("Type",      "Type",       70),
+            _col("Strike",    "Strike",     75, True),
+            _col("Expiry",    "Expiry",    110),
+            _col("Dir",       "Dir",        70),
+            _col("Qty",       "Qty",        55, True),
+            _col("Entry",     "Entry",      80, True),
+            _col("Mkt Value", "Mkt Value", 100, True),
+            _col("P&L",       "P&L",       100, True),
         ],
         data=legs,
         enable_pagination=False,
         height=280,
+        header_menu=False,   # drop the per-column menu/drag icons so headers fit
     )
 
 
@@ -664,7 +708,7 @@ def _build_ic_modal_body(
         dte_remaining=dte_remaining, expiry_str=expiry_str,
         spot=spot,
     )
-    chart = dcc.Graph(figure=ic_fig, config={"displayModeBar": False}) if ic_fig else html.P(
+    chart = dcc.Graph(figure=ic_fig, config=_GRAPH_CFG) if ic_fig else html.P(
         "No payoff chart available.", style={"color": T.TEXT_MUTED}
     )
     chart_caption = html.P(
@@ -732,7 +776,7 @@ def _build_screener_modal_body(
         fig = _plot_payoff(grp, spot)
         return [
             html.P("No option legs found.", style={"color": T.TEXT_MUTED}),
-            dcc.Graph(figure=fig, config={"displayModeBar": False}) if fig else html.Div(),
+            dcc.Graph(figure=fig, config=_GRAPH_CFG) if fig else html.Div(),
             _build_legs_table(grp, live_prices),
         ]
 
@@ -828,7 +872,7 @@ def _build_screener_modal_body(
         ))
 
     payoff_fig = _plot_payoff(grp, spot)
-    chart      = dcc.Graph(figure=payoff_fig, config={"displayModeBar": False}) if payoff_fig else html.Div()
+    chart      = dcc.Graph(figure=payoff_fig, config=_GRAPH_CFG) if payoff_fig else html.Div()
     caption    = html.P(
         "Payoff at expiration · Coloured dotted lines = strike levels · "
         "Green fill = profit zone · Red fill = loss zone",
@@ -888,7 +932,7 @@ def _build_equity_modal_body(
     ], style={"display": "flex", "gap": "10px", "flexWrap": "wrap", "marginBottom": "14px"})
 
     fig   = _plot_equity_pnl(underlying, entry_px, qty, days_held, spot=None)
-    chart = dcc.Graph(figure=fig, config={"displayModeBar": False}) if fig else html.Div()
+    chart = dcc.Graph(figure=fig, config=_GRAPH_CFG) if fig else html.Div()
 
     if entry_px > 0 and qty > 0:
         caption = html.P(
@@ -919,31 +963,18 @@ def _build_equity_modal_body(
 
 # ── Equity curve from Balance table ──────────────────────────────────────────
 
-def _build_equity_curve():
-    """Build equity curve + drawdown from portfolio.Balance table."""
-    from sqlalchemy import text as _text
-    try:
-        engine = _get_engine()
-        with engine.connect() as conn:
-            df = pd.read_sql(_text("""
-                SELECT BusinessDate, Amount
-                FROM portfolio.Balance
-                WHERE AccountId = :aid AND BalanceType = 'Cash'
-                ORDER BY BusinessDate ASC
-            """), conn, params={"aid": _ACCOUNT_ID})
-    except Exception:
-        df = pd.DataFrame()
-
-    if df.empty:
+def _build_equity_curve(df: "pd.DataFrame | None" = None):
+    """Render the equity curve + drawdown from a precomputed mark-to-market
+    series (DataFrame[BusinessDate, Amount]); see data.mtm_equity_series."""
+    if df is None or len(df) == 0:
         return html.P(
-            "No balance history. Run a Close of Business in Paper Trading first.",
+            "No account history yet — record a deposit in Transactions to start.",
             style={"color": T.TEXT_MUTED, "fontSize": "13px", "padding": "10px 0"},
         )
-
+    df = df.copy()
     df["BusinessDate"] = pd.to_datetime(df["BusinessDate"])
     df["Amount"]       = pd.to_numeric(df["Amount"], errors="coerce")
     df = df.dropna()
-
     if df.empty:
         return html.Div()
 
@@ -956,12 +987,14 @@ def _build_equity_curve():
         fill="tozeroy", fillcolor=f"rgba(99,102,241,0.06)",
         hovertemplate="%{x|%Y-%m-%d}<br>$%{y:,.0f}<extra></extra>",
     ))
-    fig_eq.add_hline(y=100_000, line=dict(color=T.BORDER_BRT, width=1, dash="dash"),
-                     annotation_text="Starting $100k",
+    start_val = float(df["Amount"].iloc[0])
+    fig_eq.add_hline(y=start_val, line=dict(color=T.BORDER_BRT, width=1, dash="dash"),
+                     annotation_text=f"Start ${start_val:,.0f}",
                      annotation_font_color=T.TEXT_MUTED)
     fig_eq.update_layout(D.plotly_layout())
     fig_eq.update_layout(
-        title=dict(text="Portfolio — Net Liquidation (Cash Balance)", font=dict(size=12, color=T.TEXT_SEC)),
+        title=dict(text="Equity Curve — daily mark-to-market (cash + positions)",
+                   font=dict(size=12, color=T.TEXT_SEC)),
         height=260, margin=dict(l=0, r=0, t=40, b=0),
         yaxis=dict(tickformat="$,.0f", gridcolor=T.BORDER, zeroline=False),
         xaxis=dict(gridcolor=T.BORDER),
@@ -991,9 +1024,9 @@ def _build_equity_curve():
     )
 
     return html.Div([
-        dbc.Card(dbc.CardBody(dcc.Graph(figure=fig_eq, config={"displayModeBar": False})),
+        dbc.Card(dbc.CardBody(dcc.Graph(figure=fig_eq, config=_GRAPH_CFG)),
                  style={**T.STYLE_CARD, "marginBottom": "12px"}),
-        dbc.Card(dbc.CardBody(dcc.Graph(figure=fig_dd, config={"displayModeBar": False})),
+        dbc.Card(dbc.CardBody(dcc.Graph(figure=fig_dd, config=_GRAPH_CFG)),
                  style=T.STYLE_CARD),
     ])
 
@@ -1284,19 +1317,19 @@ def _build_perf_chart(closed_rows: list[dict]):
         # 2. Monthly returns heatmap
         dbc.Card(dbc.CardBody([
             _section_label("Monthly Returns"),
-            dcc.Graph(figure=fig_hm, config={"displayModeBar": False}),
+            dcc.Graph(figure=fig_hm, config=_GRAPH_CFG),
         ]), style={**T.STYLE_CARD, "marginBottom": "12px"}),
 
         # 3. Per-trade P&L bars + cumulative
         dbc.Card(dbc.CardBody([
             _section_label("Per-Trade P&L"),
-            dcc.Graph(figure=fig_bar, config={"displayModeBar": False}),
+            dcc.Graph(figure=fig_bar, config=_GRAPH_CFG),
         ]), style={**T.STYLE_CARD, "marginBottom": "12px"}),
 
         # 4. P&L by strategy
         dbc.Card(dbc.CardBody([
             _section_label("P&L by Strategy"),
-            dcc.Graph(figure=fig_s, config={"displayModeBar": False}),
+            dcc.Graph(figure=fig_s, config=_GRAPH_CFG),
             html.Div(style={"height": "12px"}),
             summary_grid,
         ]), style={**T.STYLE_CARD}),
@@ -1515,7 +1548,7 @@ def _render_risk_table(mx: dict) -> html.Div:
 
     payoff_chart = dcc.Graph(
         figure=fig,
-        config={"displayModeBar": False},
+        config=_GRAPH_CFG,
         style={"marginTop": "20px"},
     )
 
@@ -1525,9 +1558,9 @@ def _render_risk_table(mx: dict) -> html.Div:
         stress_card,
         html.Div(table, style={"overflowX": "auto"}),
         html.Div(
-            "Delta ($) = portfolio $ delta at each shock  ·  "
-            "Gamma ($) = $ P&L per additional 1% move  ·  "
-            "Vega/Vanna ($) = per 1 pp IV change  ·  "
+            "Delta ($) = $ P&L per +1% move  ·  "
+            "Gamma ($) = extra $ P&L per +1% move  ·  "
+            "Vega ($) = per +1 IV pt  ·  Vanna ($) = Δvega per +1% move  ·  "
             "Theta ($) = per-day decay",
             style={"color": T.TEXT_MUTED, "fontSize": "10px", "marginTop": "8px",
                    "fontStyle": "italic"},

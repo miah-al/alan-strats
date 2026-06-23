@@ -21,14 +21,14 @@ from app.grid_helpers import mrt_grid
 from app.pages.paper_trading.data import (
     _ACCOUNT_ID, _pretty_strategy, _get_engine, _load_data, _net_entry,
     bs_val, _bs_full, _compute_risk_matrix, get_open_trade_groups_simple,
-    live_market_value,
+    live_market_value, mtm_equity_series, position_pnl,
 )
 from app.pages.paper_trading.builders import (
     _grid, _OPEN_COLS, _CLOSED_COLS, _TXNS_COLS,
     _metric_card, _render_alert_badges, _build_legs_table,
     _plot_payoff, _plot_ic_payoff, _plot_equity_pnl,
     _build_ic_modal_body, _build_screener_modal_body, _build_equity_modal_body,
-    _build_perf_chart, _build_equity_curve, _render_risk_table,
+    _build_perf_chart, _build_equity_curve, _render_risk_table, _GRAPH_CFG,
 )
 
 
@@ -41,7 +41,6 @@ from app.pages.paper_trading.builders import (
     Output("pt-closed-chart",      "children"),
     Output("pt-txns-grid",         "data"),
     Output("pt-perf-chart",        "children"),
-    Output("pt-equity-curve",      "children"),
     Output("pt-txn-filter-type",   "options"),
     Output("pt-txn-filter-dir",    "options"),
     Output("pt-txn-filter-strat",  "options"),
@@ -56,6 +55,7 @@ def refresh_all(_n, _btn):
 
     # ── Open positions ────────────────────────────────────────────────────────
     open_data = []
+    market_value = 0.0   # accumulated per-position below (live mark-to-market)
     for tgid, grp in open_groups.items():
         underlying = (
             grp["Underlying"].dropna().iloc[0]
@@ -76,20 +76,26 @@ def refresh_all(_n, _btn):
                 except Exception:
                     pass
 
-        # Alerts
+        # Live unrealized P&L for this position — required for the P&L-based
+        # alerts (take-profit / stop-loss). Without it only DTE alerts fire.
+        try:
+            mv_grp, _, _, _ = live_market_value({tgid: grp})
+        except Exception:
+            mv_grp = 0.0
+        market_value += mv_grp
+        upnl = ne + mv_grp
+
+        # Alerts — collapse to a single status dot (red > amber > green) so every
+        # row shows a health indicator instead of a blank.
         try:
             from engine.positions import compute_position_alerts
-            alerts_list = compute_position_alerts(grp, strategy, None, ne)
+            alerts_list = compute_position_alerts(grp, strategy, upnl, ne)
         except Exception:
             alerts_list = []
-        alert_icons = ""
-        for a in alerts_list:
-            lvl = a.get("level", "")
-            if lvl == "error":   alert_icons += "🔴 "
-            elif lvl == "warning": alert_icons += "🟡 "
-            elif lvl == "success": alert_icons += "🟢 "
-        alert_str = alert_icons.strip() if alert_icons else "—"
+        levels = {a.get("level", "") for a in alerts_list}
+        alert_str = "🔴" if "error" in levels else ("🟡" if "warning" in levels else "🟢")
 
+        pnl_pct = (upnl / abs(ne) * 100) if ne else None
         open_data.append({
             "Trade Group": str(tgid),
             "Underlying":  str(underlying),
@@ -98,8 +104,11 @@ def refresh_all(_n, _btn):
             "Legs":        len(grp),
             "DTE":         dte,
             "Net Entry":   f"+${ne:,.2f}" if ne >= 0 else f"-${abs(ne):,.2f}",
+            "P&L":         f"{'+' if upnl >= 0 else '-'}${abs(upnl):,.2f}",
+            "P&L %":       f"{pnl_pct:+.1f}%" if pnl_pct is not None else "—",
             "Alerts":      alert_str,
             "_net":        ne,
+            "_pnl":        upnl,
             "_tgid":       str(tgid),
         })
 
@@ -142,9 +151,8 @@ def refresh_all(_n, _btn):
             trade_cf += (1.0 if dirn == "SELL" else -1.0) * qty * px * mult
     cash_bal = deposit_cash + trade_cf
 
-    # Live market value of open positions (negative for short premium) and the
-    # resulting true account value.
-    market_value, _mv_live, _mv_priced, _mv_total = live_market_value(open_groups)
+    # market_value was accumulated per-position above (live mark-to-market;
+    # negative for net short premium). Account value nets it against cash.
     account_value = cash_bal + market_value
 
     # ── Metrics ───────────────────────────────────────────────────────────────
@@ -173,47 +181,69 @@ def refresh_all(_n, _btn):
     # e.g. short credit collected minus current cost to close.
     unrealized_pnl = total_entry + market_value
 
-    def _metric(label, value, color=T.TEXT_PRIMARY):
-        return html.Div([
+    def _metric(label, value, color=T.TEXT_PRIMARY, sub=None, big=False):
+        children = [
             html.Div(label, style={
                 "color": T.TEXT_MUTED, "fontSize": "10px", "fontWeight": "600",
                 "textTransform": "uppercase", "letterSpacing": "0.07em",
                 "marginBottom": "5px",
             }),
-            html.Div(value, style={"color": color, "fontSize": "1.1rem", "fontWeight": "700"}),
-        ], style={**T.STYLE_CARD, "minWidth": "110px", "flex": "1", "padding": "10px 12px"})
+            html.Div(value, style={"color": color,
+                                   "fontSize": "1.7rem" if big else "1.1rem",
+                                   "fontWeight": "700", "lineHeight": "1.15"}),
+        ]
+        if sub:
+            children.append(html.Div(sub, style={
+                "color": T.TEXT_MUTED, "fontSize": "11px", "marginTop": "4px"}))
+        return html.Div(children, style={
+            **T.STYLE_CARD, "minWidth": "150px", "flex": "1", "padding": "12px 14px"})
 
-    status_color = T.SUCCESS if acct.get("Status") == "Active" else T.WARNING
+    # Total P&L = realized (closed) + unrealized (open). Total return vs starting capital.
+    total_pnl = unrealized_pnl + total_closed
     win_rate_str = f"{win_rate:.0f}%" if win_rate is not None else "—"
     win_rate_color = (T.SUCCESS if win_rate and win_rate >= 50 else T.DANGER) if win_rate is not None else T.TEXT_MUTED
-    mkt_val_str = f"{'-' if market_value < 0 else ''}${abs(market_value):,.2f}"
 
+    def _c(v):  # value-based colour
+        return T.SUCCESS if v > 0 else (T.DANGER if v < 0 else T.TEXT_MUTED)
+    def _sd(v):  # signed dollar
+        return f"{'+' if v >= 0 else '-'}${abs(v):,.2f}"
+
+    # Row 1 — portfolio: Account Value = Cash + Positions, plus headline P&L.
     row1 = html.Div([
-        _metric("Account",       str(acct.get("AccountName", "—"))),
-        _metric("Type",          str(acct.get("AccountType", "—"))),
-        _metric("Status",        str(acct.get("Status", "—")), status_color),
-        _metric("Cash Balance",  f"${cash_bal:,.2f}",
-                T.SUCCESS if cash_bal >= 0 else T.DANGER),
-        _metric("Account Value", f"${account_value:,.2f}",
-                T.SUCCESS if account_value >= 0 else T.DANGER),
+        _metric("Account Value", f"${account_value:,.2f}", T.TEXT_PRIMARY,
+                sub=f"Cash ${cash_bal:,.0f}  +  Positions {_sd(market_value)}", big=True),
+        _metric("Cash", f"${cash_bal:,.2f}",
+                T.SUCCESS if cash_bal >= 0 else T.DANGER,
+                sub="available to deploy"),
+        _metric("Positions", _sd(market_value), _c(market_value),
+                sub=f"{n_open} open · live mark"),
+        _metric("Total P&L", _sd(total_pnl), _c(total_pnl),
+                sub=f"{'+' if ytd_return >= 0 else ''}{ytd_return:.1f}% vs start", big=True),
     ], style={"display": "flex", "gap": "10px", "flexWrap": "wrap"})
 
+    # Row 2 — P&L breakdown + activity.
     row2 = html.Div([
-        _metric("Open Trades",   str(n_open)),
-        _metric("Market Value",  mkt_val_str,
-                T.SUCCESS if market_value > 0 else T.DANGER if market_value < 0 else T.TEXT_MUTED),
-        _metric("Today's P&L",  f"{'+'if today_pnl>=0 else ''}${today_pnl:,.2f}",
-                T.SUCCESS if today_pnl > 0 else T.DANGER if today_pnl < 0 else T.TEXT_MUTED),
-        _metric("Unrealized P&L", f"{'+'if unrealized_pnl>=0 else ''}${unrealized_pnl:,.2f}",
-                T.SUCCESS if unrealized_pnl > 0 else T.DANGER if unrealized_pnl < 0 else T.TEXT_MUTED),
-        _metric("Realized P&L", f"{'+'if total_closed>=0 else ''}${total_closed:,.2f}",
-                T.SUCCESS if total_closed >= 0 else T.DANGER),
-        _metric("Win Rate",     win_rate_str, win_rate_color),
-        _metric("YTD Return",   f"{'+'if ytd_return>=0 else ''}{ytd_return:.1f}%",
-                T.SUCCESS if ytd_return >= 0 else T.DANGER),
+        _metric("Unrealized P&L", _sd(unrealized_pnl), _c(unrealized_pnl), sub="open positions"),
+        _metric("Realized P&L",   _sd(total_closed),   _c(total_closed),   sub="closed trades"),
+        _metric("Today's P&L",    _sd(today_pnl),      _c(today_pnl),      sub="realized today"),
+        _metric("Open Positions", str(n_open)),
+        _metric("Win Rate",       win_rate_str, win_rate_color,
+                sub=f"{n_wins}/{n_closed} closed" if n_closed else "no closed trades"),
     ], style={"display": "flex", "gap": "10px", "flexWrap": "wrap"})
 
-    metrics = html.Div([row1, row2], style={"display": "flex", "flexDirection": "column", "gap": "10px"})
+    # Row 3 — portfolio dollar Greeks (open positions only), always visible.
+    greeks_row = html.Div()
+    try:
+        if open_groups:
+            open_txns = pd.concat(open_groups.values(), ignore_index=True)
+            gmx = _compute_risk_matrix(open_txns)
+            if gmx and gmx.get("ref_spots"):
+                greeks_row = _greeks_summary_row(gmx)
+    except Exception:
+        greeks_row = html.Div()
+
+    metrics = html.Div([row1, row2, greeks_row],
+                       style={"display": "flex", "flexDirection": "column", "gap": "10px"})
 
     # ── Closed positions ──────────────────────────────────────────────────────
     closed_data = []
@@ -259,7 +289,7 @@ def refresh_all(_n, _btn):
                 "textTransform": "uppercase", "letterSpacing": "0.07em",
                 "marginBottom": "8px",
             }),
-            dcc.Graph(figure=fig_bar, config={"displayModeBar": False}),
+            dcc.Graph(figure=fig_bar, config=_GRAPH_CFG),
         ]), style={**T.STYLE_CARD})
 
     # ── All transactions ──────────────────────────────────────────────────────
@@ -293,9 +323,9 @@ def refresh_all(_n, _btn):
 
     # ── Performance chart (closed P&L) ───────────────────────────────────────
     perf_chart = _build_perf_chart(closed_rows)
-
-    # ── Equity curve from Balance table ──────────────────────────────────────
-    equity_curve = _build_equity_curve()
+    # NOTE: the equity curve has its own callback (render_equity_curve) so it can
+    # be range-driven and only recompute on the Performance tab — it pulls daily
+    # historical prices and shouldn't run on the 60s background refresh.
 
     # ── Filter dropdown options from txns_data ────────────────────────────────
     def _opts(vals):
@@ -314,8 +344,32 @@ def refresh_all(_n, _btn):
     today_caption = f"{today_count} transaction(s) on {today_str}"
     total_caption = f"{total_count} total transaction(s)"
 
-    return (metrics, open_data, closed_data, closed_chart, txns_data, perf_chart, equity_curve,
+    return (metrics, open_data, closed_data, closed_chart, txns_data, perf_chart,
             type_opts, dir_opts, strat_opts, date_opts, today_caption, total_caption)
+
+
+# ── Equity curve — range-driven, computed only on the Performance tab ─────────
+# (pulls daily historical option/stock prices, so it must NOT run on the 60s
+# background refresh; tab + range + manual Refresh are the only triggers.)
+@callback(
+    Output("pt-equity-curve",  "children"),
+    Input("pt-perf-range",     "value"),
+    Input("pt-tabs",           "active_tab"),
+    Input("pt-refresh-btn",    "n_clicks"),
+)
+def render_equity_curve(range_key, active_tab, _btn):
+    if active_tab != "perf":
+        return no_update
+    _, _, txns_df = _load_data()
+    if txns_df.empty:
+        return _build_equity_curve(None)
+    days = {"1W": 7, "1M": 30, "3M": 90, "6M": 180, "1Y": 365}.get(range_key or "1M")
+    if days is None:   # "ALL"
+        start = pd.to_datetime(txns_df["BusinessDate"]).min().date()
+    else:
+        start = datetime.date.today() - datetime.timedelta(days=days)
+    df = mtm_equity_series(txns_df, start)
+    return _build_equity_curve(df)
 
 
 # ── Modal open: step 1 — open instantly + store tgid ─────────────────────────
@@ -410,7 +464,44 @@ def build_modal_body(tgid):
     else:
         body = _build_equity_modal_body(grp, underlying, strategy, open_date)
 
-    return body, title
+    # P&L summary header — since open + day-over-day (live marks; DoD vs prior close)
+    pnl_block = html.Div()
+    try:
+        pnl    = position_pnl(grp)
+        so, dd = pnl["since_open"], pnl["dod"]
+        so_pct = (so / abs(ne) * 100) if ne else None
+
+        def _pcard(lbl, val, pct=None, sub=None):
+            col = T.SUCCESS if val > 0 else (T.DANGER if val < 0 else T.TEXT_MUTED)
+            kids = [
+                html.Div(lbl, style={"color": T.TEXT_MUTED, "fontSize": "10px",
+                                     "fontWeight": "600", "textTransform": "uppercase",
+                                     "letterSpacing": "0.06em", "marginBottom": "4px"}),
+                html.Div(f"{'+' if val >= 0 else '-'}${abs(val):,.2f}",
+                         style={"color": col, "fontSize": "1.3rem", "fontWeight": "700"}),
+            ]
+            tag = (f"{pct:+.1f}%" if pct is not None else sub) or ""
+            if tag:
+                kids.append(html.Div(tag, style={"color": col if pct is not None else T.TEXT_MUTED,
+                                                 "fontSize": "11px", "marginTop": "2px"}))
+            return html.Div(kids, style={**T.STYLE_CARD, "flex": "1", "minWidth": "130px",
+                                         "padding": "10px 14px"})
+
+        live_tag = "live marks" if pnl.get("is_live") else "some legs at entry (no live quote)"
+        pnl_block = html.Div([
+            html.Div([
+                _pcard("P&L Since Open", so, so_pct),
+                _pcard("Day P&L (DoD)", dd, sub="vs prior close"),
+                _pcard("Market Value", pnl["value"], sub=live_tag),
+            ], style={"display": "flex", "gap": "10px", "flexWrap": "wrap",
+                      "marginBottom": "16px"}),
+        ])
+    except Exception:
+        pnl_block = html.Div()
+
+    # body may be a single component OR a list (e.g. the IC builder returns a
+    # list) — wrap it so we never nest a bare list inside the outer children.
+    return html.Div([pnl_block, html.Div(body)]), title
 
 
 # ── Modal dismiss button ──────────────────────────────────────────────────────
@@ -658,15 +749,36 @@ def execute_close(n_confirm, n_cancel, tgid, current_n):
     if not n_confirm or not tgid:
         return no_update, no_update, no_update
 
-    from engine.positions import insert_closing_transactions
+    from engine.positions import (insert_closing_transactions, fetch_option_prices,
+                                   fetch_stock_price)
+    from app import get_polygon_api_key
     _, _, txns_df = _load_data()
     if not txns_df.empty:
         grp = txns_df[txns_df["TradeGroupId"] == tgid].copy()
         if not grp.empty:
-            engine = _get_engine()
+            engine  = _get_engine()
+            api_key = get_polygon_api_key()
+            # Realize the close at LIVE marks (not entry), so realized P&L is real.
+            # Options via the chain snapshot; stock/ETF legs via yfinance. Any leg
+            # without a live quote falls back to its entry price inside the inserter.
+            live: dict = {}
+            try:
+                live = fetch_option_prices(api_key, grp) if api_key else {}
+            except Exception:
+                live = {}
+            try:
+                for _, r in grp.iterrows():
+                    st  = str(r.get("SecurityType", "")).lower()
+                    sym = str(r.get("Symbol", ""))
+                    if st and st not in ("option", "cash") and sym not in live:
+                        px = fetch_stock_price(api_key, str(r.get("Underlying") or sym))
+                        if px:
+                            live[sym] = {"price": float(px)}
+            except Exception:
+                pass
             insert_closing_transactions(
                 engine=engine, account_id=_ACCOUNT_ID,
-                open_grp=grp, live_opt={}, fallback_price=0.0,
+                open_grp=grp, live_opt=live, fallback_price=0.0,
             )
     return False, False, (current_n or 0) + 1
 
@@ -805,28 +917,73 @@ def populate_leg_pills(position_tgid, _leg_clicks, current_leg):
               "paddingLeft": "8px", "borderLeft": f"2px solid {T.BORDER_BRT}"}), new_leg
 
 
+def _greeks_summary_row(mx: dict, _greeks_title: str = "Portfolio Greeks ($)"):
+    """Dollar Greeks at the current spot (the no-shock middle column of the
+    scenario matrix), shown as headline cards. `_greeks_title` lets callers label
+    it for a single position instead of the whole portfolio."""
+    shocks = mx.get("shocks") or []
+    if not shocks:
+        return html.Div()
+    atm = len(shocks) // 2
+
+    def _g(k):
+        arr = mx.get(k) or []
+        return float(arr[atm]) if atm < len(arr) else 0.0
+
+    items = [
+        ("$ Delta", _g("delta"), "P&L per +1% move"),
+        ("$ Gamma", _g("gamma"), "extra P&L per +1% move"),
+        ("$ Vega",  _g("vega"),  "per +1 IV point"),
+        ("$ Theta", _g("theta"), "per day"),
+        ("$ Vanna", _g("vanna"), "Δvega per +1% move"),
+    ]
+    cards = []
+    for label, val, sub in items:
+        col = T.SUCCESS if val > 0 else (T.DANGER if val < 0 else T.TEXT_MUTED)
+        cards.append(html.Div([
+            html.Div(label, style={"color": T.TEXT_MUTED, "fontSize": "10px",
+                                   "fontWeight": "600", "textTransform": "uppercase",
+                                   "letterSpacing": "0.06em", "marginBottom": "4px"}),
+            html.Div(f"{'+' if val >= 0 else '-'}${abs(val):,.0f}",
+                     style={"color": col, "fontSize": "1.25rem", "fontWeight": "700"}),
+            html.Div(sub, style={"color": T.TEXT_MUTED, "fontSize": "10px", "marginTop": "2px"}),
+        ], style={**T.STYLE_CARD, "flex": "1", "minWidth": "120px", "padding": "10px 12px"}))
+
+    return html.Div([
+        html.Div(_greeks_title, style={
+            "color": T.TEXT_SEC, "fontSize": "11px", "fontWeight": "600",
+            "textTransform": "uppercase", "letterSpacing": "0.07em", "marginBottom": "8px"}),
+        html.Div(cards, style={"display": "flex", "gap": "10px", "flexWrap": "wrap"}),
+    ], style={"marginBottom": "16px"})
+
+
 @callback(
     Output("pt-risk-matrix",    "children"),
     Input("pt-risk-calc-btn",   "n_clicks"),
+    Input("pt-risk-position",   "data"),
+    Input("pt-risk-leg",        "data"),
     State("pt-risk-step",       "value"),
     State("pt-risk-vol-up",     "value"),
     State("pt-risk-vol-down",   "value"),
     State("pt-risk-iv-default", "value"),
     State("pt-risk-rate",       "value"),
-    State("pt-risk-position",   "data"),
-    State("pt-risk-leg",        "data"),
     prevent_initial_call=True,
 )
-def compute_risk(n_clicks, step, vol_up, vol_dn, iv_default, rate, position_filter, leg_filter):
-    if not n_clicks:
-        return no_update
+def compute_risk(n_clicks, position_filter, leg_filter, step, vol_up, vol_dn, iv_default, rate):
+    # Recomputes on Calculate AND whenever the selected position/leg changes, so
+    # clicking a pill immediately re-scopes the matrix (not just on Calculate).
     _, _, txns_df = _load_data()
     if txns_df.empty:
         return html.P("No transactions found.", style={"color": T.TEXT_MUTED, "padding": "20px"})
 
-    # Only open positions (no CLOSE notes)
-    if "Notes" in txns_df.columns:
-        txns_df = txns_df[~txns_df["Notes"].str.upper().str.contains("CLOSE", na=False)]
+    # Restrict to genuinely OPEN positions. Filtering out just the CLOSE legs would
+    # leave a closed group's *opening* legs behind and leak them into the risk —
+    # use the open-group set instead (excludes closed groups and cash entirely).
+    from engine.positions import get_open_trade_groups
+    open_groups = get_open_trade_groups(txns_df)
+    if not open_groups:
+        return html.P("No open positions.", style={"color": T.TEXT_MUTED, "padding": "20px"})
+    txns_df = pd.concat(open_groups.values(), ignore_index=True)
 
     # Filter to single position if requested
     if position_filter and position_filter != "__all__":
@@ -866,13 +1023,28 @@ def compute_risk(n_clicks, step, vol_up, vol_dn, iv_default, rate, position_filt
 
     if position_filter == "__all__":
         scope = "Portfolio"
-    elif leg_filter and leg_filter != "__all__":
-        scope = f"{position_filter}  ›  {leg_filter}"
     else:
-        scope = position_filter
+        g = open_groups.get(position_filter)
+        if g is not None and not g.empty:
+            und = (g["Underlying"].dropna().iloc[0]
+                   if "Underlying" in g.columns and not g["Underlying"].dropna().empty
+                   else g["Symbol"].iloc[0])
+            strat = _pretty_strategy(str(g["StrategyName"].iloc[0]))
+            try:
+                od = pd.to_datetime(g["BusinessDate"]).min().strftime("%Y-%m-%d")
+            except Exception:
+                od = ""
+            scope = f"{und} · {strat}" + (f"  ·  opened {od}" if od else "")
+        else:
+            scope = str(position_filter)
+        if leg_filter and leg_filter != "__all__":
+            scope += f"  ›  {leg_filter}"
+
     header = html.Div(
         scope,
         style={"color": T.TEXT_SEC, "fontSize": "13px", "fontWeight": "600", "marginBottom": "10px"},
     )
-    return dbc.Card(dbc.CardBody([header, _render_risk_table(mx)]),
+    greeks_title = "Portfolio Greeks ($)" if position_filter == "__all__" else "Position Greeks ($)"
+    return dbc.Card(dbc.CardBody([header, _greeks_summary_row(mx, greeks_title),
+                                  _render_risk_table(mx)]),
                     style={**T.STYLE_CARD})
