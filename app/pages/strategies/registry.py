@@ -12,6 +12,9 @@ from pathlib import Path
 # ── Strategy registry ─────────────────────────────────────────────────────────
 
 _STRATEGIES_RULES = [
+    # ── Validated edge (real 20y out-of-sample, through 2008/2020/2022) ──
+    {"label": "200-Day Trend (SPY)",   "value": "trend_following"},
+    {"label": "12-Month Momentum (SPY)", "value": "ts_momentum"},
     {"label": "Iron Condor (Rules)",   "value": "iron_condor_rules"},
     {"label": "VIX Spike Fade",        "value": "vix_spike_fade"},
     {"label": "IVR Credit Spread",     "value": "ivr_credit_spread"},
@@ -60,9 +63,15 @@ _SLUG_TO_LABEL: dict[str, str] = {s["value"]: s["label"] for s in _STRATEGIES}
 #   avoid     : known broken — do not deploy until rewritten
 # Defaults to "reviewing" for any slug not in this map.
 _STRATEGY_STATUS: dict[str, str] = {
-    # Ready
+    # Ready — validated edge on real out-of-sample data
+    "trend_following":       "ready",
+    "ts_momentum":           "ready",
     "hmm_regime":            "ready",
-    "iron_condor_rules":     "ready",
+    # Iron condors: synthetic backtest looked great but REAL-price backtest
+    # (2024-26) lost -9.7% with negative Sharpe — no demonstrated edge. Do not
+    # deploy; kept for research/paper only.
+    "iron_condor_rules":     "avoid",
+    "iron_condor_ai":        "avoid",
     # Reviewed (B-grade)
     "vix_spike_fade":        "reviewed",
     "fomc_event_straddle":   "reviewed",
@@ -171,3 +180,83 @@ _UNIVERSE_OPTIONS = [{"label": k, "value": k} for k in _UNIVERSE_TICKERS] + [
 # ── Guide articles directory ──────────────────────────────────────────────────
 # This file lives at app/pages/strategies/registry.py; guides at app/guide_articles/
 _GUIDE_DIR = Path(__file__).parent.parent.parent / "guide_articles"
+
+
+# ── Screener filter param specs ───────────────────────────────────────────────
+
+_SCREENER_PARAMS: dict[str, list[dict]] = {
+    "iron_condor_rules": [
+        {"id": "ivr_min",    "label": "IVR min",    "min": 0.0, "max": 1.0,  "step": 0.05, "default": 0.20, "fmt": ".0%"},
+        {"id": "vix_min",    "label": "VIX min",    "min": 0.0, "max": 80.0, "step": 1.0,  "default": 14.0, "fmt": ".0f"},
+        {"id": "vix_max",    "label": "VIX max",    "min": 0.0, "max": 80.0, "step": 1.0,  "default": 45.0, "fmt": ".0f"},
+        {"id": "adx_max",    "label": "ADX max",    "min": 0.0, "max": 80.0, "step": 1.0,  "default": 35.0, "fmt": ".0f"},
+        {"id": "atr_pct_max","label": "ATR% max",   "min": 0.0, "max": 0.10, "step": 0.005,"default": 0.030,"fmt": ".1%"},
+    ],
+    "iron_condor_ai": [
+        {"id": "ivr_min",    "label": "IVR min",    "min": 0.0, "max": 1.0,  "step": 0.05, "default": 0.20, "fmt": ".0%"},
+        {"id": "vix_min",    "label": "VIX min",    "min": 0.0, "max": 80.0, "step": 1.0,  "default": 14.0, "fmt": ".0f"},
+        {"id": "vix_max",    "label": "VIX max",    "min": 0.0, "max": 80.0, "step": 1.0,  "default": 45.0, "fmt": ".0f"},
+        {"id": "adx_max",    "label": "ADX max",    "min": 0.0, "max": 80.0, "step": 1.0,  "default": 35.0, "fmt": ".0f"},
+        {"id": "atr_pct_max","label": "ATR% max",   "min": 0.0, "max": 0.10, "step": 0.005,"default": 0.030,"fmt": ".1%"},
+    ],
+    "vix_spike_fade": [
+        {"id": "vix_spike_ratio","label": "VIX spike ratio","min": 1.0,"max": 3.0,"step": 0.1,"default": 1.20,"fmt": ".1f"},
+        {"id": "vix_max",        "label": "VIX max",        "min": 0.0,"max": 80.0,"step": 1.0,"default": 45.0,"fmt": ".0f"},
+    ],
+    "ivr_credit_spread": [
+        {"id": "ivr_min",    "label": "IVR min",    "min": 0.0, "max": 1.0,  "step": 0.05, "default": 0.40, "fmt": ".0%"},
+        {"id": "vix_max",    "label": "VIX max",    "min": 0.0, "max": 80.0, "step": 1.0,  "default": 50.0, "fmt": ".0f"},
+    ],
+    "broken_wing_butterfly": [
+        {"id": "ivr_max",    "label": "IVR max",    "min": 0.0, "max": 1.0,  "step": 0.05, "default": 0.35, "fmt": ".0%"},
+        {"id": "adx_max",    "label": "ADX max",    "min": 0.0, "max": 80.0, "step": 1.0,  "default": 28.0, "fmt": ".0f"},
+        {"id": "vix_max",    "label": "VIX max",    "min": 0.0, "max": 80.0, "step": 1.0,  "default": 30.0, "fmt": ".0f"},
+    ],
+    "calendar_spread": [
+        {"id": "adx_max",           "label": "ADX max",        "min": 0.0, "max": 80.0, "step": 1.0,  "default": 22.0, "fmt": ".0f"},
+        {"id": "vix_min",           "label": "VIX min",        "min": 0.0, "max": 40.0, "step": 1.0,  "default": 14.0, "fmt": ".0f"},
+        {"id": "vix_max",           "label": "VIX max",        "min": 0.0, "max": 80.0, "step": 1.0,  "default": 25.0, "fmt": ".0f"},
+        {"id": "hv_iv_spread_min",  "label": "IV>HV spread",   "min": 0.0, "max": 0.20, "step": 0.01, "default": 0.03, "fmt": ".0%"},
+    ],
+    "earnings_straddle": [
+        {"id": "ivr_min",              "label": "IVR min",          "min": 0.0, "max": 1.0,  "step": 0.05, "default": 0.60, "fmt": ".0%"},
+        {"id": "atm_iv_min",           "label": "ATM IV min",       "min": 0.0, "max": 1.0,  "step": 0.05, "default": 0.40, "fmt": ".0%"},
+        {"id": "dte_to_earnings_min",  "label": "DTE to earn. min", "min": 1,   "max": 30,   "step": 1,    "default": 5,    "fmt": ".0f"},
+        {"id": "dte_to_earnings_max",  "label": "DTE to earn. max", "min": 1,   "max": 30,   "step": 1,    "default": 10,   "fmt": ".0f"},
+    ],
+    "wheel_strategy": [
+        {"id": "ivr_min",    "label": "IVR min",    "min": 0.0, "max": 1.0,  "step": 0.05, "default": 0.40, "fmt": ".0%"},
+        {"id": "adx_max",    "label": "ADX max",    "min": 0.0, "max": 80.0, "step": 1.0,  "default": 30.0, "fmt": ".0f"},
+        {"id": "vix_max",    "label": "VIX max",    "min": 0.0, "max": 80.0, "step": 1.0,  "default": 35.0, "fmt": ".0f"},
+    ],
+    "bull_put_spread": [
+        {"id": "ivr_min",    "label": "IVR min",    "min": 0.0, "max": 1.0,  "step": 0.05, "default": 0.40, "fmt": ".0%"},
+        {"id": "adx_max",    "label": "ADX max",    "min": 0.0, "max": 80.0, "step": 1.0,  "default": 30.0, "fmt": ".0f"},
+        {"id": "vix_max",    "label": "VIX max",    "min": 0.0, "max": 80.0, "step": 1.0,  "default": 35.0, "fmt": ".0f"},
+    ],
+    "hmm_regime": [
+        {"id": "vix_ceiling",           "label": "VIX ceiling",  "min": 20.0, "max": 60.0, "step": 1.0,  "default": 40.0, "fmt": ".0f"},
+        {"id": "regime_confidence_min", "label": "Min P(state)", "min": 0.40, "max": 0.90, "step": 0.05, "default": 0.55, "fmt": ".2f"},
+    ],
+    "expiry_max_pain": [
+        {"id": "vix_ceiling",   "label": "VIX ceiling", "min": 14.0, "max": 40.0, "step": 1.0,  "default": 25.0, "fmt": ".0f"},
+        {"id": "min_dist_pct",  "label": "Min spot–pin",  "min": 0.001, "max": 0.020, "step": 0.001, "default": 0.005, "fmt": ".1%"},
+        {"id": "max_dist_pct",  "label": "Max spot–pin",  "min": 0.010, "max": 0.060, "step": 0.005, "default": 0.035, "fmt": ".1%"},
+    ],
+    "short_squeeze_detector": [
+        {"id": "max_vix",          "label": "VIX max",         "min": 20.0, "max": 50.0, "step": 1.0,  "default": 32.0, "fmt": ".0f"},
+        {"id": "volume_ratio_min", "label": "Vol spike min",   "min": 1.5,  "max": 5.0,  "step": 0.1,  "default": 2.5,  "fmt": ".1f"},
+        {"id": "signal_threshold", "label": "P(squeeze) min",  "min": 0.40, "max": 0.80, "step": 0.05, "default": 0.55, "fmt": ".2f"},
+    ],
+    "tail_risk_put_spread": [
+        {"id": "vix_max_at_entry", "label": "VIX max",       "min": 20.0, "max": 60.0, "step": 1.0,  "default": 35.0, "fmt": ".0f"},
+        {"id": "long_otm_pct",     "label": "Long leg OTM%", "min": 0.03, "max": 0.12, "step": 0.01, "default": 0.07, "fmt": ".0%"},
+        {"id": "short_otm_pct",    "label": "Short leg OTM%","min": 0.12, "max": 0.25, "step": 0.01, "default": 0.18, "fmt": ".0%"},
+        {"id": "dte_target",       "label": "Target DTE",    "min": 45,   "max": 120,  "step": 5,    "default": 75,   "fmt": ".0f"},
+    ],
+    "news_sentiment_nlp": [
+        {"id": "vix_max",                "label": "VIX max",      "min": 20.0, "max": 60.0, "step": 1.0,  "default": 35.0, "fmt": ".0f"},
+        {"id": "sentiment_z_threshold",  "label": "|z| min",      "min": 1.0,  "max": 3.5,  "step": 0.1,  "default": 2.0,  "fmt": ".1f"},
+        {"id": "signal_threshold",       "label": "Model P min",  "min": 0.45, "max": 0.80, "step": 0.05, "default": 0.55, "fmt": ".2f"},
+    ],
+}

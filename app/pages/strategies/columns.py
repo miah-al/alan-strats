@@ -1,7 +1,7 @@
 """
 app/pages/strategies/columns.py
 
-AG-Grid column definitions per strategy + the slug → columns map. No state,
+Grid column definitions per strategy + the slug → columns map. No state,
 no callbacks — pure dict literals built once at import time.
 """
 from __future__ import annotations
@@ -334,7 +334,20 @@ _NSN_COLS = [
     _col("Status",     width=260),
 ]
 
+# Trend / momentum timing strategies — scan a universe for who is currently
+# in an uptrend (BUY) vs cash (HOLD). No options columns.
+_TREND_COLS = [
+    _col("Ticker",    width=130, pinned="left"),
+    _col("Price",     width=120, numeric=True),
+    _col("Signal",    width=110),
+    _col("Reference", width=150),
+    _col("Strength %", width=130, numeric=True, sort="desc"),
+    _col("Status",    width=130),
+]
+
 _COLS_BY_SLUG: dict[str, list[dict]] = {
+    "trend_following":       _TREND_COLS,
+    "ts_momentum":           _TREND_COLS,
     "iron_condor_rules":     _IC_COLS,
     "iron_condor_ai":        _IC_COLS,
     "vix_spike_fade":        _VSF_COLS,
