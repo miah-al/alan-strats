@@ -22,9 +22,6 @@ BORDER_BRT   = "#374151"
 SIDEBAR_WIDTH = "220px"
 SIDEBAR_BG    = "#0c1120"
 
-# ── AG Grid theme ─────────────────────────────────────────────────────────────
-AGGRID_THEME = "ag-theme-quartz-dark"
-
 # ── Reusable inline style blocks ─────────────────────────────────────────────
 STYLE_CARD = {
     "backgroundColor": BG_CARD,

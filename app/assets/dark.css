@@ -15,43 +15,6 @@ body, html {
     background-color: #111827 !important;
 }
 
-/* ── AG Grid alpine-dark overrides ───────────────────────────────────────── */
-.ag-theme-quartz-dark {
-    --ag-background-color:            #111827;
-    --ag-foreground-color:            #f9fafb;
-    --ag-border-color:                #1f2937;
-    --ag-secondary-border-color:      #1f2937;
-    --ag-header-background-color:     #0a0e1a;
-    --ag-header-foreground-color:     #9ca3af;
-    --ag-odd-row-background-color:    #161d2e;
-    --ag-row-hover-color:             #1a2235;
-    --ag-selected-row-background-color: rgba(99,102,241,0.18);
-    --ag-range-selection-border-color: #6366f1;
-    --ag-input-focus-border-color:    #6366f1;
-    --ag-chip-background-color:       #1f2937;
-    --ag-row-border-color:            #1f2937;
-    --ag-secondary-foreground-color:  #9ca3af;
-    --ag-disabled-foreground-color:   #4b5563;
-    --ag-font-size:                   13px;
-    --ag-font-family:                 'Inter', sans-serif;
-}
-
-/* Clickable rows — pointer cursor */
-.ag-theme-quartz-dark .ag-row {
-    cursor: pointer;
-}
-
-/* Filter/sort icon colour fix */
-.ag-theme-quartz-dark .ag-icon {
-    color: #6b7280;
-}
-.ag-theme-quartz-dark .ag-header-cell-text {
-    color: #9ca3af;
-    font-size: 11px;
-    font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 0.06em;
-}
 
 /* ── dbc.NavLink active state ─────────────────────────────────────────────── */
 .nav-pills .nav-link.active {
@@ -63,42 +26,6 @@ body, html {
     color: #f9fafb !important;
 }
 
-/* ── AG Grid direct element overrides (theme-version-agnostic) ───────────── */
-.ag-root-wrapper,
-.ag-root,
-.ag-body-viewport,
-.ag-center-cols-viewport,
-.ag-floating-bottom,
-.ag-overlay {
-    background-color: #111827 !important;
-}
-.ag-row {
-    background-color: #111827 !important;
-    border-color: #1f2937 !important;
-    color: #f9fafb !important;
-}
-.ag-row-odd {
-    background-color: #161d2e !important;
-}
-.ag-row:hover, .ag-row-hover {
-    background-color: #1a2235 !important;
-}
-.ag-header {
-    background-color: #0a0e1a !important;
-    border-color: #1f2937 !important;
-}
-.ag-header-cell {
-    color: #9ca3af !important;
-}
-.ag-cell {
-    color: #f9fafb !important;
-    border-color: #1f2937 !important;
-}
-.ag-paging-panel {
-    background-color: #111827 !important;
-    color: #9ca3af !important;
-    border-color: #1f2937 !important;
-}
 
 /* ── Bootstrap Tabs — dark override ──────────────────────────────────────── */
 .nav-tabs {
@@ -502,26 +429,6 @@ blockquote {
     border-top: 1px solid #1f2937 !important;
 }
 
-/* ── IC screener: Chart button cell ──────────────────────────────────────── */
-.ag-theme-quartz-dark .ic-chart-btn .ag-cell-value {
-    display: inline-block;
-    padding: 3px 10px;
-    border-radius: 6px;
-    border: 1px solid #6366f1;
-    color: #6366f1 !important;
-    font-size: 12px;
-    font-weight: 600;
-    cursor: pointer;
-    white-space: nowrap;
-}
-.ag-theme-quartz-dark .ic-chart-btn:hover .ag-cell-value {
-    background-color: rgba(99,102,241,0.15);
-}
-
-/* ── P&L cell colors ─────────────────────────────────────────────────────── */
-.ag-theme-quartz-dark .cell-positive { color: #10b981 !important; }
-.ag-theme-quartz-dark .cell-negative { color: #ef4444 !important; }
-.ag-theme-quartz-dark .cell-neutral  { color: #9ca3af !important; }
 
 /* ── Plotly chart axis tick labels ───────────────────────────────────────── */
 .js-plotly-plot .plotly .xtick text,

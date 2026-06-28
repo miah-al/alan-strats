@@ -287,6 +287,119 @@ def _compute_risk_matrix(
     }
 
 
+def _is_expired(row) -> bool:
+    """True when an option leg's expiration date is strictly before today."""
+    try:
+        exp = str(row.get("Expiration") or "")[:10]
+        return bool(exp) and datetime.date.fromisoformat(exp) < datetime.date.today()
+    except Exception:
+        return False
+
+
+def _expiry_settle_spot(und: str, exp_date: "datetime.date", api_key, cache: dict) -> float | None:
+    """Underlying close on (or the nearest trading day on/before) the option's
+    expiration date — the basis for cash settlement. Falls back to the latest
+    live price when daily history is unavailable. Cached per (underlying, expiry)."""
+    key = (und, exp_date.isoformat())
+    if key in cache:
+        return cache[key]
+    spot = None
+    try:
+        from data.stock_data import yf_daily_bars
+        df = yf_daily_bars(und, n_days=30)
+        if df is not None and not df.empty:
+            d = df.copy()
+            d["date"] = pd.to_datetime(d["date"]).dt.date
+            on_or_before = d[d["date"] <= exp_date]
+            if not on_or_before.empty:
+                spot = float(on_or_before["close"].iloc[-1])
+    except Exception:
+        spot = None
+    if spot is None:
+        try:
+            from engine.positions import fetch_stock_price
+            spot = fetch_stock_price(api_key, und)
+        except Exception:
+            spot = None
+    cache[key] = spot
+    return spot
+
+
+def _expired_option_intrinsic(row, api_key, spot_cache: dict) -> float | None:
+    """Per-share intrinsic settlement value of an EXPIRED option leg, or None
+    when the leg isn't expired / can't be priced. Used in place of the entry-
+    price fallback so expired legs mark at true settlement value (incl. $0 when
+    they expire worthless), not at their original cost."""
+    if str(row.get("SecurityType") or "").lower() != "option" or not _is_expired(row):
+        return None
+    try:
+        exp_date = datetime.date.fromisoformat(str(row.get("Expiration"))[:10])
+        K = float(row.get("Strike"))
+    except Exception:
+        return None
+    und = str(row.get("Underlying") or row.get("Symbol") or "")
+    if not und:
+        return None
+    S = _expiry_settle_spot(und, exp_date, api_key, spot_cache)
+    if S is None or S <= 0:
+        return None
+    otype = str(row.get("OptionType") or "put").lower()
+    return max(S - K, 0.0) if otype == "call" else max(K - S, 0.0)
+
+
+def _expiry_payoff_pnl(grp: "pd.DataFrame", S: float) -> float:
+    """Total P&L of the position if the underlying settles at price `S` at
+    expiration: opening cashflow (credit +, debit −) plus the intrinsic
+    liquidation value of every leg. Long legs are assets (+), shorts are
+    liabilities (−) — the same convention as live_market_value()."""
+    ne  = _net_entry(grp)            # opening cashflow: SELL +, BUY −
+    liq = 0.0
+    for _, r in grp.iterrows():
+        st = str(r.get("SecurityType") or "").lower()
+        if st == "cash":
+            continue
+        liq_sign = 1.0 if str(r.get("Direction", "")).upper() == "BUY" else -1.0
+        qty  = abs(float(r.get("Quantity") or 0))
+        mult = float(r.get("Multiplier") or (100 if st == "option" else 1))
+        if st == "option":
+            K     = float(r.get("Strike") or 0)
+            otype = str(r.get("OptionType") or "put").lower()
+            val   = max(S - K, 0.0) if otype == "call" else max(K - S, 0.0)
+        else:
+            val = S                  # stock/ETF is worth S per share
+        liq += liq_sign * val * qty * mult
+    return ne + liq
+
+
+def position_risk(grp: "pd.DataFrame") -> float | None:
+    """Capital at risk = magnitude of the worst-case loss at expiration.
+
+    The expiry payoff is piecewise-linear with kinks only at the strikes, so the
+    worst case is found by scanning S at {0, each strike, a far point}. Returns
+    None when the loss is unbounded (e.g. a naked short call / short stock) so
+    callers can fall back to a cost basis.
+
+    This single scan is correct for BOTH credit positions (risk = wing width −
+    credit) and debit positions (risk = premium paid), so no credit/debit branch
+    is needed.
+    """
+    strikes: list[float] = []
+    if "Strike" in grp.columns:
+        strikes = sorted({float(k) for k in
+                          pd.to_numeric(grp["Strike"], errors="coerce").dropna() if k > 0})
+    far = max(strikes) * 3.0 if strikes else 0.0
+    pts = [0.0] + strikes + ([far] if far else [])
+    if not pts:
+        return None
+    min_pnl = min(_expiry_payoff_pnl(grp, S) for S in pts)
+    # Unbounded-upside check: if the payoff is still falling beyond `far`, the
+    # loss is open-ended (short call / short stock) → no defined risk basis.
+    if far and _expiry_payoff_pnl(grp, far * 2.0) < min(_expiry_payoff_pnl(grp, far), min_pnl) - 1e-6:
+        return None
+    risk = -min_pnl
+    return risk if risk > 1e-9 else None
+
+
 def live_market_value(open_groups: dict) -> tuple[float, bool, int, int]:
     """Live mark-to-market *liquidation* value of all open positions.
 
@@ -314,6 +427,7 @@ def live_market_value(open_groups: dict) -> tuple[float, bool, int, int]:
     mv = 0.0
     n_priced = 0
     n_total  = 0
+    settle_cache: dict = {}   # (underlying, expiry) → settlement spot
     for _tgid, grp in open_groups.items():
         live_opt: dict = {}
         if api_key:
@@ -337,6 +451,8 @@ def live_market_value(open_groups: dict) -> tuple[float, bool, int, int]:
             if stype == "option":
                 live = live_opt.get(sym, {})
                 cur  = live.get("price") if isinstance(live, dict) else None
+                if cur is None:   # expired legs have no live quote → settle at intrinsic
+                    cur = _expired_option_intrinsic(r, api_key, settle_cache)
             elif api_key:
                 und = str(r.get("Underlying") or sym)
                 if und not in spots:
@@ -558,6 +674,7 @@ def position_pnl(grp, api_key=None) -> dict:
     cur = prior = 0.0
     n = priced = 0
     stock_now: dict = {}
+    settle_cache: dict = {}   # (underlying, expiry) → settlement spot
     for _, r in grp.iterrows():
         st = str(r.get("SecurityType") or "").lower()
         if st == "cash":
@@ -579,9 +696,18 @@ def position_pnl(grp, api_key=None) -> dict:
                     stock_now[und] = None
             cur_px = stock_now[und]
 
+        # Expired option legs have no live quote — settle at intrinsic value
+        # (incl. $0 when worthless) rather than reverting to entry price.
+        expired_px = None
+        if st == "option" and (cur_px is None or float(cur_px) <= 0):
+            expired_px = _expired_option_intrinsic(r, api_key, settle_cache)
+
         n += 1
         if cur_px is not None and float(cur_px) > 0:
             priced += 1
+        elif expired_px is not None:
+            priced += 1
+            cur_px = expired_px
         else:
             cur_px = entry
         prior_px = _leg_prior_close(r, api_key)

@@ -70,7 +70,7 @@ def layout() -> html.Div:
                 ),
                 dcc.Loading(
                     clickable_mrt_grid(grid_id="pt-open-grid",
-                                       aggrid_cols=_OPEN_COLS, height=480),
+                                       col_defs=_OPEN_COLS, height=480),
                     type="circle", color=T.ACCENT),
             ]),
             dbc.Tab(label="Closed Positions", tab_id="closed", children=[

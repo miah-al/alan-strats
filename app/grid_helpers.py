@@ -1,5 +1,4 @@
-"""Shared Mantine React Table helpers — single source of truth for the app's
-post-AgGrid grid component.
+"""Shared Mantine React Table helpers — the single grid component for the app.
 
 Why this file exists
 --------------------
@@ -7,7 +6,7 @@ Why this file exists
 raises ImportedInsideCallbackError otherwise). To avoid duplicating that
 import + the long mrtProps boilerplate across paper_trading.py / strategies /
 tools / market, we centralise the wrapper here. Every page imports
-`from app.grid_helpers import mrt_grid, aggrid_cols_to_mrt`.
+`from app.grid_helpers import mrt_grid, col_defs_to_mrt`.
 """
 from __future__ import annotations
 
@@ -18,14 +17,14 @@ from dash_mantine_react_table import DashMantineReactTable as _MRT
 from app import theme as T
 
 
-def aggrid_cols_to_mrt(cols: list) -> list:
-    """Convert AgGrid columnDefs to dash-mantine-react-table column defs.
+def col_defs_to_mrt(cols: list) -> list:
+    """Convert `{field, headerName, type, hide}` column dicts to MRT column defs.
 
     Drops `width` / `minWidth` so MRT can flex columns to container width
     (no horizontal scroll). Numeric columns get right-aligned in body+head.
 
     Columns marked `hide: True` are skipped entirely — MRT has no `hide` prop, so
-    a hidden AG-Grid column would otherwise become a VISIBLE MRT column. That is
+    a hidden column would otherwise become a VISIBLE MRT column. That is
     fatal for columns whose value is a dict (e.g. `_chain`): React throws
     "Objects are not valid as a React child". The row `data` still carries those
     keys (data is independent of columns), so row-click callbacks that read
@@ -53,7 +52,7 @@ def mrt_grid(
     id: str | None = None,
     data: list | None = None,
     columns: list | None = None,
-    aggrid_cols: list | None = None,
+    col_defs: list | None = None,
     height: int = 400,
     enable_pagination: bool = True,
     page_size: int = 25,
@@ -65,14 +64,14 @@ def mrt_grid(
 
     Accepts EITHER:
       - `columns` (MRT-native column defs), OR
-      - `aggrid_cols` (legacy AgGrid columnDefs — will be converted in place).
+      - `col_defs` (legacy column dicts — will be converted in place).
 
     Returns a Dash component. Use `data` prop in callbacks (NOT `rowData`).
     """
     if columns is None:
-        if aggrid_cols is None:
-            raise ValueError("mrt_grid requires either `columns` or `aggrid_cols`")
-        columns = aggrid_cols_to_mrt(aggrid_cols)
+        if col_defs is None:
+            raise ValueError("mrt_grid requires either `columns` or `col_defs`")
+        columns = col_defs_to_mrt(col_defs)
 
     kwargs = {}
     if id is not None:
@@ -86,9 +85,11 @@ def mrt_grid(
             "enableGlobalFilter":    True,
             "enableSorting":         True,
             "enableDensityToggle":   True,
-            "enableColumnOrdering":  header_menu,
+            # Column reorder/drag intentionally off — not needed for these grids
+            # and it makes headers feel unstable. Sorting/filtering still work.
+            "enableColumnOrdering":  False,
             "enableColumnActions":   header_menu,
-            "enableColumnDragging":  header_menu,
+            "enableColumnDragging":  False,
             "enableColumnResizing":  True,
             "enablePagination":      bool(enable_pagination),
             "enableStickyHeader":    True,   # header pinned while body scrolls
@@ -145,7 +146,7 @@ def clickable_mrt_grid(
     grid_id: str,
     data: list | None = None,
     columns: list | None = None,
-    aggrid_cols: list | None = None,
+    col_defs: list | None = None,
     height: int = 400,
     enable_pagination: bool = True,
     page_size: int = 25,
@@ -154,7 +155,7 @@ def clickable_mrt_grid(
 
     Server-side pattern:
         # Layout:
-        clickable_mrt_grid(grid_id="my-grid", aggrid_cols=COLS, data=rows)
+        clickable_mrt_grid(grid_id="my-grid", col_defs=COLS, data=rows)
 
         # Callback:
         @callback(
@@ -179,7 +180,7 @@ def clickable_mrt_grid(
         id=grid_id,
         data=data,
         columns=columns,
-        aggrid_cols=aggrid_cols,
+        col_defs=col_defs,
         height=height,
         enable_pagination=enable_pagination,
         page_size=page_size,

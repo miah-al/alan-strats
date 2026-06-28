@@ -15,10 +15,10 @@ import logging
 from datetime import date, timedelta
 from pathlib import Path
 
-import dash_ag_grid as dag
 import dash_bootstrap_components as dbc
 import plotly.graph_objects as go
 from dash import html, dcc, callback, Input, Output, State, no_update
+from app.grid_helpers import mrt_grid
 
 from app import theme as T, get_polygon_api_key
 
@@ -70,75 +70,92 @@ for _btn, _st, _cap, _dt in _SYNC_BUTTONS:
     _register_sync_callback(_btn, _st, _cap, _dt)
 
 
+# ── Sync All — live per-step progress (Interval-driven, state in memory) ─────
+# ONE callback handles both triggers: the button seeds the run and starts the
+# interval; each interval tick runs the NEXT step and shows it live. The chain
+# state lives in a module-level dict (a round-tripped dcc.Store gave stale reads
+# across request threads → the chain stalled), and a lock serialises steps so
+# two never hit the DB at once. interval.disabled + msg have a single writer
+# (this callback); the per-step status spans are duplicates of the per-button
+# callbacks, hence allow_duplicate.
+import threading
+_SYNC_LOCK = threading.Lock()
+_SYNC_PROGRESS = {"active": False, "idx": 0, "ticker": "", "fd": "2020-01-01",
+                  "fr": [], "ok": 0}
+
+_SYNC_STATUS_OUTPUTS = [
+    Output(f"tools-dm-st-{s}", "children", allow_duplicate=True)
+    for s in _SYNC_ALL_STEPS
+]
+
+
+def _queued_badge():
+    return html.Span("Queued", style={"color": T.TEXT_MUTED, "fontSize": "12px"})
+
+
+def _sync_msg(text, done=False):
+    style = {"fontSize": "12px",
+             "color": T.SUCCESS if done else T.TEXT_MUTED,
+             "fontWeight": "600" if done else "400"}
+    return html.Span(text, style=style)
+
+
 @callback(
-    Output("tools-dm-st-price",    "children", allow_duplicate=True),
-    Output("tools-dm-st-news",     "children", allow_duplicate=True),
-    Output("tools-dm-st-divs",     "children", allow_duplicate=True),
-    Output("tools-dm-st-earnings", "children", allow_duplicate=True),
-    Output("tools-dm-st-treasury", "children", allow_duplicate=True),
-    Output("tools-dm-st-vix",      "children", allow_duplicate=True),
-    Output("tools-dm-st-macro",    "children", allow_duplicate=True),
-    Output("tools-dm-st-cpi",      "children", allow_duplicate=True),
-    Output("tools-dm-st-fomc",     "children", allow_duplicate=True),
-    Output("tools-dm-sync-all-state", "data"),
-    Input("tools-dm-sync-all",        "n_clicks"),
-    Input("tools-dm-sync-all-state",  "data"),
-    State("tools-dm-ticker",          "value"),
-    State("tools-dm-from-date",       "value"),
-    State("tools-dm-force-full",      "value"),
+    *_SYNC_STATUS_OUTPUTS,
+    Output("tools-dm-sync-all-tick", "disabled"),
+    Output("tools-dm-sync-all-msg",  "children"),
+    Input("tools-dm-sync-all",       "n_clicks"),
+    Input("tools-dm-sync-all-tick",  "n_intervals"),
+    State("tools-dm-ticker",         "value"),
+    State("tools-dm-from-date",      "value"),
+    State("tools-dm-force-full",     "value"),
     prevent_initial_call=True,
 )
-def _sync_all_progressive(n, state, ticker, from_date, force):
-    """Runs Sync All one step at a time so the UI shows progress.
-
-    Two triggers:
-      * Button click → seed state, show step 0 as "Running…", others as "Queued".
-      * Store change → execute state["idx"], mark it Done, advance to next.
-    """
+def _sync_all(n_clicks, _ticks, ticker, from_date, force):
     from dash import ctx
+    n_out = len(_SYNC_ALL_STEPS)
     trig = ctx.triggered_id
 
-    n_out = len(_SYNC_ALL_STEPS)
-
-    # ── Phase 1: button click — seed state & show queued/running banners ──
+    # ── Button click → seed run + start the interval ──────────────────────────
     if trig == "tools-dm-sync-all":
-        if not n:
-            return [no_update] * n_out + [no_update]
-        t  = (ticker or "").strip().upper()
-        fd = from_date or "2020-01-01"
-        fr = force or []
-        if not t:
-            # Ticker required for price/news/divs/earnings; free sources OK.
-            # Seed anyway — the per-step runner will surface the warning per step.
-            pass
-        out = [html.Span("Queued", style={"color": T.TEXT_MUTED})
-               for _ in range(n_out)]
+        if not n_clicks:
+            return [no_update] * n_out + [no_update, no_update]
+        _SYNC_PROGRESS.update(active=True, idx=0, ok=0,
+                              ticker=(ticker or "").strip().upper(),
+                              fd=from_date or "2020-01-01", fr=force or [])
+        out = [_queued_badge() for _ in range(n_out)]
         out[0] = _running_badge()
-        new_state = {"idx": 0, "ticker": t, "fd": fd, "fr": fr}
-        return out + [new_state]
+        return out + [False, _sync_msg(f"Syncing {_SYNC_ALL_STEPS[0]}… (1/{n_out})")]
 
-    # ── Phase 2: state change — execute the current step and advance ──
-    if not isinstance(state, dict) or "idx" not in state:
-        return [no_update] * n_out + [no_update]
-
-    idx = int(state["idx"])
-    if idx >= n_out:
-        return [no_update] * n_out + [None]     # finished — clear state
-
-    step_name = _SYNC_ALL_STEPS[idx]
-    status, _ = _run_sync(step_name, state.get("ticker", ""),
-                          state.get("fd", "2020-01-01"),
-                          state.get("fr", []))
-
-    out = [no_update] * n_out
-    out[idx] = status    # mark current step Done
-    next_idx = idx + 1
-    if next_idx < n_out:
-        out[next_idx] = _running_badge()
-        new_state = {**state, "idx": next_idx}
-    else:
-        new_state = None   # chain complete → stop re-triggering
-    return out + [new_state]
+    # ── Interval tick → run ONE step ──────────────────────────────────────────
+    if not _SYNC_PROGRESS["active"]:
+        return [no_update] * n_out + [True, no_update]
+    if not _SYNC_LOCK.acquire(blocking=False):
+        return [no_update] * n_out + [no_update, no_update]   # a step is running
+    try:
+        idx = _SYNC_PROGRESS["idx"]
+        if idx >= n_out:
+            _SYNC_PROGRESS["active"] = False
+            return [no_update] * n_out + [True,
+                    _sync_msg(f"✓ Sync All finished — {_SYNC_PROGRESS['ok']}/{n_out} sources OK.", done=True)]
+        try:
+            status, _ = _run_sync(_SYNC_ALL_STEPS[idx], _SYNC_PROGRESS["ticker"],
+                                  _SYNC_PROGRESS["fd"], _SYNC_PROGRESS["fr"])
+            _SYNC_PROGRESS["ok"] += 1
+        except Exception as e:
+            status = f"Error: {e}"
+        _SYNC_PROGRESS["idx"] = idx + 1
+        out = [no_update] * n_out
+        out[idx] = status
+        if idx + 1 < n_out:
+            out[idx + 1] = _running_badge()
+            return out + [False,
+                    _sync_msg(f"Syncing {_SYNC_ALL_STEPS[idx+1]}… ({idx+2}/{n_out})")]
+        _SYNC_PROGRESS["active"] = False
+        return out + [True,
+                _sync_msg(f"✓ Sync All finished — {_SYNC_PROGRESS['ok']}/{n_out} sources OK.", done=True)]
+    finally:
+        _SYNC_LOCK.release()
 
 
 @callback(
@@ -257,14 +274,10 @@ def _run_iv_scan(n, tickers_str, user_api_key):
         {"field": "Error",   "minWidth": 120, "flex": 2, "resizable": True, "sortable": True, "filter": True},
     ]
 
-    summary_grid = dag.AgGrid(
-        rowData=rows,
-        columnDefs=tbl_cols,
-        defaultColDef={"resizable": True},
-        className=T.AGGRID_THEME,
-        dashGridOptions={"suppressColumnVirtualisation": True},
-        style={"height": str(60 + len(rows) * 42) + "px", "width": "100%",
-               "marginBottom": "24px"},
+    summary_grid = html.Div(
+        mrt_grid(data=rows, col_defs=tbl_cols,
+                 height=60 + len(rows) * 42, enable_pagination=False),
+        style={"marginBottom": "24px"},
     )
 
     # ── IV vs HV bar chart ────────────────────────────────────────────────────
@@ -874,13 +887,10 @@ def _px_chain(n, ticker, expiration, contract_type, strike_range,
 
     chain_cols = [{"field": c, "resizable": True, "sortable": True, "filter": True,
                    "minWidth": 70, "flex": 1} for c in chain_display.columns]
-    chain_grid = dag.AgGrid(
-        rowData=chain_display.astype(str).to_dict("records"),
-        columnDefs=chain_cols,
-        defaultColDef={"resizable": True},
-        className=T.AGGRID_THEME,
-        dashGridOptions={"suppressColumnVirtualisation": True},
-        style={"height": "400px", "width": "100%"},
+    chain_grid = mrt_grid(
+        data=chain_display.astype(str).to_dict("records"),
+        col_defs=chain_cols,
+        height=400,
     )
 
     return html.Div([

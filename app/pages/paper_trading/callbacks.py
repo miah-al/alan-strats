@@ -21,7 +21,7 @@ from app.grid_helpers import mrt_grid
 from app.pages.paper_trading.data import (
     _ACCOUNT_ID, _pretty_strategy, _get_engine, _load_data, _net_entry,
     bs_val, _bs_full, _compute_risk_matrix, get_open_trade_groups_simple,
-    live_market_value, mtm_equity_series, position_pnl,
+    live_market_value, mtm_equity_series, position_pnl, position_risk,
 )
 from app.pages.paper_trading.builders import (
     _grid, _OPEN_COLS, _CLOSED_COLS, _TXNS_COLS,
@@ -95,7 +95,12 @@ def refresh_all(_n, _btn):
         levels = {a.get("level", "") for a in alerts_list}
         alert_str = "🔴" if "error" in levels else ("🟡" if "warning" in levels else "🟢")
 
-        pnl_pct = (upnl / abs(ne) * 100) if ne else None
+        # P&L % is return on capital at risk (max loss), not on the premium
+        # collected — otherwise every fully-won credit spread reads +100%.
+        # Falls back to cost basis for unbounded-risk / non-defined positions.
+        risk = position_risk(grp)
+        pnl_basis = risk if (risk and risk > 0) else (abs(ne) if ne else None)
+        pnl_pct = (upnl / pnl_basis * 100) if pnl_basis else None
         open_data.append({
             "Trade Group": str(tgid),
             "Underlying":  str(underlying),
@@ -469,7 +474,9 @@ def build_modal_body(tgid):
     try:
         pnl    = position_pnl(grp)
         so, dd = pnl["since_open"], pnl["dod"]
-        so_pct = (so / abs(ne) * 100) if ne else None
+        _risk  = position_risk(grp)
+        _basis = _risk if (_risk and _risk > 0) else (abs(ne) if ne else None)
+        so_pct = (so / _basis * 100) if _basis else None
 
         def _pcard(lbl, val, pct=None, sub=None):
             col = T.SUCCESS if val > 0 else (T.DANGER if val < 0 else T.TEXT_MUTED)
@@ -717,7 +724,7 @@ def open_close_confirm(n_clicks, tgid):
         })
 
     table = mrt_grid(
-        aggrid_cols=[
+        col_defs=[
             {"field": "Leg"},
             {"field": "Symbol"},
             {"field": "Dir"},

@@ -465,6 +465,120 @@ def insert_closing_transactions(
         return str(e)
 
 
+def settle_expired_legs(
+    engine,
+    account_id: int,
+    open_grp: pd.DataFrame,
+    settle_prices: dict,
+    business_date=None,
+) -> str | None:
+    """Settle an EXPIRED option position into the ledger at intrinsic value.
+
+    Inserts a reverse (closing) transaction for every non-cash leg, priced at
+    settle_prices[Symbol] — the per-share intrinsic value at expiration, which
+    MAY legitimately be 0.0 for legs that expired worthless. Unlike
+    insert_closing_transactions(), a 0.0 settlement is recorded as 0.0 and is
+    NOT silently replaced by the entry price (which would zero out realized P&L).
+
+    Rows are marked Source='Settle' with Notes containing 'CLOSE' so the group
+    is recognised as closed. Commission is 0 — expired options aren't traded to
+    close. business_date defaults to today; pass the expiration date to record
+    the close on the day it economically happened.
+    """
+    from sqlalchemy import text
+
+    bdate = business_date or datetime.date.today()
+    try:
+        with engine.begin() as conn:
+            for _, row in open_grp.iterrows():
+                if str(row.get("SecurityType", "")).lower() == "cash":
+                    continue
+                orig_dir  = str(row.get("Direction", "BUY")).upper()
+                close_dir = "SELL" if orig_dir == "BUY" else "BUY"
+                symbol    = str(row.get("Symbol", ""))
+                orig_tgid = str(row.get("TradeGroupId", ""))
+                price = settle_prices.get(symbol)
+                if price is None:                       # not provided → assume worthless
+                    price = 0.0
+                conn.execute(text("""
+                    INSERT INTO portfolio.[Transaction]
+                        (BusinessDate, AccountId, TradeGroupId, StrategyName, SecurityId,
+                         Direction, Quantity, TransactionPrice, Commission,
+                         LegType, Source, Notes)
+                    VALUES
+                        (:bdate, :aid, :tgid, :strat, :secid,
+                         :dir, :qty, :price, :comm,
+                         :legtype, :src, :notes)
+                """), {
+                    "bdate":   bdate,
+                    "aid":     account_id,
+                    "tgid":    orig_tgid,
+                    "strat":   row.get("StrategyName", ""),
+                    "secid":   int(row["SecurityId"]),
+                    "dir":     close_dir,
+                    "qty":     float(row.get("Quantity", 0) or 0),
+                    "price":   float(price),
+                    "comm":    0.0,
+                    "legtype": row.get("LegType", ""),
+                    "src":     "Settle",
+                    "notes":   f"CLOSE (expired settlement) of {orig_tgid[:30]}",
+                })
+        return None
+    except Exception as e:
+        return str(e)
+
+
+def insert_equity_paper_trade(
+    engine,
+    account_id: int,
+    ticker: str,
+    strategy_name: str,
+    shares: float = 100,
+    price: float = 0.0,
+    details: dict | None = None,
+) -> str | None:
+    """Insert a long-equity paper trade: BUY `shares` of `ticker` at `price`.
+
+    Used by the validated trend / momentum timing strategies (their 'trade' is
+    simply owning the index). Creates a Stock security with Multiplier=1 (NOT the
+    100 default, which would 100× the P&L). Returns None on success, else error.
+    """
+    import json
+    import uuid
+    from sqlalchemy import text
+
+    today = datetime.date.today()
+    tgid  = f"{ticker[:4].upper()}-{strategy_name[:6].upper()}-{uuid.uuid4().hex[:6].upper()}"
+    notes = json.dumps(details or {}, default=str)[:500]
+    try:
+        with engine.begin() as conn:
+            row = conn.execute(text(
+                "SELECT SecurityId FROM portfolio.Security "
+                "WHERE Symbol = :s AND SecurityType = 'Stock'"
+            ), {"s": ticker}).fetchone()
+            if row is None:
+                conn.execute(text(
+                    "INSERT INTO portfolio.Security (Symbol, Underlying, SecurityType, Multiplier) "
+                    "VALUES (:s, :s, 'Stock', 1)"
+                ), {"s": ticker})
+                row = conn.execute(text(
+                    "SELECT SecurityId FROM portfolio.Security "
+                    "WHERE Symbol = :s AND SecurityType = 'Stock'"
+                ), {"s": ticker}).fetchone()
+            sid = int(row[0])
+            conn.execute(text("""
+                INSERT INTO portfolio.[Transaction]
+                    (BusinessDate, AccountId, TradeGroupId, StrategyName, SecurityId,
+                     Direction, Quantity, TransactionPrice, Commission, LegType, Notes)
+                VALUES (:d, :aid, :tg, :strat, :sid,
+                        'Buy', :qty, :px, 0, 'Equity', :notes)
+            """), {"d": today, "aid": account_id, "tg": tgid, "strat": strategy_name,
+                   "sid": sid, "qty": float(shares), "px": float(price), "notes": notes})
+        return None
+    except Exception as e:
+        return str(e)
+
+
 def insert_open_ic_trade(
     engine,
     account_id: int,

@@ -13,13 +13,13 @@ from __future__ import annotations
 from datetime import date, timedelta
 from pathlib import Path
 
-import dash_ag_grid as dag
 import dash_bootstrap_components as dbc
 import plotly.graph_objects as go
 from dash import html, dcc, no_update
 
 from app import theme as T, get_polygon_api_key
 from app.ui import tokens as D, components as C
+from app.grid_helpers import mrt_grid
 
 # NOTE: models.layout()/course.layout() are imported lazily inside _models_tab /
 # _course_tab (verbatim from the original) to avoid any import-cycle surprises.
@@ -94,29 +94,39 @@ def _data_manager_tab() -> html.Div:
                            "width": "160px"},
                 ),
             ], style={"flex": "0 0 auto"}),
-            html.Div([
+            # Checkbox — a 38px-tall flex box (= input height). Row is bottom-
+            # aligned (alignItems:flex-end) so this lines up with the input boxes
+            # and the button regardless of label/box-model quirks.
+            html.Div(
                 dbc.Checklist(
                     options=[{"label": "Force full re-sync", "value": "force"}],
                     value=[],
                     id="tools-dm-force-full",
                     style={"color": T.TEXT_SEC, "fontSize": "12px"},
-                    switch=True,
+                    inputStyle={"marginRight": "6px", "marginTop": "0",
+                                "accentColor": T.ACCENT},
+                    labelStyle={"display": "flex", "alignItems": "center",
+                                "marginBottom": "0"},
                 ),
-            ], style={"flex": "0 0 auto", "alignSelf": "flex-end", "paddingBottom": "4px"}),
-            html.Div([
-                dbc.Button(
-                    "Sync All (excl. Options)",
-                    id="tools-dm-sync-all",
-                    color="primary",
-                    size="sm",
-                    style={"fontSize": "12px"},
-                ),
-            ], style={"flex": "0 0 auto", "alignSelf": "flex-end", "paddingBottom": "4px"}),
-        ], style={"display": "flex", "gap": "16px", "marginBottom": "20px",
-                  "flexWrap": "wrap", "alignItems": "flex-start"}),
+                style={"flex": "0 0 auto", "height": "38px",
+                       "display": "flex", "alignItems": "center"},
+            ),
+            dbc.Button(
+                "Sync All (excl. Options)",
+                id="tools-dm-sync-all",
+                color="primary",
+                size="sm",
+                style={"flex": "0 0 auto", "fontSize": "12px", "height": "38px"},
+            ),
+        ], style={"display": "flex", "gap": "16px", "marginBottom": "12px",
+                  "flexWrap": "wrap", "alignItems": "flex-end"}),
 
-        # ── Sync All progress state (drives the progressive callback) ────────
-        dcc.Store(id="tools-dm-sync-all-state", data=None),
+        # Sync-All driver + live status line. The interval ticks the step chain;
+        # the message shows which step is running ("Syncing treasury… 5/9").
+        dcc.Interval(id="tools-dm-sync-all-tick", interval=600,
+                     disabled=True, n_intervals=0),
+        html.Div(id="tools-dm-sync-all-msg",
+                 style={"minHeight": "18px", "marginBottom": "4px"}),
 
         # ── Sync cards ────────────────────────────────────────────────────────
         dbc.Row([
@@ -824,14 +834,11 @@ def _registry_tab() -> html.Div:
         {"field": "ML",             "width": 60},
     ]
 
-    grid = dag.AgGrid(
-        rowData=rows,
-        columnDefs=col_defs,
-        dashGridOptions={"suppressColumnVirtualisation": True, "rowSelection": "single"},
-        defaultColDef={"resizable": True, "sortable": True, "filter": True},
-        className="ag-theme-quartz-dark",
-        style={"height": "480px"},
+    grid = mrt_grid(
         id="reg-grid",
+        data=rows,
+        col_defs=col_defs,
+        height=480,
     )
 
     detail_options = [

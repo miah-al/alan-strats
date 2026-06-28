@@ -150,7 +150,10 @@ def upsert_price_bars(engine: Engine, symbol: str, df: pd.DataFrame,
     with engine.begin() as conn:
         for i, row in enumerate(rows):
             result = conn.execute(sql, row)
-            inserted += result.rowcount
+            # IF NOT EXISTS…INSERT returns rowcount -1 for the skipped (already
+            # present) case; clamp so the "rows inserted" tally never goes
+            # negative (otherwise the Sync UI shows nonsense like "-404 rows").
+            inserted += max(result.rowcount, 0)
             if progress_cb and (i + 1) % 50 == 0:
                 progress_cb(i + 1, total, row.get("date"))
     if progress_cb:
@@ -454,7 +457,7 @@ def upsert_option_snapshots(engine: Engine, symbol: str,
     with engine.begin() as conn:
         for row in rows:
             result = conn.execute(sql, row)
-            inserted += result.rowcount
+            inserted += max(result.rowcount, 0)
     return inserted
 
 
@@ -526,7 +529,10 @@ def upsert_macro_bars(engine: Engine, df: pd.DataFrame, progress_cb=None) -> int
     with engine.begin() as conn:
         for i, row in enumerate(rows):
             result = conn.execute(sql, row)
-            inserted += result.rowcount
+            # IF NOT EXISTS…INSERT returns rowcount -1 for the skipped (already
+            # present) case; clamp so the "rows inserted" tally never goes
+            # negative (otherwise the Sync UI shows nonsense like "-404 rows").
+            inserted += max(result.rowcount, 0)
             if progress_cb and (i + 1) % 50 == 0:
                 progress_cb(i + 1, total, row.get("date"))
     if progress_cb:
@@ -603,7 +609,7 @@ def upsert_news(engine: Engine, symbol: str, df: pd.DataFrame,
     with engine.begin() as conn:
         for i, row in enumerate(rows):
             result = conn.execute(sql, row)
-            inserted += result.rowcount
+            inserted += max(result.rowcount, 0)
             if progress_cb and (i + 1) % 50 == 0:
                 progress_cb(i + 1, total)
     if progress_cb:
@@ -693,7 +699,10 @@ def upsert_vix_bars(engine: Engine, df: pd.DataFrame, progress_cb=None) -> int:
     with engine.begin() as conn:
         for i, row in enumerate(rows):
             result = conn.execute(sql, row)
-            inserted += result.rowcount
+            # IF NOT EXISTS…INSERT returns rowcount -1 for the skipped (already
+            # present) case; clamp so the "rows inserted" tally never goes
+            # negative (otherwise the Sync UI shows nonsense like "-404 rows").
+            inserted += max(result.rowcount, 0)
             if progress_cb and (i + 1) % 50 == 0:
                 progress_cb(i + 1, total, row.get("date"))
     if progress_cb:

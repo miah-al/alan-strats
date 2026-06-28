@@ -82,7 +82,13 @@ def section(title: str, children, subtitle: str | None = None,
                "borderBottom": f"1px solid {D.COLOR.border}",
                "paddingBottom": D.SPACE_2, "marginBottom": D.SPACE_3},
     )
-    return html.Div([header, children], className="ui-card",
+    # Flatten `children` into the top-level array. If a caller passes a LIST,
+    # `html.Div([header, children])` nests it one level deep
+    # (children=[header, [..]]); this dash-renderer build does not recursively
+    # convert component dicts inside a nested child array, so React receives raw
+    # {props,type,namespace} objects → "Objects are not valid as a React child".
+    body = list(children) if isinstance(children, (list, tuple)) else [children]
+    return html.Div([header, *body], className="ui-card",
                     style={**D.CARD, "marginBottom": D.SPACE_4})
 
 

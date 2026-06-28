@@ -64,7 +64,7 @@ body::before {
 }
 
 /* Tabular numerals everywhere data lives → columns align, terminal feel */
-.ag-cell, .ag-header-cell, td, th, input,
+td, th, input,
 .guide-md td, .Select-value-label {
   font-variant-numeric: tabular-nums; font-feature-settings: "tnum";
 }
@@ -187,6 +187,21 @@ input[type="radio"],
   box-shadow: none !important;
 }
 
+/* Vertically center EVERY checkbox/radio box with its label text. Bootstrap
+   floats .form-check-input with a top margin, leaving the box above the label
+   baseline; un-float it and flex-center the row. Applies app-wide (block and
+   inline checklists). Switches (.form-switch) keep their Bootstrap toggle. */
+.form-check:not(.form-switch) {
+  display: flex; align-items: center; padding-left: 0; min-height: 0;
+}
+.form-check-inline:not(.form-switch) {
+  display: inline-flex; margin-right: 16px;
+}
+.form-check:not(.form-switch) .form-check-input {
+  float: none; margin: 0 6px 0 0 !important;
+}
+.form-check:not(.form-switch) .form-check-label { margin: 0; }
+
 /* dcc.Dropdown menu */
 .Select-menu-outer {
   background: var(--bg-elev) !important; border: 1px solid var(--border-brt) !important;
@@ -219,7 +234,7 @@ input[type="radio"],
 }
 
 /* ── Tables — dense, zebra, sticky gradient header, hover ──────────────── */
-.guide-md table, table:not(.ag-table) { font-size: 12.5px; }
+.guide-md table, table { font-size: 12.5px; }
 .guide-md thead th, table thead th {
   position: sticky; top: 0; z-index: 1;
   background: linear-gradient(180deg, var(--bg-raised), var(--bg-elev)) !important;
@@ -229,19 +244,6 @@ input[type="radio"],
 }
 .guide-md tbody tr, table tbody tr { transition: background var(--dur) var(--ease); }
 .guide-md tbody tr:hover td, table tbody tr:hover td { background: rgba(99,102,241,.06) !important; }
-
-/* ── AG-Grid — quant-terminal density ──────────────────────────────────── */
-.ag-theme-quartz-dark {
-  --ag-row-height: 34px; --ag-header-height: 38px; --ag-font-size: 12.5px;
-  border-radius: var(--r-md); overflow: hidden;
-}
-.ag-theme-quartz-dark .ag-header {
-  background: linear-gradient(180deg, var(--bg-raised), var(--bg-elev)) !important;
-  border-bottom: 1px solid var(--border-brt) !important;
-}
-.ag-theme-quartz-dark .ag-row { border-color: rgba(31,41,55,.6) !important; }
-.ag-theme-quartz-dark .ag-cell { font-variant-numeric: tabular-nums; }
-.ag-theme-quartz-dark .ag-row-hover { background: rgba(99,102,241,.07) !important; }
 
 /* ── Plotly modebar — hide until hover ─────────────────────────────────── */
 .modebar { opacity: 0 !important; transition: opacity var(--dur) var(--ease); }

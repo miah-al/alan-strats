@@ -2,7 +2,7 @@
 app/pages/tools/data.py -- pure data/logic helpers for the Tools hub.
 
 No Dash @callback functions live here. Pure helpers used by the tab builders and
-callbacks: AG-Grid column/metric/badge helpers, the sync runner, coverage and
+callbacks: grid column/metric helpers, the sync runner, coverage and
 validation table builders, the risk computation, the Polygon client helper and
 the Robinhood helpers, plus the sync-button registry constants.
 
@@ -15,13 +15,13 @@ import logging
 from datetime import date, timedelta
 from pathlib import Path
 
-import dash_ag_grid as dag
 import dash_bootstrap_components as dbc
 import plotly.graph_objects as go
 from dash import html, dcc, callback, Input, Output, State, no_update
 
 from app import theme as T, get_polygon_api_key
 from app.ui import tokens as D, components as C
+from app.grid_helpers import mrt_grid
 
 logger = logging.getLogger(__name__)
 
@@ -47,14 +47,6 @@ def _metric_card(label: str, value: str) -> html.Div:
     """KPI tile — delegates to the shared design-system metric card so every
     counter/metric tile in the app matches."""
     return C.metric_card(label, value)
-
-
-def _status_badge(txt: str, color: str) -> html.Span:
-    return html.Span(txt, style={
-        "backgroundColor": color, "color": D.COLOR.text,
-        "borderRadius": D.RADIUS_SM, "padding": "1px 7px",
-        "fontSize": D.TEXT_XS, "fontWeight": D.WEIGHT_MED,
-    })
 
 
 def _run_sync(data_type: str, ticker: str, from_date_str: str,
@@ -234,23 +226,16 @@ def _build_coverage_tables() -> html.Div:
             html.P("Per-ticker", style={"color": D.COLOR.text_muted,
                                         "fontSize": D.TEXT_SM,
                                         "marginBottom": D.SPACE_2}),
-            dag.AgGrid(
-                rowData=ticker_data,
-                columnDefs=ticker_cols,
-                defaultColDef={"resizable": True},
-                className=T.AGGRID_THEME,
-                style={"height": "260px", "width": "100%", "marginBottom": D.SPACE_4},
+            html.Div(
+                mrt_grid(data=ticker_data, col_defs=ticker_cols,
+                         height=260, enable_pagination=False),
+                style={"marginBottom": D.SPACE_4},
             ),
             html.P("Global datasets", style={"color": D.COLOR.text_muted,
                                              "fontSize": D.TEXT_SM,
                                              "marginBottom": D.SPACE_2}),
-            dag.AgGrid(
-                rowData=global_data,
-                columnDefs=global_cols,
-                defaultColDef={"resizable": True},
-                className=T.AGGRID_THEME,
-                style={"height": "230px", "width": "100%"},
-            ),
+            mrt_grid(data=global_data, col_defs=global_cols,
+                     height=230, enable_pagination=False),
         ])
 
     except Exception as e:
@@ -301,13 +286,10 @@ def _build_validation(val_ticker: str) -> html.Div:
             _col("To",   width=120),
             _col("Rows", width=100, numeric=True),
         ]
-        parts.append(dag.AgGrid(
-            rowData=cov_rows,
-            columnDefs=cov_cols,
-            defaultColDef={"resizable": True},
-            className=T.AGGRID_THEME,
-            style={"height": str(40 + len(cov_rows) * 40) + "px", "width": "100%",
-                   "marginTop": "12px"},
+        parts.append(html.Div(
+            mrt_grid(data=cov_rows, col_defs=cov_cols,
+                     height=40 + len(cov_rows) * 40, enable_pagination=False),
+            style={"marginTop": "12px"},
         ))
 
     return html.Div(parts)
@@ -362,16 +344,13 @@ def _px_error(msg: str) -> html.Div:
                      style={"fontSize": "13px", "marginTop": "8px"})
 
 
-def _px_df_grid(df, height: int = 300) -> dag.AgGrid:
-    """Render a DataFrame as an AG Grid."""
-    cols = [{"field": c, "resizable": True, "sortable": True, "filter": True,
-              "minWidth": 80, "flex": 1} for c in df.columns]
-    return dag.AgGrid(
-        rowData=df.astype(str).to_dict("records"),
-        columnDefs=cols,
-        defaultColDef={"resizable": True},
-        className=T.AGGRID_THEME,
-        style={"height": f"{height}px", "width": "100%"},
+def _px_df_grid(df, height: int = 300) -> "html.Div":
+    """Render a DataFrame as a Mantine table."""
+    cols = [{"field": c} for c in df.columns]
+    return mrt_grid(
+        data=df.astype(str).to_dict("records"),
+        col_defs=cols,
+        height=height,
     )
 
 

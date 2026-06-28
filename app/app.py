@@ -133,4 +133,10 @@ def render_page(pathname: str):
 
 # ── Entry point ───────────────────────────────────────────────────────────────
 if __name__ == "__main__":
-    app.run(debug=True, host="0.0.0.0", port=8051, threaded=True, use_reloader=False)
+    # use_reloader=True → editing any .py auto-restarts the server and (with
+    # debug=True) hot-refreshes the browser, so code changes show up without a
+    # manual restart. Set RELOAD=0 to disable if the watcher is noisy.
+    import os as _os
+    _reload = _os.environ.get("RELOAD", "1") != "0"
+    app.run(debug=True, host="0.0.0.0", port=8051, threaded=True,
+            use_reloader=_reload)

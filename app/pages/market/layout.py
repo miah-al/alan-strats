@@ -10,7 +10,6 @@ from __future__ import annotations
 
 from dash import html, dcc
 import dash_bootstrap_components as dbc
-import dash_ag_grid as dag
 
 from app import theme as T, get_polygon_api_key
 from app.ui import tokens as D, components as C

@@ -34,10 +34,15 @@ def sync_price_bars(
     to_date:   date = None,
     progress_cb: Callable[[str], None] = None,
 ) -> dict:
-    """Fetch daily OHLCV from Polygon and store in mkt.PriceBar."""
+    """Fetch daily OHLCV from yfinance and store in mkt.PriceBar.
+
+    yfinance is the canonical stock-data source. The Polygon stock aggregates
+    endpoint is rate-limited to 5/min on this plan and frequently returns 0 bars,
+    which silently left many universe tickers (QQQ/IWM/GLD/EEM…) with no history.
+    `api_key` is retained for signature/UI compatibility and is unused here.
+    """
     to_date = to_date or date.today()
     engine  = get_engine()
-    client  = PolygonClient(api_key=api_key)
 
     # Incremental: re-sync last date (delete + re-insert) then continue forward
     from sqlalchemy import text as _t
@@ -56,16 +61,21 @@ def sync_price_bars(
         return {"status": "up_to_date", "rows": 0}
 
     if progress_cb:
-        progress_cb(f"Fetching {symbol} price bars {from_date} -> {to_date}...")
+        progress_cb(f"Fetching {symbol} price bars {from_date} -> {to_date} (yfinance)...")
 
     try:
-        df = client.get_aggregates(symbol, str(from_date), str(to_date))
-        if df.empty:
+        from alan_trader.data.stock_data import yf_daily_bars
+        n_days = (date.today() - from_date).days + 5
+        df = yf_daily_bars(symbol, n_days=max(n_days, 30))
+        if df is not None and not df.empty:
+            df = df.copy()
+            df["date"] = pd.to_datetime(df["date"]).dt.date
+            df = df[(df["date"] >= from_date) & (df["date"] <= to_date)]
+        if df is None or df.empty:
             log_sync(engine, "PriceBar", to_date, 0, symbol)
             return {"status": "no_data", "rows": 0,
-                    "detail": f"Polygon returned 0 bars for {symbol} ({from_date} → {to_date})"}
+                    "detail": f"yfinance returned 0 bars for {symbol} ({from_date} → {to_date})"}
 
-        df = df.reset_index()  # date becomes a column
         if progress_cb:
             progress_cb(f"Fetched {len(df):,} rows — writing to database...")
 
@@ -730,7 +740,7 @@ def sync_dividends(
                    "pay_date": r.get("pay_date"), "declared": r.get("declaration_date"),
                    "record": r.get("record_date"), "cash": r.get("cash_amount"),
                    "dtype": r.get("dividend_type"), "freq": r.get("frequency")})
-            inserted += res.rowcount
+            inserted += max(res.rowcount, 0)
 
     if progress_cb:
         progress_cb(f"Done — {inserted} dividend rows inserted.")
@@ -802,7 +812,7 @@ def sync_earnings(
                    "net": inc.get("net_income_loss", {}).get("value"),
                    "eps": inc.get("basic_earnings_per_share", {}).get("value"),
                    "filed": r.get("filing_date")})
-            inserted += res.rowcount
+            inserted += max(res.rowcount, 0)
 
     if progress_cb:
         progress_cb(f"Done — {inserted} earnings rows inserted.")
@@ -916,7 +926,7 @@ def sync_eps_estimates(
                    "tid": tid, "period": period_str})
 
             if res.rowcount > 0:
-                updated += res.rowcount
+                updated += max(res.rowcount, 0)
             else:
                 # Row not in DB yet — insert with minimal fields. Set both
                 # AnnouncementDate and FiledDate to reportedDate as a best-effort
@@ -1000,7 +1010,7 @@ def sync_vix_futures(
                    "o": row.get("open"),  "h": row.get("high"),
                    "l": row.get("low"),   "c": row.get("close"),
                    "s": row.get("settle"),"v": row.get("volume")})
-            total_inserted += res.rowcount
+            total_inserted += max(res.rowcount, 0)
 
     log_sync(engine, "VixFuture", to_date, total_inserted)
     return {"status": "ok" if total_inserted else "no_data", "rows": total_inserted}
@@ -1037,7 +1047,7 @@ def sync_fomc_calendar(
                 IF NOT EXISTS (SELECT 1 FROM mkt.FomcCalendar WHERE MeetingDate=:d)
                 INSERT INTO mkt.FomcCalendar (MeetingDate, IsRateDecision) VALUES (:d, 1)
             """), {"d": d})
-            inserted += res.rowcount
+            inserted += max(res.rowcount, 0)
 
     log_sync(engine, "FomcCalendar", date.today(), inserted)
     if progress_cb:
@@ -1145,7 +1155,7 @@ def sync_treasury_bars(
                     (:date,:rate_3m,:rate_6m,:rate_1y,:rate_2y,:rate_5y,:rate_10y,:rate_30y,
                      :sofr,:spread_2s10s,:spread_3m10y)
             """), row)
-            inserted += res.rowcount
+            inserted += max(res.rowcount, 0)
             if progress_cb and (i + 1) % 50 == 0:
                 progress_cb(f"Inserting yield curve: {i+1:,}/{total:,} rows  •  {row['date']}")
 
@@ -1209,7 +1219,7 @@ def sync_cpi(
                         IF NOT EXISTS (SELECT 1 FROM mkt.CpiBar WHERE BarDate=:d AND SeriesId=:sid)
                         INSERT INTO mkt.CpiBar (BarDate, SeriesId, Value) VALUES (:d, :sid, :v)
                     """), {"d": row.bar_date, "sid": series_id, "v": row.value})
-                    total_inserted += res.rowcount
+                    total_inserted += max(res.rowcount, 0)
         except Exception as e:
             logger.warning(f"CPI sync {series_id}: {e}")
 

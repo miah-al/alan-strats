@@ -83,7 +83,6 @@ WEIGHT_HEAVY  = "800"
 
 # ── Layout constants (mirror app shell) ──────────────────────────────────────
 SIDEBAR_WIDTH = _T.SIDEBAR_WIDTH    # 220px
-AGGRID_THEME  = _T.AGGRID_THEME     # ag-theme-quartz-dark
 PAGE_PAD      = "24px 32px"
 
 

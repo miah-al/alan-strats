@@ -19,7 +19,6 @@ import pandas as pd
 import plotly.graph_objects as go
 from dash import html, dcc, callback, Input, Output, State, no_update, ALL, ctx
 import dash_bootstrap_components as dbc
-import dash_ag_grid as dag
 
 from app import theme as T, get_polygon_api_key
 from engine.screener import UNIVERSES

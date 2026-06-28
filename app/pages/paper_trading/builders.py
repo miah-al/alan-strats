@@ -101,9 +101,9 @@ def _grid(id: str, cols: list, height: int = 480):
     """Plain (non-clickable) Mantine-React-Table for the closed/txns blotters.
 
     The open-positions grid is built with grid_helpers.clickable_mrt_grid in
-    layout.py so its rows open the detail modal. AG-Grid is no longer used.
+    layout.py so its rows open the detail modal.
     """
-    return mrt_grid(id=id, aggrid_cols=cols, height=height, page_size=25)
+    return mrt_grid(id=id, col_defs=cols, height=height, page_size=25)
 
 
 # ── Payoff chart (matches Streamlit _plot_payoff) ─────────────────────────────
@@ -1293,7 +1293,7 @@ def _build_perf_chart(closed_rows: list[dict]):
         for i, s in enumerate(strat_names)
     ]
     summary_grid = mrt_grid(
-        aggrid_cols=[
+        col_defs=[
             {"field": "Strategy"},
             {"field": "# Trades",  "type": "numericColumn"},
             {"field": "Win Rate"},

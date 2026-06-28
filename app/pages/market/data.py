@@ -19,7 +19,6 @@ import pandas as pd
 import plotly.graph_objects as go
 from dash import html, dcc, no_update
 import dash_bootstrap_components as dbc
-import dash_ag_grid as dag
 
 from app import theme as T, get_polygon_api_key
 from app.ui import tokens as D, components as C
@@ -918,7 +917,7 @@ def _bs_price(S: float, K: float, T: float, sigma: float, is_call: bool) -> floa
 
 
 def _build_chain_table(df: "pd.DataFrame", expiry: str, spot: float,
-                       moneyness: str = "all") -> "dag.AgGrid":
+                       moneyness: str = "all") -> "html.Div":
     """Returns an AG Grid in OMON style: calls left | strike centre | puts right.
 
     No live NBBO on this plan, so each side shows the delayed traded mark (Last)
@@ -976,69 +975,70 @@ def _build_chain_table(df: "pd.DataFrame", expiry: str, spot: float,
             "_itm_put":  k > spot,
         })
 
-    # ATM-based row style + ITM dimming
-    _atm_base  = "{'backgroundColor':'#0d2b1a','fontWeight':'700'}"
-    _dim_call  = "{'color':'#6b7280'}"   # OTM call (strike > spot) dimmed
-    _dim_put   = "{'color':'#6b7280'}"   # OTM put  (strike < spot) dimmed
-    _bright    = "{}"
+    # ── Render as a styled HTML table (OMON mirror) — no grid library ─────────
+    # Per-cell colouring is computed here in Python from the _atm/_itm flags:
+    #   ATM row  → green-tinted background, bold
+    #   ITM cell → bright; OTM cell → dimmed
+    DIM, BRIGHT, ATM_BG = "#6b7280", T.TEXT_PRIMARY, "#0d2b1a"
 
-    def _cs(field, itm_key):
-        return {"function":
-            f"params.data._atm ? {_atm_base} : "
-            f"(params.data.{itm_key} ? {_bright} : {_dim_call})"}
+    def _cell(value, row, itm_key):
+        st = {"padding": "2px 10px", "fontSize": "12px", "textAlign": "right",
+              "fontFamily": "JetBrains Mono, monospace", "whiteSpace": "nowrap"}
+        if row["_atm"]:
+            st.update({"backgroundColor": ATM_BG, "fontWeight": "700", "color": BRIGHT})
+        elif row[itm_key]:
+            st["color"] = BRIGHT
+        else:
+            st["color"] = DIM
+        return html.Td(value, style=st)
 
-    # Bloomberg mirror: Vol | IV | Last | Model  ·  STRIKE  ·  Model | Last | IV | Vol
-    # (no live NBBO on this plan — Last is the delayed mark, Model is Black-Scholes)
-    c_vol   = {"field": "c_vol",   "headerName": "Vol",   "width": 85,
-               "cellStyle": _cs("c_vol",   "_itm_call"),
-               "headerClass": "ag-right-aligned-header"}
-    c_iv    = {"field": "c_iv",    "headerName": "IV",    "width": 80,
-               "cellStyle": _cs("c_iv",    "_itm_call"),
-               "headerClass": "ag-right-aligned-header"}
-    c_last  = {"field": "c_last",  "headerName": "Last",  "width": 75,
-               "cellStyle": _cs("c_last",  "_itm_call"),
-               "headerClass": "ag-right-aligned-header"}
-    c_model = {"field": "c_model", "headerName": "Model", "width": 80,
-               "cellStyle": _cs("c_model", "_itm_call"),
-               "headerClass": "ag-right-aligned-header"}
-    strike_col = {"field": "strike", "headerName": "Strike", "width": 90,
-                  "cellStyle": {"function":
-                      "params.data._atm "
-                      "? {'backgroundColor':'#0d2b1a','fontWeight':'700','color':'#69f0ae','textAlign':'center'} "
-                      ": {'textAlign':'center','color':'#e0e0e0'}"}}
-    p_model = {"field": "p_model", "headerName": "Model", "width": 80,
-               "cellStyle": _cs("p_model", "_itm_put"),
-               "headerClass": "ag-right-aligned-header"}
-    p_last  = {"field": "p_last",  "headerName": "Last",  "width": 75,
-               "cellStyle": _cs("p_last",  "_itm_put"),
-               "headerClass": "ag-right-aligned-header"}
-    p_iv    = {"field": "p_iv",    "headerName": "IV",    "width": 80,
-               "cellStyle": _cs("p_iv",    "_itm_put"),
-               "headerClass": "ag-right-aligned-header"}
-    p_vol   = {"field": "p_vol",   "headerName": "Vol",   "width": 85,
-               "cellStyle": _cs("p_vol",   "_itm_put"),
-               "headerClass": "ag-right-aligned-header"}
+    def _strike_cell(row):
+        st = {"padding": "2px 10px", "fontSize": "12px", "textAlign": "center",
+              "fontFamily": "JetBrains Mono, monospace", "fontWeight": "700"}
+        if row["_atm"]:
+            st.update({"backgroundColor": ATM_BG, "color": "#69f0ae"})
+        else:
+            st["color"] = "#e0e0e0"
+        return html.Td(row["strike"], style=st)
 
-    # Column group headers (calls | strike | puts)
-    col_groups = [
-        {"headerName": "Calls", "headerClass": "calls-header",
-         "children": [c_vol, c_iv, c_last, c_model]},
-        {"headerName": "", "children": [strike_col]},
-        {"headerName": "Puts",  "headerClass": "puts-header",
-         "children": [p_model, p_last, p_iv, p_vol]},
-    ]
+    _grp = {"padding": "5px 8px", "fontSize": "11px", "fontWeight": "700",
+            "textTransform": "uppercase", "letterSpacing": "0.08em",
+            "textAlign": "center", "backgroundColor": T.BG_CARD,
+            "position": "sticky", "top": "0", "zIndex": "3"}
+    _sub = {"padding": "4px 10px", "fontSize": "10px", "fontWeight": "700",
+            "textTransform": "uppercase", "letterSpacing": "0.04em",
+            "color": T.TEXT_MUTED, "textAlign": "right",
+            "borderBottom": f"1px solid {T.BORDER}",
+            "backgroundColor": T.BG_CARD, "position": "sticky", "top": "26px", "zIndex": "3"}
 
-    return dag.AgGrid(
-        columnDefs=col_groups,
-        rowData=rows,
-        defaultColDef={"resizable": True, "sortable": False},
-        dashGridOptions={
-            "domLayout":        "normal",
-            "headerHeight":     28,
-            "groupHeaderHeight":24,
-            "rowHeight":        26,
-            "suppressMovableColumns": True,
-        },
-        className=T.AGGRID_THEME,
-        style={"width": "100%", "height": "520px"},
+    header = html.Thead([
+        html.Tr([
+            html.Th("Calls", colSpan=4, style={**_grp, "color": T.SUCCESS}),
+            html.Th("",      style=_grp),
+            html.Th("Puts",  colSpan=4, style={**_grp, "color": T.DANGER}),
+        ]),
+        html.Tr(
+            [html.Th(h, style=_sub) for h in ("Vol", "IV", "Last", "Model")]
+            + [html.Th("Strike", style={**_sub, "textAlign": "center"})]
+            + [html.Th(h, style=_sub) for h in ("Model", "Last", "IV", "Vol")]
+        ),
+    ])
+    body = html.Tbody([
+        html.Tr([
+            _cell(r["c_vol"],   r, "_itm_call"),
+            _cell(r["c_iv"],    r, "_itm_call"),
+            _cell(r["c_last"],  r, "_itm_call"),
+            _cell(r["c_model"], r, "_itm_call"),
+            _strike_cell(r),
+            _cell(r["p_model"], r, "_itm_put"),
+            _cell(r["p_last"],  r, "_itm_put"),
+            _cell(r["p_iv"],    r, "_itm_put"),
+            _cell(r["p_vol"],   r, "_itm_put"),
+        ]) for r in rows
+    ])
+    return html.Div(
+        html.Table([header, body],
+                   style={"width": "100%", "borderCollapse": "collapse"}),
+        style={"maxHeight": "520px", "overflowY": "auto", "width": "100%",
+               "border": f"1px solid {T.BORDER}", "borderRadius": "8px"},
     )
