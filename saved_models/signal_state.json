@@ -1,0 +1,10 @@
+{
+  "trend_following|SPY": {
+    "signal": "BUY",
+    "asof": "2026-06-25"
+  },
+  "ts_momentum|SPY": {
+    "signal": "BUY",
+    "asof": "2026-06-25"
+  }
+}
