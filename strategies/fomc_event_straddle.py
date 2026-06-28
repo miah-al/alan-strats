@@ -182,13 +182,7 @@ def _is_entry_day(ts, fomc_dates, days_before: int) -> Optional[pd.Timestamp]:
     return None
 
 
-def _compute_ivr(vix: pd.Series, window: int = 252) -> pd.Series:
-    """Rolling IV Rank from VIX 252-day range."""
-    roll_low  = vix.rolling(window, min_periods=_MIN_IVR_BARS).min()
-    roll_high = vix.rolling(window, min_periods=_MIN_IVR_BARS).max()
-    rng = roll_high - roll_low
-    ivr = (vix - roll_low) / rng.replace(0, np.nan)
-    return ivr.clip(0.0, 1.0)
+from strategies.indicators import compute_ivr as _compute_ivr
 
 
 # ─────────────────────────────────────────────────────────────────────────────

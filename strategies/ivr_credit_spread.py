@@ -110,19 +110,12 @@ def _find_strike_for_delta(S: float, T: float, r: float, sigma: float,
 _MIN_VALID_IVR_BARS = 126  # 6 months — below this the range is too narrow to rank reliably
 
 
-def _compute_ivr(vix: pd.Series, window: int = 252) -> pd.Series:
-    """
-    Rolling IV Rank: (current − 52w_low) / (52w_high − 52w_low).
-    Returns NaN until _MIN_VALID_IVR_BARS (126 bars ≈ 6 months) of history exist
-    (cold-start protection). A short min_periods would inflate IVR early because
-    a 30-day range is much narrower than the true 52-week range, making every bar
-    look relatively elevated.
-    """
-    roll_low  = vix.rolling(window, min_periods=_MIN_VALID_IVR_BARS).min()
-    roll_high = vix.rolling(window, min_periods=_MIN_VALID_IVR_BARS).max()
-    rng = roll_high - roll_low
-    ivr = (vix - roll_low) / rng.replace(0, np.nan)
-    return ivr.clip(0.0, 1.0)
+from strategies.indicators import compute_ivr
+
+
+def _compute_ivr(vix, window=252):
+    # ivr_credit_spread uses a 126-bar cold-start floor (vs the 60 default).
+    return compute_ivr(vix, window, min_periods=_MIN_VALID_IVR_BARS)
 
 
 # ─────────────────────────────────────────────────────────────────────────────

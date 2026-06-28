@@ -111,14 +111,7 @@ _SAVED_MODELS_DIR = Path(__file__).parent.parent / "saved_models"
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
 
-def _bs_price(S, K, T, r, sigma, option_type):
-    if T <= 0 or sigma <= 0 or S <= 0:
-        return max(0.0, (S - K) if option_type == "call" else (K - S))
-    d1 = (np.log(S / K) + (r + 0.5 * sigma ** 2) * T) / (sigma * np.sqrt(T))
-    d2 = d1 - sigma * np.sqrt(T)
-    if option_type == "call":
-        return float(S * norm.cdf(d1) - K * np.exp(-r * T) * norm.cdf(d2))
-    return float(K * np.exp(-r * T) * norm.cdf(-d2) - S * norm.cdf(-d1))
+from strategies.indicators import bs_price as _bs_price
 
 
 def _leg_price(S, K, T, r, atm_iv, option_type):

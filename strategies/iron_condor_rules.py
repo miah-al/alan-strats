@@ -87,6 +87,14 @@ _RISK_FREE_RATE  = 0.045   # 3-month T-Bill proxy
 _MIN_IVR_BARS    = 60      # minimum bars to compute a reliable IVR
 _MIN_TREND_BARS  = 20      # minimum bars for ATR / ADX trend filter
 
+# Per-leg cost in *contract* dollars: adverse fill (slippage) + commission,
+# charged on BOTH entry and exit. Mirrors iron_condor_ai so the two strategies
+# are compared on equal, realistic footing. A 4-leg condor pays 4×_LEG_COST per
+# side. NOTE: at $5.65/leg this is ~$45 round-trip per condor, which exceeds the
+# credit on low-priced underlyings (small credits) — i.e. those are NOT viable.
+_SLIPPAGE_PER_LEG   = 0.05   # per-share adverse fill per leg
+_LEG_COST           = _SLIPPAGE_PER_LEG * 100.0 + 0.65   # slippage×100 + commission
+
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
 
@@ -116,55 +124,18 @@ def _find_strike_for_delta(S: float, T: float, r: float, sigma: float,
         return S * np.exp(sign * sigma * np.sqrt(T))
 
 
-def _compute_ivr(vix: pd.Series, window: int = 252) -> pd.Series:
-    """Rolling IV Rank: (current − 52w_low) / (52w_high − 52w_low)."""
-    roll_low  = vix.rolling(window, min_periods=_MIN_IVR_BARS).min()
-    roll_high = vix.rolling(window, min_periods=_MIN_IVR_BARS).max()
-    rng = roll_high - roll_low
-    ivr = (vix - roll_low) / rng.replace(0, np.nan)
-    return ivr.clip(0.0, 1.0)
+from strategies.indicators import (
+    compute_ivr as _compute_ivr, compute_atr as _compute_atr, compute_adx,
+)
 
 
-def _compute_atr(high: pd.Series, low: pd.Series, close: pd.Series,
-                  period: int = 14) -> pd.Series:
-    """Average True Range — measures recent price volatility."""
-    prev_close = close.shift(1)
-    tr = pd.concat([
-        high - low,
-        (high - prev_close).abs(),
-        (low  - prev_close).abs(),
-    ], axis=1).max(axis=1)
-    return tr.rolling(period, min_periods=period // 2).mean()
+def _compute_adx(high, low, close, period=14):
+    # iron condors used a 0.0 warmup fill (vs the 20.0 default).
+    return compute_adx(high, low, close, period, warmup_fill=0.0)
 
 
-def _compute_adx(high: pd.Series, low: pd.Series, close: pd.Series,
-                  period: int = 14) -> pd.Series:
-    """
-    Average Directional Index — measures trend strength (not direction).
-    ADX < 20 = range-bound (good for iron condors)
-    ADX > 25 = trending (avoid iron condors)
-    """
-    prev_high  = high.shift(1)
-    prev_low   = low.shift(1)
-    prev_close = close.shift(1)
 
-    tr = pd.concat([
-        high - low,
-        (high - prev_close).abs(),
-        (low  - prev_close).abs(),
-    ], axis=1).max(axis=1)
 
-    dm_plus  = (high - prev_high).clip(lower=0.0)
-    dm_minus = (prev_low - low).clip(lower=0.0)
-    dm_plus  = dm_plus.where(dm_plus > dm_minus, 0.0)
-    dm_minus = dm_minus.where(dm_minus > dm_plus, 0.0)
-
-    atr   = tr.rolling(period, min_periods=period // 2).mean()
-    di_plus  = 100.0 * dm_plus.rolling(period, min_periods=period // 2).mean() / atr.replace(0, np.nan)
-    di_minus = 100.0 * dm_minus.rolling(period, min_periods=period // 2).mean() / atr.replace(0, np.nan)
-    dx = 100.0 * (di_plus - di_minus).abs() / (di_plus + di_minus).replace(0, np.nan)
-    adx = dx.rolling(period, min_periods=period // 2).mean()
-    return adx.fillna(0.0)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -482,7 +453,8 @@ class IronCondorRulesStrategy(BaseStrategy):
                 cur_cost = max((call_short_val - call_long_val) + (put_short_val - put_long_val), 0.0)
                 pnl_per  = trade["credit"] - cur_cost
                 pnl_tot  = pnl_per * trade["contracts"] * 100
-                close_comm = 4 * comm * trade["contracts"]
+                # Exit transaction cost: slippage + commission, 4 legs × contracts.
+                close_comm = 4 * _LEG_COST * trade["contracts"]
 
                 exit_reason = None
                 if pnl_per >= pt * trade["credit"]:
@@ -581,7 +553,8 @@ class IronCondorRulesStrategy(BaseStrategy):
                 # Margin model: 1 contract per trade, gated by free capital
                 contracts      = 1
                 margin_needed  = max_loss_per_contract   # = max loss for 1 contract
-                open_comm      = 4 * comm * contracts
+                # Entry transaction cost: slippage + commission, 4 legs × contracts.
+                open_comm      = 4 * _LEG_COST * contracts
 
                 if free_capital < margin_needed + open_comm:
                     continue   # not enough buying power — skip

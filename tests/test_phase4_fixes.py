@@ -409,12 +409,17 @@ class TestICAIFeaturePrep:
             f"vix_level NaN should fill to 20.0, got {row['vix_level'].iloc[0]}"
         )
 
-    def test_realized_vol_not_zero_filled(self):
+    def test_realized_vol_excluded_from_model_features(self):
+        """The 2026-05 leak audit removed realized_vol_20d from FEATURE_COLS: it was
+        both a model feature AND the basis for the label (look-ahead leakage).
+        _prepare_feat_row selects only FEATURE_COLS, so realized_vol_20d must NOT
+        appear in the prepared model-input row."""
         from strategies.iron_condor_ai import IronCondorAIStrategy
         s = IronCondorAIStrategy()
+        assert "realized_vol_20d" not in s.FEATURE_COLS
         df = pd.DataFrame({col: [np.nan] for col in s.FEATURE_COLS})
         row = s._prepare_feat_row(df)
-        assert row["realized_vol_20d"].iloc[0] == 0.15
+        assert "realized_vol_20d" not in row.columns
 
     def test_vix_ma_ratio_not_zero_filled(self):
         """vix_ma_ratio=0 is invalid (division issue). Should be 1.0."""

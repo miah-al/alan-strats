@@ -73,14 +73,7 @@ SECTOR_ETFS = ["XLK", "XLE", "XLF", "XLV", "XLI", "XLY", "XLP", "XLU", "XLRE", "
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
 
-def _bs_price(S, K, T, r, sigma, option_type):
-    if T <= 0 or sigma <= 0 or S <= 0:
-        return max(0.0, (S - K) if option_type == "call" else (K - S))
-    d1 = (np.log(S / K) + (r + 0.5 * sigma ** 2) * T) / (sigma * np.sqrt(T))
-    d2 = d1 - sigma * np.sqrt(T)
-    if option_type == "call":
-        return float(S * norm.cdf(d1) - K * np.exp(-r * T) * norm.cdf(d2))
-    return float(K * np.exp(-r * T) * norm.cdf(-d2) - S * norm.cdf(-d1))
+from strategies.indicators import bs_price as _bs_price, compute_adx as _compute_adx
 
 
 def _spread_credit(S, short_K, long_K, T, r, iv, spread_type):
@@ -89,16 +82,6 @@ def _spread_credit(S, short_K, long_K, T, r, iv, spread_type):
     return _bs_price(S, short_K, T, r, iv, "call") - _bs_price(S, long_K, T, r, iv, "call")
 
 
-def _compute_adx(high, low, close, period=14):
-    ph, pl, pc = high.shift(1), low.shift(1), close.shift(1)
-    tr  = pd.concat([high - low, (high - pc).abs(), (low - pc).abs()], axis=1).max(axis=1)
-    dmp = (high - ph).clip(lower=0.0).where((high - ph) > (pl - low), 0.0)
-    dmm = (pl - low).clip(lower=0.0).where((pl - low) > (high - ph), 0.0)
-    atr_s = tr.rolling(period, min_periods=period // 2).mean()
-    dip   = 100 * dmp.rolling(period, min_periods=period // 2).mean() / atr_s.replace(0, np.nan)
-    dim   = 100 * dmm.rolling(period, min_periods=period // 2).mean() / atr_s.replace(0, np.nan)
-    dx    = 100 * (dip - dim).abs() / (dip + dim).replace(0, np.nan)
-    return dx.rolling(period, min_periods=period // 2).mean().fillna(20.0)
 
 
 def _build_sector_features(

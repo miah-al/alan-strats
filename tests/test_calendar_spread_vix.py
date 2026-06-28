@@ -199,7 +199,12 @@ class TestVIXCalendarSpread:
 
     def test_vix_spike_close(self):
         """Open a trade in calm regime, then jump VIX above panic threshold."""
-        s = self.cls(max_concurrent=1, dte_back_target=60, dte_front_target=20)
+        # ATM strike: at the synthetic flat VIX=15 a 10%-OTM calendar's debit sits
+        # just under the $0.05 floor, so entries never open. ATM clears the floor
+        # so a trade actually opens — which is the precondition this test needs to
+        # exercise the VIX-spike panic-close path.
+        s = self.cls(max_concurrent=1, dte_back_target=60, dte_front_target=20,
+                     strike_otm_pct=0.0)
         # First 50 bars: calm contango → entry happens
         # Then jump VIX to 40 for several bars → panic close fires
         n = 200

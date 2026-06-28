@@ -131,15 +131,10 @@ _LEG_COST = DEFAULT_SLIPPAGE_PER_LEG * 100.0 + DEFAULT_COMMISSION_PER_LEG
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
 
-def _bs_price_flat(S, K, T, r, sigma, option_type):
-    """Flat-IV Black-Scholes — fallback when the engine's skew pricer is absent."""
-    if T <= 0 or sigma <= 0 or S <= 0:
-        return max(0.0, (S - K) if option_type == "call" else (K - S))
-    d1 = (np.log(S / K) + (r + 0.5 * sigma ** 2) * T) / (sigma * np.sqrt(T))
-    d2 = d1 - sigma * np.sqrt(T)
-    if option_type == "call":
-        return float(S * norm.cdf(d1) - K * np.exp(-r * T) * norm.cdf(d2))
-    return float(K * np.exp(-r * T) * norm.cdf(-d2) - S * norm.cdf(-d1))
+from strategies.indicators import (
+    bs_price as _bs_price_flat, compute_ivr as _compute_ivr,
+    compute_atr as _compute_atr, compute_adx as _compute_adx,
+)
 
 
 def _leg_price(S, K, T, r, iv, option_type):
@@ -177,33 +172,10 @@ def _find_strike_for_delta(S, T, r, sigma, target_delta, option_type):
         return S * np.exp(sign * sigma * np.sqrt(T))
 
 
-def _compute_ivr(vix: pd.Series, window: int = 252) -> pd.Series:
-    roll_low  = vix.rolling(window, min_periods=60).min()
-    roll_high = vix.rolling(window, min_periods=60).max()
-    rng = roll_high - roll_low
-    return ((vix - roll_low) / rng.replace(0, np.nan)).clip(0.0, 1.0)
 
 
-def _compute_atr(high, low, close, period=14):
-    prev_close = close.shift(1)
-    tr = pd.concat([high - low, (high - prev_close).abs(), (low - prev_close).abs()], axis=1).max(axis=1)
-    return tr.rolling(period, min_periods=period // 2).mean()
 
 
-def _compute_adx(high: pd.Series, low: pd.Series, close: pd.Series,
-                  period: int = 14) -> pd.Series:
-    """Average Directional Index — measures trend strength. Low ADX = range-bound."""
-    prev_high  = high.shift(1)
-    prev_low   = low.shift(1)
-    prev_close = close.shift(1)
-    tr = pd.concat([high - low, (high - prev_close).abs(), (low - prev_close).abs()], axis=1).max(axis=1)
-    plus_dm  = (high - prev_high).clip(lower=0).where((high - prev_high) > (prev_low - low), 0)
-    minus_dm = (prev_low - low).clip(lower=0).where((prev_low - low) > (high - prev_high), 0)
-    atr_s    = tr.rolling(period, min_periods=period // 2).mean()
-    plus_di  = 100 * plus_dm.rolling(period,  min_periods=period // 2).mean() / atr_s.replace(0, np.nan)
-    minus_di = 100 * minus_dm.rolling(period, min_periods=period // 2).mean() / atr_s.replace(0, np.nan)
-    dx       = (100 * (plus_di - minus_di).abs() / (plus_di + minus_di).replace(0, np.nan))
-    return dx.rolling(period, min_periods=period // 2).mean().fillna(20.0)
 
 
 def _build_feature_matrix(
@@ -384,7 +356,12 @@ class IronCondorAIStrategy(BaseStrategy):
         "days_to_month_end": 10,
     }
 
-    _CRITICAL_FEATURES = {"vix_level", "realized_vol_20d", "ivr"}
+    # Critical features must be a SUBSET of FEATURE_COLS — the 2026-05 audit
+    # removed realized_vol_20d from the model inputs, so referencing it here made
+    # _prepare_feat_row()[list(_CRITICAL_FEATURES)] raise KeyError on every live
+    # inference, silently forcing prob=0 / HOLD. adx (the audit's replacement
+    # range-bound discriminator) is the right critical input.
+    _CRITICAL_FEATURES = {"vix_level", "ivr", "adx"}
 
     @classmethod
     def _prepare_feat_row(cls, df_slice: "pd.DataFrame") -> "pd.DataFrame":

@@ -234,6 +234,67 @@ def _score_ic_rules(
 
 # ── Iron Condor AI — model helpers ────────────────────────────────────────────
 
+def _score_ic_ai(
+    ticker: str,
+    price_df: pd.DataFrame,
+    vix_series: pd.Series,
+    iv_metrics: dict,
+    params: dict,
+) -> Optional[dict]:
+    """AI iron-condor score.
+
+    Reuses _score_ic_rules for the displayed metric columns (IVR/VIX/ADX/ATR),
+    then OVERRIDES the Score and gate with the gradient-boosting model's
+    P(range-bound). The feature row is built with the strategy's OWN
+    _build_feature_matrix and scored via its generate_signal(), so screener
+    features are guaranteed identical to what the model was trained on — no
+    separate feature list to drift out of sync. When no trained model exists
+    the strategy's heuristic fallback is used and flagged via _ai_mode.
+    """
+    base = _score_ic_rules(ticker, price_df, vix_series, iv_metrics, params)
+    if base is None:
+        return None
+    try:
+        from strategies.iron_condor_ai import IronCondorAIStrategy, _build_feature_matrix
+
+        idx   = pd.to_datetime(price_df.index)
+        close = pd.Series(price_df["close"].astype(float).values, index=idx)
+        high  = pd.Series(price_df.get("high", price_df["close"]).astype(float).values, index=idx)
+        low   = pd.Series(price_df.get("low",  price_df["close"]).astype(float).values, index=idx)
+
+        if vix_series is not None and not vix_series.empty:
+            vix_al = (pd.Series(vix_series.values, index=pd.to_datetime(vix_series.index))
+                        .reindex(idx).ffill().bfill())
+        else:
+            vix_al = pd.Series(20.0, index=idx)
+
+        feat_df = _build_feature_matrix(close, high, low, vix_al, None, None)
+
+        strat  = IronCondorAIStrategy()
+        loaded = strat.load_model(ticker) or strat.load_model("default")
+        snap   = {"vix": float(vix_al.iloc[-1]), "price": float(close.iloc[-1]),
+                  "features_df": feat_df}
+        sig    = strat.generate_signal(snap)
+
+        prob = float(sig.confidence)
+        mode = sig.metadata.get("mode", "model" if loaded else "heuristic")
+        ai_pass = (sig.signal == "SELL")
+
+        base["score"]         = round(prob * 100, 1)
+        base["all_pass"]      = bool(ai_pass)
+        base["n_pass"]        = 4 if ai_pass else (1 if prob > 0 else 0)
+        base["_ai_prob"]      = prob
+        base["_ai_mode"]      = mode
+        base["_ai_threshold"] = strat.signal_threshold
+    except Exception as e:
+        logger.warning(f"IC-AI score error for {ticker}: {e}")
+        base["_ai_mode"] = "error"
+        base["score"]    = 0.0
+        base["all_pass"] = False
+        base["n_pass"]   = 0
+    return base
+
+
 def _ic_ai_any_model_exists() -> bool:
     return _IC_AI_MODELS_DIR.exists() and any(_IC_AI_MODELS_DIR.glob("iron_condor_ai_*.pkl"))
 
@@ -878,22 +939,43 @@ def _score_generic(
 # ── Polygon helpers ────────────────────────────────────────────────────────────
 
 def _fetch_ohlcv(ticker: str, api_key: str, bars: int = 60) -> pd.DataFrame:
-    from data.polygon_client import PolygonClient
-    to_dt   = date.today().isoformat()
-    from_dt = (date.today() - timedelta(days=bars * 2)).isoformat()
+    """Daily OHLCV bars for a stock/ETF via yfinance (free, no per-minute cap).
+
+    Per the data architecture, ALL stock data comes from yfinance — the Polygon
+    stock endpoint is rate-limited to 5/min and silently starves larger universe
+    scans. Returns a DataFrame indexed by date with open/high/low/close/volume/
+    vwap columns (matching the prior Polygon shape). `api_key` is kept for
+    signature compatibility and is unused.
+    """
     try:
-        df = PolygonClient(api_key=api_key).get_aggregates(ticker, from_dt, to_dt)
-        return df.tail(bars) if not df.empty else pd.DataFrame()
+        from data.stock_data import yf_daily_bars
+        df = yf_daily_bars(ticker, n_days=bars)
+        if df is None or df.empty:
+            return pd.DataFrame()
+        df = df.copy()
+        df["date"] = pd.to_datetime(df["date"])
+        df = df.set_index("date").sort_index()
+        keep = [c for c in ("open", "high", "low", "close", "volume", "vwap") if c in df.columns]
+        return df[keep].tail(bars)
     except Exception as e:
-        logger.warning(f"Polygon OHLCV failed for {ticker}: {e}")
+        logger.warning(f"yfinance OHLCV failed for {ticker}: {e}")
         return pd.DataFrame()
 
 
 # ── Options chain helpers ──────────────────────────────────────────────────────
 
 def _get_options_chain(ticker: str, api_key: str, spot: float,
-                       dte_target: int = 45, dte_lo: int = 30, dte_hi: int = 60):
-    """Fetch options chain from Polygon. Returns (chain_df, best_exp, dte_used) or None."""
+                       dte_target: int = 45, dte_lo: int = 30, dte_hi: int = 60,
+                       strike_lo_pct: float = 0.85, strike_hi_pct: float = 1.15):
+    """Fetch options chain from Polygon. Returns (chain_df, best_exp, dte_used) or None.
+
+    The strike window defaults to spot×[0.85, 1.15]. The previous ±30% band
+    pulled ~900 contracts/expiry for index ETFs — so many that the paginated
+    snapshot fetch could exhaust before reaching the near-the-money strikes a
+    credit spread needs, leaving the chain truncated just above the money (e.g.
+    SPY capping at ~+1.6%). Credit-spread short strikes sit ~5-6% OTM with wings
+    ~10-11% out, so ±15% covers every leg with margin and far fewer contracts.
+    """
     from data.polygon_client import PolygonClient
     today  = date.today()
     exp_lo = (today + timedelta(days=dte_lo)).isoformat()
@@ -905,8 +987,8 @@ def _get_options_chain(ticker: str, api_key: str, spot: float,
             underlying=ticker,
             expiration_date_gte=exp_lo,
             expiration_date_lte=exp_hi,
-            strike_price_gte=spot * 0.70,
-            strike_price_lte=spot * 1.30,
+            strike_price_gte=spot * strike_lo_pct,
+            strike_price_lte=spot * strike_hi_pct,
         )
     except Exception as e:
         return None, None, None, str(e)
@@ -915,23 +997,77 @@ def _get_options_chain(ticker: str, api_key: str, spot: float,
         return None, None, None, "No options data returned from Polygon"
 
     chain = chain.dropna(subset=["strike", "dte"]).copy()
+    chain["dte"] = pd.to_numeric(chain["dte"], errors="coerce")
+
+    # Pick the best expiry, then RE-FETCH just that one expiration for a complete
+    # strike ladder. Two subtleties drive the selection:
+    #   1. Nearest-to-DTE-target alone is wrong — a far-dated WEEKLY (e.g. 43 DTE)
+    #      often lists only a thin ±2% band of strikes, far too narrow for a
+    #      ~16-delta condor with wings ~10% OTM. The standard MONTHLY (3rd Friday)
+    #      a bit further out carries the deep ladder. So prefer expiries whose
+    #      ladder already spans at least spot±10%, then pick nearest the target.
+    #   2. The single-expiration refetch guarantees full coverage even if the
+    #      ranged, paginated snapshot truncated a later-sorted expiry.
+    try:
+        _bid = pd.to_numeric(chain["bid"], errors="coerce")
+        _ask = pd.to_numeric(chain["ask"], errors="coerce")
+        chain["_quoted"] = (_bid > 0) & (_ask > 0)
+        g = chain.groupby("expiration")
+        exp_stats = pd.DataFrame({
+            "dte":  g["dte"].first(),
+            "kmin": g["strike"].min(),
+            "kmax": g["strike"].max(),
+            "nq":   g["_quoted"].sum(),   # # of legs with a real two-sided quote
+        })
+        # Prefer expiries that (a) span ≥ spot±10% (deep ladder, not a thin weekly)
+        # and (b) actually have two-sided quotes (liquidity), then nearest the DTE
+        # target. Falls back gracefully so a selection is always made.
+        wide = exp_stats[(exp_stats["kmin"] <= spot * 0.90) &
+                         (exp_stats["kmax"] >= spot * 1.10)]
+        pool = wide if not wide.empty else exp_stats
+        liquid = pool[pool["nq"] >= 4]
+        pool = liquid if not liquid.empty else pool
+        best_exp = (pool["dte"] - dte_target).abs().idxmin()
+        single = client.get_options_chain(
+            underlying=ticker,
+            expiration_date=best_exp,
+            strike_price_gte=spot * strike_lo_pct,
+            strike_price_lte=spot * strike_hi_pct,
+        )
+        if single is not None and not single.empty:
+            chain = single.dropna(subset=["strike", "dte"]).copy()
+    except Exception:
+        pass  # fall back to the ranged chain already fetched
+
     for col in ["strike", "dte", "iv", "bid", "ask", "delta"]:
         if col in chain.columns:
             chain[col] = pd.to_numeric(chain[col], errors="coerce")
-    chain["mid"] = (chain["bid"] + chain["ask"]) / 2
+    # Mid from the quoted market ONLY when there is a genuine two-sided market
+    # (bid>0 AND ask>0 AND ask>=bid). Illiquid far-OTM wings frequently quote
+    # bid=0 / one-sided, so a naive (bid+ask)/2 yields a nonsense price — e.g. a
+    # further-OTM wing pricing ABOVE a nearer short strike, turning an iron
+    # condor's credit negative. Everything without a real two-sided market falls
+    # back to a Black-Scholes theoretical price, which is monotonic in strike and
+    # therefore keeps wings cheaper than the shorts they protect.
+    bid = chain["bid"]
+    ask = chain["ask"]
+    two_sided = (bid > 0) & (ask > 0) & (ask >= bid)
+    chain["mid"] = np.where(two_sided, (bid + ask) / 2.0, np.nan)
 
-    # Fall back to Black-Scholes when bid/ask are null but IV is available
-    null_mid = chain["mid"].isna() & chain["iv"].notna() & (chain["iv"] > 0)
-    if null_mid.any():
+    need_bs = chain["mid"].isna()
+    if need_bs.any():
         r = 0.045
-        for idx in chain[null_mid].index:
-            row  = chain.loc[idx]
-            T    = float(row["dte"]) / 365.0
-            iv   = float(row["iv"])
-            K    = float(row["strike"])
+        iv_med = pd.to_numeric(chain["iv"], errors="coerce").replace(0, np.nan).median()
+        iv_fallback = float(iv_med) if np.isfinite(iv_med) and iv_med > 0 else 0.25
+        for idx in chain[need_bs].index:
+            row   = chain.loc[idx]
+            T     = float(row["dte"]) / 365.0
+            iv_r  = row["iv"]
+            iv    = float(iv_r) if pd.notna(iv_r) and float(iv_r) > 0 else iv_fallback
+            K     = float(row["strike"])
             otype = str(row.get("type", "call")).lower()
-            if T > 0 and iv > 0 and K > 0:
-                chain.at[idx, "mid"] = _bs_price(spot, K, T, iv, r, otype)
+            if T > 0 and K > 0:
+                chain.at[idx, "mid"] = max(_bs_price(spot, K, T, iv, r, otype), 0.0)
 
     exps     = chain.groupby("expiration")["dte"].first()
     best_exp = exps.sub(dte_target).abs().idxmin()
