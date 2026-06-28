@@ -1349,6 +1349,50 @@ STRATEGY_METADATA: dict[str, dict] = {
         "required_data": ["price", "vix", "rates"],
         "has_screener": True,
     },
+
+    # ── Validated equity-timing rules (real 20y prices, not options backtests) ──
+    "trend_following": {
+        "display_name": "200-Day Trend (SPY)",
+        "type": "rule",
+        "status": "active",
+        "icon": "📈",
+        "description": (
+            "Own the index while it trades above its 200-day moving average; move "
+            "to cash when it drops below. Validated on 20y of real prices: ~9% CAGR, "
+            "0.64 Sharpe, -20% max drawdown (vs -55% buy-hold; only -5.6% in 2008). "
+            "Single un-optimised rule, checked monthly; ~1-3 round trips/year."
+        ),
+        "asset_class": "equities",
+        "typical_holding_days": 120,
+        "target_sharpe": 0.64,
+        "class_path": "alan_trader.strategies.trend_following.TrendFollowingStrategy",
+        "requires_training": False,
+        "uses_ml": False,
+        "requires_ticker": True,
+        "required_data": ["price"],
+        "has_screener": True,
+    },
+    "ts_momentum": {
+        "display_name": "12-Month Momentum (SPY)",
+        "type": "rule",
+        "status": "active",
+        "icon": "🚀",
+        "description": (
+            "Own the index when its trailing 12-month return is positive; otherwise "
+            "hold cash. Validated on 20y of real prices: 10.8% CAGR (matches buy-hold) "
+            "at 0.63 Sharpe and only -34% max drawdown vs -55%. Time-series (absolute) "
+            "momentum, decided monthly; ~1-2 round trips/year."
+        ),
+        "asset_class": "equities",
+        "typical_holding_days": 180,
+        "target_sharpe": 0.63,
+        "class_path": "alan_trader.strategies.ts_momentum.TSMomentumStrategy",
+        "requires_training": False,
+        "uses_ml": False,
+        "requires_ticker": True,
+        "required_data": ["price"],
+        "has_screener": True,
+    },
 }
 
 
