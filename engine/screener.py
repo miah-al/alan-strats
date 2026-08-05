@@ -46,7 +46,13 @@ _DEFAULT_PARAMS = {
         "adx_max": 35.0, "atr_pct_max": 0.030,
     },
     "ivr_credit_spread": {
-        "ivr_min": 0.40, "vix_max": 50.0,
+        "ivr_min": 0.50, "vix_max": 50.0,   # 0.50 to match the backtest entry gate
+    },
+    "vrp_premium": {
+        "vrp_min": 0.02, "vix_max": 40.0,
+    },
+    "stock_bond_vol_rotation": {
+        "vrp_min": 0.02, "vix_max": 40.0,
     },
     "broken_wing_butterfly": {
         "ivr_max": 0.35, "adx_max": 28.0, "vix_max": 30.0,
@@ -63,7 +69,7 @@ _DEFAULT_PARAMS = {
         "ivr_min": 0.40, "adx_min": 15.0, "adx_max": 30.0, "vix_max": 35.0,
     },
     "bull_put_spread": {
-        "ivr_min": 0.40, "adx_max": 30.0, "vix_max": 35.0,
+        "ivr_min": 0.40, "adx_max": 40.0, "vix_max": 35.0,   # adx_max 40 matches the strategy
     },
     "vix_term_structure": {
         "vix_max": 45.0, "threshold_short": 0.40, "threshold_long": 0.60,
@@ -832,6 +838,69 @@ def _score_bull_put_spread(
         }
     except Exception as e:
         logger.warning(f"BullPutSpread score error for {ticker}: {e}")
+        return None
+
+
+def _score_vrp_premium(
+    ticker: str,
+    price_df: pd.DataFrame,
+    vix_series: pd.Series,
+    iv_metrics: dict,
+    params: dict,
+) -> Optional[dict]:
+    """Screen for a rich variance-risk premium (ATM IV − realized vol).
+
+    The VRP harvester sells defined-risk premium when implied richly exceeds the
+    vol the model expects to realize. Here (live scan) we use the realized-vol
+    proxy VRP = ATM_IV − HV20 from the shared IV metrics — a fast, honest stand-in
+    for the model's forecast (the GBM forecast lives in the backtest, not the
+    scan). SELL when VRP ≥ vrp_min and VIX ≤ vix_max; else HOLD.
+    """
+    if price_df.empty or len(price_df) < 20:
+        return None
+    try:
+        close = price_df["close"].astype(float)
+        latest_price = float(close.iloc[-1])
+        latest_vix = float(vix_series.iloc[-1]) if not vix_series.empty else 0.0
+
+        atm_iv    = iv_metrics.get("atm_iv")
+        hv20      = iv_metrics.get("hv20")
+        vrp       = iv_metrics.get("vrp")
+        iv_source = iv_metrics.get("iv_source", "no_options_data")
+
+        if atm_iv is None:
+            atm_iv = latest_vix / 100.0
+        if hv20 is None:
+            lr = np.log(close / close.shift(1)).dropna()
+            hv20 = float(lr.tail(20).std() * np.sqrt(252)) if len(lr) >= 20 else None
+        if vrp is None and atm_iv is not None and hv20 is not None:
+            vrp = float(atm_iv) - float(hv20)
+        if vrp is None:
+            return None
+
+        vrp_min = params.get("vrp_min", 0.02)
+        vix_max = params.get("vix_max", 40.0)
+        vrp_ok  = vrp >= vrp_min
+        vix_ok  = latest_vix <= vix_max
+        signal  = "SELL" if (vrp_ok and vix_ok) else "HOLD"
+        n_pass  = int(vrp_ok) + int(vix_ok)
+        # Score in vol-points × 10 so a 4 vol-pt premium ≈ 40.
+        score = max(0.0, vrp) * 1000.0
+
+        return {
+            "Ticker":    ticker,
+            "Price":     round(latest_price, 2),
+            "Signal":    signal,
+            "VRP":       round(float(vrp), 4),
+            "ATM IV":    round(float(atm_iv), 4) if atm_iv is not None else None,
+            "HV20":      round(float(hv20), 4) if hv20 is not None else None,
+            "VIX":       round(latest_vix, 2),
+            "IV Source": iv_source,
+            "score":     round(score, 1),
+            "all_pass":  bool(vrp_ok and vix_ok),
+            "n_pass":    n_pass,
+        }
+    except Exception:
         return None
 
 
