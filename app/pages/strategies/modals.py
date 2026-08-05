@@ -21,6 +21,7 @@ from dash import html, dcc, callback, Input, Output, State, no_update
 from app import theme as T
 from app.ui import components as C
 from app.grid_helpers import mrt_grid as _mrt_grid_shared
+from app.pages.strategies.format import _num
 from app.pages.strategies.registry import _SLUG_TO_LABEL
 from app.pages.strategies.data_fetch import (
     _build_ic_payoff_fig, _get_vix_series, _hmm_trade_preview,
@@ -651,6 +652,8 @@ def _build_signal_body(row):
     # ── Strategy-specific content ─────────────────────────────────────────────
     chart      = html.Div()   # default: no chart; overridden by strategies that have P&L graphs
     legs_table = html.Div()   # default: no legs table
+    metrics    = None         # set per-branch; a generic fallback fills it below if unset
+    signal     = str(row.get("Signal", row.get("Status", "—")))
 
     if slug == "vix_spike_fade":
         vix     = row.get("VIX", "—")
@@ -710,7 +713,7 @@ def _build_signal_body(row):
         except Exception as _e:
             vsf_err = str(_e)
 
-        is_ready = float(str(ratio).rstrip("%") or 0) > 1.2
+        is_ready = _num(ratio) > 1.2
         signal = ("Buy put spread — VIX elevated, fade the spike back toward mean"
                   if is_ready else "Monitor — VIX spike not sufficient")
 
@@ -782,7 +785,7 @@ def _build_signal_body(row):
                                stop_level=max_loss * 0.5)
 
         metrics = _row(
-            _mc("VIX",        str(vix),   T.DANGER if float(str(vix) or 0) > 25 else T.TEXT_PRIMARY),
+            _mc("VIX",        str(vix),   T.DANGER if _num(vix) > 25 else T.TEXT_PRIMARY),
             _mc("VIX 20d Avg",str(vix20)),
             _mc("VIX / 20d",  str(ratio)),
             _mc("ATM IV",     str(atm_iv)),
@@ -1000,6 +1003,30 @@ def _build_signal_body(row):
             _mc("IVR",    str(ivr)),
             _mc("Status", status, status_color),
         )
+        # Short-straddle payoff, approximated from the same spot + ATM IV the
+        # screener scored on (the ATM straddle premium is ~0.8·S·σ·√T). Same
+        # approach as the calendar branch — indicative shape, not a quote.
+        price = _num(row.get("Price", 0))
+        iv_f  = (_num(atm_iv) / 100 if "%" in str(atm_iv) else _num(atm_iv, 0.25))
+        if price > 0 and iv_f > 0:
+            dte_va  = 30
+            premium = 0.8 * price * iv_f * ((dte_va / 252) ** 0.5)
+            legs_table = _make_legs_table([
+                {"Leg": "Sell ATM call", "Strike": f"${price:.0f}", "Action": "SELL",
+                 "~/Contract": f"+${premium * 50:.2f}"},
+                {"Leg": "Sell ATM put",  "Strike": f"${price:.0f}", "Action": "SELL",
+                 "~/Contract": f"+${premium * 50:.2f}"},
+                {"Leg": "NET CREDIT",    "Strike": "",              "Action": "",
+                 "~/Contract": f"+${premium * 100:.2f}"},
+            ])
+            spots = np.linspace(price * 0.80, price * 1.20, 300)
+            pnl   = [(premium - abs(float(s) - price)) * 100 for s in spots]
+            chart = _sig_chart(
+                spots, pnl, price, ticker,
+                f"Short Straddle ~{dte_va} DTE (undefined risk)",
+                max_loss=min(pnl), max_profit=premium * 100,
+                target=premium * 50, stop_level=-premium * 200,
+            )
 
     elif slug == "broken_wing_butterfly":
         atm_iv   = row.get("ATM IV", "—")
@@ -1008,7 +1035,7 @@ def _build_signal_body(row):
         adx      = row.get("ADX", "—")
         narrow_w = row.get("Narrow Wing", "—")
         wide_w   = row.get("Wide Wing", "—")
-        price    = float(str(row.get("Price", 0)) or 0)
+        price    = _num(row.get("Price", 0))
         try:
             nw = float(str(narrow_w) or 0)
             ww = float(str(wide_w)   or 0)
@@ -1069,7 +1096,7 @@ def _build_signal_body(row):
         ivr    = row.get("IVR", "—")
         vix    = row.get("VIX", "—")
         adx    = row.get("ADX", "—")
-        price  = float(str(row.get("Price", 0)) or 0)
+        price  = _num(row.get("Price", 0))
         try:
             iv_f_cal = float(str(atm_iv).rstrip("%")) / 100 if "%" in str(atm_iv) else float(str(atm_iv) or 0.25)
         except Exception:
@@ -1095,7 +1122,7 @@ def _build_signal_body(row):
             ),
         ])
         # Calendar spread P&L is IV-dependent; show a tent-shaped approximation
-        price = float(str(row.get("Price", 0)) or 0)
+        price = _num(row.get("Price", 0))
         chart = html.Div()
         if price > 0:
             try:
@@ -1122,7 +1149,7 @@ def _build_signal_body(row):
         dte_e   = row.get("Days to Earnings", "—")
         impl_mv = row.get("Impl. Move", "—")
         credit  = row.get("Straddle Credit", "—")
-        price   = float(str(row.get("Price", 0)) or 0)
+        price   = _num(row.get("Price", 0))
         try:
             cred_f = float(str(credit).lstrip("$") or 0)
         except Exception:
@@ -1187,7 +1214,7 @@ def _build_signal_body(row):
         put_k   = row.get("Put Strike", "—")
         premium = row.get("~Premium", "—")
         adx     = row.get("ADX", "—")
-        price   = float(str(row.get("Price", 0)) or 0)
+        price   = _num(row.get("Price", 0))
         try:
             _prem_ps = float(str(premium).lstrip("$") or 0)
             premium_display = f"${_prem_ps * 100:.0f} / contract"
@@ -1263,7 +1290,7 @@ def _build_signal_body(row):
         width   = row.get("Width", "—")
         credit  = row.get("~Credit", "—")
         cw_r    = row.get("Credit/Width", "—")
-        price   = float(str(row.get("Price", 0)) or 0)
+        price   = _num(row.get("Price", 0))
         try:
             _cred_ps = float(str(credit).lstrip("$") or 0)
             credit_display = f"${_cred_ps * 100:.0f} / contract"
@@ -1322,7 +1349,7 @@ def _build_signal_body(row):
                                stop_level=-cred * 2 * 100)
 
     elif slug == "put_steal":
-        price    = float(str(row.get("Price", 0)) or 0)
+        price    = _num(row.get("Price", 0))
         nii      = row.get("NII", "—")
         strike_x = row.get("Strike X", "—")
         atm_iv   = row.get("ATM IV", "—")
@@ -1501,7 +1528,7 @@ def _build_signal_body(row):
         ret5d   = row.get("5d Return", "—")
         label_r = row.get("Regime Label", "—")
         vix_val = row.get("VIX", "—")
-        price   = float(str(row.get("Price", 0)) or 0)
+        price   = _num(row.get("Price", 0))
         sig_color = (T.SUCCESS if str(sig).upper() == "LONG" else
                      T.DANGER  if str(sig).upper() == "SHORT" else T.TEXT_MUTED)
         signal  = str(label_r)
@@ -1520,8 +1547,8 @@ def _build_signal_body(row):
                 _mc("SPY Weight", str(weight), T.SUCCESS if cur_weight_pct >= 60 else
                                                T.WARNING if cur_weight_pct >= 35 else T.DANGER),
                 _mc("VIX",        str(vix_val),
-                    T.DANGER if float(str(vix_val) or 0) > 25 else
-                    T.WARNING if float(str(vix_val) or 0) > 18 else T.SUCCESS),
+                    T.DANGER if _num(vix_val) > 25 else
+                    T.WARNING if _num(vix_val) > 18 else T.SUCCESS),
                 _mc("ATR%",       str(atr)),
                 _mc("5d Return",  str(ret5d)),
                 _mc("Status",     status, status_color),
@@ -1581,9 +1608,28 @@ def _build_signal_body(row):
         chart = dcc.Graph(figure=gex_fig, config={"displayModeBar": False},
                           style={"marginTop": "12px"})
 
+    # ── Generic fallback for strategies without a bespoke option-chain view ────
+    # (vrp_premium, stock_bond_vol_rotation, covered_call_ai, rs_credit_spread,
+    #  vix_term_structure). Render whatever screener metrics the row carries so
+    #  the popup always opens with useful detail rather than crashing.
+    if metrics is None:
+        _skip = {"_slug", "all_pass", "n_pass", "Ticker", "Status", "Score", "score"}
+        cards = []
+        _px = row.get("Price")
+        if isinstance(_px, (int, float)) and _px:
+            cards.append(_mc("Price", f"${float(_px):,.2f}"))
+        for _k, _v in row.items():
+            if _k in _skip or str(_k).startswith("_") or _v in (None, "", "—"):
+                continue
+            cards.append(_mc(_k, _v))
+        metrics = html.Div([
+            _mc("Status", status, status_color),
+            _row(*cards[:8]),
+        ])
+
     score_val = row.get("Score", 0)
-    score_color = (T.SUCCESS if float(str(score_val) or 0) >= 70 else
-                   T.WARNING if float(str(score_val) or 0) >= 40 else T.DANGER)
+    score_color = (T.SUCCESS if _num(score_val) >= 70 else
+                   T.WARNING if _num(score_val) >= 40 else T.DANGER)
 
     return html.Div([
         metrics,
@@ -1618,6 +1664,9 @@ for _slug in (
     "broken_wing_butterfly", "calendar_spread", "earnings_straddle",
     "wheel_strategy", "bull_put_spread", "put_steal", "hmm_regime",
     "trend_following", "ts_momentum",
+    # VRP family + newly-wired screeners (use the generic signal body)
+    "vrp_premium", "stock_bond_vol_rotation", "covered_call_ai",
+    "rs_credit_spread", "vix_term_structure",
 ):
     _make_signal_callback(_slug)
 

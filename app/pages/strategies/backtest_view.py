@@ -68,6 +68,10 @@ _STRATEGY_CLASSES_BT = {
     "calendar_spread_vix":   ("strategies.calendar_spread_vix",   "VIXCalendarSpreadStrategy"),
     "yield_curve_regime":    ("strategies.yield_curve_regime",    "YieldCurveRegimeStrategy"),
     "vol_calendar_spread":   ("strategies.vol_calendar_spread",   "VolCalendarSpreadStrategy"),
+    # Variance-risk-premium family (real reconstructed ATM IV)
+    "vrp_premium":           ("strategies.vrp_premium",           "VRPPremiumStrategy"),
+    "crypto_etf_vrp":        ("strategies.crypto_etf_vrp",        "CryptoETFVRPStrategy"),
+    "stock_bond_vol_rotation":("strategies.stock_bond_vol_rotation","StockBondVolRotationStrategy"),
 }
 
 

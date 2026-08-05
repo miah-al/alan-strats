@@ -390,3 +390,75 @@ body, .dash-table-container, .Select, p, span, div, label, td, th, li, a {
   white-space: normal !important;
   line-height: 1.3;
 }
+
+/* ── Strategy selector — dense checkbox list ─────────────────────────────────
+   A dbc.Checklist packed into CSS columns. Plain text and a native checkbox:
+   no pills, fills or glows, so 34 strategies read as a quiet reference list
+   rather than decoration.
+
+   Uses the tokens declared in :root above — note the background token is
+   `--bg-elev`, NOT `--bg-elevated`; the latter silently falls back and is why
+   an earlier pass ignored the theme. Fallbacks here are last-resort only.
+
+   Not a dropdown: Dash 4 renders its menu in a portal on document.body, which
+   escapes `#page-content` scoping and re-anchors (visibly flickering) when the
+   pointer leaves the hover-lifting card. An inline list has neither problem. */
+
+.strat-list {
+  column-width: 200px;        /* flows into as many columns as fit */
+  column-gap: 20px;
+  max-height: 108px;          /* ~5 rows per column, then scrolls */
+  overflow-y: auto;
+  margin: 0 !important;
+  padding: 0 2px 0 0;
+}
+
+.strat-list .form-check {
+  display: flex !important;
+  align-items: center;
+  break-inside: avoid;
+  margin: 0 !important;
+  padding: 0 !important;
+  min-height: 0 !important;
+}
+
+.strat-list input[type="checkbox"] {
+  accent-color: var(--accent);
+  width: 13px;
+  height: 13px;
+  margin: 0 7px 0 0 !important;
+  flex: 0 0 auto;
+  cursor: pointer;
+}
+
+.strat-list .form-check-label {
+  color: var(--text-sec);
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 1.75;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  transition: color var(--dur) var(--ease);
+}
+
+.strat-list .form-check-label:hover { color: var(--text); }
+
+/* Checked: brighter text only — no fill, no border, no glow. */
+.strat-list .form-check:has(input:checked) .form-check-label {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.strat-list::-webkit-scrollbar { width: 8px; }
+.strat-list::-webkit-scrollbar-thumb {
+  background: var(--border-brt);
+  border-radius: var(--r-pill);
+  border: 2px solid var(--bg-card);
+}
+.strat-list::-webkit-scrollbar-track { background: transparent; }
+
+/* The card holding the list must not lift — it shifts the whole grid. */
+.ui-card:has(.strat-list):hover,
+.card:has(.strat-list):hover { transform: none !important; }

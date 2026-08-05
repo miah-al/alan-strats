@@ -106,6 +106,9 @@ def render_page(pathname: str):
         if pathname == "/tools":
             from app.pages.tools import layout
             return layout()
+        if pathname == "/scope":
+            from app.pages.scope import layout
+            return layout()
         if pathname == "/models":
             from app.pages.models import layout
             return layout()

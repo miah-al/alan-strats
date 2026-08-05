@@ -345,6 +345,19 @@ _TREND_COLS = [
     _col("Status",    width=130),
 ]
 
+_VRP_COLS = [
+    _col("Ticker",    width=120, pinned="left"),
+    _col("Price",     width=110, numeric=True),
+    _col("Signal",    width=100),
+    _col("VRP",       width=110, numeric=True, sort="desc"),
+    _col("ATM IV",    width=110, numeric=True),
+    _col("HV20",      width=110, numeric=True),
+    _col("VIX",       width=100, numeric=True),
+    _col("IV Source", width=150),
+    _col("Score",     width=110, numeric=True),
+    _col("Status",    width=130),
+]
+
 _COLS_BY_SLUG: dict[str, list[dict]] = {
     "trend_following":       _TREND_COLS,
     "ts_momentum":           _TREND_COLS,
@@ -376,4 +389,7 @@ _COLS_BY_SLUG: dict[str, list[dict]] = {
     # The screener fills a subset; absent fields render blank, never error.
     "calendar_spread_vix":    _CAL_COLS,
     "vol_calendar_spread":    _CAL_COLS,
+    # Variance-risk-premium family
+    "vrp_premium":            _VRP_COLS,
+    "stock_bond_vol_rotation": _VRP_COLS,
 }

@@ -11,6 +11,7 @@ NAV_ITEMS = [
     ("Paper Trading", "📋", "/paper-trading"),
     ("Market Data",   "📈", "/market"),
     ("Strategies",    "🧠", "/strategies"),
+    ("Scope",         "🎯", "/scope"),
     ("Tools",         "🛠",  "/tools"),
 ]
 

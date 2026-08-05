@@ -30,10 +30,30 @@ def _display_row_trend(r: dict) -> dict:
         "Signal":     r.get("Signal", ""),
         "Reference":  r.get("Reference", ""),
         "Strength %": round(r.get("Strength %", 0), 2),
+        "Score":      round(r.get("score", r.get("Strength %", 0)) or 0, 2),  # sort key
         "Status":     status,
         "all_pass":   r.get("all_pass", False),
         "n_pass":     r.get("n_pass", 0),
     }
+
+
+def _display_row_score(r: dict) -> dict:
+    """Generic scan-row formatter for the score+status scorers (covered_call_ai,
+    rs_credit_spread, vix_term_structure). Passes through the scorer's already-
+    formatted string fields, injects the grid sort key + status-pill keys, and
+    never errors on a missing column (absent fields just render blank)."""
+    out = dict(r)
+    score = r.get("Score", 0)
+    out["Score"] = score
+    out["score"] = float(score) if isinstance(score, (int, float)) else 0.0
+    if "Price" in out and isinstance(out["Price"], (int, float)):
+        out["Price"] = round(out["Price"], 2)
+    status = str(r.get("Status", "")).lower()
+    ok = out["score"] >= 60 and not any(
+        w in status for w in ("skip", "no data", "too low", "too high", "flat", "—"))
+    out["all_pass"] = ok
+    out["n_pass"] = 1 if ok else 0
+    return out
 
 
 def _display_row_ic(r: dict) -> dict:
@@ -104,6 +124,27 @@ def _display_row_ivr(r: dict) -> dict:
         "Status":      status,
         "all_pass":    r.get("all_pass", False),
         "n_pass":      r.get("n_pass", 0),
+    }
+
+
+def _display_row_vrp(r: dict) -> dict:
+    """Display row for the VRP harvester / stock-bond rotation screener."""
+    status = "Trade-Ready" if r.get("all_pass") else (
+        "Partial" if r.get("n_pass", 0) > 0 else "Blocked"
+    )
+    return {
+        "Ticker":    r.get("Ticker", ""),
+        "Price":     round(r.get("Price", 0), 2),
+        "Signal":    r.get("Signal", "—"),
+        "VRP":       _fmt_pct(r.get("VRP")),
+        "ATM IV":    _fmt_pct(r.get("ATM IV")),
+        "HV20":      _fmt_pct(r.get("HV20")),
+        "VIX":       round(r.get("VIX", 0), 2),
+        "IV Source": r.get("IV Source", "—"),
+        "Score":     round(r.get("score", 0), 1),
+        "Status":    status,
+        "all_pass":  r.get("all_pass", False),
+        "n_pass":    r.get("n_pass", 0),
     }
 
 

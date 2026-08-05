@@ -19,8 +19,13 @@ Importing this package registers every callback via the side-effect imports belo
 """
 from app.pages.strategies.layout import layout        # noqa: F401  (public API)
 from app.pages.strategies import (                     # noqa: F401  (register callbacks)
-    scan, backtest_view, modals, callbacks,
+    scan, backtest_view, modals, callbacks, performance,
 )
+
+# Performance-tab callbacks are per-slug, so they are registered explicitly
+# rather than by import side effect alone.
+from app.pages.strategies.registry import _STRATEGIES as _ALL_STRATEGIES
+performance.register_performance_callbacks(s["value"] for s in _ALL_STRATEGIES)
 
 # ── Backward-compatible public surface ───────────────────────────────────────
 # External code/tests import these names from the package root (see

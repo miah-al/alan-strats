@@ -14,6 +14,34 @@ from app import theme as T
 from app.pages.strategies.registry import _GUIDE_DIR
 
 
+# ── Numeric parsing ───────────────────────────────────────────────────────────
+
+def _num(v, default: float = 0.0) -> float:
+    """
+    Parse a screener-grid cell into a float, tolerating display formatting.
+
+    Grid cells are display strings, not numbers: a missing value is the em-dash
+    `"—"`, and present values may carry `$`, `%`, `+` or thousands separators.
+    `float(str(v) or 0)` does NOT handle this — `str("—")` is truthy, so the
+    `or 0` never fires and the float() raises, taking the whole signal popup
+    down with it. Always route grid values through here before comparing them
+    against a threshold.
+    """
+    if v is None:
+        return default
+    if isinstance(v, (int, float)) and not isinstance(v, bool):
+        return float(v)
+    text = str(v).strip()
+    if not text or text in {"—", "-", "–", "N/A", "n/a", "None", "nan"}:
+        return default
+    cleaned = text.replace("$", "").replace("%", "").replace(",", "").replace("+", "")
+    cleaned = cleaned.replace("×", "").replace("x", "").strip()
+    try:
+        return float(cleaned)
+    except (TypeError, ValueError):
+        return default
+
+
 # ── Numeric formatters ────────────────────────────────────────────────────────
 
 def _fmt_pct(v) -> str:

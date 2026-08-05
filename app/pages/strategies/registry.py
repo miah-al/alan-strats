@@ -31,6 +31,7 @@ _STRATEGIES_RULES = [
     {"label": "Tail Risk Long Put",    "value": "tail_risk_long_put"},
     {"label": "FOMC Event Straddle",   "value": "fomc_event_straddle"},
     {"label": "Calendar Spread (VIX)", "value": "calendar_spread_vix"},
+    {"label": "Crypto ETF VRP (IBIT/ETHA)", "value": "crypto_etf_vrp"},
 ]
 
 _STRATEGIES_AI = [
@@ -47,6 +48,8 @@ _STRATEGIES_AI = [
     {"label": "News Sentiment NLP",           "value": "news_sentiment_nlp"},
     {"label": "Earnings Pin Risk",            "value": "earnings_pin_risk"},
     {"label": "Yield Curve Regime",           "value": "yield_curve_regime"},
+    {"label": "VRP Premium Harvester",        "value": "vrp_premium"},
+    {"label": "Stock-Bond Vol Rotation",      "value": "stock_bond_vol_rotation"},
 ]
 
 # flat list kept for label lookup and scan-callback registration
@@ -66,11 +69,14 @@ _STRATEGY_STATUS: dict[str, str] = {
     # Ready — validated edge on real out-of-sample data
     "trend_following":       "ready",
     "ts_momentum":           "ready",
-    "hmm_regime":            "ready",
-    # Iron condors: synthetic backtest looked great but REAL-price backtest
-    # (2024-26) lost -9.7% with negative Sharpe — no demonstrated edge. Do not
-    # deploy; kept for research/paper only.
-    "iron_condor_rules":     "avoid",
+    # hmm_regime: re-audited 2026-06 — walk-forward fit is leak-free and a
+    # transmat-degeneracy bug was fixed, but the real backtest is ~flat (no
+    # demonstrated edge). Downgraded ready → reviewed (paper only).
+    "hmm_regime":            "reviewed",
+    # iron_condor_rules: re-hardened 2026-06 (skew pricing + round-trip costs +
+    # ledger reconciliation, leak-free). Now mechanically correct but marginal
+    # (+3.4%, negative Sharpe on the bull-market window). reviewed = paper only.
+    "iron_condor_rules":     "reviewed",
     "iron_condor_ai":        "avoid",
     # Reviewed (B-grade)
     "vix_spike_fade":        "reviewed",
@@ -80,11 +86,26 @@ _STRATEGY_STATUS: dict[str, str] = {
     "ivr_credit_spread":     "reviewed",
     "bull_put_spread":       "reviewed",
     "put_steal":             "reviewed",
-    "vix_term_structure":    "reviewed",
     "earnings_pin_risk":     "reviewed",
     "tail_risk_long_put":    "reviewed",
+    # covered_call_ai: re-audited 2026-06 — leak-free; beats buy-&-hold SPY
+    # risk-adjusted (Sharpe 0.82 vs 0.65, shallower DD) as a BuyWrite overlay,
+    # but the return is mostly beta and the ML head adds no alpha. Paper-only.
+    "covered_call_ai":       "reviewed",
+    # vix_term_structure: re-audited 2026-06 — label look-ahead PURGED and exit
+    # costs added; the honest post-fix result is a small LOSS (−2%). Was an
+    # inflated +17% before the fix. Downgraded reviewed → reviewing.
+    "vix_term_structure":    "reviewing",
+    # rs_credit_spread: containment edge is real frictionless (+15.7%) but does
+    # NOT survive transaction costs (−6.7% net). Leak-free, MTM-correct.
+    "rs_credit_spread":      "reviewing",
+    # VRP family: code audited (leak-free, skew-priced, costed, unit-tested) but
+    # the real-data backtest shows NO validated edge on the reconstructed
+    # (OHLC-inverted) option IV — apparent SPY gain is a calm-window short-vol
+    # artifact. Needs a clean IV feed to harvest the real premium. Paper only.
+    "vrp_premium":             "reviewed",
+    "stock_bond_vol_rotation": "reviewed",
     # Avoid (D-grade or structurally broken)
-    "covered_call_ai":       "avoid",
     "vol_arbitrage":         "avoid",
     "broken_wing_butterfly": "avoid",
     "calendar_spread":       "avoid",
@@ -139,6 +160,12 @@ _STRATEGY_SCORE: dict[str, tuple[int, str]] = {
     "gex_positioning":        (63, "B-"),
     "vix_spike_fade":         (60, "C+"),
     "earnings_vol_crush":     (58, "C+"),
+    # VRP family: clean code, but the backtest CANNOT see the edge on the
+    # reconstructed IV (the premium is the real, documented one only under a
+    # clean IV feed). Scored low because credibility = "can the backtest see a
+    # real edge" and here it cannot on the mandated data.
+    "vrp_premium":            (56, "C"),
+    "stock_bond_vol_rotation":(55, "C"),
     "expiry_max_pain":        (55, "C"),
 }
 

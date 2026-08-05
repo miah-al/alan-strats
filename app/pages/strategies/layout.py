@@ -30,9 +30,14 @@ from app.pages.strategies.backtest_view import _get_ui_params_for_slug
 logger = logging.getLogger(__name__)
 
 def _checklist_options_with_status(strategies: list[dict]) -> list[dict]:
-    """Convert a list of `{"label","value"}` entries to dbc.Checklist options
-    where each label is prefixed with a coloured dot reflecting the strategy's
-    review status (ready/reviewed/reviewing/avoid)."""
+    """Convert a list of `{"label","value"}` entries to selector options where
+    each label carries a coloured dot reflecting the strategy's review status
+    (ready/reviewed/reviewing/avoid).
+
+    `search` keeps the dropdown's type-ahead working: react-select filters on
+    label text, and these labels are components, so the plain name is supplied
+    separately.
+    """
     out = []
     for s in strategies:
         slug = s["value"]
@@ -40,14 +45,84 @@ def _checklist_options_with_status(strategies: list[dict]) -> list[dict]:
         dot_color = _STATUS_COLORS[status]["dot"]
         out.append({
             "label": html.Span([
-                html.Span("●", style={"color": dot_color, "marginRight": "5px",
-                                       "fontSize": "12px",
+                html.Span("●", style={"color": dot_color, "marginRight": "7px",
+                                       "fontSize": "11px",
                                        "verticalAlign": "middle"}),
                 html.Span(s["label"], style={"verticalAlign": "middle"}),
             ], title=f"Status: {_STATUS_COLORS[status]['label']}"),
             "value": slug,
+            "search": f"{s['label']} {slug}",
         })
     return out
+
+
+def _status_legend() -> html.Div:
+    """Status colour key, compact enough to sit in the page header."""
+    return html.Div(
+        [html.Span([
+            html.Span("●", style={"color": meta["dot"], "marginRight": "4px",
+                                  "fontSize": "10px"}),
+            html.Span(meta["label"], style={"color": T.TEXT_MUTED,
+                                            "fontSize": "10px"}),
+        ], style={"marginLeft": "12px", "whiteSpace": "nowrap"},
+            title=f"Review status: {meta['label']}")
+         for meta in _STATUS_COLORS.values()],
+        style={"display": "flex", "alignItems": "center", "flexWrap": "wrap"},
+    )
+
+
+def _api_key_pill() -> html.Div:
+    """Polygon key state as a pill — it was a full-width line of its own."""
+    ok = bool(get_polygon_api_key())
+    colour = T.SUCCESS if ok else T.WARNING
+    return html.Div([
+        html.Span("●", style={"color": colour, "marginRight": "5px",
+                              "fontSize": "9px"}),
+        html.Span("Polygon key" if ok else "No Polygon key",
+                  style={"color": T.TEXT_MUTED, "fontSize": "10px"}),
+    ], title=("Polygon API key loaded" if ok else
+              "Set POLYGON_API_KEY before scanning"),
+        style={"display": "flex", "alignItems": "center", "marginLeft": "18px",
+               "whiteSpace": "nowrap"})
+
+
+def _selector_group(title: str, icon: str, accent: str, element_id: str,
+                    strategies: list[dict], placeholder: str) -> html.Div:
+    """One labelled group of toggle pills.
+
+    This is a `dbc.Checklist` — the control the callbacks were always written
+    against, so `value` stays a list of slugs — restyled into pills entirely in
+    CSS (`.strat-chips` in z_polish.css). Keeping a real checkbox input means
+    keyboard and screen-reader behaviour are unchanged; only the painting
+    differs.
+
+    Deliberately NOT a dropdown: a popup menu renders in a portal, which both
+    escapes the app's theming and flickers as it re-anchors when the pointer
+    leaves the card. Pills are always visible, so neither problem exists.
+    """
+    return html.Div([
+        html.Div([
+            html.Span(icon, style={"marginRight": "6px", "fontSize": "11px"}),
+            html.Span(title, style={
+                "fontSize": "10px", "fontWeight": "700",
+                "letterSpacing": "0.08em", "textTransform": "uppercase",
+                "color": accent,
+            }),
+            html.Span(f"· {len(strategies)}", style={
+                "marginLeft": "6px", "fontSize": "10px",
+                "color": T.TEXT_MUTED, "fontWeight": "500",
+            }),
+        ], style={"display": "flex", "alignItems": "center",
+                  "marginBottom": "6px"}),
+        dbc.Checklist(
+            id=element_id,
+            options=_checklist_options_with_status(strategies),
+            value=[],
+            # Block items (not inline) so CSS columns can pack them densely.
+            inline=False,
+            className="strat-list",
+        ),
+    ], style={"flex": "1 1 340px", "minWidth": "280px"})
 
 
 # _SCREENER_PARAMS moved to registry.py (pure config, shared with scan.py)
@@ -361,8 +436,10 @@ def _backtest_tab(slug: str) -> html.Div:
     return html.Div([controls] + slider_cards + [results_area], style={"padding": "4px 0"})
 
 
-def _performance_stub(slug: str) -> html.Div:
-    return C.card(C.empty_state("Performance analytics coming soon.", icon="📊"))
+def _performance_tab(slug: str) -> html.Div:
+    """Real analytics — see performance.py. Was a 'coming soon' placeholder."""
+    from app.pages.strategies.performance import performance_tab
+    return performance_tab(slug)
 
 
 def _simulator_stub(slug: str) -> html.Div:
@@ -991,7 +1068,7 @@ def _inner_tabs(slug: str) -> dbc.Tabs:
             active_tab_style=tab_act_style,
         ),
         dbc.Tab(
-            _performance_stub(slug),
+            _performance_tab(slug),
             label="Performance",
             tab_id=f"str-{slug}-inner-performance",
             tab_style=tab_style,
@@ -1067,100 +1144,27 @@ def layout() -> html.Div:
         [
             C.page_header(
                 "Strategies",
-                "Select strategies to screen opportunities, run backtests, and read guides.",
+                "Screen, backtest, and read the playbook for each strategy.",
+                actions=[_status_legend(), _api_key_pill()],
             ),
 
-            # ── Strategy selector (AI vs Rules-Based) ────────────────────────
+            # ── Strategy selector ─────────────────────────────────────────────
+            # Two searchable multi-selects instead of 33 inline checkboxes. Same
+            # element IDs and same list-valued `value`, so callbacks are unchanged.
             C.card([
-                # Legend row — status colour key
                 html.Div([
-                    html.Span("Review status:", style={
-                        "color": T.TEXT_MUTED, "fontSize": "10px",
-                        "fontWeight": "700", "textTransform": "uppercase",
-                        "letterSpacing": "0.06em", "marginRight": "10px"}),
-                    *[html.Span([
-                        html.Span("●", style={"color": meta["dot"],
-                            "marginRight": "4px", "fontSize": "12px"}),
-                        html.Span(meta["label"], style={
-                            "color": T.TEXT_MUTED, "fontSize": "11px",
-                            "marginRight": "14px"}),
-                    ]) for st, meta in _STATUS_COLORS.items()],
-                ], style={"display": "flex", "alignItems": "center",
-                          "marginBottom": "12px", "flexWrap": "wrap"}),
-
-                # Row: two groups side by side
-                html.Div([
-
-                    # ── Rules-Based group ─────────────────────────────────────
-                    html.Div([
-                        html.Div([
-                            html.Span("⚙", style={"marginRight": "5px", "fontSize": "11px"}),
-                            html.Span("Rules-Based", style={"fontSize": "11px",
-                                "fontWeight": "700", "letterSpacing": "0.06em",
-                                "textTransform": "uppercase", "color": T.ACCENT}),
-                        ], style={"marginBottom": "8px"}),
-                        dbc.Checklist(
-                            id="str-strategy-select-rules",
-                            options=_checklist_options_with_status(_STRATEGIES_RULES),
-                            value=[],
-                            inline=True,
-                            inputStyle={"marginRight": "4px", "accentColor": T.ACCENT},
-                            labelStyle={
-                                "color": T.TEXT_PRIMARY, "fontSize": "13px",
-                                "marginRight": "18px", "cursor": "pointer",
-                                "whiteSpace": "nowrap",
-                            },
-                        ),
-                    ], style={"flex": "1 1 500px", "minWidth": "320px"}),
-
-                    # ── Divider ───────────────────────────────────────────────
-                    html.Div(style={
-                        "width": "1px", "backgroundColor": T.BORDER,
-                        "margin": "0 20px", "alignSelf": "stretch",
-                    }),
-
-                    # ── AI-Powered group ──────────────────────────────────────
-                    html.Div([
-                        html.Div([
-                            html.Span("🤖", style={"marginRight": "5px", "fontSize": "11px"}),
-                            html.Span("AI-Powered", style={"fontSize": "11px",
-                                "fontWeight": "700", "letterSpacing": "0.06em",
-                                "textTransform": "uppercase",
-                                "color": "#a78bfa"}),  # purple tint
-                        ], style={"marginBottom": "8px"}),
-                        dbc.Checklist(
-                            id="str-strategy-select-ai",
-                            options=_checklist_options_with_status(_STRATEGIES_AI),
-                            value=[],
-                            inline=True,
-                            inputStyle={"marginRight": "4px", "accentColor": "#a78bfa"},
-                            labelStyle={
-                                "color": T.TEXT_PRIMARY, "fontSize": "13px",
-                                "marginRight": "18px", "cursor": "pointer",
-                                "whiteSpace": "nowrap",
-                            },
-                        ),
-                    ], style={"flex": "1 1 500px", "minWidth": "320px"}),
-
+                    _selector_group("Rules-Based", "⚙", T.ACCENT,
+                                    "str-strategy-select-rules", _STRATEGIES_RULES,
+                                    "Search rules-based strategies…"),
+                    _selector_group("AI-Powered", "🤖", "#a78bfa",
+                                    "str-strategy-select-ai", _STRATEGIES_AI,
+                                    "Search AI strategies…"),
                 ], style={"display": "flex", "alignItems": "flex-start",
-                          "flexWrap": "wrap", "gap": "12px", "rowGap": "16px"}),
+                          "flexWrap": "wrap", "gap": "18px"}),
 
                 # Hidden combined store consumed by update_outer_tabs
                 dcc.Store(id="str-strategy-select"),
-            ]),
-
-            # ── API key note ──────────────────────────────────────────────────
-            html.Div(
-                (
-                    html.Span("Polygon API key loaded", style={"color": T.SUCCESS, "fontSize": "12px"})
-                    if get_polygon_api_key()
-                    else html.Span(
-                        "No Polygon API key — set POLYGON_API_KEY env var before scanning.",
-                        style={"color": T.WARNING, "fontSize": "12px"},
-                    )
-                ),
-                style={"marginBottom": "12px"},
-            ),
+            ], pad="sm"),
 
             # ── IC payoff modal ───────────────────────────────────────────────
             dbc.Modal([

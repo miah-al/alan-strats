@@ -25,7 +25,8 @@ from app.pages.strategies.data_fetch import (
 from app.pages.strategies.display_rows import (
     _status_pill_row,
     _display_row_trend, _display_row_ic, _display_row_vsf, _display_row_ivr,
-    _display_row_va, _display_row_gex, _display_row_bwb, _display_row_cal,
+    _display_row_va, _display_row_vrp, _display_row_score,
+    _display_row_gex, _display_row_bwb, _display_row_cal,
     _display_row_earn, _display_row_wheel, _display_row_bps, _display_row_put_steal,
     _display_row_hmm, _display_row_emp, _display_row_ssd, _display_row_trp,
     _display_row_nsn,
@@ -45,6 +46,10 @@ def _run_scan(slug: str, universe: str, custom: str | None, api_key: str,
         _score_ic_ai,
         _score_vix_spike_fade,
         _score_ivr_credit_spread,
+        _score_vrp_premium,
+        _score_covered_call_ai,
+        _score_rs_credit_spread,
+        _score_vix_term_structure,
         _score_vol_arbitrage,
         _score_gex_positioning,
         _score_broken_wing_butterfly,
@@ -64,6 +69,8 @@ def _run_scan(slug: str, universe: str, custom: str | None, api_key: str,
     # Locked-universe strategies ignore the universe/custom inputs
     if slug in _SPY_ONLY_SLUGS:
         tickers = ["SPY"]
+    elif slug == "stock_bond_vol_rotation":
+        tickers = ["SPY", "TLT"]   # the rotation is defined on these two legs
     elif slug in _SECTOR_ONLY_SLUGS:
         tickers = _SECTOR_ETFS_LIST
     else:
@@ -152,6 +159,36 @@ def _run_scan(slug: str, universe: str, custom: str | None, api_key: str,
                 params or {"ivr_min": 0.40, "vix_max": 50.0},
             )
             if r:
+                raw_rows.append(r)
+
+    elif slug in ("vrp_premium", "stock_bond_vol_rotation"):
+        # VRP harvester (universe scan) / stock-bond rotation (locked SPY+TLT).
+        # Same per-ticker VRP score; the rotation view just shows both legs so
+        # you can see which carries the richer premium right now.
+        for ticker in price_dfs:
+            r = _score_vrp_premium(
+                ticker,
+                price_dfs[ticker],
+                vix_series,
+                iv_all.get(ticker, {}),
+                params or {"vrp_min": 0.02, "vix_max": 40.0},
+            )
+            if r:
+                raw_rows.append(r)
+
+    elif slug in ("covered_call_ai", "rs_credit_spread", "vix_term_structure"):
+        # Score+status scorers that already existed in engine.screener but were
+        # never wired into the dispatch. They take (ticker, price_df, vix_series,
+        # params) — no iv_all — and omit Ticker/Price, which we inject here. The
+        # universe is already locked upstream (rs=sectors, vix_term=SPY-only).
+        _scorer = {"covered_call_ai":    _score_covered_call_ai,
+                   "rs_credit_spread":   _score_rs_credit_spread,
+                   "vix_term_structure": _score_vix_term_structure}[slug]
+        for ticker in price_dfs:
+            r = _scorer(ticker, price_dfs[ticker], vix_series, params)
+            if r:
+                r["Ticker"] = ticker
+                r["Price"] = round(float(price_dfs[ticker]["close"].iloc[-1]), 2)
                 raw_rows.append(r)
 
     elif slug == "vol_arbitrage":
@@ -324,6 +361,11 @@ def _run_scan(slug: str, universe: str, custom: str | None, api_key: str,
         "iron_condor_ai":       _display_row_ic,
         "vix_spike_fade":       _display_row_vsf,
         "ivr_credit_spread":    _display_row_ivr,
+        "vrp_premium":             _display_row_vrp,
+        "stock_bond_vol_rotation": _display_row_vrp,
+        "covered_call_ai":         _display_row_score,
+        "rs_credit_spread":        _display_row_score,
+        "vix_term_structure":      _display_row_score,
         "vol_arbitrage":        _display_row_va,
         "gex_positioning":      _display_row_gex,
         "broken_wing_butterfly": _display_row_bwb,

@@ -182,6 +182,13 @@ input:focus {
     background-color: #161d2e !important;
 }
 
+/* DEAD RULES — kept only to avoid churn, they match nothing.
+   The comment below is wrong: Dash 4 does NOT use react-select. It ships its
+   own Radix-based dropdown emitting `.dash-dropdown-*` class names, and renders
+   the menu in a portal on document.body (so `#page-content ...` scoping misses
+   it too). Every `.Select-*` and `[class*="-menu"]` rule in this file is inert.
+   The dropdown is themed in z_polish.css — edit it there, not here. */
+
 /* Dash 4.x react-select v5 classes */
 .Select-control {
     background-color: #161d2e !important;
