@@ -338,6 +338,31 @@ class _RegimeModel:
         for sorted_idx, raw_idx in enumerate(order):
             perm[raw_idx] = sorted_idx
 
+        # ── Repair degenerate transition rows (hmmlearn backend) ──────────
+        # When a fit window never visits a hidden state (common on short /
+        # synthetic warmup slices), Baum-Welch can leave that state's row of
+        # transmat_ summing to 0. hmmlearn's forward pass (used by
+        # predict_proba) then raises "transmat_ rows must sum to 1", and the
+        # bar would silently degrade to a useless uniform posterior — which
+        # never clears the confidence floor, so the strategy goes dark for the
+        # whole fit window. Renormalise any zero-sum row to uniform so the
+        # forward filter is always well-defined. This is a numerical-stability
+        # repair on the FITTED model only — it touches no future data and so
+        # introduces no look-ahead.
+        if self.backend == "hmmlearn":
+            A = getattr(m, "transmat_", None)
+            if A is not None:
+                row_sums = A.sum(axis=1)
+                bad = row_sums <= 1e-12
+                if bad.any():
+                    A = A.copy()
+                    A[bad, :] = 1.0 / self.n_components
+                    A = A / A.sum(axis=1, keepdims=True)
+                    m.transmat_ = A
+                sp = getattr(m, "startprob_", None)
+                if sp is not None and (not np.isfinite(sp).all() or sp.sum() <= 1e-12):
+                    m.startprob_ = np.full(self.n_components, 1.0 / self.n_components)
+
         self._raw_model = m
         self._perm      = perm
         self._fitted    = True
@@ -358,8 +383,14 @@ class _RegimeModel:
                 gamma = self._raw_model.predict_proba(np.ascontiguousarray(X_upto_i))
                 last  = gamma[-1, :]
             except Exception as e:
-                logger.warning(f"hmm predict_proba failed, using uniform: {e}")
-                last = np.ones(self.n_components) / self.n_components
+                # Last-resort fallback if the forward pass still fails (e.g. a
+                # singular emission covariance). Use the per-state emission
+                # likelihood of the LAST observation as the responsibility —
+                # informative and, crucially, still uses only obs ≤ i (no
+                # look-ahead), unlike a flat uniform which silently blanks the
+                # bar. With the transmat repair above this path is rare.
+                logger.warning(f"hmm predict_proba failed, using emission likelihood: {e}")
+                last = self._emission_responsibility(X_upto_i[-1])
         else:
             # sklearn GMM: predict_proba on a single point gives the cluster
             # responsibilities under the assumption observations are iid (no
@@ -371,6 +402,39 @@ class _RegimeModel:
         for raw_idx in range(self.n_components):
             relabeled[self._perm[raw_idx]] = last[raw_idx]
         return relabeled
+
+    def _emission_responsibility(self, x: np.ndarray) -> np.ndarray:
+        """P(state | x) from emission likelihoods alone (no transition matrix).
+
+        Used only as the predict_proba fallback when the forward pass throws.
+        Computes the multivariate-normal density of the single observation x
+        under each fitted state and normalises. Returns a length-k vector in
+        RAW (pre-relabel) state order — the caller applies the relabel.
+        """
+        m = self._raw_model
+        means  = np.asarray(m.means_, dtype=float)
+        covars = np.asarray(getattr(m, "covars_", None), dtype=float)
+        k = self.n_components
+        logp = np.empty(k, dtype=float)
+        x = np.asarray(x, dtype=float)
+        for s in range(k):
+            cov = covars[s]
+            if cov.ndim == 1:                       # diagonal stored as vector
+                cov = np.diag(cov)
+            cov = cov + np.eye(cov.shape[0]) * 1e-9   # ridge for invertibility
+            diff = x - means[s]
+            try:
+                inv = np.linalg.inv(cov)
+                _, logdet = np.linalg.slogdet(cov)
+                logp[s] = -0.5 * (diff @ inv @ diff + logdet)
+            except np.linalg.LinAlgError:
+                logp[s] = -1e18
+        logp -= logp.max()
+        w = np.exp(logp)
+        total = w.sum()
+        if total <= 0 or not np.isfinite(total):
+            return np.full(k, 1.0 / k)
+        return w / total
 
     # ── Sorted means (for diagnostics / state validation) ─────────────────
     def sorted_means(self) -> np.ndarray:

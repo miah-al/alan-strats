@@ -9,7 +9,7 @@ The VIX risk premium — the persistent spread between implied volatility (VIX) 
 
 The problem: the **20-25% of days when realized vol exceeds implied** (backwardation periods) cause catastrophic losses for static premium sellers. March 2020, August 2015, September 2022 — these were all backwardation regimes where selling premium destroyed capital. A static "always sell premium" approach loses more in those periods than it makes in all the contango periods combined.
 
-This strategy uses a gradient boosting classifier to predict **regime transitions** — specifically, will realized vol exceed current implied vol over the next 14 days? When the answer is "yes" with high confidence, it flips from selling premium to buying protection.
+This strategy uses a gradient boosting classifier to predict **regime transitions** — specifically, will realized vol exceed current implied vol over the next `dte_target` days (21 by default)? When the answer is "yes" with high confidence, it flips from selling premium to buying protection.
 
 ```
 Regime Detection:
@@ -95,17 +95,28 @@ atr_pct                  ATR as % of price — realized daily range
 ## Label Construction
 
 ```python
-# 14-day forward backwardation label (no look-ahead)
+# H-day forward backwardation label (H = dte_target, default 21; no look-ahead)
 for each bar i:
     implied_vol  = VIX[i] / 100
-    realized_vol = std(log_returns[i+1 : i+15]) * sqrt(252)
+    realized_vol = std(log_returns[i+1 : i+1+H]) * sqrt(252)   # STRICTLY future
     label[i]     = 1 if realized_vol > implied_vol else 0
 
 # Positive rate: ~20-25% of days (backwardation is the minority regime)
 # Class imbalance is expected — backwardation is rare but catastrophic
 ```
 
-The 14-day window matches the dte_target (21 DTE). The model predicts whether the next 14 days of realized vol will overshoot current implied vol — the exact condition that causes credit spread losses.
+The label window equals `dte_target` (default 21 bars). The model predicts whether the next 21 days of realized vol will overshoot current implied vol — the exact condition that causes credit spread losses. Note that `label[i]` consumes returns from `i+1` to `i+H` only; it never touches a price at or before bar `i`.
+
+### Purging the training window (leak-freedom)
+
+Because `label[i]` peeks `H` bars into the future, a naive expanding window would let the model "see" labels whose forward window overlaps the bar being predicted. At each retrain at bar `i` we therefore **purge the last `H` rows**:
+
+```
+cutoff = i - dte_target          # H = dte_target
+train on rows  j < cutoff        # so every used label satisfies  j + H <= i
+```
+
+For `i = 250`, `H = 21`: training stops at row 229, whose label window ends exactly at bar 250. No training row's outcome is influenced by data on or after the prediction bar — the model is honestly out-of-sample.
 
 ---
 
@@ -136,8 +147,35 @@ Timeline:
 
 **Model output: P(backwardation) = 0.18** → deep contango → sell credit spread.
 
-Trade: Short put $506 / Long put $503.50 | Net credit: $0.85 | Max loss: $1.80
-Outcome (21 days): SPY at $524. Both puts expired worthless. **P&L: +$85/contract.**
+Trade construction and worked P&L (per the actual code path):
+
+```
+Spot 516, wing = 2.5% × 516 ≈ $12.90 → round to 2.5-wide grid
+Short put 506 / Long put 503.50    skew-priced legs (bs_price_skew)
+Net credit received  = $0.85/share
+Capital at risk/contract = (wing - credit) = (2.50 - 0.85) = $1.65 → $165
+
+Sizing (risk-aware, NOT premium-blind):
+  budget    = capital × position_size_pct = 100,000 × 0.02 = $2,000
+  contracts = floor( 2,000 / ((wing - credit) × 100) )
+            = floor( 2,000 / 165 ) = 12 contracts
+
+Frictions (charged on BOTH sides):
+  per-leg cost = commission 0.65 + slippage 0.05 = $0.70
+  entry_fees  = 0.70 × 2 legs × 12 = $16.80   (debited at OPEN)
+  exit_cost   = 0.70 × 2 legs × 12 = $16.80   (debited at CLOSE)
+```
+
+Outcome (21 days): SPY at $524, both puts expire worthless.
+
+```
+gross P&L = credit × 100 × contracts = 0.85 × 100 × 12 = $1,020
+net  P&L  = 1,020 - entry_fees(16.80) - exit_cost(16.80) = $986.40
+```
+
+**Net P&L: +$986.40 on the position (+$82.20/contract after both-sided costs).**
+The pre-fix code charged only the entry fee and sized on the gross wing, which
+overstated this trade's contribution by ~$17 and inflated contract counts.
 
 ---
 
@@ -196,3 +234,16 @@ Model trained (≥ 90 bar warmup) Required         Required
 **Ignoring the 0.40-0.60 flat zone.** This zone is not indecision — it is genuine model uncertainty and should be respected. A P(backwardation) = 0.52 is not a trade signal.
 
 **Increasing model complexity.** If raising n_estimators or max_depth dramatically improves the backtest, you are likely overfitting. The regularized defaults produce modest but robust improvements over the simple VRP threshold rule.
+
+
+---
+
+## Audit & money verdict — 2026-07-03
+
+**End-to-end audit (UI · Backtest · Screening · Tests · Training): all surfaces PASS.**
+
+- **Real backtest:** −2.06% · 40 trades · PF 0.77 (SPY 2024-04→2026-03).
+- **Money verdict:** Loses modestly overall — **but the decomposition matters**: the credit/contango leg has a real edge (+$2,647, 79% win) while the AI backwardation/debit leg loses (−$4,659, 29% win). A **credit-only** version would plausibly flip it net-positive — the most actionable improvement in this set.
+- **Deploy:** Paper only (credit-only variant recommended).
+
+_Audited on real DB data via the production backtest + screener paths. Full cross-strategy report: `docs/reviews/2026-07-03_top10_strategy_audit.md`._

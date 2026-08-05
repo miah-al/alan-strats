@@ -109,8 +109,20 @@ class BrokenWingButterflyStrategy(BaseStrategy):
         high   = price_data.get("high", close).astype(float)
         low    = price_data.get("low",  close).astype(float)
         vix    = auxiliary_data.get("vix", pd.Series(dtype=float))
+        # vix arrives from get_vix_bars as a DataFrame; normalise to a close
+        # Series aligned to the price index (helpers below expect a Series).
+        if isinstance(vix, pd.DataFrame):
+            vix = vix["close"] if "close" in vix.columns else (
+                vix.iloc[:, 0] if vix.shape[1] else pd.Series(dtype=float))
+        if not vix.empty:
+            vix.index = pd.to_datetime(vix.index)
+            vix = pd.to_numeric(vix, errors="coerce").reindex(close.index).ffill().fillna(20.0)
 
-        from alan_trader.strategies.ivr_credit_spread import _compute_ivr, _compute_adx, _compute_atr
+        from alan_trader.strategies.indicators import (
+            compute_ivr as _compute_ivr,
+            compute_adx as _compute_adx,
+            compute_atr as _compute_atr,
+        )
         ivr_s  = _compute_ivr(vix)
         adx_s  = _compute_adx(high, low, close)
         atr_s  = _compute_atr(high, low, close)
@@ -165,7 +177,7 @@ class BrokenWingButterflyStrategy(BaseStrategy):
         daily_ret = eq_series.pct_change().fillna(0.0)
 
         from alan_trader.risk.metrics import compute_all_metrics
-        metrics = compute_all_metrics(daily_ret, eq_series)
+        metrics = compute_all_metrics(eq_series, closed)
 
         return BacktestResult(
             strategy_name=self.name,

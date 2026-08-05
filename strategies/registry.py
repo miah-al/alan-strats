@@ -308,12 +308,12 @@ STRATEGY_METADATA: dict[str, dict] = {
     "earnings_straddle": {
         "display_name": "Earnings Straddle",
         "type": "rule",
-        "status": "stub",
+        "status": "active",
         "description": "Buy ATM straddle before earnings expecting move > implied move.",
         "asset_class": "equities_options",
         "typical_holding_days": 2,
         "target_sharpe": 0.8,
-        "class_path": "",
+        "class_path": "alan_trader.strategies.earnings_straddle.EarningsStraddleStrategy",
     },
     "earnings_pin_risk": {
         "display_name": "Earnings Pin Risk",
@@ -514,7 +514,7 @@ STRATEGY_METADATA: dict[str, dict] = {
     "wheel_strategy": {
         "display_name": "The Wheel",
         "type": "rule",
-        "status": "stub",
+        "status": "active",
         "icon": "🎡",
         "description": (
             "Sell cash-secured puts on pullbacks. When assigned, sell covered calls at or above cost basis. "
@@ -523,7 +523,7 @@ STRATEGY_METADATA: dict[str, dict] = {
         "asset_class": "equities_options",
         "typical_holding_days": 30,
         "target_sharpe": 1.0,
-        "class_path": "",
+        "class_path": "alan_trader.strategies.wheel_strategy.WheelStrategy",
         "requires_training": False,
         "uses_ml": False,
         "required_data": ["price", "options_chain"],
@@ -1347,6 +1347,147 @@ STRATEGY_METADATA: dict[str, dict] = {
         "uses_ml": True,
         "requires_ticker": True,
         "required_data": ["price", "vix", "rates"],
+        "has_screener": True,
+    },
+
+    # ── Rule-based options structures (were backtestable but missing metadata) ─
+    "bull_put_spread": {
+        "display_name": "Bull Put Spread",
+        "type": "rule",
+        "status": "active",
+        "icon": "🐂",
+        "description": (
+            "Defined-risk bull put credit spread: sell an OTM put, buy a further-OTM "
+            "put for protection. Enters on elevated IV-rank in an uptrend (IVR gate + "
+            "above 50-day MA + moderate ADX). Skew-priced with round-trip costs, 50% "
+            "profit target / 2× stop. Regime-gated, so it trades rarely in calm bulls."
+        ),
+        "asset_class": "equities_options",
+        "typical_holding_days": 30,
+        "target_sharpe": 1.3,
+        "class_path": "alan_trader.strategies.bull_put_spread.BullPutSpreadStrategy",
+        "requires_training": False,
+        "uses_ml": False,
+        "requires_ticker": True,
+        "required_data": ["price", "vix"],
+        "has_screener": True,
+    },
+    "broken_wing_butterfly": {
+        "display_name": "Broken Wing Butterfly",
+        "type": "rule",
+        "status": "active",
+        "icon": "🦋",
+        "description": (
+            "Asymmetric (broken-wing) put butterfly — a defined-risk, neutral-to-"
+            "slightly-bullish structure financed to near-zero cost or a small credit. "
+            "Enters on low IV-rank with calm ADX and moderate VIX."
+        ),
+        "asset_class": "equities_options",
+        "typical_holding_days": 21,
+        "target_sharpe": 1.4,
+        "class_path": "alan_trader.strategies.broken_wing_butterfly.BrokenWingButterflyStrategy",
+        "requires_training": False,
+        "uses_ml": False,
+        "requires_ticker": True,
+        "required_data": ["price", "vix"],
+        "has_screener": True,
+    },
+    "calendar_spread": {
+        "display_name": "Calendar Spread",
+        "type": "rule",
+        "status": "active",
+        "icon": "📅",
+        "description": (
+            "Long calendar spread: sell a near-dated option and buy a longer-dated one "
+            "at the same strike, harvesting faster near-term theta. Enters when short-"
+            "term IV is cheap vs longer-term, with calm ADX and low-to-mid VIX."
+        ),
+        "asset_class": "equities_options",
+        "typical_holding_days": 21,
+        "target_sharpe": 1.3,
+        "class_path": "alan_trader.strategies.calendar_spread.CalendarSpreadStrategy",
+        "requires_training": False,
+        "uses_ml": False,
+        "requires_ticker": True,
+        "required_data": ["price", "vix"],
+        "has_screener": True,
+    },
+
+    # ── Variance-risk-premium harvester (AI RV regressor) ──────────────────────
+    "vrp_premium": {
+        "display_name": "VRP Premium Harvester",
+        "type": "ai",
+        "status": "active",
+        "icon": "🪙",
+        "description": (
+            "Gradient-boosting regressor forecasts forward realized vol; trades the "
+            "explicit variance-risk premium (real ATM IV minus forecast RV). Sells a "
+            "defined-risk iron condor when the premium is rich and risk gates pass. "
+            "Prices off the real skew-adjusted IV surface; data-hygiene gate rejects "
+            "implausible IV prints. SPY & TLT. NOTE: edge is bounded by IV data "
+            "quality — on reconstructed (OHLC-inverted) IV the realized premium is "
+            "near-zero; it needs a clean IV feed (e.g. VIX/quote-derived) to harvest."
+        ),
+        "asset_class": "equities_options",
+        "typical_holding_days": 10,
+        "target_sharpe": 0.9,
+        "class_path": "alan_trader.strategies.vrp_premium.VRPPremiumStrategy",
+        "requires_training": True,
+        "uses_ml": True,
+        "requires_ticker": True,
+        "required_data": ["price", "atm_iv", "vix"],
+        "has_screener": True,
+    },
+
+    # ── Crypto-ETF variance-risk-premium harvester (defined risk) ─────────────
+    "crypto_etf_vrp": {
+        "display_name": "Crypto ETF VRP (IBIT/ETHA)",
+        "type": "rule",
+        "status": "active",
+        "icon": "₿",
+        "description": (
+            "Sells defined-risk put credit spreads on spot-crypto ETFs (IBIT, ETHA) "
+            "when trailing vol is in the top half of its own range and price is "
+            "above trend — harvesting the variance risk premium and crash-fear put "
+            "skew that make crypto ETFs the richest listed-option surface in US "
+            "equities. Never naked: crypto tails are genuinely fat. NOTE: no "
+            "historical IBIT/ETHA option chain exists, so legs are priced from "
+            "trailing realized vol x a `vrp_multiplier` assumption — results scale "
+            "with it, and at 1.0 there is no edge by construction. Measured on "
+            "~2y of real bars it does NOT clear the risk-free rate."
+        ),
+        "asset_class": "crypto_etf_options",
+        "typical_holding_days": 30,
+        "target_sharpe": 0.7,
+        "class_path": "alan_trader.strategies.crypto_etf_vrp.CryptoETFVRPStrategy",
+        "requires_training": False,
+        "uses_ml": False,
+        "requires_ticker": True,
+        "required_data": ["price"],
+        "has_screener": False,
+    },
+
+    # ── Stock-bond relative-VRP rotation, correlation-gated ────────────────────
+    "stock_bond_vol_rotation": {
+        "display_name": "Stock-Bond Vol Rotation",
+        "type": "ai",
+        "status": "active",
+        "icon": "⚖️",
+        "description": (
+            "Rotates defined-risk premium selling between SPY and TLT toward the asset "
+            "with the richer forecast variance-risk premium, sized by the stock-bond "
+            "correlation regime (larger when negatively correlated/each hedges the "
+            "other, de-risked when correlation flips positive as in 2022). Both legs "
+            "priced off their own real skew-adjusted IV. Edge bounded by IV data quality."
+        ),
+        "asset_class": "multi_asset_options",
+        "typical_holding_days": 10,
+        "target_sharpe": 0.9,
+        "class_path": "alan_trader.strategies.stock_bond_vol_rotation.StockBondVolRotationStrategy",
+        "requires_training": True,
+        "uses_ml": True,
+        "requires_ticker": False,
+        "required_data": ["price", "tlt", "atm_iv_spy", "atm_iv_tlt", "vix"],
         "has_screener": True,
     },
 

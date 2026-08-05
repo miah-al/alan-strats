@@ -268,8 +268,9 @@ class DealerGammaRegimeStrategy(BaseStrategy):
             put-side skew so condor short puts / straddle wings are priced
             realistically.
             """
-            price, _ = _bs_price_skew(S, K, T, r, base_iv, option_type)
-            return price
+            # bs_price_skew returns a scalar price, not a (price, iv) tuple —
+            # unpacking it raised TypeError on the first entry.
+            return _bs_price_skew(S, K, T, r, base_iv, option_type)
 
         opts = auxiliary_data.get("option_snapshots")
         if opts is None or (isinstance(opts, pd.DataFrame) and opts.empty):

@@ -104,7 +104,12 @@ _WARMUP_BARS      = 90
 _RETRAIN_EVERY    = 15
 # Per-leg cost (commission + slippage) charged on BOTH entry and exit, per leg
 # (a vertical has 2 legs) × contracts.
-_COST_PER_LEG     = float(DEFAULT_COMMISSION_PER_LEG) + float(DEFAULT_SLIPPAGE_PER_LEG)
+# Slippage is quoted per share in BS-mark units, so it must be scaled by the
+# 100-share contract multiplier. Omitting it undercharged slippage 100×
+# ($0.70/leg instead of $5.65) — enough to account for this strategy's entire
+# reported return. Matches iron_condor_ai._LEG_COST.
+_COST_PER_LEG     = (float(DEFAULT_COMMISSION_PER_LEG)
+                     + float(DEFAULT_SLIPPAGE_PER_LEG) * 100.0)
 _LEGS_PER_SPREAD  = 2
 _SAVED_MODELS_DIR = Path(__file__).parent.parent / "saved_models"
 

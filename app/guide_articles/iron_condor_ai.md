@@ -224,21 +224,27 @@ range_bound = 1 if max(|return_i|) ≤ sigma_45d  for all i in [t+1, t+45]
 ```
 Model confidence → delta adjustment → credit/risk tradeoff
 
-P(range-bound) ≥ 0.75  →  delta = 0.16 + 0.04 = 0.20  (tighter, more credit)
-P(range-bound) 0.60–0.74 →  delta = 0.16              (standard)
-P(range-bound) 0.55–0.60 →  delta = 0.16 − 0.03 = 0.13 (wider, more buffer)
+P(range-bound) ≥ 0.75    →  delta = 0.16 − 0.03 = 0.13  (WIDER strikes)
+P(range-bound) 0.60–0.74 →  delta = 0.16               (standard)
+P(range-bound) < 0.60    →  delta = 0.16 + 0.04 = 0.20  (TIGHTER strikes)
 
-At 0.20 delta (high confidence):
-  Credit is ~30% higher than 0.16 delta
-  Short strikes are ~1.5% closer to spot
-  Model says we have 75%+ probability of staying in range
-  Additional tightness is compensated by model's confidence
-
-At 0.13 delta (marginal confidence):
-  Credit is ~20% lower than 0.16 delta
+At 0.13 delta (high confidence):
   Short strikes are ~2% further from spot
-  Extra wing buffer protects against model being wrong
+  Credit is ~20% lower than 0.16 delta
+  The model says the range should hold, so the trade takes the
+  cheaper, safer structure rather than reaching for premium
+
+At 0.20 delta (marginal confidence):
+  Short strikes are ~1.5% closer to spot
+  Credit is ~30% higher than 0.16 delta
+  A weak signal has to be paid for — more credit is collected to
+  justify entering on an uncertain read
 ```
+
+> **Corrected 2026-08-01.** This section previously described the two branches
+> the wrong way round (high conviction → tighter). The rule above now matches
+> `strategies/iron_condor_ai.py:748-752`. Anyone who traded the earlier text
+> placed strikes inverted on every entry.
 
 ---
 

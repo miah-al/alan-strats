@@ -73,7 +73,6 @@ from alan_trader.strategies.base import (
     StrategyType,
 )
 from alan_trader.backtest.engine import (
-    bs_price,
     bs_price_skew,
     DEFAULT_SLIPPAGE_PER_LEG,
     DEFAULT_COMMISSION_PER_LEG,
@@ -90,10 +89,27 @@ _MIN_TREND_BARS  = 20      # minimum bars for ATR / ADX trend filter
 # Per-leg cost in *contract* dollars: adverse fill (slippage) + commission,
 # charged on BOTH entry and exit. Mirrors iron_condor_ai so the two strategies
 # are compared on equal, realistic footing. A 4-leg condor pays 4×_LEG_COST per
-# side. NOTE: at $5.65/leg this is ~$45 round-trip per condor, which exceeds the
+# side. NOTE: at ~$5.65/leg this is ~$45 round-trip per condor, which exceeds the
 # credit on low-priced underlyings (small credits) — i.e. those are NOT viable.
-_SLIPPAGE_PER_LEG   = 0.05   # per-share adverse fill per leg
-_LEG_COST           = _SLIPPAGE_PER_LEG * 100.0 + 0.65   # slippage×100 + commission
+# Pulled from the shared engine constants (single source of truth) rather than
+# hardcoded, so a re-calibration of slippage/commission flows through here too.
+# DEFAULT_SLIPPAGE_PER_LEG is in BS-mark per-SHARE units → ×100 for per-contract.
+_LEG_COST = DEFAULT_SLIPPAGE_PER_LEG * 100.0 + DEFAULT_COMMISSION_PER_LEG
+
+
+def _leg_price(S: float, K: float, T: float, r: float, iv: float,
+               option_type: str) -> float:
+    """Price one option leg with the engine's skew-aware Black-Scholes.
+
+    bs_price_skew(S, K, T, r, atm_iv, option_type) applies the equity-index
+    volatility skew internally (OTM puts richer, OTM calls cheaper), so we pass
+    the ATM (VIX-derived) IV directly. This is the single pricing primitive used
+    for BOTH the entry credit and every mark-to-market exit valuation, so entry
+    and exit are always priced on the same surface (no artificial pricing-basis
+    P&L). Strike selection still uses flat-IV delta (see _find_strike_for_delta)
+    — that only locates the ~16-delta strike and does not affect realized P&L.
+    """
+    return float(bs_price_skew(S, K, T, r, iv, option_type))
 
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
@@ -146,13 +162,17 @@ class IronCondorRulesStrategy(BaseStrategy):
     """
     Rules-based Iron Condor strategy.
 
-    Entry rules (ALL must pass):
+    Entry rules ACTUALLY ENFORCED (ALL must pass):
       1. IVR ≥ ivr_min            (only sell expensive premium)
       2. VIX in [vix_min, vix_max] (avoid extreme fear/complacency regimes)
       3. ADX ≤ adx_max             (avoid trending markets — IC needs range-bound)
       4. ATR % of spot ≤ atr_pct_max (avoid high-velocity moves)
-      5. Price within band of 50-day MA (mean-reverting, not breakout)
-      6. No earnings within dte_target days (no binary events)
+
+    NOT enforced here (documented in the guide as discretionary overlays the
+    backtest does not model): a 50-day-MA mean-reversion band and an earnings
+    blackout. SPY (the only backtested underlying) has no single-stock earnings,
+    and the ADX/ATR filters already proxy the "not breaking out" condition, so
+    these are left as live-trading checklist items rather than coded gates.
 
     Trade structure:
       Short call at delta_short (default 16-delta)
@@ -409,7 +429,6 @@ class IronCondorRulesStrategy(BaseStrategy):
         ivr_s  = _compute_ivr(vix, window=252)
         adx_s  = _compute_adx(high, low, close, period=14)
         atr_s  = _compute_atr(high, low, close, period=14)
-        ma50   = close.rolling(50, min_periods=20).mean()
 
         all_dates = list(price_data.index)
         n         = len(all_dates)
@@ -445,10 +464,10 @@ class IronCondorRulesStrategy(BaseStrategy):
                 dte_rem = trade["expiry_idx"] - i
                 T_now   = max(dte_rem / 252.0, 1e-6)
 
-                call_short_val = bs_price(spot, trade["call_short_K"], T_now, r, iv_val, "call")
-                call_long_val  = bs_price(spot, trade["call_long_K"],  T_now, r, iv_val, "call")
-                put_short_val  = bs_price(spot, trade["put_short_K"],  T_now, r, iv_val, "put")
-                put_long_val   = bs_price(spot, trade["put_long_K"],   T_now, r, iv_val, "put")
+                call_short_val = _leg_price(spot, trade["call_short_K"], T_now, r, iv_val, "call")
+                call_long_val  = _leg_price(spot, trade["call_long_K"],  T_now, r, iv_val, "call")
+                put_short_val  = _leg_price(spot, trade["put_short_K"],  T_now, r, iv_val, "put")
+                put_long_val   = _leg_price(spot, trade["put_long_K"],   T_now, r, iv_val, "put")
 
                 cur_cost = max((call_short_val - call_long_val) + (put_short_val - put_long_val), 0.0)
                 pnl_per  = trade["credit"] - cur_cost
@@ -467,10 +486,19 @@ class IronCondorRulesStrategy(BaseStrategy):
                     exit_reason = "end_of_data"
 
                 if exit_reason:
-                    net_pnl = round(pnl_tot - close_comm, 2)
+                    # Gross P&L (credit captured) minus the EXIT-leg costs. We
+                    # add only close_comm to `capital` here because the ENTRY-leg
+                    # cost (open_comm) was already deducted from `capital` at
+                    # entry — adding it again would double-charge the equity
+                    # curve. The reported `pnl` field, however, is the FULL
+                    # round-trip net (entry + exit costs) so the trade ledger
+                    # reconciles with the equity curve and reflects every cost.
+                    open_comm    = trade["open_comm"]
+                    capital_pnl  = pnl_tot - close_comm        # applied to capital
+                    net_pnl      = round(pnl_tot - close_comm - open_comm, 2)  # reported
                     # Release margin and apply P&L to capital
                     reserved_margin -= trade["margin_reserved"]
-                    capital         += net_pnl
+                    capital         += capital_pnl
                     closed_trades.append({
                         "entry_date":      trade["entry_date"].date(),
                         "exit_date":       dt.date(),
@@ -503,11 +531,15 @@ class IronCondorRulesStrategy(BaseStrategy):
 
             # ── 2. Entry check ────────────────────────────────────────────
             enough_history = i >= max(_MIN_IVR_BARS, _MIN_TREND_BARS, 50)
-            enough_data    = (n - i) > dte_tgt
 
+            # LEAK-FREEDOM: the entry decision must use ONLY trailing data. A
+            # guard like `(n - i) > dte_tgt` makes a trade's existence depend on
+            # how much future data happens to exist, which is a look-ahead leak
+            # (verified: 37 entry dates appeared only when the sample was
+            # extended). A trade opened near the end is force-closed by the
+            # `end_of_data` exit instead. Same fix as ivr_credit_spread.py:426.
             rules_ok = (
                 enough_history
-                and enough_data
                 and ivr_val >= ivr_min_eff
                 and vix_min_eff <= vix_val <= vix_max_eff
                 and adx_val <= adx_max_eff
@@ -537,10 +569,10 @@ class IronCondorRulesStrategy(BaseStrategy):
                 put_long_K  = put_short_K  - wing_width
 
                 credit = (
-                    bs_price(spot, call_short_K, T_entry, r, iv_val, "call")
-                    - bs_price(spot, call_long_K,  T_entry, r, iv_val, "call")
-                    + bs_price(spot, put_short_K,  T_entry, r, iv_val, "put")
-                    - bs_price(spot, put_long_K,   T_entry, r, iv_val, "put")
+                    _leg_price(spot, call_short_K, T_entry, r, iv_val, "call")
+                    - _leg_price(spot, call_long_K,  T_entry, r, iv_val, "call")
+                    + _leg_price(spot, put_short_K,  T_entry, r, iv_val, "put")
+                    - _leg_price(spot, put_long_K,   T_entry, r, iv_val, "put")
                 )
 
                 if credit <= 0.10:
@@ -564,7 +596,11 @@ class IronCondorRulesStrategy(BaseStrategy):
                 free_capital    -= margin_needed
                 capital         -= open_comm
 
-                expiry_idx = min(i + dte_tgt, n - 1)
+                # Do NOT clamp to n-1: clamping shrinks T for trades opened near
+                # the end of the sample, making their exit timing and marks
+                # depend on how much future data exists — the same leak as the
+                # entry guard above. `end_of_data` force-closes at the last bar.
+                expiry_idx = i + dte_tgt
                 open_trades.append({
                     "entry_date":      dt,
                     "expiry_idx":      expiry_idx,
@@ -577,6 +613,7 @@ class IronCondorRulesStrategy(BaseStrategy):
                     "wing_width":      wing_width,
                     "contracts":       contracts,
                     "margin_reserved": margin_needed,
+                    "open_comm":       open_comm,
                     "ivr_at_entry":    ivr_val,
                     "vix_at_entry":    vix_val,
                     "adx_at_entry":    adx_val,

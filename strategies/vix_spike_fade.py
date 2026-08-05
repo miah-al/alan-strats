@@ -329,7 +329,12 @@ class VIXSpikeFadeStrategy(BaseStrategy):
                     commissions = _LEGS_PER_SPREAD * self.commission_per_leg * contracts
                     slippage    = _LEGS_PER_SPREAD * _SLIPPAGE_PER_LEG * 100.0 * contracts
                     net_pnl   = gross_pnl - commissions - slippage
-                    capital   += net_pnl
+                    # Closing SELLS the spread, so cash receives its full market
+                    # value — not just the P&L. Entry debited the whole premium
+                    # (entry_debit x 100 x contracts); crediting only gross_pnl
+                    # here would strand that principal and destroy it on every
+                    # round trip.
+                    capital   += cur_val * 100.0 * contracts - commissions - slippage
 
                     trades_list.append({
                         "entry_date":   open_trade["entry_date"].date(),
@@ -426,7 +431,9 @@ class VIXSpikeFadeStrategy(BaseStrategy):
             commissions = _LEGS_PER_SPREAD * self.commission_per_leg * contracts
             slippage    = _LEGS_PER_SPREAD * _SLIPPAGE_PER_LEG * 100.0 * contracts
             net_pnl     = gross_pnl - commissions - slippage
-            capital    += net_pnl
+            # Same as the in-loop exit above: cash receives the spread's full
+            # market value, not the P&L, or the entry debit is destroyed.
+            capital    += cur_val * 100.0 * contracts - commissions - slippage
             equity_list[-1] = capital
 
             trades_list.append({

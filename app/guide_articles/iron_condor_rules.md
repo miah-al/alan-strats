@@ -41,39 +41,44 @@ Max profit:         net credit (if stock stays between short strikes)
 Max loss:           wing_width − net_credit (per spread, per side)
 ```
 
-**Concrete example — SPY at $450, VIX at 22, IVR at 0.60, 45 DTE:**
+**Concrete example — SPY at $450, VIX at 22 (ATM IV ≈ 0.22), 45 DTE.** These are
+the exact strikes and credit the code's skew-aware pricer produces at these
+inputs (16-delta shorts located by Black-Scholes, 5%-of-spot wings):
 
 ```
-Short call at $468  (16-delta, ~4% OTM)     collect $3.20
-Long  call at $491  (5% above short call)   pay    $0.85
-Short put  at $432  (16-delta, ~4% OTM)     collect $3.40
-Long  put  at $409  (5% below short put)    pay    $0.90
+Short call at $500  (16-delta, ~11% OTM)    collect ~$1.10
+Long  call at $522  (5% above short call)   pay    ~$0.35
+Short put  at $415  (16-delta, ~7.7% OTM)   collect ~$4.85
+Long  put  at $393  (5% below short put)    pay    ~$0.95
 
-Net credit:   $3.20 − $0.85 + $3.40 − $0.90 = $4.85 per share
-              = $485 per contract (1 contract = 100 shares)
+Net credit:   ≈ $4.66 per share
+              = $466 per contract (1 contract = 100 shares)
 
-Wing width:   $23 (distance from short to long strike each side)
-Max loss:     ($23 − $4.85) × 100 = $1,815 per contract
-Max profit:   $4.85 × 100 = $485 per contract
-Break-even:   $450 ± $4.85 → $445.15 to $454.85
+Wing width:   $22.50 (5% × $450, each side)
+Max loss:     ($22.50 − $4.66) × 100 = $1,784 per contract  (= margin reserved)
+Max profit:   $4.66 × 100 = $466 per contract
+Break-even:   $450 ± $4.66 → $445.34 to $454.66
 
-For stock to incur max loss: SPY must close below $409 or above $491 at expiry
-That is a ±9.1% move — wider than 97% of 45-day SPY moves historically.
+For stock to incur max loss: SPY must close below $393 or above $522 at expiry.
+Note the ASYMMETRY: with the equity-index skew, the 16-delta put sits closer to
+spot (~7.7% OTM) than the 16-delta call (~11% OTM), and the put side carries most
+of the credit. That is the skew working as intended — downside insurance is
+richer, so you are paid more for it.
 ```
 
 ### P&L Diagram
 
 ```
-P&L at expiration (1 contract, net credit = $4.85):
+P&L at expiration (1 contract, net credit = $4.66):
 
-  +$485 ────────────────┬──────────────────────────┬──────────────────
+  +$466 ────────────────┬──────────────────────────┬──────────────────
                         │         MAX PROFIT        │
     $0  ──────────────┬─┘                          └─┬────────────────
                    B/E│                              │B/E
                   $445│                              │$455
- -$1,815 ─────────────┘                              └─────────────────
+ -$1,784 ─────────────┘                              └─────────────────
          │← max loss                                     max loss →│
-         $409        $432        $450       $468        $491
+         $393        $415        $450       $500        $522
          Long put    Short put   Spot       Short call  Long call
 ```
 
@@ -266,9 +271,13 @@ contracts = floor(capital × position_size_pct / max_loss_per_contract)
 
 # Example: $100k capital, 3% risk, SPY at $450:
 # wing_width = $450 × 5% = $22.50
-# net_credit = $4.85
-# max_loss = ($22.50 − $4.85) × 100 = $1,765
-# contracts = floor($100,000 × 0.03 / $1,765) = 1 contract
+# net_credit = $4.66   (skew-aware pricer at ATM IV 0.22)
+# max_loss = ($22.50 − $4.66) × 100 = $1,784
+# contracts = floor($100,000 × 0.03 / $1,784) = 1 contract
+#
+# NOTE: the backtest hard-codes 1 contract per trade and gates on free capital
+# (margin = max_loss); this floor()-based sizing is the LIVE sizing rule the
+# guide recommends, not what the backtest simulates.
 
 # With 2 concurrent ICs at 3% risk: 6% of capital at max risk
 # With 3 concurrent ICs at 3% risk: 9% of capital at max risk
@@ -289,23 +298,92 @@ contracts = floor(capital × position_size_pct / max_loss_per_contract)
 
 ## Quick Reference
 
+These are the **actual code defaults**, calibrated for the limited (~2-year)
+VIX history currently in the database. The "classic" 2010–2023 thresholds quoted
+in the rule sections above (IVR ≥ 0.45, VIX 16–35, ADX ≤ 22) are tighter; raise
+the defaults toward them once a longer VIX history is synced.
+
 ```
 Parameter            Default  Range      Description
 -------------------  -------  ---------  ----------------------------------
-`ivr_min`            0.45     0.30–0.75  Min IV Rank to enter
-`vix_min`            16.0     12–20      VIX floor (avoid cheap premium)
-`vix_max`            35.0     28–45      VIX ceiling (avoid fear regime)
-`adx_max`            22.0     15–30      Max ADX (range-bound filter)
-`atr_pct_max`        0.025    0.01–0.04  Max ATR/spot ratio
+`ivr_min`            0.20     0.10–0.60  Min IV Rank to enter (low default suits short VIX history)
+`vix_min`            14.0     10–20      VIX floor (avoid cheap premium)
+`vix_max`            45.0     25–55      VIX ceiling (avoid fear regime)
+`adx_max`            35.0     15–50      Max ADX (range-bound filter)
+`atr_pct_max`        0.030    0.01–0.05  Max ATR/spot ratio
 `delta_short`        0.16     0.10–0.25  Short strike delta (~84% prob OTM)
-`wing_width_pct`     0.05     0.03–0.10  Wing width as % of spot
-`dte_target`         45       30–60      Days to expiry at entry
-`dte_exit`           21       14–28      Force-close at this DTE
-`profit_target_pct`  0.50     0.30–0.70  Close at 50% of max credit
-`stop_loss_mult`     2.0      1.5–3.0    Stop at N× credit received
-`position_size_pct`  0.03     0.01–0.06  Capital at risk per trade
-`max_concurrent`     3        1–6        Max simultaneous positions
+`wing_width_pct`     0.05     0.02–0.10  Wing width as % of spot
+`dte_target`         45       21–60      Days to expiry at entry
+`dte_exit`           21       7–30       Force-close at this DTE
+`profit_target_pct`  0.50     0.25–0.75  Close at 50% of max credit
+`stop_loss_mult`     2.0      1.0–4.0    Stop at N× credit received
+`position_size_pct`  0.03     0.01–0.08  Capital at risk per trade
+`max_concurrent`     5        1–8        Max simultaneous positions
 ```
+
+---
+
+## Backtest Mechanics — How P&L Is Simulated
+
+The backtest is fully walk-forward (no look-ahead): every entry decision on bar
+*i* uses only IVR/VIX/ADX/ATR computed from bars ≤ *i*, all from causal rolling
+windows. Three details make the simulated P&L realistic rather than optimistic:
+
+**1. Skew-aware option pricing.** Legs are priced with the engine's
+`bs_price_skew`, which applies a linear equity-index volatility skew to the
+VIX-derived ATM IV: OTM puts (lower strikes) are marked *richer* and OTM calls
+(higher strikes) *cheaper* than a single flat IV would imply. Both the entry
+credit and every mark-to-market exit valuation use the **same** surface, so no
+artificial pricing-basis P&L is created. Strike selection still locates the
+~16-delta strike using flat-IV delta — that only positions the strikes and does
+not affect realized P&L.
+
+**2. Transaction costs on entry AND exit.** Each leg is charged
+`DEFAULT_SLIPPAGE_PER_LEG` ($0.05/share adverse fill → $5.00/contract) plus
+`DEFAULT_COMMISSION_PER_LEG` ($0.65/contract). That is **$5.65 per leg**, and a
+condor is 4 legs, charged on *both* the opening fill and the closing fill:
+
+```
+Round-trip cost per 1-contract condor
+  = 8 legs × $5.65
+  = $45.20
+
+This is deducted from realized P&L. On a ~$4.66 credit ($466) the cost is ~10% of
+gross premium; on a thin $1.00 credit it is ~45% — which is exactly why low-VIX
+/ low-priced underlyings are flagged as not viable.
+```
+
+The reported per-trade `pnl` is the **full round-trip net** (gross credit
+captured − entry cost − exit cost), so the trade ledger sums exactly to the
+realized change in the equity curve.
+
+**3. Pessimistic exit realization.** All exits (profit target, 21-DTE, 2× stop)
+are realized at the daily close, not at the intraday trigger price — so gap days
+are modeled against the position, never in its favor.
+
+### Worked numeric example — one full trade
+
+```
+Entry: SPY = $450, VIX = 22 (ATM IV ≈ 0.22), 45 DTE, IVR clears the gate
+  Short call (16Δ) ≈ $500   Long call  = $500 + 5%×450 = $522.50
+  Short put  (16Δ) ≈ $415   Long put   = $415 − 5%×450 = $392.50
+  Skew-adjusted net credit (bs_price_skew):  ≈ $4.66/share  →  $466
+  Wing width = 5% × $450 = $22.50
+  Max loss   = ($22.50 − $4.66) × 100 = $1,784  (this is the margin reserved)
+
+Exit at 50% profit target (cost-to-close ≈ $2.33/share = $233):
+  Gross P&L   = ($4.66 − $2.33) × 100 = +$233
+  Entry cost  = 4 legs × $5.65        = −$22.60
+  Exit cost   = 4 legs × $5.65        = −$22.60
+  Net P&L     = $233 − $45.20         = +$188   ← what the ledger records
+```
+
+A symmetric losing trade stopped at 2× credit closes for ~$9.32/share, i.e.
+−$466 gross, −$511 after costs — about 2.5× the average winner, which is the
+structural reason the equity path is choppy (see the honesty note below).
+(This ~$188 illustrative winner is close to the real backtest's +$279 average
+winner; the spread reflects that real exits happen at varying spots/DTEs, not
+exactly at the idealised 50%-cost-to-close point.)
 
 ## Data Requirements
 
@@ -319,6 +397,42 @@ VIX daily close         `mkt.VixBar`    IVR calculation, VIX filter
 
 No options chain data required — strikes are estimated from Black-Scholes using VIX as IV proxy.
 
+---
+
+## Honest Results — SPY, Apr 2024 → Mar 2026
+
+Run on the real reconstructed-IV window currently in the database, at the code
+defaults, with skew pricing and full round-trip costs:
+
+```
+Total return        +3.4%        (over ~2 years)
+Annualized          +1.7%
+Sharpe              −0.66        ← NEGATIVE
+Sortino             −0.76
+Max drawdown        −5.6%
+Trades              46
+Win rate            80%          (31 profit-target, 8 DTE-exit, 7 stops)
+Profit factor       1.49         (gross-profitable, after costs)
+Avg winner          +$279        Avg loser  −$770   (≈2.5× the winner)
+```
+
+**Read this carefully.** The strategy is *gross-profitable* (PF 1.49, 80% win
+rate, positive total return) but has a **negative Sharpe**. That is not a
+contradiction — it is the defining risk profile of premium selling: many small
+wins punctuated by a few losses ~2.5× the size of a typical winner. The few
+2× stop-outs land on the worst days (trending sell-offs), so the *return path*
+is choppy and its volatility-adjusted score is poor even though the sum is
+positive.
+
+The honest verdict: **the edge here is marginal and not robust.** On this
+particular sample the variance-risk-premium thesis barely clears costs, and the
+2024–2026 tape was a persistent bull trend — the single environment Iron Condors
+struggle in most (one side keeps getting tested). Do **not** treat the +3.4%
+as a reliable forward expectation. The strategy is best understood as a
+range-bound-regime tool that should be sized small and turned off (via the ADX
+and VIX filters) when the market trends — which is exactly what dragged the
+Sharpe negative on this window. A longer, regime-diverse VIX history is needed
+before claiming a durable edge.
 
 ---
 
@@ -454,3 +568,16 @@ Account down 25% from peak   Stop trading, full strategy review
 4. **Treating IVR = 0.40 as a hard floor.** In a persistently low-vol environment (e.g. most of 2017, much of 2024 Q1), IVR 0.40 may still represent historically cheap premium. Pair IVR with VRP to confirm the opportunity is real.
 
 5. **Holding through expiration week.** The final 5 days of a condor carry outsized gamma risk relative to the remaining premium. Unless you are actively watching intraday, closing at 5–7 DTE for 60–70% of max profit is a sound mechanical rule that significantly improves long-run Sharpe.
+
+
+---
+
+## Audit & money verdict — 2026-07-03
+
+**End-to-end audit (UI · Backtest · Screening · Tests · Training): all surfaces PASS.**
+
+- **Real backtest:** +3.4% · Sharpe −0.66 · −5.6% max DD · 46 trades · PF 1.49 (SPY 2024-04→2026-03).
+- **Money verdict:** **No durable edge** — +3.4% is below the ~4.5% risk-free rate; losers run ~2.8× winners; it loses in sustained trends. A range-bound-regime tool: size small, disable in trends.
+- **Deploy:** Paper only.
+
+_Audited on real DB data via the production backtest + screener paths. Full cross-strategy report: `docs/reviews/2026-07-03_top10_strategy_audit.md`._

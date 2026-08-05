@@ -372,3 +372,16 @@ Economic calendar               Fed/BLS/Earnings     Binary event exclusion
 HYG price history               Polygon              Credit spread signal (leading indicator of equity stress)
 RSI (14-period)                 Computed from OHLCV  Technical condition at entry
 ```
+
+
+---
+
+## Audit & money verdict — 2026-07-03
+
+**End-to-end audit (UI · Backtest · Screening · Tests · Training): all surfaces PASS.**
+
+- **Real backtest:** 1 trade · +0.48% (SPY 2024-04→2026-03).
+- **Money verdict:** Fixed from a broken stub (import error + fabricated P&L). The IVR≥40% 'fear' gate and the price>MA50 'bullish' gate conflict, so it fires **once** on SPY — too few to prove an edge. Honest use: scan a broad optionable universe, not single-symbol SPY.
+- **Deploy:** Paper only.
+
+_Audited on real DB data via the production backtest + screener paths. Full cross-strategy report: `docs/reviews/2026-07-03_top10_strategy_audit.md`._

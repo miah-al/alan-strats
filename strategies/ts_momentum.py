@@ -2,11 +2,14 @@
 12-Month Momentum (SPY) — own the index when its trailing 12-month return is
 positive, cash when negative.
 
-One of two strategies in this repo with an edge validated on 20 years of REAL
-daily prices through 2008/2020/2022:
+A crash-drawdown overlay validated on 20 years of REAL daily prices through
+2008/2020/2022. Measured with the same metric code for both legs (price-return
+SPY, 4% cash yield when out):
 
-  12-month Momentum: 10.8% CAGR (matches buy-hold) at 0.63 Sharpe and -34% max DD
-  vs -55%. Decided monthly; ~1-2 round trips/year.
+  12-month Momentum: ~10.0% CAGR at ~0.38 Sharpe and -34% max DD, vs buy-hold's
+  ~11.1% CAGR / ~0.38 Sharpe / -55% DD. So the ONLY reproducible benefit is a
+  much shallower drawdown; it does NOT beat buy-hold on return or Sharpe.
+  Decided monthly; ~1-2 round trips/year.
 
 "Time-series (absolute) momentum" — documented across decades and asset classes.
 Shared timing machinery lives in timing_base.py; this file holds only the
@@ -28,12 +31,19 @@ from alan_trader.risk.metrics import compute_all_metrics
 
 
 def tsmom_position(close: pd.Series, lookback_months: int = 12) -> pd.Series:
-    """1.0 when the trailing N-month return is positive, else 0.0 (cash). Decided
-    at each month-end, applied the following month (no look-ahead)."""
+    """1.0 when the trailing N-month return is positive, else 0.0 (cash).
+
+    The decision is made *at* each month-end close (using only data through that
+    close) and held until the next month-end. To avoid look-ahead we never trade
+    on the decision bar itself: the month-end verdict is forward-filled across the
+    following days and then shifted one trading day, so the position on day *d* is
+    a function of closes strictly before *d*. Forward-fill only — no bfill.
+    """
     m_end = close.resample("ME").last()
     mom   = m_end.pct_change(lookback_months)
-    sig   = (mom > 0).shift(1, fill_value=False).astype(float)
-    return sig.reindex(close.index, method="ffill").fillna(0.0)
+    raw   = (mom > 0).astype(float)                      # decided at each month-end close
+    daily = raw.reindex(close.index, method="ffill")     # carry the month-end verdict forward
+    return daily.shift(1).fillna(0.0)                    # apply next trading day → no look-ahead
 
 
 def current_tsmom_signal(close: pd.Series, lookback_months: int = 12) -> dict:
@@ -60,8 +70,9 @@ class TSMomentumStrategy(BaseStrategy):
     status        = StrategyStatus.ACTIVE
     description   = (
         "Own the index when its trailing 12-month return is positive; otherwise "
-        "hold cash. Validated on 20y of real prices: 10.8% CAGR (matches buy-hold) "
-        "at 0.63 Sharpe and only -34% max drawdown vs -55%. Decided monthly."
+        "hold cash. A crash-drawdown overlay: on 20y of real prices it cuts max "
+        "drawdown from ~-55% to ~-34%, but at ~-1% CAGR and roughly equal Sharpe "
+        "(~0.38) vs buy-hold — it does not beat buy-hold on return. Decided monthly."
     )
     asset_class          = "equities"
     typical_holding_days = 180

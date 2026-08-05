@@ -92,6 +92,79 @@ The means above are typical SPY values 2010-2024. They are *not* hard-coded — 
 
 The HMM has three things to learn: (1) the emission distribution of each hidden state — here a 3-dim Gaussian with mean μ_k and covariance Σ_k for each k ∈ {0, 1, 2}; (2) the 3×3 transition matrix A where A[i,j] = P(state_t+1 = j | state_t = i); (3) the initial state distribution π. The Baum-Welch algorithm initializes these randomly, computes the forward-backward smoothed state probabilities γ(i,t) = P(state_t = i | obs_0:T) under the current parameters, then re-estimates the parameters by maximum likelihood over those soft assignments, and iterates to convergence. Convergence is fast — typically 20-50 iterations on 1000+ bars of equity data. The cost is O(K² × T) per iteration where K = 3 and T = bars.
 
+### Worked numeric example — the forward algorithm, by hand
+
+This is the single most important computation in the strategy: given the fitted
+HMM and a stream of observations, produce the **filtered** posterior
+`P(state_t | obs_0:t)` at each bar — the quantity that gates every trade. The
+example below is fully reproducible by hand (and matches `predict_proba`'s last
+row). To keep the arithmetic transparent we use the `rv20` dimension only; the
+real model uses the full 3-D `(log_return, vix, rv20)` emission, but the
+mechanics are identical.
+
+**Fitted parameters (illustrative, sorted by ascending vol):**
+
+```
+Emission (Gaussian on rv20):
+  state 0:  μ=0.10  σ=0.03     (low-vol bull)
+  state 1:  μ=0.16  σ=0.04     (chop)
+  state 2:  μ=0.35  σ=0.10     (high-vol bear)
+
+Transition matrix A (row = from, col = to):
+        →0     →1     →2
+  0 [ 0.95   0.04   0.01 ]      persistent low-vol
+  1 [ 0.05   0.90   0.05 ]      persistent chop
+  2 [ 0.02   0.18   0.80 ]      sticky crisis, decays toward chop
+
+Initial state distribution π = [0.80, 0.15, 0.05]
+```
+
+**Observations (3 bars):** rv20 = 0.11, then 0.12, then a spike to 0.30.
+
+**Step 1 — emission likelihood** of each observation under each state, using
+the Gaussian pdf `b_k(x) = exp(−½((x−μ_k)/σ_k)²) / (σ_k·√(2π))`:
+
+```
+t=0  x=0.11   b = [12.579, 4.566, 0.224]
+t=1  x=0.12   b = [10.648, 6.049, 0.283]
+t=2  x=0.30   b = [ 0.000, 0.022, 3.521]   ← x is 6σ from state 0, ~likelihood 0
+```
+
+**Step 2 — scaled forward recursion** (this *is* the filter; the scaling factor
+`c_t` is discarded — it only normalises):
+
+```
+t=0 (init):  α₀ ∝ π ⊙ b₀ = [0.80, 0.15, 0.05] ⊙ [12.579, 4.566, 0.224]
+                          = [10.063, 0.685, 0.011]
+             normalise →  P(state | obs_0:0) = [0.9353, 0.0637, 0.0010]
+
+t=1:         α₁ ∝ (α₀ · A) ⊙ b₁
+             α₀·A = [0.9353·0.95 + 0.0637·0.05 + 0.0010·0.02, …] = [0.892, 0.095, 0.013]
+             ⊙ b₁ = [9.50, 0.575, 0.0037]
+             normalise →  P(state | obs_0:1) = [0.9426, 0.0570, 0.0004]
+
+t=2 (spike): α₂ ∝ (α₁ · A) ⊙ b₂
+             α₁·A = [0.898, 0.090, 0.012]
+             ⊙ b₂ = [0.898·0.000, 0.090·0.022, 0.012·3.521] = [0.000, 0.0020, 0.0423]
+             normalise →  P(state | obs_0:2) = [0.0000, 0.0420, 0.9580]
+```
+
+**Reading the result.** After two quiet bars the filter sits at ~94% state 0 →
+a bull-put credit spread is eligible (P ≥ 0.60). The vol spike at t=2 flips the
+posterior to ~96% state 2 in a *single* bar, because the state-0 emission
+likelihood of rv20=0.30 is effectively zero (6σ away) — the transition matrix's
+persistence cannot hold the filter in state 0 against an observation that the
+state-0 Gaussian says is impossible. This is exactly the behaviour we want: the
+filter is sticky during noise (t=0→t=1 barely moved) but responsive to genuine
+regime evidence (t=1→t=2 flipped hard).
+
+**Why this is leak-free.** Every quantity at bar t uses only `b_0 … b_t` and the
+already-fitted `A`, `π`. Nothing from bar t+1 enters `α_t`. The strategy calls
+`predict_proba(obs[:t+1])` and reads the **last** row, which equals this `α_t`
+exactly — see `test_predict_proba_is_filtered_not_smoothed`, which proves that
+the *smoothed* (forward-backward) value for an interior bar differs because it
+would peek at future observations.
+
 ### State-relabel (the engineering detail that matters most)
 
 ```
@@ -285,6 +358,54 @@ chopped through 195-205 in September.
 - [ ] **Entry IV is consistent with the state classification.** Sanity check: state 0 entries should have VIX 10-18, state 2 entries should have VIX 22-40. If the snapshot says state 0 but VIX is 35, distrust the model — the relabel may have failed at the last refit.
 
 ---
+
+## Measured Backtest Results (2026-06, current code)
+
+Real SPY backtest, **2021-01-04 → 2026-06-01**, $100K starting capital, default
+config (state 2 disabled, full per-leg commission + slippage on both sides, vol
+skew, reserved-margin accounting). These are the honest, reproducible numbers
+from the production loader — *not* the illustrative figures elsewhere in this
+guide:
+
+```
+Total return            -0.19%   (≈ flat over 5.4 years)
+Annualised return       -0.04%
+Max drawdown            -1.68%
+Trades                   32
+Win rate                 62.5%
+Profit factor            0.968    (just under break-even)
+Sharpe (as reported)    -7.005    ← see artifact note below
+```
+
+**Verdict: NO DEMONSTRATED EDGE on SPY 2021-2026 — paper-only.** The mechanics
+are correct and leak-free, but the realised P&L is essentially flat-to-slightly-
+negative. State 0 (bull put) contributed +$292; state 1 (iron condor) -$412.
+This is an honest "the edge did not show up in this window" result, not a bug.
+
+### The Sharpe is a cash-drag artifact, not a skill signal
+
+The reported Sharpe of **−7.0** is misleading and must NOT be read as "deeply
+unskilled." It is a metric artifact of an intermittent, mostly-in-cash strategy:
+
+- The strategy holds **at most one trade** and is flat (in cash) on ~83% of
+  days (1,120 of 1,357 days have an exactly-zero daily return).
+- `compute_all_metrics` subtracts a **5% annual risk-free rate** from *every*
+  daily return — including the ~1,120 flat cash days. That injects a constant
+  −0.0198%/day "excess return" drag, so the mean excess return ≈ −0.000200.
+- The return **standard deviation is tiny** (~0.00045) because the curve only
+  moves on the handful of trade-active days.
+- Sharpe = mean_excess / std × √252 = (−0.000200 / 0.00045) × √252 ≈ **−7.0**.
+- With the risk-free term set to 0, the Sharpe is **−0.045** — i.e. flat, which
+  is the truthful read of a −0.19% / 5.4-year curve.
+
+The −7.0 reflects "held cash earning 0% while the benchmark assumes 5% risk-
+free," not trade-level skill. This is a **shared-metric limitation** in
+`risk/metrics.py` (`sharpe_ratio` / `compute_all_metrics`), not a strategy bug —
+it penalises every intermittent, capital-light strategy identically. A correct
+fix (out of scope for this strategy file) would compute excess return only over
+**deployed** capital / days, or report Sharpe on the trade-return series. Until
+then, judge this strategy by total return, profit factor and win rate, not the
+headline Sharpe.
 
 ## Defensive Exits (added 2026-05)
 
@@ -531,3 +652,16 @@ Option chain (live only)         Broker API          Real-time          Strike s
 2. Ang, A. & Bekaert, G. (2002). *Regime Switches in Interest Rates.* Journal of Business and Economic Statistics 20(2): 163-182.
 3. Guidolin, M. & Timmermann, A. (2007). *Asset allocation under multivariate regime switching.* Journal of Economic Dynamics and Control 31(11): 3503-3544.
 4. Rabiner, L. R. (1989). *A tutorial on Hidden Markov Models and selected applications in speech recognition.* Proceedings of the IEEE 77(2): 257-286.
+
+
+---
+
+## Audit & money verdict — 2026-07-03
+
+**End-to-end audit (UI · Backtest · Screening · Tests · Training): all surfaces PASS.**
+
+- **Real backtest:** −0.19% · 32 trades · PF 0.968 (SPY 2021→2026).
+- **Money verdict:** **~Flat, no standalone edge** (the −7 Sharpe is a cash-drag metric artifact; with rf=0 Sharpe ≈ 0). The regime classifier itself is high-quality and leak-free (37 expanding walk-forward refits, filtered — not smoothed — posterior). Its value is **as a filter/overlay** gating other strategies.
+- **Deploy:** Paper only (use as a regime filter).
+
+_Audited on real DB data via the production backtest + screener paths. Full cross-strategy report: `docs/reviews/2026-07-03_top10_strategy_audit.md`._

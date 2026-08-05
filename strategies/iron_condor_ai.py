@@ -467,13 +467,33 @@ class IronCondorAIStrategy(BaseStrategy):
         return str(path)
 
     def load_model(self, ticker: str = "default") -> bool:
+        """
+        Load a persisted model. Returns False (never raises) when the artifact
+        is missing OR unreadable.
+
+        An unreadable pickle used to propagate out of here. The screener wraps
+        its scoring in a broad `except`, so the exception was converted into
+        `score = 0.0, all_pass = False` — a broken model presented to the user
+        as "no setup found". Pickles written under scikit-learn 1.8 raise
+        `ModuleNotFoundError: No module named '_loss'` under 1.9, which is
+        exactly how that happened for every non-SPY ticker.
+        """
         path = _SAVED_MODELS_DIR / f"iron_condor_ai_{ticker.lower()}.pkl"
-        if path.exists():
+        if not path.exists():
+            return False
+        try:
             with open(path, "rb") as f:
                 self._model = pickle.load(f)
-            logger.info(f"iron_condor_ai: model loaded from {path}")
-            return True
-        return False
+        except Exception as exc:
+            logger.warning(
+                f"iron_condor_ai: model at {path} is unreadable ({type(exc).__name__}: "
+                f"{exc}); falling back to the heuristic. Retrain with "
+                f"`python -m scripts.retrain_models`."
+            )
+            self._model = None
+            return False
+        logger.info(f"iron_condor_ai: model loaded from {path}")
+        return True
 
     def generate_signal(self, market_snapshot: dict) -> SignalResult:
         """Live signal using loaded model or heuristic fallback."""

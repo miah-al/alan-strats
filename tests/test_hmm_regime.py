@@ -200,6 +200,135 @@ class TestHMMRegime:
         assert not np.allclose(post_truncated, post_with_future), \
             "Posterior should differ when prediction is run at a different bar"
 
+    def test_predict_proba_is_filtered_not_smoothed(self):
+        """
+        The deepest HMM look-ahead trap: hmmlearn.predict_proba runs the
+        forward-BACKWARD (smoothing) algorithm, so an *interior* row of its
+        output P(state_t | obs_0:T) is contaminated by FUTURE observations.
+
+        The wrapper sidesteps this by always slicing obs[:i+1] and taking the
+        LAST row, which is mathematically the FILTERED probability
+        P(state_i | obs_0:i) — the backward pass from the final element is
+        trivial. This test proves the distinction is real and that the wrapper
+        is on the safe side:
+
+          * filtered(i)  = predict_proba(obs[:i+1])[-1]      (no future)
+          * smoothed(i)  = raw.predict_proba(obs[:i+k])[i]   (sees k-1 future bars)
+
+        If these were equal, smoothing would be harmless and the slice would
+        not matter. We assert they DIFFER materially — i.e. using a smoothed
+        interior row WOULD leak — which is exactly why the strategy must (and
+        does) slice and take the last row.
+        """
+        from strategies.hmm_regime import (
+            _RegimeModel, _build_observation_matrix, _HMM_BACKEND,
+        )
+        if _HMM_BACKEND != "hmmlearn":
+            pytest.skip("forward/backward distinction only applies to the hmmlearn backend")
+
+        price_df, vix_df = _make_three_regime_series(n=500, seed=3)
+        obs = _build_observation_matrix(price_df["close"], vix_df["close"]).dropna()
+        X = obs.values.astype(float)
+
+        m = _RegimeModel(n_components=3, random_state=42)
+        m.fit(X[:300])
+
+        i = 250
+        filtered = m.predict_proba(X[: i + 1])          # wrapper: last row of truncated slice
+        # Smoothed interior row from the SAME fitted raw model, but with 49
+        # future bars appended — this is what a naive "predict on full array
+        # then index [i]" implementation would (wrongly) use.
+        gamma_future = m._raw_model.predict_proba(np.ascontiguousarray(X[: i + 50]))
+        smoothed = np.zeros(3)
+        for raw_idx in range(3):
+            smoothed[m._perm[raw_idx]] = gamma_future[i, raw_idx]
+
+        assert np.abs(filtered - smoothed).max() > 1e-3, (
+            "Filtered and smoothed posteriors are identical — the no-lookahead "
+            "slice would be pointless. Expected the backward pass over future "
+            f"bars to shift the posterior. filtered={filtered}, smoothed={smoothed}"
+        )
+
+    def test_walkforward_fit_is_expanding_not_full_sample(self):
+        """
+        The classic HMM leak is a SINGLE Baum-Welch fit over the whole sample,
+        then assigning regimes to every bar from that one full-sample model.
+        This test instruments _RegimeModel.fit and asserts the backtest instead
+        re-fits walk-forward on strictly EXPANDING windows that each end at the
+        current bar (obs[:i+1]) — never the full series at an early bar.
+        """
+        import strategies.hmm_regime as H
+
+        sizes: list[int] = []
+        orig_fit = H._RegimeModel.fit
+
+        def spy_fit(self, X, prior_sorted_means=None):
+            sizes.append(int(X.shape[0]))
+            return orig_fit(self, X, prior_sorted_means)
+
+        H._RegimeModel.fit = spy_fit
+        try:
+            price_df, vix_df = _make_three_regime_series(n=600, seed=42)
+            s = self.cls(warmup_bars=200, retrain_every=30, regime_confidence_min=0.5)
+            s.backtest(price_df, {"vix": vix_df}, starting_capital=100_000, ticker="SYN")
+        finally:
+            H._RegimeModel.fit = orig_fit
+
+        n_clean = len(
+            __import__("strategies.hmm_regime", fromlist=["_build_observation_matrix"])
+            ._build_observation_matrix(price_df["close"], vix_df["close"]).dropna()
+        )
+        assert len(sizes) >= 2, "Expected multiple walk-forward refits, not one full-sample fit"
+        # Strictly increasing → expanding window, each fit ends at the live bar.
+        assert all(sizes[j] < sizes[j + 1] for j in range(len(sizes) - 1)), (
+            f"Fit windows must strictly grow (expanding walk-forward); got {sizes}"
+        )
+        # First fit must be ~warmup-sized, NOT the full clean series (no peeking).
+        assert sizes[0] < n_clean, (
+            f"First refit saw {sizes[0]} obs but the full clean series is "
+            f"{n_clean} — that would be a full-sample fit (look-ahead leak)."
+        )
+        # No single fit may ever see the entire clean series at once during the
+        # walk (the last bar's exit is handled at i=n-1 but warmup+retrain stop
+        # short of the final bar in this config).
+        assert max(sizes) < n_clean, (
+            f"A fit saw the full series ({max(sizes)} == {n_clean}); "
+            "walk-forward must always trail the data end."
+        )
+
+    def test_transmat_repair_no_uniform_blackout(self):
+        """
+        Regression: on short/synthetic warmup windows a hidden state may go
+        unvisited, leaving a transmat_ row summing to 0. Pre-fix, hmmlearn's
+        forward pass threw and the bar silently fell back to a UNIFORM
+        posterior (~0.333 each) that never clears the confidence floor —
+        blacking out the strategy. The fit-time transmat repair must keep the
+        posterior non-uniform and well-formed.
+        """
+        from strategies.hmm_regime import _RegimeModel, _build_observation_matrix
+
+        # A short, low-variance series likely to leave a state unvisited.
+        rng = np.random.default_rng(123)
+        n = 80
+        log_ret = rng.normal(0.0003, 0.004, n)        # one tight regime only
+        price = 400.0 * np.exp(np.cumsum(log_ret))
+        idx = pd.date_range("2021-01-04", periods=n, freq="B")
+        close = pd.Series(price, index=idx)
+        vix = pd.Series(np.clip(13 + rng.normal(0, 0.5, n), 9, 60), index=idx)
+
+        obs = _build_observation_matrix(close, vix).dropna()
+        m = _RegimeModel(n_components=3, random_state=42)
+        m.fit(obs.values.astype(float))
+
+        post = m.predict_proba(obs.values.astype(float))
+        assert post.shape == (3,)
+        assert np.isfinite(post).all()
+        assert abs(post.sum() - 1.0) < 1e-6, f"posterior must sum to 1, got {post.sum()}"
+        # Must not be a flat-uniform black-out (the old failure mode).
+        assert np.abs(post - 1.0 / 3.0).max() > 1e-3, (
+            f"posterior collapsed to uniform {post} — transmat repair failed"
+        )
+
     # ── Backtest — synthetic 3-regime series ──────────────────────────────
 
     def test_backtest_runs_on_synthetic(self):

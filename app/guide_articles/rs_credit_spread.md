@@ -161,7 +161,46 @@ Timeline:
 
 ---
 
-## Real Trade Walkthrough
+## Pricing Realism — Skew and Frictions
+
+The backtest does **not** price legs with a single flat VIX-implied IV. Two
+corrections are applied so the simulated fills match what a real account would
+get; both are essential to an honest result.
+
+**1. Equity-index volatility skew.** Real index/ETF option surfaces are not flat:
+OTM puts trade at a *higher* IV than ATM, OTM calls at a *lower* IV (the downside
+"smirk"). Each leg is priced through `engine.bs_price_skew` with a skew slope of
+**0.15**, applied exactly once. The short leg of a bull put (an OTM put) therefore
+carries a richer IV — but so does the long protective put, and the net effect on
+the *credit* is smaller than the flat-IV approximation suggests. For the bear
+call the OTM short call sits on the cheaper side of the smirk, which *reduces* the
+credit relative to flat IV. Net: skew makes the realised credits modestly thinner
+than a flat-IV model would print.
+
+**2. Commission + slippage on entry AND exit.**
+
+```
+Per leg, per contract:
+  Commission   $0.65  (broker, charged on entry and again on exit)
+  Slippage     $0.05/share = $5.00/contract  (adverse fill vs mid)
+
+Per spread (2 legs), round trip:
+  Entry  : 2 × $0.65                    = $1.30 commission
+           2 × $0.05 baked into credit  = $0.10/share = $10/contract
+  Exit   : 2 × ($0.65 + $5.00)          = $11.30/contract
+  ----------------------------------------------------------------
+  Total round-trip friction ≈ $12.60 + $1.30  ≈ $13.90 per contract
+```
+
+**Why this matters so much here.** Sector-ETF credit spreads are *cheap* — a
+typical net credit is only **$0.40–$1.20/share ($40–$120/contract)**. A round-trip
+friction of ~$12–14/contract is therefore **10–35% of the gross credit on every
+single trade**, before any market move. This is not a modelling artefact; it is
+the real economics of trading low-priced, tight (4%-buffer) spreads weekly.
+
+---
+
+## Worked Numeric Example (with skew + costs)
 
 **Date:** November 2023 | **SPY ADX:** 18 (range-bound — ideal for mean-reversion)
 
@@ -169,20 +208,46 @@ Timeline:
 - #1 Leader: **XLE** +7.8% (energy rally on oil price spike)
 - #11 Laggard: **XLRE** -6.2% (rate fears hammered REITs)
 
-**Leg 1: Bear call spread on XLRE**
-- XLRE spot: $34.50 | Short call: $35.88 | Long call: $37.60
-- Net credit: $0.42 | Max loss: $1.30
-- Model P(XLRE contained): 0.72 → enter
+**Leg 2: Bull put spread on XLE** (leader)
+```
+XLE spot S            = $87.20
+DTE                   = 21 calendar → T = 21/252 ≈ 0.0833 yr
+ATM IV proxy          = VIX/100 ≈ 0.165
+Short put strike      = S × (1 − 0.04) = $83.71   (OTM put, m = ln(83.71/87.20) = −0.0408)
+Long  put strike      = short − 5%×S  = $79.36
 
-**Leg 2: Bull put spread on XLE**
-- XLE spot: $87.20 | Short put: $83.71 | Long put: $79.36
-- Net credit: $0.38 | Max loss: $1.07
-- Model P(XLE contained): 0.68 → enter
+Skew-adjusted IVs (slope 0.15):
+  short put IV = 0.165 − 0.15 × (−0.0408) ≈ 0.171   (richer, as puts should be)
+  long  put IV = 0.165 − 0.15 × ln(79.36/87.20) ≈ 0.179
 
-Outcome (10 days):
-- XLRE: $33.80 (fell slightly, well below $35.88 short call) → **Leg 1: +$42/contract**
-- XLE: $89.50 (rose slightly, well above $83.71 short put) → **Leg 2: +$38/contract**
-- **Combined P&L: +$80 for two spreads requiring ~$650 max risk capital**
+Black-Scholes mid premiums:
+  short put ≈ $0.46/sh,  long put ≈ $0.10/sh
+  credit_mid = 0.46 − 0.10 = $0.36/sh
+
+Entry slippage (2 legs × $0.05):
+  net credit  = 0.36 − 0.10 = $0.26/sh   →  entry_value = $0.26
+
+Position size (position_size_pct = 1.5%, capital $100k):
+  wing = |83.71 − 79.36| = $4.35
+  max loss/contract = (4.35 − 0.26) × 100 = $409
+  contracts = floor(100000 × 0.015 / 409) = floor(3.67) = 3
+  entry commission = 2 × $0.65 × 3 = $3.90 (deducted from cash)
+```
+
+**Outcome after 10 days** — XLE drifts to $89.50 (stays well above the $83.71
+short put):
+```
+Cost to close (skew-priced) ≈ $0.05/sh
+Gross P&L = (0.26 − 0.05) × 100 × 3 contracts = $63.00
+Exit friction = 2 × ($0.65 + $5.00) × 3       = $33.90
+Net P&L (this leg) = 63.00 − 33.90 − 3.90 (entry comm) = $25.20
+```
+
+The leg is still a **winner**, but the $37.80 of round-trip friction on 3
+contracts has eaten **60% of the $63 gross profit**. On a *losing* trade the same
+friction is added to the loss. Multiply this across ~180 trades over five years and
+the cumulative friction (~$10k on $100k of capital) is the dominant P&L term — see
+the honest backtest finding below.
 
 ---
 
@@ -234,6 +299,54 @@ End of data         Close at market
 
 ---
 
+## What the Backtest Actually Shows (Honest Verdict)
+
+Run on the real 11 SPDR sector ETFs (mkt.PriceBar, 2021-04 → 2026-04, SPY as the
+market context leg):
+
+```
+                       Flat IV, no costs    Realistic (skew + costs)
+                       (idealised)          (production)
+  Total return         +15.7%               −6.7%
+  Annualised           +2.9%                −1.4%
+  Win rate             93.7%                59.7%
+  Profit factor        3.0                  0.52
+  Trades               191                  176
+  Sharpe (rf=5%)       —                    −6.0
+  Sharpe (rf=0, raw)   +2.2                 −1.3
+```
+
+**The edge is real but it does not survive transaction costs.** Under idealised
+flat-IV, zero-cost pricing the strategy makes +15.7% with a 94% win rate — the
+mean-reversion containment thesis genuinely works. But once each leg is priced
+with the equity-index skew and charged realistic commission + slippage on entry
+**and** exit, the ~$12–14/contract round-trip friction consumes the entire thin
+sector-ETF credit and the strategy ends slightly **negative**. The high win rate
+(60%) with a sub-1 profit factor (0.52) is the classic credit-spread tail: many
+small wins, occasional losses ~3× the size of the wins.
+
+**On the "wildly negative Sharpe."** An earlier version reported a Sharpe near
+**−14** while showing a *positive* +4% return. That was an **equity-curve
+artifact, not a real result**: the curve recorded only *realised* capital, so it
+was a step function that stayed flat on ~89% of days and jumped only on exit days.
+That collapses the daily-return standard deviation to a tiny number; dividing a
+small (and, after subtracting the 5% risk-free rate, slightly negative) mean
+excess return by that tiny std produces an absurd magnitude. The fix is to
+**mark every open spread to market on every bar** (now done), which yields a
+smooth, economically meaningful equity curve. The Sharpe is still negative — but
+now for the *honest* reason that the net strategy loses to its frictions, not
+because of a degenerate denominator.
+
+**Practical takeaway.** Do not trade this as-is on the standard sector ETFs with
+retail-style frictions. It would need one of: (a) materially cheaper execution
+(institutional commissions, mid-or-better fills), (b) wider buffers / longer DTE to
+collect larger credits that dwarf the fixed friction, or (c) restriction to the
+highest-premium regimes (elevated VIX, wide RS divergence) where the gross edge is
+large enough to clear costs. None of those were applied here, because doing so to
+chase a positive number would be overfitting.
+
+---
+
 ## Common Mistakes
 
 **Entering when SPY ADX > 30.** This is the most dangerous regime for this strategy. In trending markets, sector rotation accelerates rather than reverts. The ADX filter is not optional — override it at your own risk.
@@ -243,3 +356,16 @@ End of data         Close at market
 **Letting both legs run simultaneously into expiry.** The two legs have independent risk profiles. A macro event (e.g., Fed rate decision) can simultaneously spike energy and crush tech — simultaneously losing on both legs. The individual stop-losses per leg (2× credit) limit this damage, but don't treat the dual spread as fully uncorrelated.
 
 **Expecting high trade frequency.** This strategy trades weekly at most. With the SPY ADX filter and minimum confidence requirements, there may be extended periods (2-4 weeks) of no entries. This is correct behavior — patience is part of the edge. Forcing trades in ambiguous regimes destroys the positive expectancy.
+
+
+---
+
+## Audit & money verdict — 2026-07-03
+
+**End-to-end audit (UI · Backtest · Screening · Tests · Training): all surfaces PASS.**
+
+- **Real backtest:** frictionless +15.7% → **net −6.7%** · 176 trades (11 SPDR ETFs 2021→2026).
+- **Money verdict:** The cross-sectional containment edge is **real frictionless** (94% win, PF 3.0) but does **not survive transaction costs** — sector-ETF credits ($40–120) are too thin vs ~$12–14 round-trip friction. Would need cheaper execution or wider/longer structures.
+- **Deploy:** Paper only.
+
+_Audited on real DB data via the production backtest + screener paths. Full cross-strategy report: `docs/reviews/2026-07-03_top10_strategy_audit.md`._

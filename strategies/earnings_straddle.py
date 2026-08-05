@@ -116,6 +116,12 @@ class EarningsStraddleStrategy(BaseStrategy):
         p         = {**self._DEFAULTS, **(params or {})}
         close     = price_data["close"].astype(float)
         vix       = auxiliary_data.get("vix", pd.Series(dtype=float))
+        # `vix` arrives from get_vix_bars as a DataFrame; normalise to a close
+        # Series aligned to the price index so vix.iloc[i] is a scalar.
+        if isinstance(vix, pd.DataFrame):
+            vix = vix["close"] if "close" in vix.columns else vix.iloc[:, 0]
+        if not vix.empty:
+            vix = pd.to_numeric(vix, errors="coerce").reindex(close.index).ffill()
 
         capital   = 100_000.0
         trades, equity = [], []
@@ -153,5 +159,5 @@ class EarningsStraddleStrategy(BaseStrategy):
         daily_ret = eq_series.pct_change().fillna(0.0)
 
         from alan_trader.risk.metrics import compute_all_metrics
-        metrics = compute_all_metrics(daily_ret, eq_series)
+        metrics = compute_all_metrics(eq_series, closed)
         return BacktestResult(self.name, eq_series, daily_ret, closed, metrics, p)

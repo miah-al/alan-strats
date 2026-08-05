@@ -423,14 +423,20 @@ class IVRCreditSpreadStrategy(BaseStrategy):
             # Only enter if IVR ≥ threshold and we have valid IV / MA.
             # Require at least 50 bars of history so the 50-day MA is meaningful
             # (ivr_series itself requires 126 bars before it returns a value).
+            #
+            # LEAK-FREEDOM: the entry decision uses ONLY trailing data (IVR, MA,
+            # spot, IV at bar i). It must NOT reference n_dates / how much future
+            # data exists — doing so makes a trade's existence depend on where the
+            # sample happens to end (a classic survivorship/look-ahead leak). A
+            # trade opened near the end of the sample is simply force-closed by the
+            # `end_of_data` exit at the final bar (a conservative, real-world
+            # "mark at last close" assumption), so no future-length guard is needed.
             can_enter = (
                 i >= 50
                 and ivr_val >= ivr_min_eff
                 and not np.isnan(ivr_series.iloc[i])   # IVR must be a real value
                 and iv_val > 0
                 and spot > 0
-                # Avoid entering too close to end of data
-                and (n_dates - i) > dte_tgt_eff
             )
 
             if can_enter:
@@ -482,7 +488,13 @@ class IVRCreditSpreadStrategy(BaseStrategy):
                 entry_comm = 2 * comm * contracts
                 capital   -= entry_comm
 
-                expiry_idx = min(i + dte_bars, n_dates - 1)
+                # True calendar expiry bar. Do NOT clamp to n_dates-1: clamping
+                # would shrink `dte_remaining`/T for trades opened near the end of
+                # the sample, making their exit timing (and mark-to-market) depend
+                # on how much future data exists — a look-ahead leak. If the expiry
+                # bar lies beyond the data, the `end_of_data` exit force-closes the
+                # position at the last available bar instead.
+                expiry_idx = i + dte_bars
                 open_trades.append({
                     "entry_date":    dt,
                     "entry_idx":     i,

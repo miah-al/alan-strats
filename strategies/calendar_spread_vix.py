@@ -410,7 +410,7 @@ class VIXCalendarSpreadStrategy(BaseStrategy):
 
             # ── 1. MTM and exits ───────────────────────────────────────────
             still_open: list[dict] = []
-            unrealized_pnl = 0.0
+            open_position_value = 0.0
             panic = spot > self.vix_spike_close
 
             for trade in open_trades:
@@ -441,7 +441,12 @@ class VIXCalendarSpreadStrategy(BaseStrategy):
                     close_comm = 2 * comm * trade["contracts"]
                     close_slip = 2 * slip * trade["contracts"] * 100
                     net_pnl    = round(pnl_tot - close_comm - close_slip, 2)
-                    capital   += net_pnl
+                    # Closing SELLS the spread, so cash receives its full market
+                    # value. Entry debited the whole premium; crediting only the
+                    # P&L here would strand that principal and destroy it on
+                    # every round trip.
+                    capital   += (cur_value * trade["contracts"] * 100
+                                  - close_comm - close_slip)
                     closed_trades.append({
                         "entry_date":  trade["entry_date"].date(),
                         "exit_date":   dt.date(),
@@ -455,10 +460,13 @@ class VIXCalendarSpreadStrategy(BaseStrategy):
                     })
                 else:
                     still_open.append(trade)
-                    unrealized_pnl += pnl_per * trade["contracts"] * 100
+                    # Cash already paid the debit, so equity must carry the
+                    # position's full market value — not its P&L, which would
+                    # under-report equity by the debit for every open trade.
+                    open_position_value += cur_value * trade["contracts"] * 100
 
             open_trades = still_open
-            mtm_equity  = capital + unrealized_pnl
+            mtm_equity  = capital + open_position_value
             equity_curve.append(mtm_equity)
 
             # ── 2. Entry gate ──────────────────────────────────────────────

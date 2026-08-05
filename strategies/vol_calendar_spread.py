@@ -234,6 +234,40 @@ class VolCalendarSpreadStrategy(BaseStrategy):
     # ═════════════════════════════════════════════════════════════════════════
 
     @staticmethod
+    def _chains_from_snapshots(snaps) -> Optional[dict]:
+        """Adapt the flat mkt.OptionSnapshot frame (from load_option_snapshots)
+        into the {date → chain DataFrame} shape the backtest consumes.
+
+        The loader supplies columns SnapshotDate / StrikePrice / OptionType /
+        iv / Delta / Gamma / ExpirationDate; we rename to the internal
+        strike / type / iv / delta / gamma / expiration schema and group by
+        snapshot date. Returns None when no usable IV rows exist.
+        """
+        if snaps is None or getattr(snaps, "empty", True):
+            return None
+        df = snaps.rename(columns={
+            "StrikePrice": "strike", "OptionType": "type", "iv": "iv",
+            "Delta": "delta", "Gamma": "gamma",
+            "ExpirationDate": "expiration", "SnapshotDate": "_snap",
+        }).copy()
+        if "iv" not in df.columns or "_snap" not in df.columns:
+            return None
+        for _c in ("strike", "iv", "delta", "gamma"):
+            if _c in df.columns:
+                df[_c] = pd.to_numeric(df[_c], errors="coerce")
+        df["type"] = df["type"].astype(str).str.lower()   # 'C'/'P' → 'c'/'p'
+        df["expiration"] = pd.to_datetime(df["expiration"]).dt.strftime("%Y-%m-%d")
+        df = df[df["iv"].notna() & (df["iv"] > 0.01) & (df["iv"] < 5.0)]
+        if df.empty:
+            return None
+        keep = [c for c in ("strike", "type", "iv", "delta", "gamma", "expiration")
+                if c in df.columns]
+        chains: dict = {}
+        for d, g in df.groupby("_snap"):
+            chains[pd.Timestamp(d).date()] = g[keep].reset_index(drop=True)
+        return chains or None
+
+    @staticmethod
     def _atm_price(chain_df: pd.DataFrame, expiry: str, spot: float) -> Optional[float]:
         """ATM mid/close price for a given expiry. Uses mid if available, else last price."""
         exp = chain_df[chain_df["expiration"] == str(expiry)]
@@ -850,20 +884,35 @@ class VolCalendarSpreadStrategy(BaseStrategy):
     def backtest(
         self,
         price_data:       pd.DataFrame,
+        auxiliary_data:   Optional[dict] = None,
+        starting_capital: float = 100_000.0,
+        *,
         ticker:           str = "UNKNOWN",
         chains:           Optional[dict] = None,    # date → options chain DataFrame
         vix_data:         Optional[pd.Series] = None,
         news_data:        Optional[pd.DataFrame] = None,
         spy_data:         Optional[pd.DataFrame] = None,
-        starting_capital: float = 100_000.0,
         progress_callback = None,
         **kwargs,
     ) -> BacktestResult:
-        # The dash backtest runner instantiates the strategy with defaults and
-        # forwards the UI-tuned params (which are constructor-style knobs) into
-        # backtest() as **kwargs. Apply any recognised knobs to self so the UI
-        # sliders actually take effect instead of being silently swallowed.
-        # Use 'is not None' (NOT truthiness) so a slider set to 0 / 0.0 is honoured.
+        """
+        Full walk-forward backtest — standard (price_data, auxiliary_data) contract.
+
+        The Dash backtest runner calls backtest(price_data, auxiliary_data,
+        starting_capital=..., **params). Options chains, VIX and news are pulled
+        from auxiliary_data (option_snapshots / vix / news_sentiment); the
+        `chains`/`vix_data`/`news_data` keyword args stay available for direct
+        callers (tests) and, when supplied, override the aux-derived values.
+
+        1. Build feature matrix from historical options chains + price data.
+        2. Train model on first (1 − oos_fraction) of data.
+        3. Simulate trades on OOS period only — no lookahead.
+        4. Each trade: ATM calendar at signal date, marked-to-market at
+           min(hold_days, front expiry − 5 DTE).
+        """
+        # UI sliders arrive as **kwargs (constructor-style knobs). Apply any
+        # recognised knob to self so the sliders take effect. 'is not None' (NOT
+        # truthiness) so a slider set to 0 / 0.0 is honoured.
         for _k in (
             "front_dte_min", "front_dte_max", "back_dte_target",
             "label_horizon", "label_sigma_mult", "confidence_min",
@@ -875,23 +924,23 @@ class VolCalendarSpreadStrategy(BaseStrategy):
         ):
             if _k in kwargs and kwargs[_k] is not None:
                 setattr(self, _k, kwargs[_k])
-        """
-        Full walk-forward backtest.
 
-        1. Build feature matrix from historical options chains + price data.
-        2. Train model on first (1 − oos_fraction) of data.
-        3. Simulate trades on OOS period only — no lookahead.
-        4. Each trade: ATM calendar at signal date, marked-to-market at
-           min(hold_days, front expiry − 5 DTE).
+        # ── Resolve inputs from auxiliary_data (explicit kwargs win) ──────────
+        aux = auxiliary_data if isinstance(auxiliary_data, dict) else {}
+        if ticker == "UNKNOWN":
+            ticker = aux.get("ticker", "UNKNOWN")
+        if chains is None:
+            chains = self._chains_from_snapshots(aux.get("option_snapshots"))
+        if vix_data is None:
+            _v = aux.get("vix")
+            if _v is not None and len(_v):
+                if isinstance(_v, pd.DataFrame):
+                    _v = _v["close"] if "close" in _v.columns else _v.iloc[:, 0]
+                vix_data = pd.to_numeric(_v, errors="coerce")
+                vix_data.index = pd.to_datetime(vix_data.index)
+        if news_data is None:
+            news_data = aux.get("news_sentiment")
 
-        Parameters
-        ----------
-        price_data : DataFrame with columns [open, high, low, close, volume], DatetimeIndex
-        chains     : dict mapping date → options chain DataFrame (from Polygon)
-        vix_data   : Series of VIX closes, DatetimeIndex
-        news_data  : DataFrame with sentiment columns, DatetimeIndex
-        spy_data   : DataFrame with SPY OHLCV for correlation feature
-        """
         if chains is None or len(chains) == 0:
             return BacktestResult(
                 strategy_name = self.name,

@@ -28,7 +28,23 @@ WALK-FORWARD TRAINING
 ---------------------
   - Warmup: 90 bars
   - Retrain every 15 bars
-  - Label window: 30-day forward premium extraction vs assignment cost
+  - Label: over the next `dte_target` days, did the AGGRESSIVE (0.30Δ) covered
+    call realize more P&L than the CONSERVATIVE (0.15Δ) call? (1 = aggressive
+    better; 0 = stock rallied between the strikes → conservative preserved more
+    upside). This scores the exact delta choice the model makes at inference.
+  - Purge: the trailing `dte_target` rows are excluded from every training slice
+    so a label's forward window can never overlap the decision bar (no leakage).
+
+HONEST PERFORMANCE NOTE
+-----------------------
+  Covered calls are LONG underlying + SHORT calls, so most of the headline
+  return is SPY beta (measured beta ≈ 0.82), not alpha. Over 2021–2026 the
+  strategy beat buy-and-hold SPY on both return and risk-adjusted return
+  (lower drawdown), which is the well-known BuyWrite (BXM) premium-harvest
+  effect — NOT something the ML layer creates. Ablation shows a naive "always
+  0.30Δ" rule matches the AI within noise: the AI adds NO measurable alpha,
+  because the aggressive-vs-conservative outcome has a ~75% base rate that the
+  model cannot beat. See app/guide_articles/covered_call_ai.md.
 
 FEATURE SET (10 features)
 --------------------------
@@ -143,38 +159,63 @@ def _build_features(close, high, low, vix):
     }).ffill()  # ffill only — bfill leaks future values into early NaNs (walk-forward look-ahead)
 
 
+def _covered_call_pnl(S: float, exit_px: float, strike: float, premium: float) -> float:
+    """P&L per share of a covered-call writer held to expiry.
+
+    Below the strike the writer keeps the premium plus the stock's move; above
+    it the upside is capped at (strike - S) plus the premium.
+    """
+    if exit_px <= strike:
+        return premium + (exit_px - S)        # premium + stock appreciation
+    return premium + (strike - S)             # gain capped at strike
+
+
 def _build_labels(close: pd.Series, vix: pd.Series,
-                   dte: int = 30, delta: float = 0.25) -> pd.Series:
+                   dte: int = 30,
+                   aggressive_delta: float = 0.30,
+                   conservative_delta: float = 0.15) -> pd.Series:
     """
-    Binary label: 1 if selling a covered call at `delta` strike for `dte` days
-    outperforms holding the stock outright (premium > forgone upside).
-    Positive when: stock stays below the short strike (premium fully kept).
-    Negative when: stock rallies above strike (covered call assignment caps gain).
+    Supervised label for the *delta-selection* decision the strategy actually
+    makes — NOT a generic "did a covered call make money" label.
+
+    label[i] = 1  if writing the AGGRESSIVE (higher-delta, nearer-the-money)
+                   call would have realized more P&L over the next `dte` days
+                   than the CONSERVATIVE (lower-delta, further-OTM) call;
+             = 0  otherwise (the stock rallied between the two strikes, so the
+                   conservative strike preserved more upside).
+
+    This is the label the model needs: at inference the strategy chooses
+    aggressive vs conservative, so the target must score exactly that choice.
+    The earlier ``cc_pnl > 0`` label scored a decision the strategy never makes
+    (write-vs-don't), was ~73% positive on bull-market data, and could not teach
+    the delta split — see the guide's beta-vs-alpha note.
+
+    LOOK-AHEAD SAFETY
+    -----------------
+    The label at row i reads ``close.iloc[i + dte]`` — strictly forward data.
+    Rows i for which the forward window is unavailable (i > len-dte-1) are left
+    NaN. The walk-forward trainer PURGES the trailing ``dte`` rows from every
+    training slice (see ``backtest``), so no label whose forward window overlaps
+    the decision bar can leak into training.
     """
-    sigma = vix / 100.0
+    sigma  = vix / 100.0
     labels = pd.Series(np.nan, index=close.index)
+    T      = dte / 252.0
 
     for i in range(len(close) - dte):
-        iv   = float(sigma.iloc[i])
-        S    = float(close.iloc[i])
-        T    = dte / 252.0
+        iv = float(sigma.iloc[i])
+        S  = float(close.iloc[i])
         if iv <= 0 or S <= 0:
             continue
-        strike = _strike_for_delta(S, T, _RISK_FREE_RATE, iv, delta)
-        premium = _bs_price(S, strike, T, _RISK_FREE_RATE, iv, "call")
+        k_agg  = _strike_for_delta(S, T, _RISK_FREE_RATE, iv, aggressive_delta)
+        k_cons = _strike_for_delta(S, T, _RISK_FREE_RATE, iv, conservative_delta)
+        p_agg  = _bs_price(S, k_agg,  T, _RISK_FREE_RATE, iv, "call")
+        p_cons = _bs_price(S, k_cons, T, _RISK_FREE_RATE, iv, "call")
         exit_px = float(close.iloc[i + dte])
 
-        # P&L of covered call writer:
-        # If exit <= strike: keep premium + stock gain
-        # If exit > strike: gain capped at (strike - S) + premium
-        if exit_px <= strike:
-            cc_pnl = premium + (exit_px - S)
-        else:
-            cc_pnl = premium + (strike - S)
-        # P&L of just holding stock:
-        hold_pnl = exit_px - S
-        # Covered call wins if the position made positive P&L (premium > capital loss)
-        labels.iloc[i] = 1.0 if cc_pnl > 0.0 else 0.0
+        pnl_agg  = _covered_call_pnl(S, exit_px, k_agg,  p_agg)
+        pnl_cons = _covered_call_pnl(S, exit_px, k_cons, p_cons)
+        labels.iloc[i] = 1.0 if pnl_agg > pnl_cons else 0.0
 
     return labels
 
@@ -259,11 +300,25 @@ class CoveredCallAIStrategy(BaseStrategy):
             pickle.dump(self._model, f)
 
     def load_model(self, ticker: str = "SPY") -> bool:
+        """
+        Load a persisted model. Returns False (never raises) when the artifact
+        is missing OR unreadable — see IronCondorAIStrategy.load_model for why
+        an exception here becomes a silent "no signal" further up.
+        """
         path = _SAVED_MODELS_DIR / f"covered_call_ai_{ticker}.pkl"
         if not path.exists():
             return False
-        with open(path, "rb") as f:
-            self._model = pickle.load(f)
+        try:
+            with open(path, "rb") as f:
+                self._model = pickle.load(f)
+        except Exception as exc:
+            logger.warning(
+                f"covered_call_ai: model at {path} is unreadable "
+                f"({type(exc).__name__}: {exc}); falling back to the heuristic. "
+                f"Retrain with `python -m scripts.retrain_models`."
+            )
+            self._model = None
+            return False
         return True
 
     def is_trainable(self) -> bool:
@@ -329,7 +384,12 @@ class CoveredCallAIStrategy(BaseStrategy):
         vix = vix_df["close"].reindex(close.index).ffill().fillna(20.0)
 
         feats  = _build_features(close, high, low, vix)
-        labels = _build_labels(close, vix, dte=dte_tgt, delta=agg_delta)
+        # Label scores the aggressive-vs-conservative delta choice the model makes
+        # at inference, using ONLY forward prices (purged from training below).
+        labels = _build_labels(
+            close, vix, dte=dte_tgt,
+            aggressive_delta=agg_delta, conservative_delta=cons_delta,
+        )
 
         all_dates   = list(price_data.index)
         # Model the stock position as a fixed fractional holding
@@ -338,8 +398,12 @@ class CoveredCallAIStrategy(BaseStrategy):
         shares      = float(starting_capital) / stock_px_0  # fractional shares
         # Covered calls are written 1 contract per 100 shares held.
         contracts   = shares / 100.0
-        # Per-leg friction (commission + slippage), per contract, in BS-mark units.
-        per_leg_cost = DEFAULT_COMMISSION_PER_LEG + DEFAULT_SLIPPAGE_PER_LEG
+        # Per-leg friction (commission + slippage) per CONTRACT. Slippage is
+        # quoted per share in BS-mark units, so it must be scaled by the 100-
+        # share multiplier — omitting it undercharged slippage 100× ($0.70/leg
+        # instead of $5.65). See iron_condor_ai._LEG_COST for the same figure.
+        per_leg_cost = (DEFAULT_COMMISSION_PER_LEG
+                        + DEFAULT_SLIPPAGE_PER_LEG * 100.0)
         cash        = 0.0   # running cash from CC premium gains/losses
         equity_list = []
         trades_list = []
@@ -408,7 +472,15 @@ class CoveredCallAIStrategy(BaseStrategy):
                 continue
 
             if i - last_train >= _RETRAIN_EVERY:
-                # Exclude last dte_tgt bars: their labels use future close data
+                # PURGE GAP — mirror iron_condor_ai.py. The label at row j reads
+                # close[j + dte_tgt], so its forward window is (j, j + dte_tgt].
+                # Training only on rows j < (i - dte_tgt) guarantees every label's
+                # forward window ends strictly before the decision bar i, so no
+                # future price can leak into training. Slicing [:cutoff] is
+                # exclusive, so the last training row is (i - dte_tgt - 1) whose
+                # window ends at (i - 1) < i. Without this gap the most recent
+                # labels would be built from prices at/after bar i — classic
+                # walk-forward look-ahead leakage.
                 cutoff = max(0, i - dte_tgt)
                 X_tr = feats.iloc[:cutoff][self.FEATURE_COLS]
                 y_tr = labels.iloc[:cutoff]

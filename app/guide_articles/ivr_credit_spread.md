@@ -157,8 +157,13 @@ In practice:
   stop, 21-DTE exit) and on the skew/cost model, NOT on the raw 84% OTM
   probability. Early profit-taking raises the hit-rate but caps per-trade profit;
   the 2× stop and gamma near expiry lower it.
-  TODO: re-run the backtest to report the realized max-profit / win rate under the
-  current cost-and-skew model. Do not quote a number until then.
+
+  Measured on SPY, 2024-04 → 2026-03 (real DB price + VIX), the strategy fired
+  only 12 times (a deliberately low-vol regime, see honest-stats note below) with
+  a realized win rate of 83% — 10 profit-target exits, 1 stop-loss, 1 dte-exit.
+  The high hit-rate is exactly what the 50% profit target + 16-delta strike are
+  designed to produce; it does NOT mean the strategy made money net of the
+  risk-free rate (it did not, in this window — see the honest verdict).
 ```
 
 ### Computing the 16-Delta Strike
@@ -180,6 +185,63 @@ Find K such that |Δ(K)| = 0.16 under Black-Scholes:
 Default spread_width_pct = 5% of spot
   → SPY at $500: spread width = $25, short strike at 16-delta
   → NVDA at $800: spread width = $40, short strike at 16-delta
+```
+
+---
+
+## Worked Numeric Example — Model-Exact (Reproducible)
+
+Unlike the two *illustrative* walkthroughs further down, every number in this
+section is produced by the **actual code path** the backtest uses: strike from
+`_find_strike_for_delta`, leg prices from `bs_price_skew` (skew slope 0.15),
+slippage `$0.05/leg` and commission `$0.65/leg` from the engine defaults. You
+can reproduce it line-for-line.
+
+```
+Inputs:
+  Spot S            = $500.00
+  ATM IV (VIX/100)  = 0.25            (VIX = 25)
+  Risk-free r       = 0.045
+  DTE at entry      = 45  → T = 45/365 = 0.1233 yr
+  Trend filter      = spot above 50-day MA  → BULL PUT SPREAD
+  spread_width_pct  = 0.05  → width = 0.05 × 500 = $25.00
+
+Step 1 — short strike at 16-delta (Brent inversion on flat ATM IV):
+  short_K = $462.53          (a 16-delta put, ~7.5% OTM)
+  long_K  = short_K − width = 462.53 − 25.00 = $437.53
+
+Step 2 — leg prices WITH equity-index skew (bs_price_skew, slope 0.15):
+  short put @ 462.53  =  $4.357      (OTM put → IV lifted ABOVE 0.25 by skew)
+  long  put @ 437.53  =  $1.398
+  gross credit        =  4.357 − 1.398 = $2.959
+
+Step 3 — entry slippage (2 legs × $0.05/share):
+  net credit received = 2.959 − 0.100 = $2.859  → $285.90 per contract
+
+Step 4 — sizing (3% of $100k against max loss per contract):
+  max loss/contract = (width − credit) × 100 = (25.00 − 2.859) × 100 = $2,214.11
+  contracts = floor( 100,000 × 0.03 / 2,214.11 ) = floor(1.355) = 1 contract
+
+Step 5 — entry commission (2 legs × $0.65 × 1 contract):
+  entry commission = $1.30  (deducted from capital immediately)
+
+Exit at the 50% profit target:
+  Target = close the spread once P&L ≥ 0.50 × credit = 0.50 × $2.859 = $1.4295/sh.
+  i.e. when the modeled cost-to-close (short leg − long leg, skew-priced at the
+  then-current spot/IV/T) has decayed to ≈ $1.43/share.
+  Gross P&L at that point = (2.859 − 1.43) × 100 = +$142.90 per contract.
+
+  Exit friction (2 legs commission + 2 legs slippage, per contract):
+    = 2 × ($0.65 + $0.05 × 100) = $11.30
+  Net P&L on the round trip ≈ 142.90 − 11.30 = +$131.60 per contract.
+
+Key takeaways:
+  • The skew makes the SHORT (OTM) put richer than a flat-IV model would — this
+    is a CONSERVATIVE choice for the cost-to-close on the way out, not a way to
+    inflate the entry credit.
+  • Round-trip friction here is $1.30 (entry) + $11.30 (exit) = $12.60, i.e.
+    ~$0.126/share against a $2.859 credit — about 4.4% of the credit. On thin
+    single-name spreads with credit < $0.80 this friction can eat most of the edge.
 ```
 
 ---
@@ -476,11 +538,7 @@ $170 --+---------------------------------------+
        |  loss zone: $478 to $505
        |  slope: $100 per $1 move
        |
--$2530-+  max loss = ($27−$1.70) × 100
-```
-occurs if stock at or below $478 at expiry
-------------------------------------------
-```
+-$2530-+  max loss = ($27−$1.70) × 100 (occurs at or below $478 at expiry)
        └────┬─────┬─────┬──────┬──────┬───── Stock price
           $470  $480  $490  $500  $510  $520
 ```
@@ -509,6 +567,15 @@ Assumptions:
   → VIX used as the ATM IV proxy (appropriate for SPY/QQQ; rougher for single names).
   → Stops/targets are evaluated and realized at the daily close (end-of-day), so
     gap days can realize worse-or-better than the intraday trigger price.
+  → LEAK-FREEDOM: every entry/exit decision uses ONLY trailing data (IVR, MA,
+    spot, IV at the current bar). Neither the entry filter nor the option's
+    expiry bar references how much future data exists — a trade opened near the
+    end of the sample is force-closed by the `end_of_data` rule at the last bar
+    rather than being skipped or having its expiry clamped. (Earlier versions
+    gated entries on `(n_dates − i) > dte_target` and clamped `expiry_idx` to
+    `n_dates − 1`; both made a trade's existence/timing depend on the sample's
+    end date and were removed.) This is verified by a truncation test in
+    `tests/test_ivr_credit_spread.py`.
 ```
 
 ---
@@ -661,14 +728,33 @@ Max loss             (spread_width − credit) × 100  Per contract, fully defin
 Target Sharpe        1.2 (aspirational target)      NOT a realized figure — re-run required (see below)
 ```
 
-> **Honest-stats note.** The "Target Sharpe 1.2" above is an aspirational design
-> target, not a measured backtest result. After the recent cost-and-skew hardening
-> (skew-adjusted leg pricing, entry+exit slippage, calendar→trading-day DTE), all
-> realized headline statistics (Sharpe, win rate, CAGR, max drawdown) must be
-> **re-computed** before being quoted. The variance-risk-premium edge and the
-> academic references below remain valid as *context*, but no specific realized
-> performance number should be cited until the backtest is re-run.
-> **TODO: re-run backtest and populate honest headline stats here.**
+> **Honest-stats note (measured, do not embellish).** The "Target Sharpe 1.2"
+> above is an aspirational design target, NOT a measured result. The realized
+> figures below were produced by the production backtest on **SPY, 2024-04-01 →
+> 2026-03-26**, using real DB price bars and real VIX, after the cost-and-skew
+> hardening (skew-adjusted leg pricing via `bs_price_skew`, entry+exit slippage,
+> calendar→trading-day DTE) and the look-ahead fixes described in *What the
+> Backtest Simulates*:
+>
+> ```
+> Total return:        +0.78%   (over ~2 years, $100k → $100,781)
+> Annualized return:   +0.39%
+> Sharpe:              −6.4      (vs a 5% risk-free rate)
+> Max drawdown:        −0.56%
+> Win rate:            83.3%     (10 of 12 trades profitable)
+> Profit factor:       2.62
+> Trades:              12        (only 12 bars had IVR ≥ 0.50 in this window)
+> ```
+>
+> **Read the Sharpe correctly.** The strategy's average daily return (~+0.0016%)
+> is *positive* but far below the daily risk-free rate (5%/252 ≈ +0.020%). Sharpe
+> is computed against that 5% cash benchmark, so an honest reading is: **in this
+> low-VIX window the strategy badly underperformed simply holding cash.** The
+> drawdown is tiny and the win rate is high, but the strategy was barely invested
+> (12 trades / 2 years) because IVR rarely cleared 0.50 — 2024–2025 was a
+> persistently low-vol regime. The variance-risk-premium edge and the academic
+> references are real, but they only pay in *elevated-IV* regimes (2020, 2022);
+> this particular two-year sample simply did not offer them.
 
 ---
 
@@ -697,3 +783,16 @@ of VIX data so the 52-week range is fully populated for accurate IVR.
 - Cboe (2021). VIX White Paper — Methodology and Usage
 - Tastyworks Research (2019). The Case for Selling Options at High IV Rank
 - Cohen, G. (2015). *The Bible of Options Strategies*. FT Press.
+
+
+---
+
+## Audit & money verdict — 2026-07-03
+
+**End-to-end audit (UI · Backtest · Screening · Tests · Training): all surfaces PASS.**
+
+- **Real backtest:** +0.78% · 12 trades · 83% win · PF 2.62 (SPY 2024-04→2026-03).
+- **Money verdict:** **Regime-starved** — correctly dormant in low vol (IVR rarely cleared 0.50 in 2024-25). The variance-risk-premium edge is real but only pays in elevated-IV regimes (2020, 2022); it underperformed cash in this window.
+- **Deploy:** Paper only.
+
+_Audited on real DB data via the production backtest + screener paths. Full cross-strategy report: `docs/reviews/2026-07-03_top10_strategy_audit.md`._

@@ -60,10 +60,15 @@ from alan_trader.strategies.base import (
     StrategyType,
 )
 from alan_trader.risk.metrics import compute_all_metrics
+from alan_trader.backtest.engine import (
+    DEFAULT_COMMISSION_PER_LEG,
+    DEFAULT_SLIPPAGE_PER_LEG,
+)
 
 logger = logging.getLogger(__name__)
 
 _RISK_FREE_RATE   = 0.045
+_SKEW_SLOPE       = 0.15    # equity-index downside IV skew (see engine.effective_iv)
 _WARMUP_BARS      = 90
 _RETRAIN_EVERY    = 15
 _SAVED_MODELS_DIR = Path(__file__).parent.parent / "saved_models"
@@ -73,13 +78,23 @@ SECTOR_ETFS = ["XLK", "XLE", "XLF", "XLV", "XLI", "XLY", "XLP", "XLU", "XLRE", "
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
 
-from strategies.indicators import bs_price as _bs_price, compute_adx as _compute_adx
+from strategies.indicators import compute_adx as _compute_adx
+from strategies.indicators import bs_price as _bs_price  # noqa: F401  (re-exported for tests)
+from backtest.engine import bs_price_skew as _bs_price_skew
 
 
 def _spread_credit(S, short_K, long_K, T, r, iv, spread_type):
-    if spread_type == "bull_put":
-        return _bs_price(S, short_K, T, r, iv, "put") - _bs_price(S, long_K, T, r, iv, "put")
-    return _bs_price(S, short_K, T, r, iv, "call") - _bs_price(S, long_K, T, r, iv, "call")
+    """Mid-market value of a vertical credit spread, priced with the equity-index
+    IV skew so the OTM short leg carries a realistic (higher/lower) IV than the
+    flat VIX-implied ATM level. Returns short_premium − long_premium (the credit).
+
+    Skew is applied EXACTLY ONCE here via bs_price_skew; the strategy never calls
+    the flat-IV bs_price for pricing, so there is no double-application.
+    """
+    opt = "put" if spread_type == "bull_put" else "call"
+    short_v = _bs_price_skew(S, short_K, T, r, iv, opt, skew_slope=_SKEW_SLOPE)
+    long_v  = _bs_price_skew(S, long_K,  T, r, iv, opt, skew_slope=_SKEW_SLOPE)
+    return short_v - long_v
 
 
 
@@ -381,6 +396,7 @@ class RSCreditSpreadStrategy(BaseStrategy):
         labels_lead = _build_rs_labels(main_close, buf, h_days, "leader")
 
         all_dates   = list(price_data.index)
+        n_dates     = len(all_dates)
         capital     = float(starting_capital)
         equity_list = []
         trades_list = []
@@ -389,6 +405,9 @@ class RSCreditSpreadStrategy(BaseStrategy):
         model_lead  = None
         last_train  = -999
         last_rebal  = -999
+
+        comm = DEFAULT_COMMISSION_PER_LEG   # $/contract/leg
+        slip = DEFAULT_SLIPPAGE_PER_LEG     # BS-mark units/share/leg
 
         def _train_model(X, y):
             valid = y.notna() & X.notna().all(axis=1)
@@ -416,27 +435,36 @@ class RSCreditSpreadStrategy(BaseStrategy):
                 iv_now  = float(vix.iloc[i]) / 100.0
                 days_rem = max(0, h_days - trade["days_held"])
                 t_yr    = days_rem / 252.0
+                contracts = trade["contracts"]
+                # Cost to close (skew-priced). credit_now is per-share spread value.
                 credit_now = _spread_credit(spot, trade["short_strike"], trade["long_strike"],
                                              t_yr, _RISK_FREE_RATE, iv_now, trade["spread_type"])
-                entry_v    = trade["entry_value"]
-                pnl_now    = (entry_v - credit_now) * 100
+                entry_v    = trade["entry_value"]          # net credit per share, after entry slippage
+                # Realised P&L before exit friction (credit kept − cost to close).
+                pnl_gross  = (entry_v - credit_now) * 100 * contracts
+                # Round-trip exit friction: commission + slippage, 2 legs × contracts.
+                close_cost = 2 * (comm + slip * 100) * contracts
 
                 exit_reason = None
-                if pnl_now >= entry_v * 100 * pt_pct:
+                if pnl_gross >= entry_v * 100 * contracts * pt_pct:
                     exit_reason = "profit_target"
-                elif pnl_now <= -entry_v * 100 * self.stop_loss_mult:
+                elif pnl_gross <= -entry_v * 100 * contracts * self.stop_loss_mult:
                     exit_reason = "stop_loss"
                 elif trade["days_held"] >= h_days:
                     exit_reason = "hold_days"
+                elif i == n_dates - 1:
+                    exit_reason = "end_of_data"
 
                 if exit_reason:
+                    pnl_now = pnl_gross - close_cost
                     capital += pnl_now
                     trades_list.append({
                         "entry_date":  trade["entry_date"].date(),
                         "exit_date":   dt.date(),
                         "spread_type": trade["spread_type"],
-                        "entry_cost":  round(entry_v * 100, 2),
-                        "exit_value":  round(credit_now * 100, 2),
+                        "contracts":   contracts,
+                        "entry_cost":  round(entry_v * 100 * contracts, 2),
+                        "exit_value":  round(credit_now * 100 * contracts, 2),
                         "pnl":         round(pnl_now, 2),
                         "exit_reason": exit_reason,
                     })
@@ -444,7 +472,19 @@ class RSCreditSpreadStrategy(BaseStrategy):
                     new_open.append(trade)
             open_trades = new_open
 
-            equity_list.append(capital)
+            # Mark-to-market equity: realised capital + unrealised P&L of every
+            # open spread. Without this the equity curve is a step function that
+            # only moves on exit days, which collapses the daily-return std and
+            # produces a meaningless (wildly negative) Sharpe.
+            mtm = 0.0
+            for ot in open_trades:
+                spot_m = float(sector_closes.get(ot["ticker"], spy_close).iloc[i])
+                iv_m   = float(vix.iloc[i]) / 100.0
+                t_m    = max(0, h_days - ot["days_held"]) / 252.0
+                val_m  = _spread_credit(spot_m, ot["short_strike"], ot["long_strike"],
+                                        t_m, _RISK_FREE_RATE, iv_m, ot["spread_type"])
+                mtm   += (ot["entry_value"] - val_m) * 100 * ot["contracts"]
+            equity_list.append(capital + mtm)
 
             if i < _WARMUP_BARS:
                 continue
@@ -512,7 +552,6 @@ class RSCreditSpreadStrategy(BaseStrategy):
                 iv_entry  = float(vix.iloc[i]) / 100.0
                 t_yr      = dte_tgt / 252.0
                 wing_w    = spot * wing
-                max_cost  = capital * self.position_size_pct
 
                 if stype == "bear_call":
                     short_K = round(spot * (1 + buf), 2)
@@ -521,30 +560,59 @@ class RSCreditSpreadStrategy(BaseStrategy):
                     short_K = round(spot * (1 - buf), 2)
                     long_K  = round(short_K - wing_w, 2)
 
-                entry_v = _spread_credit(spot, short_K, long_K, t_yr,
-                                          _RISK_FREE_RATE, iv_entry, stype)
-                if entry_v <= 0:
+                # Mid credit (skew-priced), then degrade by entry slippage: filled
+                # below mid on the short (sell) leg and above mid on the long (buy)
+                # leg → realised net credit drops by 2 legs of per-share slippage.
+                credit_mid = _spread_credit(spot, short_K, long_K, t_yr,
+                                            _RISK_FREE_RATE, iv_entry, stype)
+                entry_v = credit_mid - 2 * slip
+                if entry_v <= 0.01:
                     continue
+
+                # Position sizing: deploy the per-leg risk budget. Max loss per
+                # contract = (wing − credit) × 100; size so total max loss ≈
+                # capital × position_size_pct (floor 1 contract).
+                wing_dollars = abs(long_K - short_K)
+                max_loss_per_contract = max(wing_dollars - entry_v, 0.01) * 100
+                contracts = max(1, int(capital * self.position_size_pct
+                                       // max_loss_per_contract))
+
+                # Entry commission (2 legs × contracts); slippage already in entry_v.
+                capital -= 2 * comm * contracts
 
                 open_trades.append({
                     "role": role, "ticker": ticker,
                     "entry_date": dt, "spread_type": stype,
                     "short_strike": short_K, "long_strike": long_K,
-                    "entry_value": entry_v,
+                    "entry_value": entry_v, "contracts": contracts,
                     "days_held": 0, "prob": prob,
                 })
 
             # Always update rebalance counter after the check (regardless of entries)
             last_rebal = i
 
+        # Any trade still open after the loop (e.g. opened on the final bar)
+        # is marked-to-market and closed at the last bar, with round-trip exit
+        # friction, so its P&L is realistic rather than a forced zero.
+        last_i = n_dates - 1
         for trade in open_trades:
+            spot_e = float(sector_closes.get(trade["ticker"], spy_close).iloc[last_i])
+            iv_e   = float(vix.iloc[last_i]) / 100.0
+            t_e    = max(0, h_days - trade["days_held"]) / 252.0
+            contracts = trade["contracts"]
+            val_e  = _spread_credit(spot_e, trade["short_strike"], trade["long_strike"],
+                                    t_e, _RISK_FREE_RATE, iv_e, trade["spread_type"])
+            close_cost = 2 * (comm + slip * 100) * contracts
+            pnl_e  = (trade["entry_value"] - val_e) * 100 * contracts - close_cost
+            capital += pnl_e
             trades_list.append({
                 "entry_date":  trade["entry_date"].date(),
                 "exit_date":   all_dates[-1].date(),
                 "spread_type": trade["spread_type"],
-                "entry_cost":  round(trade["entry_value"] * 100, 2),
-                "exit_value":  0.0,
-                "pnl":         0.0,
+                "contracts":   contracts,
+                "entry_cost":  round(trade["entry_value"] * 100 * contracts, 2),
+                "exit_value":  round(val_e * 100 * contracts, 2),
+                "pnl":         round(pnl_e, 2),
                 "exit_reason": "end_of_data",
             })
 
@@ -552,7 +620,7 @@ class RSCreditSpreadStrategy(BaseStrategy):
         daily_ret = equity.pct_change().dropna()
         bh_ret    = spy_close.pct_change().reindex(equity.index).dropna()
         trades_df = pd.DataFrame(trades_list) if trades_list else pd.DataFrame(
-            columns=["entry_date", "exit_date", "spread_type",
+            columns=["entry_date", "exit_date", "spread_type", "contracts",
                      "entry_cost", "exit_value", "pnl", "exit_reason"]
         )
         metrics = compute_all_metrics(

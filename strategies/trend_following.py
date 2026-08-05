@@ -1,10 +1,16 @@
 """
 200-Day Trend (SPY) — own the index above its moving average, cash below.
 
-One of two strategies in this repo with an edge validated on 20 years of REAL
-daily prices through 2008/2020/2022. The edge is RISK-ADJUSTED, not excess return:
+One of two strategies in this repo measured on ~30 years of REAL daily SPY prices
+through 2008/2020/2022. The edge is DRAWDOWN REDUCTION, not return or excess
+Sharpe. Re-measured on the real series in this app's DB (1995-2026):
 
-  200-day Trend: ~9% CAGR, 0.64 Sharpe, -20% max DD (vs -55% buy-hold; -5.6% in 2008).
+  200-day Trend: ~9.1% CAGR, -20% max DD, raw Sharpe ~0.77 / excess Sharpe ~0.36.
+  Buy & hold:    ~10.6% CAGR, -55% max DD, raw Sharpe ~0.62 / excess Sharpe ~0.36.
+
+So: a bit LESS return, ~a third of the drawdown (-12% vs -55% in 2008), and on an
+excess-of-5%-cash basis (what the metrics panel shows) the Sharpe merely TIES
+buy-and-hold. The real, durable benefit is the smaller worst-case loss.
 
 Single, un-optimised rule (the 200-day average) — the opposite of the curve-fit,
 flat-vol options backtests elsewhere in this repo. Shared timing machinery lives
@@ -27,15 +33,33 @@ from alan_trader.strategies.timing_base import (
 from alan_trader.risk.metrics import compute_all_metrics
 
 
+def _clean_close(close: pd.Series) -> pd.Series:
+    """Defensive sanitiser for a close series: sorted, deduped (keep last per
+    date), and forward-filled only. NEVER back-fills — a back-fill would pull a
+    future close into the past and leak look-ahead into the MA. Internal gaps in
+    a daily-bar series are rare, but ffill keeps the MA computable without
+    fabricating any forward-looking value."""
+    if close is None or len(close) == 0:
+        return pd.Series(dtype=float)
+    s = close.copy()
+    s.index = pd.to_datetime(s.index)
+    s = s.sort_index()
+    s = s[~s.index.duplicated(keep="last")]
+    return s.astype(float).ffill()
+
+
 def trend_position(close: pd.Series, ma_window: int = 200) -> pd.Series:
     """1.0 when close > its moving average (long), else 0.0 (cash). Shifted one
-    day so today's position uses only data through yesterday's close."""
+    day so today's position uses only data through yesterday's close (no
+    look-ahead). The input is forward-filled only — never back-filled."""
+    close = _clean_close(close)
     ma = close.rolling(ma_window).mean()
     return (close > ma).shift(1, fill_value=False).astype(float)
 
 
 def current_trend_signal(close: pd.Series, ma_window: int = 200) -> dict:
     """Today's IN/OUT verdict for the trend strategy."""
+    close = _clean_close(close)
     if close.empty or len(close) < ma_window + 1:
         return {"signal": "UNKNOWN", "detail": "insufficient history"}
     ma = float(close.rolling(ma_window).mean().iloc[-1])
@@ -59,9 +83,10 @@ class TrendFollowingStrategy(BaseStrategy):
     status        = StrategyStatus.ACTIVE
     description   = (
         "Own the index while it trades above its 200-day moving average; move to "
-        "cash when it drops below. Validated on 20y of real prices: ~9% CAGR, "
-        "0.64 Sharpe, -20% max drawdown (vs -55% buy-hold; only -5.6% in 2008). "
-        "Checked monthly; ~1-3 round trips/year."
+        "cash when it drops below. Measured on ~30y of real SPY prices: ~9.1% CAGR "
+        "and -20% max drawdown (vs ~10.6% CAGR, -55% drawdown buy-hold; -12% vs "
+        "-55% in 2008). Edge is drawdown reduction, not return or excess Sharpe "
+        "(excess-of-cash Sharpe ties buy-hold). Checked monthly; ~3 round trips/year."
     )
     asset_class          = "equities"
     typical_holding_days = 120
@@ -103,7 +128,7 @@ class TrendFollowingStrategy(BaseStrategy):
         mw = ma_window if ma_window is not None else self.ma_window
         cy = cash_yield if cash_yield is not None else self.cash_yield
         ticker = (auxiliary_data or {}).get("ticker", self.ticker)
-        close = close_from_inputs(price_data, ticker)
+        close = _clean_close(close_from_inputs(price_data, ticker))
         if close.empty:
             raise ValueError(f"No price data for {ticker}.")
         pos = trend_position(close, mw)

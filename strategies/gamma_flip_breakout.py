@@ -68,6 +68,27 @@ _RISK_FREE     = 0.045
 _HOLD_STOP_DTE = 7
 
 
+# ── Skew-aware option pricing (falls back to flat-IV BS if unavailable) ───────
+try:
+    from alan_trader.backtest.engine import bs_price as _BS_FLAT, bs_price_skew as _BS_SKEW
+    _HAS_SKEW = True
+except Exception:  # pragma: no cover - engine always present in practice
+    from alan_trader.backtest.engine import bs_price as _BS_FLAT
+    _BS_SKEW = None
+    _HAS_SKEW = False
+
+
+def _opt_price(S: float, K: float, T: float, r: float, atm_iv: float,
+               otype: str) -> float:
+    """Skew-aware option price. The equity-index smirk (OTM puts richer, OTM
+    calls cheaper) is material for the strangle/condor legs this strategy trades
+    away from spot — flat IV systematically under-prices the short put wing of a
+    condor and the long put of a strangle."""
+    if _HAS_SKEW and _BS_SKEW is not None:
+        return _BS_SKEW(S, K, T, r, atm_iv, otype)
+    return _BS_FLAT(S, K, T, r, atm_iv, otype)
+
+
 class GammaFlipBreakoutStrategy(BaseStrategy):
     """
     XGBoost binary classifier trained on dealer GEX, distance to flip, and
@@ -527,10 +548,15 @@ class GammaFlipBreakoutStrategy(BaseStrategy):
           rate10y          : DataFrame — date-indexed, "close" column (accepted but unused)
         """
         opts = auxiliary_data.get("option_snapshots")
+        # Dealer GEX is built from gamma × OPEN INTEREST. Open interest is dealer
+        # positioning — it cannot be derived from price/IV. A backtest therefore
+        # REQUIRES a real daily option chain carrying open_interest (and gamma,
+        # or IV+dte to compute gamma). No proxy is substituted: if OI is absent
+        # the backtest refuses rather than fabricate dealer positioning.
         if opts is None or (isinstance(opts, pd.DataFrame) and opts.empty):
             raise ValueError(
-                "gamma_flip_breakout: option_snapshots is required but was empty or missing. "
-                "Please sync options data for this ticker before running the backtest."
+                "gamma_flip_breakout: option_snapshots is required (real dealer GEX "
+                "needs historical open interest). None supplied."
             )
 
         vix_df  = auxiliary_data.get("vix")
@@ -538,7 +564,6 @@ class GammaFlipBreakoutStrategy(BaseStrategy):
 
         price_data = price_data.sort_index()
 
-        # Normalise snapshot date column
         date_col = None
         for c in ("SnapshotDate", "snapshot_date", "date", "Date"):
             if c in opts.columns:
@@ -546,6 +571,15 @@ class GammaFlipBreakoutStrategy(BaseStrategy):
                 break
         if date_col is None:
             raise ValueError("option_snapshots must have a date column (SnapshotDate, date, etc.)")
+
+        # Open interest must be present and non-trivial — without it GEX is
+        # undefined. Refuse instead of weighting every strike equally (a proxy).
+        oi_col = next((c for c in ("OpenInterest", "open_interest", "oi") if c in opts.columns), None)
+        if oi_col is None or pd.to_numeric(opts[oi_col], errors="coerce").fillna(0).abs().sum() == 0:
+            raise ValueError(
+                "gamma_flip_breakout: option_snapshots has no usable open interest. "
+                "Real dealer GEX cannot be computed; backtest aborted (no proxy substituted)."
+            )
 
         opts = opts.copy()
         opts[date_col] = pd.to_datetime(opts[date_col])
@@ -646,7 +680,7 @@ class GammaFlipBreakoutStrategy(BaseStrategy):
             progress_callback(0.42, "Starting walk-forward simulation…")
 
         # ── Step 2: Walk-forward with retraining ───────────────────────────
-        from alan_trader.backtest.engine import bs_price as _bs_price
+        _bs_price = _opt_price   # skew-aware pricing (see _opt_price)
         from scipy.stats import norm as _norm
 
         capital    = float(starting_capital)
