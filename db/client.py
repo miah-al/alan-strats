@@ -256,10 +256,11 @@ def get_earnings_calendar(engine: Engine, symbol: str,
                           from_date: date, to_date: date) -> pd.DataFrame:
     """Return earnings announcements for `symbol` between dates.
 
-    Date precedence: AnnouncementDate (Alpha Vantage reportedDate — the actual
-    release date) ▸ FiledDate (SEC filing — often weeks later) ▸ PeriodOfReport
-    (fiscal period end — least accurate). Strategies should treat
-    `release_date` as the trading-day timestamp of the announcement.
+    Date precedence: FiledDate (SEC filing date — best available in the current
+    schema) ▸ PeriodOfReport (fiscal period end — least accurate). Strategies
+    should treat `release_date` as the trading-day timestamp of the announcement.
+    (There is no AnnouncementDate column in mkt.Earnings; FiledDate is the
+    closest proxy for the actual release date.)
 
     Returned columns:
         ticker          uppercase symbol
@@ -276,16 +277,19 @@ def get_earnings_calendar(engine: Engine, symbol: str,
     tid = get_ticker_id(engine, symbol)
     if tid is None:
         return pd.DataFrame()
+    # NB: mkt.Earnings has no AnnouncementDate column — the best-available
+    # release date is FiledDate (SEC filing date), falling back to
+    # PeriodOfReport (fiscal-period end) when the filing date is null.
     query = text("""
         SELECT
-            COALESCE(AnnouncementDate, FiledDate, PeriodOfReport) AS release_date,
+            COALESCE(FiledDate, PeriodOfReport) AS release_date,
             EpsBasic        AS eps_actual,
             EpsEstimate     AS eps_estimate,
             RevenueUSD      AS revenue_usd,
             NetIncomeUSD    AS net_income_usd
         FROM   mkt.Earnings
         WHERE  TickerId = :tid
-          AND  COALESCE(AnnouncementDate, FiledDate, PeriodOfReport)
+          AND  COALESCE(FiledDate, PeriodOfReport)
                  BETWEEN :from_d AND :to_d
         ORDER  BY release_date
     """)

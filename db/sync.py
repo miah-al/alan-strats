@@ -114,6 +114,31 @@ def _bs_mid(S: float, K: float, T: float, r: float, iv: float, opt: str) -> floa
         return float("nan")
 
 
+def _bs_greeks(S: float, K: float, T: float, r: float, iv: float, opt: str):
+    """Return (delta, gamma) under Black-Scholes for the reconstructed IV.
+
+    Polygon's Starter plan gives no historical greeks, so we derive delta/gamma
+    analytically from the same IV we invert from the option's traded price. This
+    lets gamma/delta-driven strategies (dealer_gamma_regime, expiry_max_pain,
+    sizing on delta) see real, self-consistent greeks instead of NULLs.
+    """
+    if T <= 0 or iv <= 0 or S <= 0 or K <= 0:
+        return None, None
+    try:
+        from scipy.stats import norm as _norm
+        cdf, pdf = _norm.cdf, _norm.pdf
+    except ImportError:
+        cdf = lambda x: 0.5 * (1 + math.erf(x / math.sqrt(2)))
+        pdf = lambda x: math.exp(-0.5 * x * x) / math.sqrt(2 * math.pi)
+    try:
+        d1 = (math.log(S / K) + (r + 0.5 * iv * iv) * T) / (iv * math.sqrt(T))
+        delta = cdf(d1) if opt == "call" else cdf(d1) - 1.0
+        gamma = pdf(d1) / (S * iv * math.sqrt(T))
+        return round(float(delta), 6), round(float(gamma), 8)
+    except Exception:
+        return None, None
+
+
 def bs_price_chain(df: pd.DataFrame, S: float, r: float = 0.045) -> pd.DataFrame:
     """
     Recalculate bid/ask/mid for every row using Black-Scholes with the given
@@ -277,6 +302,8 @@ def sync_option_snapshots(
     dte_max:   int  = 90,
     spot_range_pct: float = 0.25,   # fetch strikes within ±25% of spot
     progress_cb: Callable[[str, int, int, int], None] = None,
+    force: bool = False,            # re-fetch even dates already synced (adds new DTE bands / greeks)
+    monthly_only: bool = False,     # keep only 3rd-Friday monthly expiries (feasible ≥45-DTE backfill)
 ) -> dict:
     """
     Build a real historical IV surface from per-contract daily OHLC data.
@@ -344,6 +371,20 @@ def sync_option_snapshots(
     if not all_contracts:
         return {"status": "error", "message": "No contracts found for given parameters."}
 
+    # Optionally keep only standard monthly expiries (3rd Friday). SPY lists
+    # daily + weekly + monthly series, so a full per-contract OHLC backfill is
+    # O(10k) contracts even for a few weeks. Calendar / skew strategies only
+    # need the monthly ladder, so this cuts the fetch ~10-20× and makes a
+    # multi-month ≥45-DTE backfill feasible.
+    if monthly_only:
+        def _is_third_friday(dstr: str) -> bool:
+            d = date.fromisoformat(dstr)
+            return d.weekday() == 4 and 15 <= d.day <= 21
+        all_contracts = [c for c in all_contracts
+                         if _is_third_friday(c.get("expiration_date", ""))]
+        if not all_contracts:
+            return {"status": "error", "message": "No monthly (3rd-Friday) contracts in range."}
+
     if progress_cb:
         progress_cb(f"Found {len(all_contracts)} contracts — fetching daily OHLC...", 0, len(all_contracts), 0)
 
@@ -364,18 +405,34 @@ def sync_option_snapshots(
             """), {"d": snap_d}).fetchall()
         return {_TENOR_DTE[r[0]]: float(r[1]) / 100 for r in rows if r[1] is not None}
 
-    # Pre-load already-synced dates so we can skip them on resume
+    # Pre-load already-synced dates so we can skip them on resume. With
+    # force=True we intentionally do NOT skip — this lets a re-sync widen the
+    # DTE band (e.g. add 23–60 DTE rows) and backfill greeks on dates that were
+    # previously synced with a narrower window. The upsert is idempotent
+    # (IF NOT EXISTS INSERT) so existing rows are never duplicated.
     from alan_trader.db.client import get_ticker_id as _get_tid
+    # The resume key MUST include contract type. Keying on date alone is a
+    # date-level test applied inside a contract-level loop: `all_contracts`
+    # lists every call before every put, so once the calls have covered each
+    # snapshot date, every single put contract matches "already synced" and is
+    # skipped. That silently produced a 63,010-row, calls-only surface with
+    # zero puts — which quietly breaks every credit-spread, condor and
+    # put-based strategy downstream.
     _tid = _get_tid(engine, symbol)
-    synced_dates: set[date] = set()
-    if _tid:
+    synced_keys: set[tuple] = set()
+    if _tid and not force:
         with engine.connect() as _conn:
             from sqlalchemy import text as _t
             _rows = _conn.execute(_t("""
-                SELECT DISTINCT SnapshotDate FROM mkt.OptionSnapshot
+                SELECT DISTINCT SnapshotDate, ContractType FROM mkt.OptionSnapshot
                 WHERE TickerId = :tid AND SnapshotDate BETWEEN :from_d AND :to_d
             """), {"tid": _tid, "from_d": from_date, "to_d": to_date}).fetchall()
-            synced_dates = {r[0] if isinstance(r[0], date) else r[0].date() for r in _rows}
+            synced_keys = {
+                ((r[0] if isinstance(r[0], date) else r[0].date()),
+                 str(r[1] or "").upper()[:1])
+                for r in _rows
+            }
+    synced_dates = {k[0] for k in synced_keys}   # kept for progress reporting
 
     if synced_dates and progress_cb:
         progress_cb(
@@ -399,6 +456,9 @@ def sync_option_snapshots(
                 n = upsert_option_snapshots(engine, symbol, snap_date, pd.DataFrame(date_rows))
                 total_rows_ref[0] += n
                 synced_dates.add(snap_date)
+                for _r in date_rows:
+                    synced_keys.add((snap_date,
+                                     str(_r.get("type") or "").upper()[:1]))
             except Exception as e:
                 errors.append(f"{snap_date}: {e}")
         rows_by_date.clear()
@@ -422,9 +482,11 @@ def sync_option_snapshots(
         if contract_start > contract_end:
             continue
         # Check if every trading date in this contract's window is already synced
+        _ct_key = str(opt_type or "").upper()[:1]     # 'C' or 'P'
         relevant_spot_dates = [d for d in spot_dates if contract_start <= d <= contract_end]
-        if relevant_spot_dates and all(d in synced_dates for d in relevant_spot_dates):
-            continue  # all dates covered — skip Polygon API call
+        if relevant_spot_dates and all((d, _ct_key) in synced_keys
+                                       for d in relevant_spot_dates):
+            continue  # this side of the chain is covered — skip the API call
 
         try:
             bars = client.get_aggregates(ticker, str(from_date), str(to_date))
@@ -440,8 +502,12 @@ def sync_option_snapshots(
                 bar_date = bar_date.date()
             if bar_date < from_date or bar_date > to_date:
                 continue
-            if bar_date in synced_dates:
-                continue  # already committed to DB
+            # Must be keyed on contract type, like the contract-level skip
+            # above. A bare date test drops every put bar on any date the calls
+            # already covered — which silently produced a calls-only surface
+            # even after the contract-level skip was fixed.
+            if (bar_date, _ct_key) in synced_keys:
+                continue  # this side of the chain already committed to DB
 
             S = spot_series.get(bar_date)
             if not S:
@@ -481,6 +547,7 @@ def sync_option_snapshots(
                 continue
 
             spread = max(0.01, close_price * (0.04 if close_price < 1 else 0.02))
+            delta, gamma = _bs_greeks(S, K, T, r, iv, opt_type)
             rows_by_date.setdefault(bar_date, []).append({
                 "expiration":    exp_str,
                 "type":          opt_type,
@@ -488,8 +555,8 @@ def sync_option_snapshots(
                 "bid":           round(close_price - spread / 2, 4),
                 "ask":           round(close_price + spread / 2, 4),
                 "iv":            round(iv, 6),
-                "delta":         None,
-                "gamma":         None,
+                "delta":         delta,
+                "gamma":         gamma,
                 "theta":         None,
                 "vega":          None,
                 "open_interest": None,
