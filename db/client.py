@@ -398,11 +398,24 @@ def get_option_snapshots(engine: Engine, symbol: str,
 
 
 def upsert_option_snapshots(engine: Engine, symbol: str,
-                             snapshot_date: date, df: pd.DataFrame) -> int:
+                             snapshot_date: date, df: pd.DataFrame,
+                             overwrite: bool = False) -> int:
     """
     Insert option snapshot rows, skipping duplicates.
+
+    `overwrite=False` (default) is insert-only: an existing (ticker, date,
+    expiry, strike, type) row is left untouched. That is right for incremental
+    syncs, but it means a re-sync can never CORRECT a stored value — which is
+    why `sync_option_snapshots(force=True)` appeared to succeed while changing
+    nothing: it re-fetched and re-computed every row, then discarded the result
+    at this insert. It also means `force`'s documented "backfill greeks on
+    previously-synced dates" never worked.
+
+    `overwrite=True` updates the priced columns in place, for exactly that
+    corrective case (e.g. after the option-IV clock fix in db/sync.py).
+
     df must match Polygon options chain schema (see polygon_client.get_options_chain).
-    Returns number of rows inserted.
+    Returns number of rows inserted or updated.
     """
     if df.empty:
         return 0
@@ -425,7 +438,34 @@ def upsert_option_snapshots(engine: Engine, symbol: str,
         if col not in df.columns:
             df[col] = None
 
-    sql = text("""
+    if overwrite:
+        # Standard SQL Server upsert: try the UPDATE first, INSERT only if the
+        # row was absent. Keeps the natural key stable while letting a
+        # corrective re-sync actually replace stale prices/greeks.
+        sql = text("""
+            UPDATE mkt.OptionSnapshot
+               SET Bid = :bid, Ask = :ask, Mid = :mid, LastPrice = :last,
+                   ImpliedVol = :iv, Delta = :delta, Gamma = :gamma,
+                   Theta = :theta, Vega = :vega,
+                   OpenInterest = :open_interest, Volume = :volume
+             WHERE TickerId       = :ticker_id
+               AND SnapshotDate   = :snapshot_date
+               AND ExpirationDate = :expiration
+               AND Strike         = :strike
+               AND ContractType   = :contract_type;
+            IF @@ROWCOUNT = 0
+            INSERT INTO mkt.OptionSnapshot (
+                TickerId, SnapshotDate, ExpirationDate, Strike, ContractType,
+                Bid, Ask, Mid, LastPrice, ImpliedVol,
+                Delta, Gamma, Theta, Vega, OpenInterest, Volume
+            ) VALUES (
+                :ticker_id, :snapshot_date, :expiration, :strike, :contract_type,
+                :bid, :ask, :mid, :last, :iv,
+                :delta, :gamma, :theta, :vega, :open_interest, :volume
+            )
+        """)
+    else:
+        sql = text("""
         IF NOT EXISTS (
             SELECT 1 FROM mkt.OptionSnapshot
             WHERE  TickerId        = :ticker_id

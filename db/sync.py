@@ -453,7 +453,12 @@ def sync_option_snapshots(
         """Write all accumulated rows to DB, update synced_dates."""
         for snap_date, date_rows in sorted(rows_by_date.items()):
             try:
-                n = upsert_option_snapshots(engine, symbol, snap_date, pd.DataFrame(date_rows))
+                # force=True means "recompute and REPLACE", so the write must
+                # overwrite. Without this the insert-only upsert silently drops
+                # every corrected value and a corrective re-sync is a no-op.
+                n = upsert_option_snapshots(engine, symbol, snap_date,
+                                            pd.DataFrame(date_rows),
+                                            overwrite=force)
                 total_rows_ref[0] += n
                 synced_dates.add(snap_date)
                 for _r in date_rows:
@@ -525,7 +530,20 @@ def sync_option_snapshots(
             if not (dte_min <= dte <= dte_max):
                 continue
 
-            T = dte / 252.0
+            # `dte` is CALENDAR days, so the year fraction must use a calendar
+            # year. Dividing calendar days by the 252 trading-day year made T
+            # 365/252 = 1.45x too large; because IV is found by inverting
+            # Black-Scholes against the observed price, an over-large T forces a
+            # correspondingly SMALLER sigma to reproduce that price. Every
+            # stored ImpliedVol was therefore ~15% too low
+            # (predicted sqrt(252/365) = 0.831; measured stored/correct = 0.851
+            # across 22,747 SPY puts), and _bs_greeks inherits the same T so
+            # Delta and Gamma carry it too.
+            #
+            # NOTE: this corrects future syncs only. Rows already in
+            # mkt.OptionSnapshot keep the old values until re-synced with
+            # `python -m scripts.bootstrap_market_data --options-only`.
+            T = dte / 365.0
             yc = _get_rate(bar_date)
             r  = _term_rate(dte, yc)
 

@@ -109,6 +109,11 @@ def main(argv=None) -> int:
     ap.add_argument("--monthly-only", action="store_true", default=True)
     ap.add_argument("--options-start", default="2024-04-01",
                     help="option history start; the Starter plan only serves ~2y")
+    ap.add_argument("--force", action="store_true",
+                    help="re-fetch dates already synced. Needed after a pricing "
+                         "correction: the resume logic skips (date, contract_type) "
+                         "pairs already present, so without this a re-sync is a no-op "
+                         "and stale values survive.")
     args = ap.parse_args(argv)
 
     from db import sync
@@ -161,7 +166,8 @@ def main(argv=None) -> int:
         _run(args.symbol, sync.sync_option_snapshots, args.symbol, key,
              from_date=date.fromisoformat(args.options_start), to_date=END,
              dte_min=args.dte_min, dte_max=args.dte_max,
-             monthly_only=args.monthly_only, progress_cb=progress)
+             monthly_only=args.monthly_only, force=args.force,
+             progress_cb=progress)
         print()
         show_counts("── row counts after option sync ──")
 
