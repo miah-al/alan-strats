@@ -16,6 +16,33 @@ actually earned on real data, and whether it is worth deploying.
 
 ---
 
+> ### ⚠️ Numbers below are superseded — read this first (2026-08-17)
+>
+> Two corrections landed after this table was generated. Both change conclusions,
+> not just digits.
+>
+> **1. `iron_condor_rules` was leveraged, not skilled.** Its `max_concurrent`
+> cap was resolved from the UI and never read, so it ran up to **21 simultaneous
+> condors against a documented cap of 5**. With the cap enforced its CAGR falls
+> **4.33% → 2.79%**. It is no longer "the only strategy positive every year"; it
+> is a small short-vol carry below the risk-free rate.
+>
+> **2. Every stored option IV was ~15% too low.** `db/sync.py` inverted
+> Black-Scholes with calendar-day DTE over a 252 trading-day year, making T
+> 1.45x too large and forcing a correspondingly smaller sigma
+> (predicted 0.831, measured 0.851). Every options figure in the table below was
+> computed against that surface. The clock is fixed and the surface re-synced;
+> the options rows need re-measuring.
+>
+> **Also retracted:** the claim that strategies "lose to cash". None of them
+> credit interest on idle collateral while being scored against a 5% hurdle, and
+> they deploy only 0.17%-1.9% of capital. Cash-adjusted they return 5.16%-6.39%
+> — above T-bills, not below. The real defect is under-deployment, not a
+> negative edge.
+>
+> What is unchanged: **only `covered_call_ai` beats SPY buy-and-hold**, and the
+> ML head adds nothing in any AI strategy tested.
+
 ## The bar every strategy has to clear
 
 | Benchmark | CAGR% | TotRet% | MaxDD% | Sharpe |

@@ -313,13 +313,34 @@ lifetime P&L is one 2022 macro call), `rs_credit_spread`,
 
 ## The three things that matter most
 
-1. **Stop pricing entry and exit with the same volatility.** Eight strategies do
-   this. Under Black-Scholes it makes the position a fair game by construction —
-   expected P&L ≈ 0 before costs — then friction is subtracted. The variance
-   risk premium, the only thing a short-premium book earns, is set to exactly
-   zero. It is a deterministic bleed, not a bet gone wrong.
-2. **Add a `credit ≥ 3 × round-trip friction` gate to every credit strategy.**
-   The median `put_steal` trade has a maximum possible profit smaller than its
-   own transaction cost.
-3. **The `AI_DRIVEN` label is not describing a source of return.** Ship the two
-   that work, retire the rest.
+> **RETRACTED 2026-08-17 — the "same-vol pricing" claim below was wrong.**
+> An earlier version of this section said eight strategies price entry and exit
+> at the same volatility, making the position "a fair game by construction".
+> That is false, both in theory and on this data. Marking a short option at a
+> constant sigma against a *real* price path gives
+> `P&L = 1/2 * integral( gamma * S^2 * (iv^2 - rv^2) dt )`, which is strictly
+> positive whenever implied exceeds realised — that IS the variance risk
+> premium. Freezing the mark removes vega noise and therefore *flatters* a
+> short-vol book. Measured on this data: frozen mark +31.1% of credit vs
+> contemporaneous +24.0%, i.e. honest marking costs 7pp. And only ONE strategy
+> (`vrp_premium`) actually freezes its mark; the rest vary it correctly.
+> The corrected findings are below.
+
+1. **Delete the profit-target/stop-loss pair from the credit strategies.** This
+   is the single largest destroyer of VRP capture, measured: an unstopped short
+   vertical earns **+30.8% of credit** (t = 9.45); with the shipped 50%-target /
+   2x-credit stop it earns **+6.8%**, and friction then takes it negative. A 50%
+   target caps the win near +$1.20 while a 2x stop admits a -$4.82 loss — 4:1
+   asymmetry against a 73% hit rate. Worse, the stop trips on the *vol* mark: SPY
+   falls, VIX spikes, the buy-back cost jumps, and the position is closed at the
+   worst print. "Defined risk" is already provided by the wing width.
+2. **Size the positions.** Average capital actually at risk is **0.17%-1.9%** of
+   the account. No edge, however good, produces a meaningful CAGR at 1/30th of
+   the stated risk budget. This — not a negative edge — is why these return ~1%.
+3. **Credit the risk-free rate on idle collateral.** None of these do, yet all
+   are scored against a 5% hurdle. Cash-adjusted they return 5.16%-6.39%, i.e.
+   they beat T-bills by +0.16 to +1.39pp rather than losing to them. The earlier
+   "loses to cash" framing in this document was an artifact of that omission.
+4. **The `AI_DRIVEN` label is not describing a source of return.** Ship the two
+   that work, retire the rest. (This one stands, and was independently
+   reconfirmed: ablations beat the real model in every pair tested.)
