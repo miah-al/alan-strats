@@ -462,3 +462,29 @@ body, .dash-table-container, .Select, p, span, div, label, td, th, li, a {
 /* The card holding the list must not lift — it shifts the whole grid. */
 .ui-card:has(.strat-list):hover,
 .card:has(.strat-list):hover { transform: none !important; }
+
+/* ── Dash 4 dropdown: theme via its OWN tokens ───────────────────────────────
+   Dash 4.4.1 dropped react-select for an in-house Radix dropdown. It emits
+   `.dash-dropdown-*` classes and renders the menu in a PORTAL on document.body,
+   so every `#page-content …` rule misses it — which is why the menu painted as
+   a white panel on 14 call sites across 6 pages.
+
+   Rather than fight its CSS with !important overrides, redefine the tokens it
+   actually reads. Custom properties inherit through the portal from :root, so
+   this reaches the menu wherever it is mounted. Token names verified against
+   dash/dcc/async-dropdown.js in the installed 4.4.1 bundle.
+
+   This also replaces Dash's default #7f4bc4 purple focus — the only non-indigo
+   accent in the app — with our own. */
+:root {
+  --Dash-Fill-Inverse-Strong:     var(--bg-elev);
+  --Dash-Fill-Interactive-Strong: var(--accent);
+  --Dash-Fill-Interactive-Weak:   rgba(99, 102, 241, .10);
+  --Dash-Fill-Disabled:           var(--border);
+  --Dash-Stroke-Strong:           var(--border-brt);
+  --Dash-Text-Strong:             var(--text);
+  --Dash-Text-Weak:               var(--text-sec);
+  --Dash-Text-Disabled:           var(--text-muted);
+  --Dash-Shading-Strong:          rgba(0, 0, 0, .55);
+  --Dash-Shading-Weak:            rgba(0, 0, 0, .28);
+}

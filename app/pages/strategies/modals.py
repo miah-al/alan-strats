@@ -271,7 +271,7 @@ def _paper_trade_sig(n_clicks, row, contracts):
         try:
             from engine.positions import insert_equity_paper_trade
             from db.client import get_engine
-            price = float(row.get("Price") or 0)
+            price = _num(row.get("Price"))
             if price <= 0:
                 return html.Span("⚠ No current price — cannot record trade.",
                                  style={"color": T.WARNING, "fontSize": "12px"})
@@ -346,7 +346,7 @@ def _paper_trade_sig(n_clicks, row, contracts):
             except Exception:
                 state_val = -1
             try:
-                spot = float(row.get("Price") or 0.0)
+                spot = _num(row.get("Price"))
                 vix  = float(row.get("VIX") or 0.0)
                 preview = _hmm_trade_preview(state_val, spot, vix, ticker)
             except Exception:
@@ -663,7 +663,7 @@ def _build_signal_body(row):
         hv20    = row.get("HV20", "—")
         ivr     = row.get("IVR", "—")
         ma200   = row.get("MA200", "—")
-        spot    = float(row.get("Price") or 0)
+        spot    = _num(row.get("Price"))
 
         # Fetch real ATM put from Polygon (~30 DTE, delta ≈ -0.50)
         vsf_chain = None
@@ -803,7 +803,7 @@ def _build_signal_body(row):
         iv_hv    = row.get("IV/HV", "—")
         trend    = row.get("Trend", "—")
         sp_type  = row.get("Spread Type", "—")
-        spot     = float(row.get("Price") or 0)
+        spot     = _num(row.get("Price"))
         is_bull  = "Bull" in str(sp_type)
         signal   = f"{sp_type} — sell premium into elevated IV (IVR {ivr})"
 

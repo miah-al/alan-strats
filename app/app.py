@@ -48,6 +48,13 @@ app = Dash(
 server = app.server  # WSGI entry point for production
 
 # ── Layout ────────────────────────────────────────────────────────────────────
+# `data-bs-theme="dark"` puts Bootstrap 5.3 itself into dark mode. Without it
+# every dbc component falls back to its LIGHT tokens regardless of our own CSS:
+# ~20 dbc.Alert panels on the Strategies page rendered as cream/pink cards
+# (including the Performance tab's "Read with care" warning, whose entire job is
+# to stop a bad trade), and dbc.Modal's `.btn-close` painted a black SVG on a
+# #161d2e header at 1.25:1 — an effectively invisible close button. This also
+# recolours form controls, accordions and tables natively.
 app.layout = html.Div(
     [
         dcc.Location(id="url", refresh=False),
@@ -73,6 +80,7 @@ app.layout = html.Div(
         ),
     ],
     style={"backgroundColor": T.BG_BASE, "fontFamily": "'Inter', sans-serif"},
+    **{"data-bs-theme": "dark"},
 )
 
 # ── Pre-import all page modules so callbacks register at startup ──────────────

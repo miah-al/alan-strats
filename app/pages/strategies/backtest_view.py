@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import importlib
 import logging
-from datetime import date
+from datetime import date, timedelta as _timedelta
 
 import pandas as _pd
 import dash_bootstrap_components as dbc
@@ -31,6 +31,9 @@ logger = logging.getLogger(__name__)
 _TONE = {T.SUCCESS: "success", T.DANGER: "danger", T.WARNING: "warning",
          T.ACCENT: "accent", T.TEXT_PRIMARY: "default", T.TEXT_MUTED: "muted"}
 
+
+# Matches scripts/rank_strategies.py and performance.py so all three agree.
+_WARMUP_DAYS = 420
 
 _STRATEGY_CLASSES_BT = {
     # Validated-edge equity-timing strategies
@@ -509,7 +512,15 @@ def _make_backtest_callback(slug: str):
         try:
             fd = date.fromisoformat(from_date)
             td = date.fromisoformat(to_date)
-            price_data = get_price_bars(engine, ticker, fd, td)
+            # Load WARMUP_DAYS of history before the window so indicators are
+            # live from bar one. Feeding a strategy only the reporting window
+            # cripples long-lookback signals: a 12-month momentum has NaN for
+            # its first 12 month-ends and `NaN > 0` is False, so it sits forced
+            # flat for a year and the missed return is scored as a decision.
+            # Without this the Backtest tab disagreed with the Performance tab
+            # on identical inputs — ts_momentum 12.05% vs 15.20% CAGR, and
+            # vix_term_structure flipped sign.
+            price_data = get_price_bars(engine, ticker, fd - _timedelta(days=_WARMUP_DAYS), td)
         except Exception as e:
             return dbc.Alert(
                 f"Error loading price data for {ticker}: {e}",
@@ -578,6 +589,26 @@ def _make_backtest_callback(slug: str):
         except Exception as e:
             logger.exception(f"Backtest error for {slug}: {e}")
             return dbc.Alert(f"Backtest error: {str(e)}", color="danger")
+
+        # Score on the reporting window only — the warm-up informs the signal
+        # but must not contribute to the metrics.
+        try:
+            _eq = _pd.Series(result.equity_curve).copy()
+            _eq.index = _pd.to_datetime(_eq.index)
+            _eq_win = _eq[_eq.index >= _pd.Timestamp(fd)]
+            if len(_eq_win) > 2:
+                from risk.metrics import compute_all_metrics as _cam
+                _tr = result.trades
+                if _tr is not None and not _tr.empty:
+                    for _c in ("exit_date", "entry_date"):
+                        if _c in _tr.columns:
+                            _w = _pd.to_datetime(_tr[_c], errors="coerce")
+                            _tr = _tr[_w >= _pd.Timestamp(fd)]
+                            break
+                result.equity_curve = _eq_win
+                result.metrics = _cam(_eq_win, _tr if _tr is not None and not _tr.empty else None)
+        except Exception:
+            logger.exception(f"{slug}: window truncation failed; showing full-span metrics")
 
         # ── Render results ────────────────────────────────────────────────────
         try:

@@ -65,3 +65,39 @@ def test_threshold_comparison_is_safe_for_every_grid_value():
     """The exact shape of the code that was crashing."""
     for cell in ["—", "18.4", "$5.25", "62.5%", None, "", "N/A"]:
         assert isinstance(_num(cell) > 25, bool)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# The popup itself must survive a missing Price on every branch
+# ─────────────────────────────────────────────────────────────────────────────
+
+@pytest.mark.parametrize("slug", [
+    "ivr_credit_spread", "vix_spike_fade", "iron_condor_rules",
+    "bull_put_spread", "calendar_spread", "wheel_strategy",
+])
+@pytest.mark.parametrize("missing", ["—", "", "N/A", None, "-"])
+def test_signal_popup_survives_a_missing_price(slug, missing):
+    """
+    Four branches read the spot price with `float(row.get("Price") or 0)`.
+    A missing grid value is the em-dash "—", which is truthy, so the `or 0`
+    never fires and float() raises — blanking the modal with no message,
+    because `_build_signal_body` IS the callback.
+    """
+    from alan_trader.app.pages.strategies.modals import _build_signal_body
+
+    row = {
+        "Ticker": "SPY", "Price": missing, "Score": 55, "Status": "Partial",
+        "IVR": "0.42", "VIX": "16.0", "_slug": slug,
+    }
+    assert _build_signal_body(row) is not None
+
+
+def test_no_unguarded_price_parses_remain():
+    """Guards against the anti-pattern being reintroduced."""
+    from pathlib import Path
+
+    src = (Path(__file__).resolve().parents[1]
+           / "app" / "pages" / "strategies" / "modals.py").read_text(encoding="utf-8")
+    assert 'float(row.get("Price")' not in src, (
+        "a raw float() on a grid Price cell is back; route it through _num()"
+    )
