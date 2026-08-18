@@ -538,8 +538,14 @@ class IronCondorRulesStrategy(BaseStrategy):
             # (verified: 37 entry dates appeared only when the sample was
             # extended). A trade opened near the end is force-closed by the
             # `end_of_data` exit instead. Same fix as ivr_credit_spread.py:426.
+            # `max_conc` was resolved from the UI slider and then never read, so
+            # the documented cap of 5 was not enforced: measured peak
+            # concurrency was 21 simultaneous condors, mean 3.3. That unbounded
+            # leverage is what produced the headline 4.33% CAGR — enforcing the
+            # cap gives ~2.79%. The slider was decorative; now it binds.
             rules_ok = (
                 enough_history
+                and len(open_trades) < max_conc
                 and ivr_val >= ivr_min_eff
                 and vix_min_eff <= vix_val <= vix_max_eff
                 and adx_val <= adx_max_eff

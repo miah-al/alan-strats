@@ -723,7 +723,13 @@ class IronCondorAIStrategy(BaseStrategy):
 
             # ── 3. Entry check ─────────────────────────────────────────────
             enough_history = i >= _WARMUP_BARS
-            enough_data    = (n - i) > dte_tgt
+            # LEAK-FREEDOM: entry must depend only on trailing data. A guard on
+            # remaining sample length makes a trade's existence depend on how
+            # much future data happens to exist. The same defect was removed
+            # from iron_condor_rules; a trade opened near the end is force-closed
+            # by the end-of-data exit instead. Kept as a constant so the signal
+            # ledger below still records a value.
+            enough_data    = True
             model_ready    = model_pipeline is not None
 
             prob = 0.0
@@ -800,7 +806,11 @@ class IronCondorAIStrategy(BaseStrategy):
                 margin_needed = max_loss_per_spread * contracts * 100
                 # Entry transaction cost: slippage + commission, 4 legs × contracts.
                 open_comm     = _LEG_COST * 4.0 * contracts
-                expiry_idx    = min(i + dte_tgt, n - 1)
+                # Do NOT clamp to n-1: clamping shrinks T for trades opened near
+                # the end of the sample, so their exit timing and marks depend
+                # on how much future data exists — the same leak as the entry
+                # guard above.
+                expiry_idx    = i + dte_tgt
 
                 reserved_margin += margin_needed
                 open_trades.append({
@@ -845,15 +855,18 @@ class IronCondorAIStrategy(BaseStrategy):
         regime_df     = pd.DataFrame(regime_series) if regime_series else pd.DataFrame()
         metrics       = compute_all_metrics(eq, trades_df if not trades_df.empty else None)
 
-        # Store trained model + save per-ticker file for live use
+        # Keep the fitted model on the instance, but DO NOT persist it here.
+        #
+        # `backtest()` used to call save_model(), so every run from the Backtest
+        # or Performance tab silently overwrote saved_models/iron_condor_ai_
+        # <ticker>.pkl — the same artifact engine/screener.py scores live trades
+        # with. An exploratory "what if I move this slider" click therefore
+        # mutated production model state, with no warning and no undo, and left
+        # a tracked file dirty in git.
+        #
+        # Persisting is now an explicit action: `scripts/retrain_models.py`
+        # calls save_model() deliberately after a full walk-forward run.
         self._model = model_pipeline
-        if model_pipeline is not None:
-            try:
-                ticker_slug = auxiliary_data.get("ticker", "default")
-                self.save_model(ticker_slug)
-                logger.info(f"IronCondorAI: model saved for ticker '{ticker_slug}'")
-            except Exception as _e:
-                logger.warning(f"IronCondorAI: model save failed: {_e}")
 
         if not trades_df.empty:
             n_trades  = len(trades_df)
