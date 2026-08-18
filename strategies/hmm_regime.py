@@ -1119,15 +1119,30 @@ class HMMRegimeStrategy(BaseStrategy):
 
             gating_post = fwd_posterior if fwd_posterior is not None else posterior
 
+            # CONFIDENCE FLOOR APPLIES TO THE SPOT POSTERIOR, NOT THE FORWARD ONE.
+            #
+            # `expected_posterior` projects the chain `horizon` steps ahead
+            # (default max(dte)//2 = 22 bars). As the fitted transition matrix
+            # accumulates data it grows more diffuse, so a 22-step projection
+            # converges toward the stationary distribution — whose maximum is
+            # ~1/3-0.5 for a 3-state chain. A FIXED 0.60 floor on that quantity
+            # is therefore guaranteed to stop passing as the sample grows, and
+            # it did: mean forward-max decayed 0.751 (2021) -> 0.498 (2026),
+            # pass rate 99.6% -> 20%, and the strategy took its last entry on
+            # 2025-07-17 followed by a 348-day drought to the end of data.
+            #
+            # "Am I confident which regime we are in" is a question about NOW,
+            # so the floor belongs on the spot posterior. The forward posterior
+            # is still used for the stability check below, which compares
+            # argmax only and is therefore scale-free.
             free_capital = capital - reserved_margin
             base_can_enter = (
                 posterior is not None
                 and gating_post is not None
                 and open_trade is None
                 and vix <= p["vix_ceiling"]
-                and float(np.max(gating_post)) >= p["regime_confidence_min"]
+                and float(np.max(posterior)) >= p["regime_confidence_min"]
                 and int(np.argmax(gating_post)) == int(np.argmax(posterior))   # spot/forward agree
-                and (n - i) > max(p["dte_bull_put"], p["dte_condor"], p["dte_long_put"]) + 5
                 and free_capital > 0   # must have free capital after margin reserves
             )
 

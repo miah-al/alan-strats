@@ -126,6 +126,13 @@ _SKEW_SLOPE       = 0.15
 # Number of option legs in the iron butterfly (2 short ATM + 2 long wings).
 _N_LEGS           = 4
 
+# A single-class training history carries no discriminative information. Below
+# this many observations the strategy stays out entirely rather than trading off
+# a degenerate stub; above it, the stub's probability is Laplace-smoothed so it
+# can never assert certainty. Previously a single-class fit of as few as 4
+# events produced P = 1.000 and authorised trades unconditionally.
+_MIN_SINGLE_CLASS_EVENTS = 20
+
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
 
@@ -134,14 +141,45 @@ class _ConstantClassifier:
 
     Returns a constant probability vector in the standard sklearn shape so it
     can be wrapped in a Pipeline alongside a pass-through scaler. Picklable.
+
+    The probability is **Laplace-smoothed**, not the raw label. Previously this
+    stored `float(label_value)` and therefore returned exactly 1.000 (or 0.000)
+    — absolute certainty from a model that had observed a single class, often
+    from as few as 4 events. `pin_threshold` could never bind against a 1.000,
+    so the strategy traded unconditionally off a model that knew nothing. With
+    a Beta(1,1) prior, n observations all of one class give (n+1)/(n+2), which
+    approaches certainty only as evidence actually accumulates.
     """
-    def __init__(self, label_value: int, n_features: int):
-        self._p = float(label_value)
+    def __init__(self, label_value: int, n_features: int, n_samples: int = 1):
+        n = max(int(n_samples), 1)
+        # Beta(1,1) posterior mean — never 0 or 1 for finite n.
+        self._p = (n + 1) / (n + 2) if int(label_value) == 1 else 1 / (n + 2)
+        self._n_samples = n
+        self.degenerate = True          # single-class fit: no discriminative power
         self.feature_importances_ = np.zeros(n_features)
+
+    def __setstate__(self, state):
+        """
+        Repair artifacts pickled before smoothing existed.
+
+        Those instances stored `_p` as exactly 1.0 or 0.0. Unpickling restores
+        __dict__ directly without calling __init__, so the certainty would come
+        straight back on load. Re-derive a smoothed value from whatever sample
+        size was recorded (defaulting to the old minimum of 4 when absent).
+        """
+        self.__dict__.update(state)
+        p = float(self.__dict__.get("_p", 0.5))
+        if p in (0.0, 1.0):
+            n = max(int(self.__dict__.get("_n_samples", 4)), 1)
+            self._p = (n + 1) / (n + 2) if p == 1.0 else 1 / (n + 2)
+            self._legacy_repaired = True
+        self.__dict__.setdefault("degenerate", True)
 
     def predict_proba(self, X):
         n_rows = len(X)
-        return np.array([[1.0 - self._p, self._p]] * n_rows)
+        # getattr keeps artifacts pickled before smoothing was added loadable.
+        p = float(getattr(self, "_p", 0.5))
+        return np.array([[1.0 - p, p]] * n_rows)
 
 
 class _PassThroughScaler:
@@ -808,13 +846,14 @@ class EarningsPinRiskStrategy(BaseStrategy):
                         )
                     except Exception as e:
                         logger.warning(f"earnings_pin_risk: retrain failed: {e}")
-                elif len(np.unique(y)) == 1 and len(y) >= 1:
+                elif len(np.unique(y)) == 1 and len(y) >= _MIN_SINGLE_CLASS_EVENTS:
                     # Degenerate: only one class observed in history. Use a
                     # constant-output stub that returns the empirical class
                     # probability — keeps the strategy from blocking forever
                     # while still being honest about its lack of information.
                     # Bypass Pipeline (sklearn's is_fitted check rejects naive stubs).
-                    model_pipeline = _ConstantClassifier(int(y[0]), len(self.FEATURE_COLS))
+                    model_pipeline = _ConstantClassifier(
+                        int(y[0]), len(self.FEATURE_COLS), n_samples=len(y))
                     # Wrap with named_steps shim so the post-loop feature_importance
                     # extraction doesn't crash.
                     model_pipeline.named_steps = {"clf": model_pipeline}

@@ -433,7 +433,15 @@ class RSCreditSpreadStrategy(BaseStrategy):
                 trade["days_held"] += 1
                 spot    = float(sector_closes.get(trade["ticker"], spy_close).iloc[i])
                 iv_now  = float(vix.iloc[i]) / 100.0
-                days_rem = max(0, h_days - trade["days_held"])
+                # Price on the SAME time base the position was sold on. The
+                # spread is written with `dte_tgt` days to expiry and closed
+                # after `h_days` of holding — those are different quantities.
+                # Marking against `h_days - days_held` re-priced a 21-day option
+                # as a <=10-day one on the very first mark, handing every trade
+                # an instant, unearned block of theta. That artifact WAS the
+                # strategy's apparent frictionless edge: +$16,617 before this
+                # correction, -$4,167 after it.
+                days_rem = max(0, dte_tgt - trade["days_held"])
                 t_yr    = days_rem / 252.0
                 contracts = trade["contracts"]
                 # Cost to close (skew-priced). credit_now is per-share spread value.
@@ -480,7 +488,8 @@ class RSCreditSpreadStrategy(BaseStrategy):
             for ot in open_trades:
                 spot_m = float(sector_closes.get(ot["ticker"], spy_close).iloc[i])
                 iv_m   = float(vix.iloc[i]) / 100.0
-                t_m    = max(0, h_days - ot["days_held"]) / 252.0
+                # Same time base as the exit pricing above — see the note there.
+                t_m    = max(0, dte_tgt - ot["days_held"]) / 252.0
                 val_m  = _spread_credit(spot_m, ot["short_strike"], ot["long_strike"],
                                         t_m, _RISK_FREE_RATE, iv_m, ot["spread_type"])
                 mtm   += (ot["entry_value"] - val_m) * 100 * ot["contracts"]
@@ -598,7 +607,10 @@ class RSCreditSpreadStrategy(BaseStrategy):
         for trade in open_trades:
             spot_e = float(sector_closes.get(trade["ticker"], spy_close).iloc[last_i])
             iv_e   = float(vix.iloc[last_i]) / 100.0
-            t_e    = max(0, h_days - trade["days_held"]) / 252.0
+            # Same single time base as the in-loop mark and exit above: the
+            # spread was written at dte_tgt, so remaining life is measured
+            # against dte_tgt, not against the holding-period cap.
+            t_e    = max(0, dte_tgt - trade["days_held"]) / 252.0
             contracts = trade["contracts"]
             val_e  = _spread_credit(spot_e, trade["short_strike"], trade["long_strike"],
                                     t_e, _RISK_FREE_RATE, iv_e, trade["spread_type"])

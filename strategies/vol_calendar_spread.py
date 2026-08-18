@@ -92,6 +92,16 @@ LABEL_NAMES = {COMPRESS: "COMPRESS", NEUTRAL: "NEUTRAL", EXPAND: "EXPAND"}
 
 # ── Model persistence ─────────────────────────────────────────────────────────
 _MODEL_DIR = Path(__file__).parent.parent / "saved_models"
+
+# Minimum net premium per share for a calendar to be worth entering. Below this
+# the two legs price to effectively the same value, friction dominates, and the
+# position sizer divides by a near-zero denominator. Rejecting the trade is the
+# honest response; clamping the cost up to a floor is not.
+_MIN_NET_PER_SHARE = 0.05
+
+# Hard ceiling on contracts per entry. A backstop, not a sizing rule — if this
+# ever binds, the sizing inputs are wrong and the run should be distrusted.
+_MAX_CONTRACTS = 50
 _MODEL_DIR.mkdir(exist_ok=True)
 
 
@@ -1183,7 +1193,7 @@ class VolCalendarSpreadStrategy(BaseStrategy):
                     else:
                         back_adj  = back_price  - slip   # sell back leg at bid
                         front_adj = front_price + slip   # buy front leg at ask
-                    cost = max(0.01, (back_adj - front_adj)) * 100
+                    net_per_share = back_adj - front_adj
                     price_source = "market"
                 else:
                     # BS fallback: price both legs using stored IV. Use the
@@ -1197,14 +1207,34 @@ class VolCalendarSpreadStrategy(BaseStrategy):
                     front_price = bs_price_skew(spot, spot, _T_f, 0.045, _iv_f, "call")
                     back_price  = bs_price_skew(spot, spot, _T_b, 0.045, _iv_b, "call")
                     if result["trade_type"] == "debit_calendar":
-                        cost = max(0.01, (back_price + slip) - (front_price - slip)) * 100
+                        net_per_share = (back_price + slip) - (front_price - slip)
                     else:
-                        cost = max(0.01, (front_price + slip) - (back_price - slip)) * 100
+                        net_per_share = (front_price + slip) - (back_price - slip)
                     price_source = "bs_fallback"
 
+                # A calendar whose two legs price to (nearly) the same value has
+                # no economics left after friction. The previous code clamped
+                # `cost` up to a $0.01/share floor instead of rejecting the
+                # trade, and that floor then became the DENOMINATOR of the
+                # position sizer below: cost $1.00 + $1.30 commission sized
+                # 100_000 * 0.05 / 2.30 = 2,173 contracts on a $100k account,
+                # and the resulting exit marks printed six-figure fictional P&L.
+                # Skip the entry instead — an unpriceable spread is not a
+                # zero-cost spread.
+                if not np.isfinite(net_per_share) or net_per_share < _MIN_NET_PER_SHARE:
+                    continue
+
+                cost = net_per_share * 100
                 commission = self.commission_per_leg * 2  # 2 legs per calendar
-                contracts = max(1, int(capital * self.position_size_pct / max(cost + commission, 1)))
-                capital  -= (cost + commission) * contracts
+
+                # Size on capital actually at risk, and never let the per-contract
+                # denominator fall below one real contract's cost.
+                per_contract = cost + commission
+                contracts = int(capital * self.position_size_pct / per_contract)
+                if contracts < 1:
+                    continue
+                contracts = min(contracts, _MAX_CONTRACTS)
+                capital  -= per_contract * contracts
 
                 open_trades.append({
                     "entry_date":   dt,

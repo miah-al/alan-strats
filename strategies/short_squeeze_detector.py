@@ -1006,7 +1006,13 @@ class ShortSqueezeDetectorStrategy(BaseStrategy):
                     # cost was already deducted from capital at entry).
                     exit_cost = _LEG_COST * trade["contracts"]
                     net_pnl   = round(pnl_tot - exit_cost, 2)
-                    capital  += net_pnl
+                    # Closing SELLS the call, so cash receives its full market
+                    # value — not the P&L. Entry debited the whole premium
+                    # (premium x contracts x 100); crediting only pnl_tot here
+                    # stranded that principal and destroyed it on every round
+                    # trip, so even a call that doubled in value booked a net
+                    # capital LOSS.
+                    capital  += cur_prem * trade["contracts"] * 100 - exit_cost
                     closed_trades.append({
                         "entry_date":  trade["entry_date"].date() if hasattr(trade["entry_date"], "date") else trade["entry_date"],
                         "exit_date":   dt.date() if hasattr(dt, "date") else dt,
@@ -1117,7 +1123,10 @@ class ShortSqueezeDetectorStrategy(BaseStrategy):
                 dte_rem = max(ot["expiry_idx"] - fi, 0)
                 T_mtm   = max(dte_rem / 252.0, 1e-6)
                 cv      = _leg_price(spot, ot["strike"], T_mtm, r, iv_dec_mtm, "call")
-                mtm    += (cv - ot["debit"]) * ot["contracts"] * 100
+                # Cash already paid the debit, so equity carries the option's
+                # full market value, not its P&L — otherwise every open position
+                # under-reports equity by its own premium.
+                mtm    += cv * ot["contracts"] * 100
             equity_list.append(capital + mtm)
 
         # ── Build outputs ────────────────────────────────────────────────────
