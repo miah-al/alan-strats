@@ -25,7 +25,6 @@ from app.grid_helpers import mrt_grid
 # _course_tab (verbatim from the original) to avoid any import-cycle surprises.
 from app.pages.tools.data import _col, _metric_card, _compute_risk_metrics
 
-_GUIDE_DIR = Path(__file__).parent.parent.parent / "guide_articles"
 _BROKER_GUIDE = Path(__file__).parent.parent.parent / "guide_articles" / "broker_integration.md"
 
 
@@ -254,22 +253,20 @@ def _iv_metrics_tab() -> html.Div:
     ], style={"padding": "16px 0"})
 
 
-_AI_SLUGS = {
-    "iron_condor_ai", "ml_gradient_boost", "ml_transformer_seq",
-    "ml_ensemble_stacking", "reinforcement_agent", "neural_regime_transformer",
-    "online_adaptive_model",
-}
-
-
 def _guide_options() -> tuple[list[dict], str | None]:
-    """Build grouped dcc.Dropdown options: AI/ML first, then Rules-Based."""
+    """Build grouped dcc.Dropdown options: AI/ML first, then Rules-Based.
+    Articles come from the platform and every installed strategy plugin; a
+    registered strategy is grouped by its registry type, everything else is
+    general (rules-based) education."""
+    from app.guides import all_guide_slugs
+    from alan_trader.strategy_api.registry import STRATEGY_METADATA
+
     ai_opts, rules_opts = [], []
-    if _GUIDE_DIR.exists():
-        for p in sorted(_GUIDE_DIR.glob("*.md")):
-            slug = p.stem
-            label = slug.replace("_", " ").title()
-            entry = {"label": label, "value": slug}
-            (ai_opts if slug in _AI_SLUGS else rules_opts).append(entry)
+    for slug in all_guide_slugs():
+        label = slug.replace("_", " ").title()
+        entry = {"label": label, "value": slug}
+        is_ai = STRATEGY_METADATA.get(slug, {}).get("type") == "ai"
+        (ai_opts if is_ai else rules_opts).append(entry)
 
     groups: list[dict] = []
     if ai_opts:
@@ -779,9 +776,13 @@ def _risk_tab() -> html.Div:
 
 def _registry_tab() -> html.Div:
     try:
-        from strategies.registry import STRATEGY_METADATA
+        from alan_trader.strategy_api.registry import STRATEGY_METADATA
     except ImportError:
         return dbc.Alert("Could not load strategy registry.", color="warning")
+    if not STRATEGY_METADATA:
+        return dbc.Alert(
+            "No strategy packages installed — the registry is empty. Install a "
+            "strategy plugin and restart the app.", color="info")
 
     total  = len(STRATEGY_METADATA)
     active = sum(1 for m in STRATEGY_METADATA.values() if m.get("status") == "active")

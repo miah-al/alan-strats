@@ -8,7 +8,7 @@ import numpy as np
 import pandas as pd
 from typing import Optional
 
-from alan_trader.strategies.base import BacktestResult
+from alan_trader.strategy_api.base import BacktestResult
 from alan_trader.risk import metrics as rm
 
 logger = logging.getLogger(__name__)

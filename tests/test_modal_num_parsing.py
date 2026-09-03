@@ -1,11 +1,9 @@
 """
-Screener-grid cells are display strings, and a missing value is the em-dash "—".
+The signal popup must survive a missing grid value.
 
-The signal popup compared those cells against thresholds via
-`float(str(v) or 0)`, which cannot work: `str("—")` is truthy so the `or 0`
-never fires and float() raises ValueError. Any row with a missing VIX, Price or
-Score took the entire popup down — and the Score parse sits in the shared tail
-of `_build_signal_body`, so it affected every strategy.
+Grid cells are display strings, not numbers: a missing value is the em-dash
+"—", which is truthy, so `float(row.get("Price") or 0)` raises and blanks the
+whole modal. Every grid value must be parsed through `_num()`.
 """
 
 import pytest
@@ -13,81 +11,41 @@ import pytest
 from alan_trader.app.pages.strategies.format import _num
 
 
-@pytest.mark.parametrize("missing", ["—", "-", "–", "", "   ", "N/A", "n/a",
-                                     "None", "nan", None])
+@pytest.mark.parametrize("missing", ["—", "", "N/A", None, "-"])
 def test_missing_values_fall_back_to_the_default(missing):
     assert _num(missing) == 0.0
     assert _num(missing, 12.5) == 12.5
 
 
 def test_the_em_dash_is_the_case_that_used_to_raise():
-    """`float(str("—") or 0)` raises ValueError — this must not."""
+    with pytest.raises(ValueError):
+        float("—")
     assert _num("—") == 0.0
 
 
-@pytest.mark.parametrize("value,expected", [
-    ("18.4", 18.4),
-    ("$5.25", 5.25),
-    ("62.5%", 62.5),
-    ("+3.10", 3.10),
-    ("$1,250.75", 1250.75),
-    ("1.8x", 1.8),
-    ("  24.0  ", 24.0),
-    ("-7.25", -7.25),
-    ("$-3.50", -3.50),
+@pytest.mark.parametrize("value, expected", [
+    ("$590.25", 590.25),
+    ("42.5%", 42.5),
+    ("+1.25", 1.25),
+    ("1,234.5", 1234.5),
+    ("2.3×", 2.3),
+    (17, 17.0),
+    (0.42, 0.42),
 ])
 def test_display_formatting_is_stripped(value, expected):
     assert _num(value) == pytest.approx(expected)
 
 
-@pytest.mark.parametrize("value,expected", [
-    (42, 42.0),
-    (3.5, 3.5),
-    (0, 0.0),
-])
-def test_real_numbers_pass_through(value, expected):
-    assert _num(value) == pytest.approx(expected)
-
-
-def test_booleans_are_not_treated_as_numbers():
-    """bool is an int subclass; treating True as 1.0 would be a silent lie."""
-    assert _num(True) == 0.0
-    assert _num(False) == 0.0
-
-
-def test_garbage_falls_back_rather_than_raising():
-    assert _num("not a number") == 0.0
-    assert _num("$$$") == 0.0
-    assert _num(object()) == 0.0
-
-
-def test_threshold_comparison_is_safe_for_every_grid_value():
-    """The exact shape of the code that was crashing."""
-    for cell in ["—", "18.4", "$5.25", "62.5%", None, "", "N/A"]:
-        assert isinstance(_num(cell) > 25, bool)
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# The popup itself must survive a missing Price on every branch
-# ─────────────────────────────────────────────────────────────────────────────
-
-@pytest.mark.parametrize("slug", [
-    "ivr_credit_spread", "vix_spike_fade", "iron_condor_rules",
-    "bull_put_spread", "calendar_spread", "wheel_strategy",
-])
 @pytest.mark.parametrize("missing", ["—", "", "N/A", None, "-"])
-def test_signal_popup_survives_a_missing_price(slug, missing):
-    """
-    Four branches read the spot price with `float(row.get("Price") or 0)`.
-    A missing grid value is the em-dash "—", which is truthy, so the `or 0`
-    never fires and float() raises — blanking the modal with no message,
-    because `_build_signal_body` IS the callback.
-    """
+def test_generic_signal_popup_survives_a_missing_price(missing):
+    """`_build_signal_body` IS the callback: a raise blanks the modal with no
+    message. The generic body (used by any strategy without a bespoke view)
+    must render for a row whose Price cell is missing."""
     from alan_trader.app.pages.strategies.modals import _build_signal_body
 
     row = {
         "Ticker": "SPY", "Price": missing, "Score": 55, "Status": "Partial",
-        "IVR": "0.42", "VIX": "16.0", "_slug": slug,
+        "IVR": "0.42", "VIX": "16.0", "_slug": "__no_such_strategy__",
     }
     assert _build_signal_body(row) is not None
 

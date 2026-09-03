@@ -48,7 +48,7 @@ def main(argv=None) -> int:
     from app import get_polygon_api_key
     from app.pages.strategies.scan import _run_scan
     from app.pages.strategies.registry import _STRATEGIES_RULES, _STRATEGIES_AI
-    from strategies.registry import STRATEGY_METADATA
+    from alan_trader.strategy_api.registry import STRATEGY_METADATA
 
     all_slugs = [e["value"] for e in _STRATEGIES_RULES + _STRATEGIES_AI]
     slugs = [s.strip() for s in args.slugs.split(",")] if args.slugs else all_slugs

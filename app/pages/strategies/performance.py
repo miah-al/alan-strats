@@ -132,13 +132,14 @@ def compute_performance(slug: str, ticker: str, from_date: str, to_date: str,
     """
     from db.client import get_engine, get_price_bars, get_vix_bars, get_macro_bars
     from app.pages.backtest_loaders import run_loaders_for
-    from app.pages.strategies.backtest_view import (
-        _STRATEGY_CLASSES_BT, _get_ui_params_for_slug,
-    )
+    from app.pages.strategies.backtest_view import _get_ui_params_for_slug
+    from alan_trader.strategy_api.base import StubStrategy
+    from alan_trader.strategy_api.registry import get_strategy
     from risk.metrics import compute_all_metrics
 
-    if slug not in _STRATEGY_CLASSES_BT:
-        raise ValueError(f"No backtest class registered for {slug!r}.")
+    strategy = get_strategy(slug)
+    if isinstance(strategy, StubStrategy):
+        raise ValueError(f"No implementation registered for {slug!r}.")
 
     fd, td = date.fromisoformat(from_date), date.fromisoformat(to_date)
     load_fd = fd - timedelta(days=WARMUP_DAYS)   # indicators warm up before fd
@@ -169,8 +170,6 @@ def compute_performance(slug: str, ticker: str, from_date: str, to_date: str,
             f"{slug} is missing required data for this window — see the "
             f"Backtest tab for the loader's message.")
 
-    mod_path, cls_name = _STRATEGY_CLASSES_BT[slug]
-    strategy = getattr(importlib.import_module(mod_path), cls_name)()
     params = {p["key"]: p["default"]
               for p in _get_ui_params_for_slug(slug) if "default" in p}
     result = strategy.backtest(bars, aux, starting_capital=float(capital), **params)

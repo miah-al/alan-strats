@@ -60,20 +60,15 @@ EARNINGS_TICKER = "F"                            # only ticker with earnings+opt
 # cripples anything with a long lookback: a 12-month momentum has NaN for its
 # first 12 month-ends, and `NaN > 0` evaluates to False, so the strategy is
 # forced FLAT for a year and the missed return is scored against it as if it
-# were a decision. (Measured on ts_momentum: 272 of 1378 bars forced flat,
-# missing +23.6%, understating CAGR by ~3pp.) We therefore load history from
+# were a decision. (Measured on a 12-month momentum overlay: 272 of 1378 bars
+# forced flat, missing +23.6%, understating CAGR by ~3pp.) We therefore load history from
 # WARMUP_DAYS before the window, then truncate the equity curve back to the
 # window before computing metrics — so the warm-up informs the indicators but
 # never contributes to the score.
 WARMUP_DAYS = 420
 
-OPTIONS_WINDOW_SLUGS = {
-    "vrp_premium", "stock_bond_vol_rotation", "vol_calendar_spread",
-    "dealer_gamma_regime", "expiry_max_pain", "short_squeeze_detector",
-}
-EARNINGS_SLUGS = {
-    "earnings_straddle", "earnings_vol_crush", "earnings_pin_risk",
-}
+# Which window a strategy is ranked on is declared by its plugin
+# (metadata key ``rank_window``: "price" (default) | "options" | "earnings").
 
 
 def _one_line(text: str, limit: int = 220) -> str:
@@ -152,10 +147,12 @@ def _degenerate_reason(result: Any, slug: str) -> str:
 
 
 def window_for(slug: str) -> tuple[str, str, str]:
-    """Return (ticker, from_date, to_date) for a slug."""
-    if slug in EARNINGS_SLUGS:
+    """Return (ticker, from_date, to_date) for a slug, per its declared window."""
+    from alan_trader.strategy_api.registry import STRATEGY_METADATA
+    kind = STRATEGY_METADATA.get(slug, {}).get("rank_window", "price")
+    if kind == "earnings":
         return EARNINGS_TICKER, OPTIONS_WINDOW[0], OPTIONS_WINDOW[1]
-    if slug in OPTIONS_WINDOW_SLUGS:
+    if kind == "options":
         return "SPY", OPTIONS_WINDOW[0], OPTIONS_WINDOW[1]
     return "SPY", PRICE_WINDOW[0], PRICE_WINDOW[1]
 
@@ -168,10 +165,9 @@ def run_one(slug: str, capital: float = 100_000.0) -> RunResult:
     """
     from db.client import get_engine, get_price_bars, get_vix_bars, get_macro_bars
     from app.pages.backtest_loaders import run_loaders_for
-    from app.pages.strategies.backtest_view import (
-        _STRATEGY_CLASSES_BT, _get_ui_params_for_slug,
-    )
-    from strategies.registry import STRATEGY_METADATA
+    from app.pages.strategies.backtest_view import _get_ui_params_for_slug
+    from alan_trader.strategy_api.base import StubStrategy
+    from alan_trader.strategy_api.registry import STRATEGY_METADATA, get_strategy
 
     ticker, from_date, to_date = window_for(slug)
     res = RunResult(
@@ -181,8 +177,9 @@ def run_one(slug: str, capital: float = 100_000.0) -> RunResult:
         window=f"{from_date[:7]}→{to_date[:7]}",
     )
 
-    if slug not in _STRATEGY_CLASSES_BT:
-        res.status, res.reason = "ERROR", "no backtest class registered"
+    strategy = get_strategy(slug) if slug in STRATEGY_METADATA else None
+    if strategy is None or isinstance(strategy, StubStrategy):
+        res.status, res.reason = "ERROR", "no implementation registered"
         return res
 
     fd, td = date.fromisoformat(from_date), date.fromisoformat(to_date)
@@ -238,8 +235,6 @@ def run_one(slug: str, capital: float = 100_000.0) -> RunResult:
 
     # ── run ───────────────────────────────────────────────────────────────────
     try:
-        mod_path, cls_name = _STRATEGY_CLASSES_BT[slug]
-        strategy = getattr(importlib.import_module(mod_path), cls_name)()
         ui_params = _get_ui_params_for_slug(slug)
         params = {p["key"]: p["default"] for p in ui_params if "default" in p}
         result = strategy.backtest(

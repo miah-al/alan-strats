@@ -30,7 +30,7 @@ from alan_trader.trading.spread_selector import contracts_to_trade, select_sprea
 
 logger = logging.getLogger(__name__)
 
-STATE_FILE = Path(__file__).parent.parent / "saved_models" / "live_state.json"
+STATE_FILE = Path(__file__).parent.parent / "runtime_state" / "live_state.json"
 
 
 class LiveTrader:

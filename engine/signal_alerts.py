@@ -1,9 +1,13 @@
 """
-Signal monitor + WhatsApp alerts for the validated trend / momentum strategies.
+Signal monitor + WhatsApp alerts for strategies that publish a live signal.
 
-Computes today's BUY/HOLD verdict for each (strategy, ticker), compares it to the
-last seen state on disk, and WhatsApps you ONLY when a signal flips (so you get a
-text the day SPY crosses its 200-day average, not spam every day).
+Computes today's verdict for each (strategy, ticker), compares it to the last
+seen state on disk, and WhatsApps you ONLY when a signal flips (so you get a
+text the day a signal changes, not spam every day).
+
+Which strategies take part is decided by the plugins: any registered strategy
+whose ``current_signal(close)`` returns a dict is monitored. The platform
+itself names none.
 
 Run on a schedule (cron / Task Scheduler / the app's /schedule), e.g. daily after
 the close:
@@ -13,25 +17,29 @@ Or import and call check_and_alert(...) from a Dash callback / button.
 """
 from __future__ import annotations
 
-import os
 import json
 import logging
-import datetime as _dt
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
-_STATE_PATH = Path(__file__).resolve().parent.parent / "saved_models" / "signal_state.json"
+_STATE_PATH = Path(__file__).resolve().parent.parent / "runtime_state" / "signal_state.json"
 
-# (slug, current_signal_fn, label)
-def _strategies():
-    from alan_trader.strategies.timing_base import load_close
-    from alan_trader.strategies.trend_following import current_trend_signal
-    from alan_trader.strategies.ts_momentum import current_tsmom_signal
-    return {
-        "trend_following": (current_trend_signal, "200-Day Trend"),
-        "ts_momentum":     (current_tsmom_signal, "12-Month Momentum"),
-    }, load_close
+
+def _monitored() -> dict:
+    """{slug: (strategy, label)} for every strategy that publishes a live signal."""
+    from alan_trader.strategy_api.base import BaseStrategy
+    from alan_trader.strategy_api.registry import STRATEGY_METADATA, get_strategy
+    out = {}
+    for slug, meta in STRATEGY_METADATA.items():
+        if meta.get("status") != "active":
+            continue
+        strat = get_strategy(slug)
+        # Only strategies that override the hook — the base returns None.
+        if type(strat).current_signal is BaseStrategy.current_signal:
+            continue
+        out[slug] = (strat, meta.get("ui_label") or meta.get("display_name") or slug)
+    return out
 
 
 def _load_state() -> dict:
@@ -50,14 +58,22 @@ def _save_state(state: dict) -> None:
 
 
 def compute_signals(tickers: list[str]) -> dict:
-    """{ 'slug|TICKER': signal_dict } for every strategy × ticker."""
-    strats, load_close = _strategies()
+    """{ 'slug|TICKER': signal_dict } for every monitored strategy × ticker."""
+    from alan_trader.strategy_api.timing_base import load_close
+    strats = _monitored()
     out = {}
     closes = {t: load_close(t) for t in tickers}
     for t in tickers:
         c = closes[t]
-        for slug, (fn, label) in strats.items():
-            sig = fn(c)
+        for slug, (strat, label) in strats.items():
+            try:
+                sig = strat.current_signal(c)
+            except Exception as exc:
+                logger.warning(f"{slug}: current_signal failed for {t}: {exc}")
+                continue
+            if not sig:
+                continue
+            sig = dict(sig)
             sig["label"] = label
             sig["ticker"] = t
             out[f"{slug}|{t}"] = sig
@@ -66,10 +82,9 @@ def compute_signals(tickers: list[str]) -> dict:
 
 def format_signal_line(sig: dict) -> str:
     base = f"{sig.get('label')} · {sig.get('ticker')}: {sig.get('signal')} ({sig.get('state','')})"
-    if "ma" in sig:
-        base += f"\n  px {sig['price']} vs {sig['rule']} {sig['ma']} ({sig['pct_vs_ma']:+}%)"
-    elif "ret_lookback_pct" in sig:
-        base += f"\n  px {sig['price']} · {sig['rule']} = {sig['ret_lookback_pct']:+}%"
+    detail = sig.get("detail")
+    if detail:
+        base += f"\n  {detail}"
     base += f"\n  as of {sig.get('asof')}"
     return base
 
@@ -88,10 +103,9 @@ def check_and_alert(tickers: list[str] | None = None, force: bool = False) -> di
         if cur in (None, "UNKNOWN"):
             continue
         old = (prev.get(key) or {}).get("signal")
-        if force or (old is not None and old != cur) or (old is None):
-            # alert on a genuine flip; on first-ever run (old is None) record silently
-            if force or (old is not None and old != cur):
-                flips.append((key, sig, old))
+        # alert on a genuine flip; on first-ever run (old is None) record silently
+        if force or (old is not None and old != cur):
+            flips.append((key, sig, old))
 
     sent, detail = False, "no flips"
     if flips:
@@ -105,7 +119,6 @@ def check_and_alert(tickers: list[str] | None = None, force: bool = False) -> di
         else:
             detail = "WhatsApp not configured (set WHATSAPP_PHONE + CALLMEBOT_APIKEY)"
 
-    # persist latest
     _save_state({k: {"signal": v.get("signal"), "asof": v.get("asof")} for k, v in sigs.items()})
     return {"checked": list(sigs.keys()),
             "flips": [f"{k}: {old}→{s.get('signal')}" for k, s, old in flips],

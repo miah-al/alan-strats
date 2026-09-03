@@ -10,7 +10,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from strategies.indicators import compute_ivr, compute_atr, compute_adx, bs_price
+from alan_trader.strategy_api.indicators import compute_ivr, compute_atr, compute_adx, bs_price
 
 
 # ── deterministic synthetic OHLC + VIX ────────────────────────────────────────

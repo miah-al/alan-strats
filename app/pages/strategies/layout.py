@@ -1,26 +1,28 @@
 """
 app/pages/strategies/layout.py — page layout + per-strategy tab builders (pure view, no @callback).
+
+Every per-strategy decision (columns, filter params, locked universe, extra
+tabs, test suites) is read from the strategy's UI hook
+(`strategy_api.registry.get_ui`). This module names no strategy.
 """
 from __future__ import annotations
 
 import logging
 from datetime import date
-from pathlib import Path
 
 from app.grid_helpers import (
     clickable_mrt_grid as _mrt_clickable,
 )
 import dash_bootstrap_components as dbc
-import plotly.graph_objects as go
 from dash import html, dcc
 
 from app import theme as T, get_polygon_api_key
 from app.ui import components as C
+from app.ui.strategy_widgets import GENERIC_COLS
+from alan_trader.strategy_api.registry import get_ui
 from app.pages.strategies.registry import (
-    _STRATEGIES_RULES, _STRATEGIES_AI, _SPY_ONLY_SLUGS, _SECTOR_ETFS_LIST, _SECTOR_ONLY_SLUGS, _UNIVERSE_OPTIONS, _STATUS_COLORS, get_strategy_status, get_strategy_score, get_score_color, _SCREENER_PARAMS,
-)
-from app.pages.strategies.columns import (
-    _COLS_BY_SLUG, _IC_COLS,
+    _STRATEGIES_RULES, _STRATEGIES_AI, _UNIVERSE_OPTIONS, _STATUS_COLORS,
+    get_strategy_status, get_strategy_score, get_score_color,
 )
 from app.pages.strategies.format import (
     _load_guide,
@@ -28,6 +30,7 @@ from app.pages.strategies.format import (
 from app.pages.strategies.backtest_view import _get_ui_params_for_slug
 
 logger = logging.getLogger(__name__)
+
 
 def _checklist_options_with_status(strategies: list[dict]) -> list[dict]:
     """Convert a list of `{"label","value"}` entries to selector options where
@@ -95,10 +98,6 @@ def _selector_group(title: str, icon: str, accent: str, element_id: str,
     CSS (`.strat-chips` in z_polish.css). Keeping a real checkbox input means
     keyboard and screen-reader behaviour are unchanged; only the painting
     differs.
-
-    Deliberately NOT a dropdown: a popup menu renders in a portal, which both
-    escapes the app's theming and flickers as it re-anchors when the pointer
-    leaves the card. Pills are always visible, so neither problem exists.
     """
     return html.Div([
         html.Div([
@@ -125,9 +124,6 @@ def _selector_group(title: str, icon: str, accent: str, element_id: str,
     ], style={"flex": "1 1 340px", "minWidth": "280px"})
 
 
-# _SCREENER_PARAMS moved to registry.py (pure config, shared with scan.py)
-
-
 def _param_input(slug: str, p: dict) -> html.Div:
     """Single labelled number input for one screener filter param."""
     inp_id = {"type": f"str-{slug}-param", "index": p["id"]}
@@ -146,6 +142,7 @@ def _param_input(slug: str, p: dict) -> html.Div:
 
 def _screener_layout(slug: str) -> html.Div:
     """Controls + grid layout for one strategy's Screener sub-tab."""
+    ui = get_ui(slug)
     universe_id   = f"str-{slug}-universe"
     custom_id     = f"str-{slug}-custom"
     scan_id       = f"str-{slug}-scan-btn"
@@ -153,39 +150,22 @@ def _screener_layout(slug: str) -> html.Div:
     status_id     = f"str-{slug}-status"
     vix_banner_id = f"str-{slug}-vix-banner"
     loading_id    = f"str-{slug}-loading"
-    cols          = _COLS_BY_SLUG.get(slug, _IC_COLS)
+    cols          = ui.columns or GENERIC_COLS
 
-    params_spec  = _SCREENER_PARAMS.get(slug, [])
+    params_spec  = list(ui.screener_params or [])
     filter_tog   = f"str-{slug}-filter-toggle"
     filter_col   = f"str-{slug}-filter-collapse"
 
-    spy_only     = slug in _SPY_ONLY_SLUGS
-    sector_only  = slug in _SECTOR_ONLY_SLUGS
-    locked       = spy_only or sector_only
-    locked_label = "SPY only" if spy_only else "11 Sector ETFs" if sector_only else ""
-    locked_value = "SPY" if spy_only else ",".join(_SECTOR_ETFS_LIST) if sector_only else None
+    locked_tickers = list(ui.locked_tickers or [])
+    locked       = bool(locked_tickers)
+    locked_label = ui.locked_label or (f"{len(locked_tickers)} fixed tickers" if locked else "")
+    locked_value = ",".join(locked_tickers) if locked else None
 
-    # Strategy-specific info banner (e.g., HMM doesn't really use the screener)
-    info_banner = None
-    if slug == "hmm_regime":
-        info_banner = dbc.Alert([
-            html.Strong("HMM is a single-ticker strategy. "),
-            "The Screener scans a universe for candidates, but HMM has ",
-            html.Code("max_concurrent = 1"),
-            " and is normally run on a single broad-market ticker (SPY). ",
-            "For today's signal and model status, use the ",
-            html.Strong("Live & Model"),
-            " tab instead. Scanning here will only return tickers that have a trained ",
-            html.Code(".pkl"),
-            " in ", html.Code("saved_models/"), " and ≥ 252 bars of history.",
-        ],
-            color="info",
-            style={"fontSize": "12px", "padding": "10px 14px",
-                   "marginBottom": "14px", "borderLeft": f"3px solid {T.ACCENT}",
-                   "backgroundColor": "rgba(99,102,241,0.08)", "color": T.TEXT_PRIMARY,
-                   "border": f"1px solid {T.BORDER}"},
-            dismissable=False,
-        )
+    try:
+        info_banner = ui.info_banner()
+    except Exception:
+        logger.exception(f"{slug}: info_banner failed")
+        info_banner = None
 
     return html.Div([
         # Optional strategy-specific info banner
@@ -263,8 +243,7 @@ def _screener_layout(slug: str) -> html.Div:
         html.Div(id=status_id),
 
         # Results grid — clickable MRT (rows fire JS-bridged callback into
-        # f"{grid_id}-clicked" hidden Dash input; old cellClicked callbacks are
-        # rewritten in _make_signal_callback / _make_ic_chart_callback).
+        # f"{grid_id}-clicked" hidden Dash input).
         dcc.Loading(
             html.Div(
                 _mrt_clickable(
@@ -283,7 +262,7 @@ def _screener_layout(slug: str) -> html.Div:
 def _score_badge(slug: str) -> html.Div:
     """Credibility score/grade banner shown above a strategy's guide article.
 
-    Reflects the 2026-05-30 hardening review (edge realism + implementation
+    Reflects the plugin's hardening review (edge realism + implementation
     quality), NOT realized P&L. Renders nothing for unscored slugs.
     """
     sc = get_strategy_score(slug)
@@ -357,7 +336,7 @@ def _backtest_tab(slug: str) -> html.Div:
                 dbc.Input(id=f"str-{slug}-bt-capital", type="number", value=10000,
                           min=1000, step=1000,
                           style={**_inp, "width": "160px"})]),
-            html.Div([_lbl("\u00a0"),
+            html.Div([_lbl(" "),
                 dbc.Button("Run Backtest", id=f"str-{slug}-bt-run", color="primary",
                            style={"fontWeight": "600", "fontSize": "13px",
                                   "height": "34px", "padding": "0 20px",
@@ -437,7 +416,7 @@ def _backtest_tab(slug: str) -> html.Div:
 
 
 def _performance_tab(slug: str) -> html.Div:
-    """Real analytics — see performance.py. Was a 'coming soon' placeholder."""
+    """Real analytics — see performance.py."""
     from app.pages.strategies.performance import performance_tab
     return performance_tab(slug)
 
@@ -446,503 +425,7 @@ def _simulator_stub(slug: str) -> html.Div:
     return C.card(C.empty_state("Simulator tab — coming in Phase 7.", icon="🎛"))
 
 
-# ── Live Signal + Model tab (HMM Regime) ──────────────────────────────────────
-
-_HMM_MODEL_DIR = Path(__file__).parent.parent.parent.parent / "saved_models"
-
-_HMM_STATE_REF = [
-    ("State 0", "Bull / quiet drift",  "Bull put credit spread", "0.20Δ short, 5% wing, 30 DTE", T.SUCCESS),
-    ("State 1", "Chop / mean-reverting", "Iron condor",          "0.16Δ both sides, 5% wings, 35 DTE", T.WARNING),
-    ("State 2", "Crisis / bear",        "Long put debit spread", "0.30Δ long put, 5% short, 45 DTE", T.DANGER),
-]
-
-_HMM_ENTRY_GATES = [
-    ("p_state >= 0.60",                  "Posterior confidence floor"),
-    ("VIX <= 40",                        "Dislocation circuit breaker"),
-    ("spot/forward posterior agree",     "Regime stability check"),
-    ("No open trade (max_concurrent=1)", "Single-position discipline"),
-    ("Not a known event day",            "FOMC / CPI / NFP / OpEx pause"),
-]
-
-
-def _hmm_load_model(ticker: str = "spy"):
-    """Try to load the saved HMM model. Returns (model, status_text, status_color, fit_date)."""
-    path = _HMM_MODEL_DIR / f"hmm_regime_{ticker.lower()}.pkl"
-    if not path.exists():
-        return None, f"No saved model at {path.name} — run a backtest to train.", T.WARNING, None
-    try:
-        import pickle
-        with open(path, "rb") as f:
-            model = pickle.load(f)
-        if model is None or not getattr(model, "_fitted", False):
-            return None, "Model file present but not fitted — re-run backtest.", T.DANGER, None
-        from datetime import datetime
-        fit_date = datetime.fromtimestamp(path.stat().st_mtime).strftime("%Y-%m-%d %H:%M")
-        backend = getattr(model, "backend", "unknown")
-        return model, f"Loaded ({backend}) — last fit {fit_date}", T.SUCCESS, fit_date
-    except Exception as e:
-        return None, f"Failed to load model: {e}", T.DANGER, None
-
-
-def _hmm_live_signal_tab(slug: str) -> html.Div:
-    if slug != "hmm_regime":
-        return html.Div()
-
-    model, status_text, status_color, fit_date = _hmm_load_model("spy")
-
-    # ── Model status banner ──────────────────────────────────────────────────
-    status_card = C.card([
-        dbc.Row([
-            dbc.Col(html.Div([
-                html.Span("●  ", style={"color": status_color, "fontSize": "16px"}),
-                html.Span("Model status: ", style={
-                    "color": T.TEXT_MUTED, "fontSize": "12px", "fontWeight": "600",
-                    "textTransform": "uppercase", "letterSpacing": "0.06em"}),
-                html.Span(status_text, style={"color": T.TEXT_PRIMARY, "fontSize": "13px"}),
-            ]), width=True),
-            dbc.Col(html.Div([
-                html.Span("Algorithm: ", style={"color": T.TEXT_MUTED, "fontSize": "11px",
-                                                 "fontWeight": "600", "textTransform": "uppercase"}),
-                html.Span("3-state Gaussian HMM (hmmlearn)",
-                          style={"color": T.ACCENT, "fontSize": "12px",
-                                 "fontFamily": "JetBrains Mono, monospace"}),
-            ]), width="auto"),
-        ], align="center"),
-    ], style={"borderLeft": f"3px solid {status_color}"})
-
-    # ── Sanity check row (only if model loaded) ──────────────────────────────
-    sanity_card = None
-    if model is not None:
-        try:
-            sm = model.sorted_means()  # (3, 3) array
-            tmat = model.sorted_transmat()  # (3, 3) or None
-            rv_means = [float(sm[i, 2]) for i in range(3)]
-            rv_ratio = rv_means[2] / max(rv_means[0], 1e-6)
-            rv_ok = rv_ratio >= 2.0
-            if tmat is not None:
-                diag = [float(tmat[i, i]) for i in range(3)]
-                diag_ok = all(d >= 0.85 for d in diag)
-                diag_text = f"{diag[0]:.2f} / {diag[1]:.2f} / {diag[2]:.2f}"
-            else:
-                diag_ok = None
-                diag_text = "n/a (GMM fallback)"
-        except Exception as e:
-            rv_means, rv_ratio, rv_ok = [0, 0, 0], 0, False
-            diag_ok, diag_text = False, f"error: {e}"
-
-        def _check_row(label: str, value: str, ok: bool | None) -> html.Div:
-            if ok is True:
-                ind = "✓"; color = T.SUCCESS
-            elif ok is False:
-                ind = "✗"; color = T.DANGER
-            else:
-                ind = "—"; color = T.TEXT_MUTED
-            return html.Div([
-                html.Span(ind, style={"color": color, "fontSize": "14px",
-                                       "fontWeight": "700", "marginRight": "10px",
-                                       "fontFamily": "JetBrains Mono, monospace"}),
-                html.Span(label, style={"color": T.TEXT_PRIMARY, "fontSize": "12px"}),
-                html.Span(f"  →  {value}", style={"color": T.TEXT_MUTED, "fontSize": "12px",
-                                                    "fontFamily": "JetBrains Mono, monospace"}),
-            ], style={"marginBottom": "6px"})
-
-        sanity_card = C.section("Model sanity checks", [
-            _check_row("rv20 mean(state 2) > 2× mean(state 0)",
-                       f"{rv_means[0]:.3f} / {rv_means[1]:.3f} / {rv_means[2]:.3f}  (ratio {rv_ratio:.2f}×)",
-                       rv_ok),
-            _check_row("Transition matrix diagonal > 0.85 (regime persistence)",
-                       diag_text, diag_ok),
-        ])
-
-    # ── State reference cards ────────────────────────────────────────────────
-    state_cards = []
-    for label, desc, trade, struct, color in _HMM_STATE_REF:
-        state_cards.append(dbc.Col(C.card([
-            html.Div(label, style={"color": color, "fontSize": "11px",
-                                    "fontWeight": "700", "textTransform": "uppercase",
-                                    "letterSpacing": "0.08em", "marginBottom": "4px"}),
-            html.Div(desc, style={"color": T.TEXT_PRIMARY, "fontSize": "13px",
-                                   "fontWeight": "600", "marginBottom": "8px"}),
-            html.Div(trade, style={"color": T.ACCENT, "fontSize": "12px",
-                                    "fontFamily": "JetBrains Mono, monospace",
-                                    "marginBottom": "4px"}),
-            html.Div(struct, style={"color": T.TEXT_MUTED, "fontSize": "11px",
-                                     "fontFamily": "JetBrains Mono, monospace"}),
-        ], style={"borderTop": f"3px solid {color}", "height": "100%", "marginBottom": "0"}), md=4))
-
-    state_ref_row = dbc.Row(state_cards, style={"marginBottom": "16px"})
-
-    # ── Entry checklist (static reference) ───────────────────────────────────
-    gate_rows = [html.Div([
-        html.Span("□  ", style={"color": T.TEXT_MUTED, "fontFamily": "JetBrains Mono, monospace"}),
-        html.Span(gate, style={"color": T.TEXT_PRIMARY, "fontSize": "12px",
-                                "fontFamily": "JetBrains Mono, monospace"}),
-        html.Span(f"   — {note}", style={"color": T.TEXT_MUTED, "fontSize": "11px"}),
-    ], style={"marginBottom": "5px"}) for gate, note in _HMM_ENTRY_GATES]
-
-    gates_card = C.section("Entry checklist (all must pass to open a trade)", gate_rows)
-
-    # ── Compute today's signal — placeholder (callback to be wired) ──────────
-    compute_card = C.section("Today's signal", [
-        html.P(
-            "Click below to fetch the latest SPY + VIX data, run the loaded model, "
-            "and display today's regime posterior and trade recommendation.",
-            style={"color": T.TEXT_MUTED, "fontSize": "12px", "marginBottom": "12px"},
-        ),
-        dbc.Button(
-            "Compute today's signal",
-            id=f"str-{slug}-live-compute-btn",
-            color="primary", size="sm",
-            disabled=(model is None),
-            style={"marginBottom": "12px"},
-        ),
-        html.Div(
-            id=f"str-{slug}-live-signal-output",
-            children=html.P("(Awaiting compute — output will appear here)",
-                            style={"color": T.TEXT_MUTED, "fontSize": "11px",
-                                   "fontStyle": "italic", "margin": "0"}),
-        ),
-    ])
-
-    return html.Div([
-        status_card,
-        *([sanity_card] if sanity_card is not None else []),
-        state_ref_row,
-        gates_card,
-        compute_card,
-    ])
-
-
-# ── Model details tab (Iron Condor AI only) ───────────────────────────────────
-
-_IC_AI_FEATURES = [
-    ("ivr",               "Option Chain", "IV Rank (0–1). Fraction of time VIX was below current level over past year. Entry requires ≥ 0.35."),
-    ("iv_term_slope",     "Option Chain", "VIX 5-day diff / 5. Positive = vol rising (contango). Negative = backwardation (vol falling, sellers favored)."),
-    ("put_call_skew",     "Option Chain", "vol_1m / vol_3m ratio (0.5–2.0). >1.1 signals elevated put premium — structural edge for condor seller."),
-    ("atm_iv",            "Option Chain", "ATM implied vol as decimal (VIX/100). Proxy for option pricing richness."),
-    ("realized_vol_20d",  "Volatility",  "20-day annualized realized vol from daily returns. Compares to IV to compute VRP."),
-    ("vrp",               "Volatility",  "Vol Risk Premium = atm_iv − realized_vol_20d. Positive = implied > realized → structural edge to sell premium."),
-    ("atr_pct",           "Volatility",  "ATR(14) / close price. Daily range as % of spot — measures intraday momentum/choppiness."),
-    ("ret_5d",            "Momentum",    "5-day price return. High |ret_5d| → trending → bad condor environment."),
-    ("ret_20d",           "Momentum",    "20-day price return. Strong directional move → model should reduce P(range-bound)."),
-    ("dist_from_ma50",    "Momentum",    "(close − MA50) / MA50. Measures deviation from trend. Far from MA50 = extended, prone to mean-revert or continue."),
-    ("vix_level",         "VIX",         "Absolute VIX level. 16–28 = condor-friendly. >35 = too much gap risk, model should suppress signal."),
-    ("vix_5d_change",     "VIX",         "VIX 5-day % change. Spike (>+20%) → avoid entry. Fast collapse → vol likely cheap."),
-    ("vix_ma_ratio",      "VIX",         "VIX / 20-day VIX MA. >1.2 = elevated vs recent history. Backwardation signal."),
-    ("rate_10y",          "Macro",       "10-year Treasury yield (decimal). Higher rates → higher carry cost, slightly cheaper puts."),
-    ("yield_curve_2y10y", "Macro",       "10Y−2Y spread. Inversion (<0) historically precedes vol spikes + bear markets."),
-    ("days_to_month_end", "Calendar",    "Days remaining to month end. Options expiry clusters at month-end; liquidity peaks."),
-    ("oi_put_call_proxy", "Option Chain", "OI put/call proxy (reuses put_call_skew). Elevated = market skewed for downside protection."),
-]
-
-_SAVED_MODELS_DIR = Path(__file__).parent.parent.parent.parent / "saved_models"
-_SAMPLE_DATA_PATH = Path(__file__).parent.parent.parent.parent / "data" / "sample_ic_training_data.csv"
-
-
-def _find_ic_ai_model() -> "Path | None":
-    """Locate a trained IC-AI model on disk. Models are saved per-ticker as
-    iron_condor_ai_{ticker}.pkl — there is no un-suffixed file. Prefer SPY, then
-    the default fallback, then any trained ticker."""
-    for name in ("iron_condor_ai_spy.pkl", "iron_condor_ai_default.pkl"):
-        p = _SAVED_MODELS_DIR / name
-        if p.exists():
-            return p
-    hits = sorted(_SAVED_MODELS_DIR.glob("iron_condor_ai_*.pkl"))
-    return hits[0] if hits else None
-
-
-def _model_tab(slug: str) -> html.Div:
-    if slug != "iron_condor_ai":
-        return html.Div()
-
-    # ── Model status ──────────────────────────────────────────────────────────
-    _model_path   = _find_ic_ai_model()
-    model_trained = _model_path is not None
-    status_color  = T.SUCCESS if model_trained else T.WARNING
-    status_text   = f"Trained model found: {_model_path.name}" if model_trained \
-                    else "No saved model — run a backtest to train the GBM classifier"
-
-    status_card = C.card([
-        dbc.Row([
-            dbc.Col(html.Div([
-                html.Span("●  ", style={"color": status_color, "fontSize": "16px"}),
-                html.Span("Model Status: ", style={"color": T.TEXT_MUTED, "fontSize": "12px",
-                                                    "fontWeight": "600", "textTransform": "uppercase",
-                                                    "letterSpacing": "0.06em"}),
-                html.Span(status_text, style={"color": T.TEXT_PRIMARY, "fontSize": "13px"}),
-            ]), width=True),
-            dbc.Col(html.Div([
-                html.Span("Algorithm: ", style={"color": T.TEXT_MUTED, "fontSize": "11px",
-                                                 "fontWeight": "600", "textTransform": "uppercase"}),
-                html.Span("Gradient Boosting Classifier (sklearn)",
-                          style={"color": T.ACCENT, "fontSize": "12px",
-                                 "fontFamily": "JetBrains Mono, monospace"}),
-            ]), width="auto"),
-        ], align="center"),
-    ], style={"borderLeft": f"3px solid {status_color}"})
-
-    # ── Feature importance chart (from model or placeholder) ──────────────────
-    # Names MUST be the model's actual training columns (FEATURE_COLS, 14) and in
-    # that order — feature_importances_ is positional, so using the old 17-item
-    # reference list would mislabel every bar.
-    from strategies.iron_condor_ai import IronCondorAIStrategy
-    feat_names = list(IronCondorAIStrategy.FEATURE_COLS)
-
-    importances = None
-    if model_trained:
-        try:
-            import pickle
-            with open(_model_path, "rb") as f:
-                saved = pickle.load(f)
-            # Pipeline(StandardScaler, GBC) → pull the classifier; also support
-            # a raw model or a {"clf": model} dict wrapper.
-            if hasattr(saved, "named_steps"):
-                clf = saved.named_steps.get("clf")
-            elif isinstance(saved, dict):
-                clf = saved.get("clf")
-            else:
-                clf = saved
-            imp = getattr(clf, "feature_importances_", None)
-            if imp is not None and len(imp) == len(feat_names):
-                importances = list(imp)
-        except Exception:
-            importances = None
-
-    # Placeholder importances (aligned to FEATURE_COLS order) when no usable model
-    if importances is None:
-        importances = [
-            0.16,  # ivr
-            0.14,  # adx
-            0.06,  # put_call_skew
-            0.06,  # iv_term_slope
-            0.10,  # vrp
-            0.06,  # atr_pct
-            0.05,  # ret_5d
-            0.05,  # ret_20d
-            0.06,  # dist_from_ma50
-            0.08,  # vix_level
-            0.05,  # vix_5d_change
-            0.05,  # vix_ma_ratio
-            0.04,  # yield_curve_2y10y
-            0.04,  # days_to_month_end
-        ]
-        importance_note = " (illustrative — run backtest to see trained importances)"
-    else:
-        importance_note = " (from trained model)"
-
-    # Sort by importance descending (guard the unpack against an empty pairing)
-    paired = sorted(zip(feat_names, importances), key=lambda x: x[1], reverse=True)
-    sorted_names, sorted_imps = (zip(*paired) if paired else ((), ()))
-    bar_colors = [T.ACCENT if v > 0.08 else (T.TEXT_SEC if v > 0.04 else T.BORDER_BRT)
-                  for v in sorted_imps]
-
-    fig_imp = go.Figure(go.Bar(
-        x=list(sorted_imps),
-        y=list(sorted_names),
-        orientation="h",
-        marker=dict(color=bar_colors),
-        text=[f"{v:.1%}" for v in sorted_imps],
-        textposition="outside",
-        textfont=dict(color=T.TEXT_SEC, size=11),
-    ))
-    fig_imp.update_layout(
-        paper_bgcolor=T.BG_BASE,
-        plot_bgcolor=T.BG_ELEVATED,
-        font=dict(color=T.TEXT_PRIMARY, family="Inter, sans-serif", size=12),
-        height=420,
-        margin=dict(l=160, r=60, t=30, b=30),
-        title=dict(text=f"Feature Importances{importance_note}",
-                   font=dict(size=12, color=T.TEXT_MUTED)),
-        xaxis=dict(gridcolor=T.BORDER, tickformat=".0%", showgrid=True),
-        yaxis=dict(gridcolor=T.BORDER, showgrid=False),
-        showlegend=False,
-    )
-
-    importance_card = C.section("Feature Importances", [
-        dcc.Graph(figure=fig_imp, config={"displayModeBar": False}),
-    ])
-
-    # ── Hyperparameters table ─────────────────────────────────────────────────
-    hyperparam_rows = [
-        ("n_estimators",      "100",   "Number of boosting trees. More = slower but better calibration. Default 100 balances speed and accuracy."),
-        ("max_depth",         "3",     "Tree depth. Shallow (3) prevents overfitting — GBM with deep trees memorizes noise."),
-        ("learning_rate",     "0.05",  "Shrinkage factor per tree. Smaller = more regularization, needs more trees."),
-        ("signal_threshold",  "0.60",  "P(range-bound) must exceed this to trigger entry. Higher = fewer but higher-quality signals."),
-        ("ivr_min",           "0.35",  "Hard IVR floor — no entry below this regardless of model score. Ensures option premium is sufficient."),
-        ("vix_max",           "38.0",  "Hard VIX ceiling — suppress entries during volatility regime breaks (crash risk)."),
-        ("delta_short",       "0.16",  "Default short strike delta (≈ 1 std dev). Model adjusts asymmetrically in directional regimes."),
-        ("wing_width_pct",    "5%",    "Wing width as % of spot price. Defines max loss (wing − credit)."),
-        ("dte_target",        "45",    "Target days-to-expiry at entry. Theta decay accelerates after ~45 DTE."),
-        ("dte_exit",          "21",    "Force-close DTE. Avoids gamma risk in final weeks. Non-negotiable rule."),
-        ("profit_target_pct", "50%",   "Take profit at 50% of max credit. Statistically optimal for IC strategies."),
-        ("stop_loss_mult",    "2×",    "Stop loss at 2× credit received. Limits tail loss on gap moves."),
-        ("position_size_pct", "3%",    "Capital at risk per trade (max loss ÷ account = 3%). Kelly-conservative sizing."),
-        ("warmup_bars",       "180",   "Bars before first ML prediction. Ensures sufficient training data (~9 months)."),
-        ("retrain_every",     "30",    "Bars between model retrains (≈ monthly). Walk-forward prevents lookahead bias."),
-    ]
-
-    hyp_table = dbc.Table([
-        html.Thead(html.Tr([
-            html.Th(h, style={"color": T.TEXT_MUTED, "fontSize": "10px", "fontWeight": "700",
-                              "textTransform": "uppercase", "letterSpacing": "0.07em",
-                              "padding": "8px 12px"})
-            for h in ["Parameter", "Default", "Rationale"]
-        ])),
-        html.Tbody([
-            html.Tr([
-                html.Td(p, style={"color": T.ACCENT, "fontSize": "12px", "fontWeight": "600",
-                                   "fontFamily": "JetBrains Mono, monospace",
-                                   "padding": "7px 12px", "whiteSpace": "nowrap"}),
-                html.Td(v, style={"color": T.SUCCESS, "fontSize": "12px", "fontWeight": "700",
-                                   "fontFamily": "JetBrains Mono, monospace",
-                                   "padding": "7px 12px"}),
-                html.Td(r, style={"color": T.TEXT_SEC, "fontSize": "12px",
-                                   "padding": "7px 12px", "lineHeight": "1.5"}),
-            ]) for p, v, r in hyperparam_rows
-        ]),
-    ], bordered=False, hover=True, size="sm",
-        style={"borderColor": T.BORDER, "--bs-table-bg": T.BG_ELEVATED,
-               "--bs-table-color": T.TEXT_PRIMARY,
-               "--bs-table-hover-bg": "#1a2235",
-               "--bs-table-border-color": T.BORDER})
-
-    hyperparam_card = C.section("GBM Hyperparameters & Strategy Parameters", [hyp_table])
-
-    # ── Feature descriptions table ────────────────────────────────────────────
-    feat_table = dbc.Table([
-        html.Thead(html.Tr([
-            html.Th(h, style={"color": T.TEXT_MUTED, "fontSize": "10px", "fontWeight": "700",
-                              "textTransform": "uppercase", "letterSpacing": "0.07em",
-                              "padding": "8px 12px"})
-            for h in ["Feature", "Category", "Description"]
-        ])),
-        html.Tbody([
-            html.Tr([
-                html.Td(name, style={"color": T.ACCENT, "fontSize": "11px", "fontWeight": "600",
-                                      "fontFamily": "JetBrains Mono, monospace",
-                                      "padding": "6px 12px", "whiteSpace": "nowrap"}),
-                html.Td(cat, style={"color": T.WARNING, "fontSize": "11px", "fontWeight": "500",
-                                     "padding": "6px 12px", "whiteSpace": "nowrap"}),
-                html.Td(desc, style={"color": T.TEXT_SEC, "fontSize": "12px",
-                                      "padding": "6px 12px", "lineHeight": "1.5"}),
-            ]) for name, cat, desc in _IC_AI_FEATURES
-        ]),
-    ], bordered=False, hover=True, size="sm",
-        style={"borderColor": T.BORDER, "--bs-table-bg": T.BG_ELEVATED,
-               "--bs-table-color": T.TEXT_PRIMARY,
-               "--bs-table-hover-bg": "#1a2235",
-               "--bs-table-border-color": T.BORDER})
-
-    feat_card = C.section("Feature Engineering — Model Input Features", [
-        html.P([
-            "All features are derived from ", html.Strong("price, VIX, and macro data"),
-            " — no options chain required. VIX serves as the IV proxy. "
-            "Features are constructed without lookahead: only data available at bar ", html.Em("t"),
-            " is used to generate predictions for bar ", html.Em("t+1"), ".",
-        ], style={"color": T.TEXT_SEC, "fontSize": "13px", "lineHeight": "1.6",
-                  "marginBottom": "14px"}),
-        feat_table,
-    ])
-
-    # ── Label construction note ───────────────────────────────────────────────
-    label_card = C.section("Label Construction", [
-        dbc.Row([
-            dbc.Col([
-                html.P("Binary classification target:", style={"color": T.TEXT_MUTED,
-                       "fontSize": "11px", "fontWeight": "600", "textTransform": "uppercase",
-                       "letterSpacing": "0.06em", "marginBottom": "8px"}),
-                html.Div([
-                    html.Div([
-                        html.Span("1  ", style={"color": T.SUCCESS, "fontWeight": "700",
-                                                 "fontFamily": "JetBrains Mono, monospace",
-                                                 "fontSize": "14px"}),
-                        html.Span("Range-bound — IC profitable. Max excursion over next 45 days "
-                                  "≤ 1σ expected N-day move.",
-                                  style={"color": T.TEXT_PRIMARY, "fontSize": "13px"}),
-                    ], style={"marginBottom": "8px", "padding": "8px 12px",
-                              "background": f"{T.SUCCESS}11",
-                              "border": f"1px solid {T.SUCCESS}33",
-                              "borderRadius": "6px"}),
-                    html.Div([
-                        html.Span("0  ", style={"color": T.DANGER, "fontWeight": "700",
-                                                 "fontFamily": "JetBrains Mono, monospace",
-                                                 "fontSize": "14px"}),
-                        html.Span("Trending / gapping — IC loses. Stock breaks outside the "
-                                  "expected 1σ volatility band.",
-                                  style={"color": T.TEXT_PRIMARY, "fontSize": "13px"}),
-                    ], style={"padding": "8px 12px",
-                              "background": f"{T.DANGER}11",
-                              "border": f"1px solid {T.DANGER}33",
-                              "borderRadius": "6px"}),
-                ]),
-            ], width=7),
-            dbc.Col([
-                html.P("Expected positive rate:", style={"color": T.TEXT_MUTED,
-                       "fontSize": "11px", "fontWeight": "600", "textTransform": "uppercase",
-                       "letterSpacing": "0.06em", "marginBottom": "8px"}),
-                html.Div([
-                    html.Div("~48–55%", style={"color": T.SUCCESS, "fontSize": "2rem",
-                                                "fontWeight": "700",
-                                                "fontFamily": "JetBrains Mono, monospace"}),
-                    html.Div("of days are range-bound (45-day window on SPY/QQQ)",
-                             style={"color": T.TEXT_MUTED, "fontSize": "12px",
-                                    "lineHeight": "1.5", "marginTop": "4px"}),
-                    html.Div(["Formula: ", html.Code(
-                        "max_excursion ≤ σ × √(N/252)",
-                        style={"background": T.BG_ELEVATED, "color": T.TEXT_PRIMARY,
-                               "padding": "2px 6px", "borderRadius": "4px",
-                               "fontSize": "11px"})],
-                        style={"color": T.TEXT_MUTED, "fontSize": "12px", "marginTop": "10px"}),
-                ], style={"padding": "14px 16px", "background": T.BG_ELEVATED,
-                          "borderRadius": "8px", "border": f"1px solid {T.BORDER}"}),
-            ], width=5),
-        ]),
-    ])
-
-    # ── Sample data section ───────────────────────────────────────────────────
-    sample_exists = _SAMPLE_DATA_PATH.exists()
-    sample_card = C.section("Sample Training Data", [
-        html.Div(id="str-ic-ai-sample-data-body"),
-        dcc.Store(id="str-ic-ai-sample-exists", data=sample_exists),
-    ])
-
-    return html.Div([
-        status_card,
-        dbc.Row([
-            dbc.Col(importance_card, width=12),
-        ]),
-        dbc.Row([
-            dbc.Col(hyperparam_card, width=6),
-            dbc.Col(label_card,      width=6),
-        ], className="g-3 mb-0"),
-        html.Div(style={"marginBottom": "16px"}),
-        feat_card,
-        sample_card,
-    ], style={"padding": "8px 0"})
-
-
-
 # ── Test tab ─────────────────────────────────────────────────────────────────
-
-_TEST_SUITES = {
-    "trend_following":       [{"id": "trend", "label": "Trend / Momentum Tests",     "module": "test_trend_following"}],
-    "ts_momentum":           [{"id": "trend", "label": "Trend / Momentum Tests",     "module": "test_trend_following"}],
-    "iron_condor_rules": [
-        {"id": "ic",            "label": "Iron Condor Tests",             "module": "test_iron_condor_rules"},
-        {"id": "ic_integration","label": "IC Integration (DB + Polygon)", "module": "test_ic_rules_integration"},
-    ],
-    "vix_spike_fade":        [{"id": "vsf",   "label": "VIX Spike Fade Tests",        "module": "test_vix_spike_fade"}],
-    "vol_arbitrage":         [{"id": "va",    "label": "Vol Arbitrage Tests",          "module": "test_vol_arbitrage"}],
-    "iron_condor_ai":        [{"id": "icai",  "label": "IC AI Tests",                 "module": "test_iron_condor_ai"}],
-    "ivr_credit_spread":     [{"id": "ivr",   "label": "IVR Credit Spread Tests",     "module": "test_ivr_credit_spread"}],
-    "gex_positioning":       [{"id": "gex",   "label": "GEX Positioning Tests",       "module": "test_gex_positioning"}],
-    "dealer_gamma_regime":   [{"id": "dgr",   "label": "Dealer Gamma Regime Tests",   "module": "test_dealer_gamma_regime"}],
-    "broken_wing_butterfly": [{"id": "bwb",   "label": "BWB Strategy Tests",          "module": "test_broken_wing_butterfly"}],
-    "calendar_spread":       [{"id": "cal",   "label": "Calendar Spread Tests",       "module": "test_calendar_spread"}],
-    "earnings_straddle":     [{"id": "earn",  "label": "Earnings Short Condor Tests", "module": "test_earnings_straddle"}],
-    "wheel_strategy":        [{"id": "wheel", "label": "Wheel (CSP) Tests",           "module": "test_wheel_strategy"}],
-    "bull_put_spread":       [{"id": "bps",   "label": "Bull Put Spread Tests",       "module": "test_bull_put_spread"}],
-}
 
 _TEST_MARK_OPTIONS = [
     {"label": "All tests",    "value": "all"},
@@ -953,7 +436,7 @@ _TEST_MARK_OPTIONS = [
 
 
 def _test_tab(slug: str) -> html.Div:
-    suites = _TEST_SUITES.get(slug, [])
+    suites = list(get_ui(slug).test_suites or [])
     suite_options = [{"label": s["label"], "value": s["id"]} for s in suites]
     default_suite = suites[0]["id"] if suites else None
 
@@ -970,6 +453,7 @@ def _test_tab(slug: str) -> html.Div:
                     value=default_suite,
                     clearable=False,
                     searchable=False,
+                    placeholder="No suites declared" if not suites else None,
                     style={"width": "260px", "fontSize": "12px",
                            "backgroundColor": T.BG_ELEVATED, "color": T.TEXT_PRIMARY},
                 ),
@@ -983,7 +467,7 @@ def _test_tab(slug: str) -> html.Div:
                            "backgroundColor": T.BG_ELEVATED, "color": T.TEXT_PRIMARY},
                 ),
                 dbc.Button("▶ Run Tests", id=f"str-{slug}-test-run-btn",
-                           color="primary", size="sm",
+                           color="primary", size="sm", disabled=not suites,
                            style={"fontSize": "12px",
                                   "backgroundColor": T.ACCENT, "border": "none"}),
             ], style={"display": "flex", "gap": "8px", "alignItems": "center"}),
@@ -999,7 +483,9 @@ def _test_tab(slug: str) -> html.Div:
                 html.Span("▶ Run Tests", style={"color": T.TEXT_PRIMARY,
                           "fontSize": "12px", "fontWeight": "600"}),
                 html.Span(" to execute.", style={"color": T.TEXT_MUTED, "fontSize": "12px"}),
-            ]),
+            ]) if suites else html.Div(
+                "This strategy's plugin declares no test suites for the Test tab.",
+                style={"color": T.TEXT_MUTED, "fontSize": "12px"}),
             id=f"str-{slug}-test-summary",
             style={"marginBottom": "10px"},
         ),
@@ -1019,11 +505,7 @@ def _test_tab(slug: str) -> html.Div:
     ], style={"padding": "16px 0"})
 
 
-
-# ── Signal & Alert tab (validated trend / momentum strategies) ────────────────
-
-_SIGNAL_ALERT_SLUGS = {"trend_following", "ts_momentum"}
-
+# ── Signal & Alert tab (strategies that publish a live signal) ────────────────
 
 def _signal_alert_tab(slug: str) -> html.Div:
     return html.Div([
@@ -1046,10 +528,10 @@ def _signal_alert_tab(slug: str) -> html.Div:
     ], style={"padding": "16px 4px"})
 
 
-
 # ── Inner tabs per strategy ───────────────────────────────────────────────────
 
 def _inner_tabs(slug: str) -> dbc.Tabs:
+    ui = get_ui(slug)
     tab_style     = {"fontSize": "13px", "padding": "6px 14px"}
     tab_act_style = {**tab_style, "borderTop": f"2px solid {T.ACCENT}"}
     tabs = [
@@ -1083,34 +565,30 @@ def _inner_tabs(slug: str) -> dbc.Tabs:
         ),
     ]
 
-    # Model tab — Iron Condor AI only
-    if slug == "iron_condor_ai":
+    # Strategy-provided tabs (model inspection, live signal panels, ...)
+    try:
+        extra = ui.extra_tabs() or []
+    except Exception:
+        logger.exception(f"{slug}: extra_tabs failed")
+        extra = []
+    for spec in extra:
         tabs.append(dbc.Tab(
-            _model_tab(slug),
-            label="Model",
-            tab_id=f"str-{slug}-inner-model",
+            spec.content,
+            label=spec.label,
+            tab_id=f"str-{slug}-inner-{spec.tab_id}",
             tab_style=tab_style,
-            active_tab_style={**tab_act_style, "borderTop": f"2px solid #a78bfa"},
+            active_tab_style={**tab_act_style,
+                              "borderTop": f"2px solid {spec.accent or T.ACCENT}"},
         ))
 
-    # Signal & Alert tab — validated trend / momentum strategies
-    if slug in _SIGNAL_ALERT_SLUGS:
+    # Signal & Alert tab — strategies that publish a live signal
+    if ui.has_signal_alert:
         tabs.append(dbc.Tab(
             _signal_alert_tab(slug),
             label="Signal & Alert",
             tab_id=f"str-{slug}-inner-alert",
             tab_style=tab_style,
             active_tab_style={**tab_act_style, "borderTop": f"2px solid {T.ACCENT}"},
-        ))
-
-    # Live Signal & Model tab — HMM Regime only
-    if slug == "hmm_regime":
-        tabs.append(dbc.Tab(
-            _hmm_live_signal_tab(slug),
-            label="Live & Model",
-            tab_id=f"str-{slug}-inner-live",
-            tab_style=tab_style,
-            active_tab_style={**tab_act_style, "borderTop": f"2px solid #a78bfa"},
         ))
 
     tabs.append(dbc.Tab(
@@ -1139,7 +617,50 @@ def _inner_tabs(slug: str) -> dbc.Tabs:
 
 # ── Layout ────────────────────────────────────────────────────────────────────
 
+def _no_plugins_notice() -> html.Div:
+    return C.card([
+        html.Div("No strategy packages installed.", style={
+            "color": T.TEXT_PRIMARY, "fontSize": "14px", "fontWeight": "600",
+            "marginBottom": "6px"}),
+        html.Div([
+            "This platform ships no strategies. Install a strategy plugin "
+            "(a package exposing a ", html.Code("StrategyPlugin"),
+            " through the ", html.Code("alan_trader.strategies"),
+            " entry point, or listed in ", html.Code("ALAN_TRADER_STRATEGY_PACKAGES"),
+            ") and restart the app.",
+        ], style={"color": T.TEXT_MUTED, "fontSize": "12px"}),
+    ], pad="lg")
+
+
 def layout() -> html.Div:
+    groups = []
+    if _STRATEGIES_RULES:
+        groups.append(_selector_group("Rules-Based", "⚙", T.ACCENT,
+                                      "str-strategy-select-rules", _STRATEGIES_RULES,
+                                      "Search rules-based strategies…"))
+    if _STRATEGIES_AI:
+        groups.append(_selector_group("AI-Powered", "🤖", "#a78bfa",
+                                      "str-strategy-select-ai", _STRATEGIES_AI,
+                                      "Search AI strategies…"))
+
+    if groups:
+        selector = C.card([
+            html.Div(groups, style={"display": "flex", "alignItems": "flex-start",
+                                    "flexWrap": "wrap", "gap": "18px"}),
+            # Hidden combined store consumed by update_outer_tabs
+            dcc.Store(id="str-strategy-select"),
+        ], pad="sm")
+    else:
+        selector = html.Div([
+            _no_plugins_notice(),
+            # The selection callbacks reference these ids even with nothing to select.
+            dbc.Checklist(id="str-strategy-select-rules", options=[], value=[],
+                          style={"display": "none"}),
+            dbc.Checklist(id="str-strategy-select-ai", options=[], value=[],
+                          style={"display": "none"}),
+            dcc.Store(id="str-strategy-select"),
+        ])
+
     return html.Div(
         [
             C.page_header(
@@ -1149,65 +670,9 @@ def layout() -> html.Div:
             ),
 
             # ── Strategy selector ─────────────────────────────────────────────
-            # Two searchable multi-selects instead of 33 inline checkboxes. Same
-            # element IDs and same list-valued `value`, so callbacks are unchanged.
-            C.card([
-                html.Div([
-                    _selector_group("Rules-Based", "⚙", T.ACCENT,
-                                    "str-strategy-select-rules", _STRATEGIES_RULES,
-                                    "Search rules-based strategies…"),
-                    _selector_group("AI-Powered", "🤖", "#a78bfa",
-                                    "str-strategy-select-ai", _STRATEGIES_AI,
-                                    "Search AI strategies…"),
-                ], style={"display": "flex", "alignItems": "flex-start",
-                          "flexWrap": "wrap", "gap": "18px"}),
+            selector,
 
-                # Hidden combined store consumed by update_outer_tabs
-                dcc.Store(id="str-strategy-select"),
-            ], pad="sm"),
-
-            # ── IC payoff modal ───────────────────────────────────────────────
-            dbc.Modal([
-                dbc.ModalHeader(
-                    dbc.ModalTitle(id="str-ic-modal-title", children="Payoff Chart"),
-                    style={"backgroundColor": T.BG_ELEVATED,
-                           "borderBottom": f"1px solid {T.BORDER}"},
-                    close_button=True,
-                ),
-                dbc.ModalBody(
-                    dcc.Loading(
-                        html.Div(id="str-ic-modal-body"),
-                        type="circle", color=T.ACCENT,
-                    ),
-                    style={"backgroundColor": T.BG_BASE, "padding": "20px"},
-                ),
-                dbc.ModalFooter([
-                    html.Div([
-                        html.Label("Contracts", style={"color": T.TEXT_SEC,
-                            "fontSize": "12px", "marginRight": "6px",
-                            "lineHeight": "32px"}),
-                        dbc.Input(id="str-ic-contracts", type="number",
-                            value=1, min=1, max=100, step=1,
-                            style={"width": "70px", "fontSize": "13px",
-                                   "backgroundColor": T.BG_ELEVATED,
-                                   "border": f"1px solid {T.BORDER}",
-                                   "color": T.TEXT_PRIMARY}),
-                    ], style={"display": "flex", "alignItems": "center",
-                              "gap": "6px"}),
-                    dbc.Button("Paper Trade", id="str-ic-paper-btn",
-                        color="success", size="sm", disabled=True,
-                        style={"fontWeight": "600"}),
-                    html.Div(id="str-ic-paper-feedback",
-                             style={"fontSize": "12px", "lineHeight": "32px"}),
-                ], style={"backgroundColor": T.BG_ELEVATED,
-                          "borderTop": f"1px solid {T.BORDER}",
-                          "gap": "12px"}),
-            ], id="str-ic-modal", size="xl", is_open=False, scrollable=True),
-
-            # ── Store: selected IC row for modal ─────────────────────────────
-            dcc.Store(id="str-ic-row-store"),
-
-            # ── Signal detail modal (VSF / IVR / VA / GEX) ───────────────────
+            # ── Signal detail modal (one modal serves every strategy) ─────────
             dbc.Modal([
                 dbc.ModalHeader(
                     dbc.ModalTitle(id="str-sig-modal-title", children="Signal Detail"),
@@ -1228,7 +693,7 @@ def layout() -> html.Div:
                                   style={"color": T.TEXT_MUTED, "fontSize": "12px",
                                          "alignSelf": "center", "marginRight": "6px"}),
                         dbc.Input(id="str-sig-contracts", type="number", value=1,
-                                  min=1, max=50, step=1,
+                                  min=1, max=100, step=1,
                                   style={"width": "60px", "fontSize": "13px",
                                          "height": "32px",
                                          "backgroundColor": T.BG_ELEVATED,
@@ -1253,7 +718,8 @@ def layout() -> html.Div:
             dcc.Store(id="str-strategy-tabs-store", data=[]),
             html.Div(id="str-outer-tabs-container", children=[
                 html.P(
-                    "Select at least one strategy above.",
+                    "Select at least one strategy above." if groups
+                    else "Install a strategy package to get started.",
                     style={"color": T.TEXT_MUTED, "fontSize": "14px"},
                 )
             ]),

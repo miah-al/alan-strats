@@ -3,6 +3,8 @@ app/pages/strategies/format.py
 
 Pure formatting helpers used by the screener and signal-modal renderers.
 No DB calls, no callbacks — only string-formatting and html.Div builders.
+The numeric helpers live in app.ui.strategy_widgets (shared with plugins) and
+are re-exported here under their historical names.
 """
 from __future__ import annotations
 
@@ -10,72 +12,19 @@ import dash_bootstrap_components as dbc
 from dash import html
 
 from app import theme as T
+from app.ui.strategy_widgets import num as _num, fmt_pct as _fmt_pct, fmt2 as _fmt2, fmt_price as _fmt_price  # noqa: F401
 
-from app.pages.strategies.registry import _GUIDE_DIR
-
-
-# ── Numeric parsing ───────────────────────────────────────────────────────────
-
-def _num(v, default: float = 0.0) -> float:
-    """
-    Parse a screener-grid cell into a float, tolerating display formatting.
-
-    Grid cells are display strings, not numbers: a missing value is the em-dash
-    `"—"`, and present values may carry `$`, `%`, `+` or thousands separators.
-    `float(str(v) or 0)` does NOT handle this — `str("—")` is truthy, so the
-    `or 0` never fires and the float() raises, taking the whole signal popup
-    down with it. Always route grid values through here before comparing them
-    against a threshold.
-    """
-    if v is None:
-        return default
-    if isinstance(v, (int, float)) and not isinstance(v, bool):
-        return float(v)
-    text = str(v).strip()
-    if not text or text in {"—", "-", "–", "N/A", "n/a", "None", "nan"}:
-        return default
-    cleaned = text.replace("$", "").replace("%", "").replace(",", "").replace("+", "")
-    cleaned = cleaned.replace("×", "").replace("x", "").strip()
-    try:
-        return float(cleaned)
-    except (TypeError, ValueError):
-        return default
-
-
-# ── Numeric formatters ────────────────────────────────────────────────────────
-
-def _fmt_pct(v) -> str:
-    if v is None:
-        return "—"
-    try:
-        return f"{float(v)*100:.1f}%"
-    except Exception:
-        return "—"
-
-
-def _fmt2(v) -> str:
-    if v is None:
-        return "—"
-    try:
-        return f"{float(v):.2f}"
-    except Exception:
-        return "—"
-
-
-def _fmt_price(v) -> str:
-    if v is None:
-        return "—"
-    try:
-        return f"${float(v):.2f}"
-    except Exception:
-        return "—"
+_TONE_COLOR = {"success": T.SUCCESS, "warning": T.WARNING, "danger": T.DANGER,
+               "muted": T.TEXT_SEC, "default": T.TEXT_PRIMARY}
 
 
 # ── VIX banner ────────────────────────────────────────────────────────────────
 
 def _vix_banner(vix_series, slug: str) -> html.Div:
-    """4-pill VIX context banner for screener top."""
+    """4-pill VIX context banner for screener top. The status line comes from
+    the strategy's UI hook when it has one."""
     from engine.screener import _vix_ivr, _vix_20d_avg
+    from alan_trader.strategy_api.registry import get_ui
     if vix_series is None or len(vix_series) == 0:
         return html.Div()
 
@@ -87,27 +36,15 @@ def _vix_banner(vix_series, slug: str) -> html.Div:
     vix_color = (T.DANGER if current_vix > 35 else
                  T.WARNING if current_vix > 25 else T.SUCCESS)
 
-    if slug in ("iron_condor_rules", "iron_condor_ai"):
-        if 14 <= current_vix <= 45:
-            status_text = "VIX in IC sweet spot (14–45)"
-            status_color = T.SUCCESS
-        elif current_vix > 45:
-            status_text = "VIX > 45 — fear regime, ICs risky"
-            status_color = T.DANGER
-        else:
-            status_text = "VIX < 14 — premium too thin"
-            status_color = T.WARNING
-    elif slug == "vix_spike_fade":
-        ratio = current_vix / max(vix_20d_avg, 0.01)
-        if ratio >= 1.3:
-            status_text  = f"VIX spike: {ratio:.1f}× above 20d avg — fade signal ACTIVE"
-            status_color = T.DANGER
-        else:
-            status_text  = f"VIX / 20d avg = {ratio:.1f}× — no spike yet (need ≥ 1.3×)"
-            status_color = T.WARNING
-    else:
-        status_text  = f"VIX 20d avg: {vix_20d_avg:.1f}"
-        status_color = T.TEXT_SEC
+    status_text  = f"VIX 20d avg: {vix_20d_avg:.1f}"
+    status_color = T.TEXT_SEC
+    try:
+        custom = get_ui(slug).vix_banner_status(current_vix, vix_20d_avg)
+    except Exception:
+        custom = None
+    if custom:
+        status_text, tone = custom
+        status_color = _TONE_COLOR.get(tone, tone)
 
     def pill(label: str, value: str, color: str = T.TEXT_PRIMARY) -> html.Div:
         return html.Div([
@@ -169,7 +106,5 @@ def _status_pills(rows: list[dict]) -> html.Div:
 # ── Guide loader ──────────────────────────────────────────────────────────────
 
 def _load_guide(slug: str) -> str:
-    md_path = _GUIDE_DIR / f"{slug}.md"
-    if md_path.exists():
-        return md_path.read_text(encoding="utf-8")
-    return f"*No guide article found for `{slug}`.*"
+    from app.guides import load_guide
+    return load_guide(slug)

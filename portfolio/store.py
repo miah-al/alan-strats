@@ -307,7 +307,7 @@ class PortfolioStore:
         return [
             {
                 "position_id": "demo_1",
-                "strategy": "iron_condor_rules",
+                "strategy": "demo_strategy",
                 "spread_type": "bull_call",
                 "long_strike": 520.0,
                 "short_strike": 525.0,
@@ -318,7 +318,7 @@ class PortfolioStore:
             },
             {
                 "position_id": "demo_2",
-                "strategy": "vol_arbitrage",
+                "strategy": "demo_strategy_2",
                 "spread_type": "bear_put",
                 "long_strike": 515.0,
                 "short_strike": 510.0,
@@ -329,7 +329,7 @@ class PortfolioStore:
             },
             {
                 "position_id": "demo_3",
-                "strategy": "dividend_arb",
+                "strategy": "demo_strategy_3",
                 "spread_type": "bull_put",
                 "long_strike": 510.0,
                 "short_strike": 516.0,

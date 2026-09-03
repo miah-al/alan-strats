@@ -30,6 +30,10 @@ for _p in (_REPO, os.path.dirname(_REPO)):
     if _p not in sys.path:
         sys.path.insert(0, _p)
 
+# Force UTF-8 output on Windows so the box-drawing characters don't raise.
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+
 import warnings
 warnings.filterwarnings("ignore")
 logging.basicConfig(level=logging.CRITICAL)
@@ -90,11 +94,11 @@ def check_layout(slug):
 
 
 def check_params(slug):
-    from app.pages.strategies.backtest_view import (
-        _STRATEGY_CLASSES_BT, _get_ui_params_for_slug,
-    )
-    if slug not in _STRATEGY_CLASSES_BT:
-        raise _Skip("no backtest class")
+    from app.pages.strategies.backtest_view import _get_ui_params_for_slug
+    from alan_trader.strategy_api.base import StubStrategy
+    from alan_trader.strategy_api.registry import get_strategy
+    if isinstance(get_strategy(slug), StubStrategy):
+        raise _Skip("no implementation registered")
     params = _get_ui_params_for_slug(slug)
     for p in params:
         if "key" not in p:
@@ -110,8 +114,7 @@ def check_params(slug):
 def check_signal(slug):
     """generate_signal must return a well-formed SignalResult on real data."""
     import pandas as pd
-    from strategies.registry import get_strategy
-    from strategies.base import SignalResult
+    from alan_trader.strategy_api.registry import get_strategy
     from db.client import get_engine, get_price_bars, get_vix_bars
 
     strategy = get_strategy(slug)
@@ -186,9 +189,15 @@ def check_payoff(slug):
     """
     The payoff diagram lives on the signal popup: a screener row is clicked and
     `_build_signal_body` renders the body. This drives that exact path with a
-    real screener row.
+    real screener row. Strategies whose plugin declares no bespoke popup get
+    the platform's generic metrics view, which has no chart — skipped.
     """
     from app.pages.strategies.modals import _build_signal_body
+    from alan_trader.strategy_api.registry import get_ui
+    from alan_trader.strategy_api.ui import StrategyUI
+
+    if type(get_ui(slug)).signal_body is StrategyUI.signal_body:
+        raise _Skip("no bespoke popup")
 
     rows = _scan_rows(slug)
     if not rows:
@@ -249,7 +258,7 @@ def main(argv=None) -> int:
     args = ap.parse_args(argv)
 
     from app.pages.strategies.registry import _STRATEGIES_RULES, _STRATEGIES_AI
-    from strategies.registry import STRATEGY_METADATA
+    from alan_trader.strategy_api.registry import STRATEGY_METADATA
 
     all_slugs = [e["value"] for e in _STRATEGIES_RULES + _STRATEGIES_AI]
     slugs = [s.strip() for s in args.slugs.split(",")] if args.slugs else all_slugs

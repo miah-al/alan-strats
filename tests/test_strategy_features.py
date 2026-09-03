@@ -6,6 +6,9 @@ only "Performance analytics coming soon." — indistinguishable, to a user, from
 feature that was working but had nothing to show. These tests assert that each
 tab a strategy exposes builds real content, and that the analytics agree with
 the ranking harness rather than being a second, divergent implementation.
+
+The page is generic, so every strategy-parametrised test runs over whatever
+the installed plugins expose (and skips when nothing is installed).
 """
 
 import pandas as pd
@@ -16,20 +19,15 @@ from dash.development.base_component import Component
 import importlib
 
 from alan_trader.app.pages.strategies import performance as P
-from alan_trader.app.pages.strategies.registry import (
-    _STRATEGIES_RULES, _STRATEGIES_AI,
-)
+from alan_trader.app.pages.strategies.registry import slugs as _slugs
 
 # `app.pages.strategies.__init__` re-exports the `layout` FUNCTION, which
 # shadows the `layout` MODULE on the package. Import the module explicitly.
 L = importlib.import_module("alan_trader.app.pages.strategies.layout")
 
-
-TOP_AI = ["covered_call_ai", "vix_term_structure", "iron_condor_ai", "hmm_regime"]
-TOP_RULES = ["ts_momentum", "trend_following", "gex_positioning",
-             "iron_condor_rules"]
-TOP_8 = TOP_AI + TOP_RULES
-ALL_SLUGS = [e["value"] for e in _STRATEGIES_RULES + _STRATEGIES_AI]
+ALL_SLUGS = _slugs()
+_PARAM_SLUGS = ALL_SLUGS or [pytest.param("__none__", marks=pytest.mark.skip(
+    reason="no strategy plugin installed"))]
 
 
 def _walk(node):
@@ -60,14 +58,14 @@ def _graphs(node) -> int:
 
 # ── the placeholder must be gone ──────────────────────────────────────────────
 
-@pytest.mark.parametrize("slug", ALL_SLUGS)
+@pytest.mark.parametrize("slug", _PARAM_SLUGS)
 def test_performance_tab_is_not_a_placeholder(slug):
     text = _text_of(L._performance_tab(slug)).lower()
     for phrase in ("coming soon", "not implemented", "todo", "placeholder"):
         assert phrase not in text, f"{slug}: Performance tab still says {phrase!r}"
 
 
-@pytest.mark.parametrize("slug", ALL_SLUGS)
+@pytest.mark.parametrize("slug", _PARAM_SLUGS)
 def test_performance_tab_exposes_its_controls(slug):
     ids = _ids(L._performance_tab(slug))
     for suffix in ("perf-ticker", "perf-from", "perf-to", "perf-capital",
@@ -76,6 +74,8 @@ def test_performance_tab_exposes_its_controls(slug):
 
 
 def test_every_strategy_has_a_performance_callback():
+    if not ALL_SLUGS:
+        pytest.skip("no strategy plugin installed")
     from dash._callback import GLOBAL_CALLBACK_MAP
 
     for slug in ALL_SLUGS:
@@ -87,8 +87,8 @@ def test_every_strategy_has_a_performance_callback():
 
 # ── tab inventory ─────────────────────────────────────────────────────────────
 
-@pytest.mark.parametrize("slug", TOP_8)
-def test_core_tabs_build_for_top_strategies(slug):
+@pytest.mark.parametrize("slug", _PARAM_SLUGS)
+def test_core_tabs_build_for_every_strategy(slug):
     """Screener / Backtest / Performance / Guide exist for every strategy."""
     tabs = L._inner_tabs(slug)
     labels = {t.label for t in tabs.children}
@@ -97,11 +97,15 @@ def test_core_tabs_build_for_top_strategies(slug):
     )
 
 
-def test_conditional_tabs_are_wired_where_documented():
-    assert "Model" in {t.label for t in L._inner_tabs("iron_condor_ai").children}
-    assert "Live & Model" in {t.label for t in L._inner_tabs("hmm_regime").children}
-    for slug in ("trend_following", "ts_momentum"):
-        assert "Signal & Alert" in {t.label for t in L._inner_tabs(slug).children}
+@pytest.mark.parametrize("slug", _PARAM_SLUGS)
+def test_plugin_extra_tabs_are_wired(slug):
+    """Whatever extra tabs the plugin declares must appear on the page."""
+    from alan_trader.strategy_api.registry import get_ui
+    labels = {t.label for t in L._inner_tabs(slug).children}
+    for spec in get_ui(slug).extra_tabs():
+        assert spec.label in labels, f"{slug}: declared tab {spec.label!r} not rendered"
+    if get_ui(slug).has_signal_alert:
+        assert "Signal & Alert" in labels
 
 
 def test_unimplemented_tabs_are_disabled_not_silently_empty():
@@ -109,7 +113,9 @@ def test_unimplemented_tabs_are_disabled_not_silently_empty():
     The Simulator is genuinely unbuilt. That is fine — but it must be visibly
     disabled rather than presenting as a working, empty tab.
     """
-    for tab in L._inner_tabs("iron_condor_rules").children:
+    if not ALL_SLUGS:
+        pytest.skip("no strategy plugin installed")
+    for tab in L._inner_tabs(ALL_SLUGS[0]).children:
         if tab.label == "Simulator":
             assert getattr(tab, "disabled", False) is True
             return

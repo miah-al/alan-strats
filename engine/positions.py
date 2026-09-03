@@ -14,13 +14,6 @@ import pandas as pd
 _INITIAL_CASH = 100_000.0
 _COMMISSION   = 1.0   # per trade
 
-# Strategies eligible for ETF paper trading (signal returns spy_weight / tlt_weight)
-_ELIGIBLE_STRATEGIES: dict[str, str] = {
-    "rates_spy_rotation":         "TLT / SPY Rotation",
-    "rates_spy_rotation_options": "TLT / SPY Rotation (Options)",
-    "gex_positioning":            "Dealer Gamma Exposure",
-}
-
 
 # ── DB helpers ────────────────────────────────────────────────────────────────
 
@@ -584,11 +577,13 @@ def insert_open_ic_trade(
     account_id: int,
     ticker: str,
     chain: dict,
-    strategy_name: str = "iron_condor_rules",
+    strategy_name: str,
     contracts: int = 1,
 ) -> str | None:
     """
     Insert a 4-leg Iron Condor opening trade into portfolio.[Transaction].
+    `strategy_name` labels the transaction group with the strategy that
+    produced it (the caller decides; the platform has no default).
     Creates Security records if they don't exist.
     Returns None on success, error string on failure.
     """

@@ -1,38 +1,42 @@
 """
 app/pages/strategies/ — Strategies page (package).
 
-Split from the original ~5,000-line module into focused modules, matching the
-market/ and tools/ page convention:
-  registry.py      — strategy lists, universes, slug-sets, screener param specs
-  columns.py       — grid column defs
-  format.py        — numeric formatters, VIX banner, status pills, guide loader
-  display_rows.py  — per-strategy grid row formatters
-  data_fetch.py    — shared fetch / option-chain / payoff / trade-preview helpers
+A generic page: every strategy it shows comes from an installed strategy
+plugin (see alan_trader.strategy_api). Modules:
+  registry.py      — selector lists, review palette, universes (from the registry)
+  format.py        — VIX banner, status pills, guide loader
+  data_fetch.py    — shared price / VIX / IV fetch
   scan.py          — screener scan engine + scan callbacks
   backtest_view.py — backtest run callbacks + result rendering
-  modals.py        — signal / IC payoff modals + paper-trade callbacks
+  modals.py        — row-click detail modal + paper-trade callbacks
+  performance.py   — performance tab
   layout.py        — page layout + per-strategy tab builders (pure view)
-  callbacks.py     — layout-driving callbacks (outer tabs, selection merge, etc.)
+  callbacks.py     — layout-driving callbacks (outer tabs, tests, alerts)
 
-Public surface is unchanged: `from app.pages.strategies import layout`.
-Importing this package registers every callback via the side-effect imports below.
+Public surface: `from app.pages.strategies import layout`.
+Importing this package registers every callback via the side-effect imports
+below, then gives each strategy's UI hook a chance to register its own.
 """
+import logging as _logging
+
 from app.pages.strategies.layout import layout        # noqa: F401  (public API)
 from app.pages.strategies import (                     # noqa: F401  (register callbacks)
     scan, backtest_view, modals, callbacks, performance,
 )
+from app.pages.strategies.registry import _STRATEGIES, slugs as _slugs  # noqa: F401
 
 # Performance-tab callbacks are per-slug, so they are registered explicitly
 # rather than by import side effect alone.
-from app.pages.strategies.registry import _STRATEGIES as _ALL_STRATEGIES
-performance.register_performance_callbacks(s["value"] for s in _ALL_STRATEGIES)
+performance.register_performance_callbacks(_slugs())
 
-# ── Backward-compatible public surface ───────────────────────────────────────
-# External code/tests import these names from the package root (see
-# tests/test_strategies_page_smoke.py and test_ic_rules_integration.py). The
-# implementations now live in submodules; keep the root names stable.
-from app.pages.strategies.registry import _STRATEGIES               # noqa: F401
-from app.pages.strategies.backtest_view import _STRATEGY_CLASSES_BT  # noqa: F401
-from app.pages.strategies.data_fetch import _fetch_ic_strikes        # noqa: F401
+# Plugin-provided callbacks (extra tabs, model panels, ...).
+from alan_trader.strategy_api.registry import get_ui as _get_ui
+
+for _slug in _slugs():
+    try:
+        _get_ui(_slug).register_callbacks()
+    except Exception as _exc:  # a broken plugin must not take the page down
+        _logging.getLogger(__name__).warning(
+            "register_callbacks failed for %s: %s", _slug, _exc)
 
 __all__ = ["layout"]

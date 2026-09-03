@@ -5,82 +5,24 @@ from __future__ import annotations
 
 import logging
 
-from app.grid_helpers import (
-    mrt_grid as _mrt_grid_shared,
-)
 import dash_bootstrap_components as dbc
 from dash import html, callback, Input, Output, State, no_update, ctx
 
 from app import theme as T
-from app.ui import components as C
-from app.pages.strategies.registry import (
-    _STRATEGIES, _SLUG_TO_LABEL,
-)
-from app.pages.strategies.layout import (
-    _SAMPLE_DATA_PATH, _TEST_SUITES, _SIGNAL_ALERT_SLUGS, _inner_tabs,
-)
+from alan_trader.strategy_api import registry as R
+from app.pages.strategies.registry import _STRATEGIES, _SLUG_TO_LABEL, slugs as _slugs
+from app.pages.strategies.layout import _inner_tabs
 
 logger = logging.getLogger(__name__)
 
-@callback(
-    Output("str-ic-ai-sample-data-body", "children"),
-    Input("str-ic-ai-sample-exists",     "data"),
-)
-def _render_sample_data_preview(exists: bool):
-    if not exists or not _SAMPLE_DATA_PATH.exists():
-        return dbc.Alert([
-            html.Strong("Sample data not yet generated. "),
-            "Run the generator script: ",
-            html.Code("python data/generate_sample_data.py",
-                      style={"background": "#1f2937", "padding": "2px 8px",
-                             "borderRadius": "4px", "fontSize": "12px"}),
-        ], color="warning", style={"fontSize": "13px"})
 
-    try:
-        import pandas as pd
-        df = pd.read_csv(_SAMPLE_DATA_PATH)
-        n_rows   = len(df)
-        n_cols   = len(df.columns)
-        pos_rate = f"{df['label'].mean():.1%}" if "label" in df.columns else "—"
-        date_rng = f"{df['date'].iloc[0]} → {df['date'].iloc[-1]}" if "date" in df.columns else "—"
-
-        stats_row = C.kpi_row([
-            ("Rows", f"{n_rows:,}"),
-            ("Features", f"{n_cols - 3}"),
-            ("Positive Rate", pos_rate, "success"),
-            ("Date Range", date_rng),
-        ])
-
-        # Preview last 10 rows
-        preview = df.tail(10).round(4)
-        col_defs = [{"field": c, "width": 80 if c == "date" else 70,
-                     "minWidth": 60} for c in preview.columns]
-        col_defs[0]["width"] = 100  # date column wider
-
-        grid = _mrt_grid_shared(
-            data=preview.to_dict("records"),
-            col_defs=col_defs,
-            height=400,
-            enable_pagination=False,
-        )
-
-        return html.Div([
-            html.P([
-                html.Span(f"File: ", style={"color": T.TEXT_MUTED, "fontSize": "11px"}),
-                html.Code(str(_SAMPLE_DATA_PATH.name),
-                          style={"background": T.BG_ELEVATED, "color": T.ACCENT,
-                                 "padding": "2px 6px", "borderRadius": "4px",
-                                 "fontSize": "11px"}),
-                html.Span("  ·  Showing last 10 rows",
-                          style={"color": T.TEXT_MUTED, "fontSize": "11px"}),
-            ], style={"marginBottom": "10px"}),
-            stats_row,
-            grid,
-        ])
-    except Exception as e:
-        return dbc.Alert(f"Could not load sample data: {e}", color="danger")
+# ── Test tab ──────────────────────────────────────────────────────────────────
 
 def _make_test_callback(slug: str):
+    ui = R.get_ui(slug)
+    if not ui.test_suites:
+        return None
+
     @callback(
         Output(f"str-{slug}-test-output",  "children"),
         Output(f"str-{slug}-test-output",  "style"),
@@ -92,16 +34,17 @@ def _make_test_callback(slug: str):
     )
     def _run_tests(n_clicks, suite_id, marks):
         import subprocess, sys, os, time
-        suites = _TEST_SUITES.get(slug, [])
+        suites = R.get_ui(slug).test_suites
         suite  = next((s for s in suites if s["id"] == suite_id), None)
         if not suite:
             return "No test suite selected.", {"display": "block"}, html.P("No suite.")
 
-        test_file = os.path.join(
-            os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__)))),
-            "tests",
-            f"{suite['module']}.py",
-        )
+        tests_dir = R.tests_dir_for(slug)
+        root      = R.root_for(slug)
+        if tests_dir is None:
+            return ("The strategy's plugin declares no tests directory.",
+                    {"display": "block"}, html.P("No tests directory."))
+        test_file = os.path.join(str(tests_dir), f"{suite['module']}.py")
         if not os.path.exists(test_file):
             return f"Test file not found: {test_file}", {"display": "block"}, html.P("File missing.")
 
@@ -126,7 +69,7 @@ def _make_test_callback(slug: str):
                 cmd,
                 capture_output=True, text=True,
                 timeout=120,
-                cwd=os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__)))),
+                cwd=str(root) if root else None,
             )
             output  = result.stdout + result.stderr
             elapsed = time.time() - t0
@@ -134,9 +77,7 @@ def _make_test_callback(slug: str):
             failed  = output.count(" FAILED")
             errored = output.count(" ERROR")
             skipped = output.count(" SKIPPED")
-            total   = passed + failed + errored
 
-            summary_color = T.SUCCESS if failed == 0 and errored == 0 else T.DANGER
             summary = html.Div([
                 html.Span(f"✅ {passed} passed", style={"color": T.SUCCESS, "fontWeight": "700",
                                                          "marginRight": "12px", "fontSize": "13px"}),
@@ -160,9 +101,11 @@ def _make_test_callback(slug: str):
     return _run_tests
 
 
-# Register test callbacks for all strategies
-for _slug in [s["value"] for s in _STRATEGIES]:
+for _slug in _slugs():
     _make_test_callback(_slug)
+
+
+# ── Signal & Alert tab ────────────────────────────────────────────────────────
 
 def _make_signal_alert_callback(slug: str):
     @callback(
@@ -178,16 +121,17 @@ def _make_signal_alert_callback(slug: str):
             return no_update, no_update
         do_send = (trig == f"str-{slug}-alert-btn")
         try:
-            from strategies.timing_base import load_close
-            from strategies.trend_following import current_trend_signal
-            from strategies.ts_momentum import current_tsmom_signal
+            from alan_trader.strategy_api.timing_base import load_close
             from engine.signal_alerts import format_signal_line, send_trade_alert
             from engine.notify import whatsapp_configured
 
+            label = R.get_ui(slug).label
             close = load_close("SPY")
-            sig = (current_trend_signal(close) if slug == "trend_following"
-                   else current_tsmom_signal(close))
-            label = "200-Day Trend" if slug == "trend_following" else "12-Month Momentum"
+            sig = R.get_strategy(slug).current_signal(close)
+            if not sig:
+                return html.Div("This strategy publishes no live signal.",
+                                style={"color": T.WARNING, "fontSize": "12px"}), ""
+            sig = dict(sig)
             sig["label"] = label; sig["ticker"] = "SPY"
 
             color = T.SUCCESS if sig.get("signal") == "BUY" else T.WARNING
@@ -203,7 +147,6 @@ def _make_signal_alert_callback(slug: str):
                                 "marginTop": "4px"}),
             ]
 
-            cfg = ""
             if do_send:
                 if not whatsapp_configured():
                     body.append(html.Div("⚠ WhatsApp not configured — set WHATSAPP_PHONE + "
@@ -215,8 +158,7 @@ def _make_signal_alert_callback(slug: str):
                                           else f"❌ Send failed: {detail}"),
                                          style={"color": T.SUCCESS if ok else T.DANGER,
                                                 "fontSize": "12px", "marginTop": "8px"}))
-            from engine.notify import whatsapp_configured as _wc
-            cfg = ("WhatsApp: configured ✓" if _wc() else
+            cfg = ("WhatsApp: configured ✓" if whatsapp_configured() else
                    "WhatsApp: not configured (one-time CallMeBot setup needed)")
             return html.Div(body), cfg
         except Exception as e:
@@ -226,8 +168,10 @@ def _make_signal_alert_callback(slug: str):
     return _alert
 
 
-for _slug in _SIGNAL_ALERT_SLUGS:
-    _make_signal_alert_callback(_slug)
+for _slug in _slugs():
+    if R.get_ui(_slug).has_signal_alert:
+        _make_signal_alert_callback(_slug)
+
 
 # ── Callback: merge AI + rules selections into combined store ─────────────────
 

@@ -75,7 +75,7 @@ def cmd_train(args):
     print(f"  Ticker:             {ticker}")
     print(f"  Best val accuracy:  {max(history['val_acc']):.3f}")
     print(f"  Final val accuracy: {history['val_acc'][-1]:.3f}")
-    print(f"  Model saved to saved_models/{model_name}.pt")
+    print(f"  Model saved to runtime_state/models/{model_name}.pt")
 
 
 def cmd_backtest(args):

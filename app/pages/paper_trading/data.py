@@ -20,9 +20,8 @@ _ACCOUNT_ID = 1
 
 
 def _pretty_strategy(name: str) -> str:
-    """Map a strategy slug (e.g. 'hmm_regime') to its display label
-    (e.g. 'HMM Regime Classifier'). Falls back to the input unchanged
-    if no mapping is registered."""
+    """Map a strategy slug to the display label its plugin registered.
+    Falls back to the input unchanged if no mapping is registered."""
     if not name:
         return name
     try:
