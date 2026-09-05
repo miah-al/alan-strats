@@ -644,9 +644,20 @@ def layout() -> html.Div:
                                       "Search AI strategies…"))
 
     if groups:
+        # The selection callback lists BOTH checklists as Inputs; when only one
+        # category is installed (e.g. an allow-list of rules-only strategies) the
+        # other must still exist or Dash refuses to fire the callback at all.
+        hidden = []
+        if not _STRATEGIES_RULES:
+            hidden.append(dbc.Checklist(id="str-strategy-select-rules", options=[], value=[],
+                                        style={"display": "none"}))
+        if not _STRATEGIES_AI:
+            hidden.append(dbc.Checklist(id="str-strategy-select-ai", options=[], value=[],
+                                        style={"display": "none"}))
         selector = C.card([
             html.Div(groups, style={"display": "flex", "alignItems": "flex-start",
                                     "flexWrap": "wrap", "gap": "18px"}),
+            *hidden,
             # Hidden combined store consumed by update_outer_tabs
             dcc.Store(id="str-strategy-select"),
         ], pad="sm")
