@@ -47,6 +47,14 @@ _DEF_TO = "2026-06-30"
 
 # ── layout ────────────────────────────────────────────────────────────────────
 
+def _default_ticker(slug: str) -> str:
+    try:
+        from strategy_api.registry import get_ui
+        return str(get_ui(slug).meta.get("default_ticker") or "SPY").upper()
+    except Exception:
+        return "SPY"
+
+
 def performance_tab(slug: str) -> html.Div:
     """Controls + output area. Analytics render on demand (a backtest is slow)."""
     inp = {"backgroundColor": T.BG_ELEVATED, "border": f"1px solid {T.BORDER}",
@@ -61,7 +69,7 @@ def performance_tab(slug: str) -> html.Div:
     controls = C.card([
         html.Div([
             html.Div([lbl("Ticker"),
-                      dbc.Input(id=f"str-{slug}-perf-ticker", value="SPY",
+                      dbc.Input(id=f"str-{slug}-perf-ticker", value=_default_ticker(slug),
                                 style={**inp, "width": "100px"})]),
             html.Div([lbl("From"),
                       dbc.Input(id=f"str-{slug}-perf-from", value=_DEF_FROM,

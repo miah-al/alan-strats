@@ -359,6 +359,35 @@ def load_minute_bars(engine, ticker, fd, td, *, price_data, label,
     return LoaderResult(aux_updates={key: bars})
 
 
+def load_option_minute_bars(engine, ticker, fd, td, *, price_data, label,
+                            symbol: str | None = None, key: str = "option_minute_bars",
+                            required: bool = True, **_):
+    """Mount per-contract 1-minute option trade bars from mkt.OptionMinuteBar under `key`:
+    columns expiry, right (C|P), strike, ts (naive US/Eastern bar START), open, high, low,
+    close, volume, trades, vwap. `symbol` overrides the backtest ticker (the underlying).
+    Blocks the backtest when nothing is stored for the window unless `required` is False,
+    in which case an empty frame is mounted and the strategy decides what to do."""
+    sym = (symbol or ticker or "").upper()
+    try:
+        from db.client import get_option_minute_bars
+        bars = get_option_minute_bars(engine, sym, fd, td)
+    except Exception as exc:
+        logger.warning(f"{label}: option minute bars load failed for {sym}: {exc}")
+        bars = pd.DataFrame()
+    if bars is None or bars.empty:
+        if not required:
+            return LoaderResult(aux_updates={key: pd.DataFrame(
+                columns=["expiry", "right", "strike", "ts", "open", "high", "low", "close", "volume", "trades", "vwap"])})
+        alert = dbc.Alert([
+            html.Strong(f"{label} requires per-contract option minute bars for {sym}. "), html.Br(),
+            f"No mkt.OptionMinuteBar rows for {sym} between {fd} and {td}. Pull them with ",
+            html.Code(f"python -m scripts.bootstrap_market_data --intraday-only --option-minutes {sym}"),
+            " (Polygon; about three hours for two years, resumable).",
+        ], color="warning")
+        return LoaderResult(alert=alert, is_blocking=True)
+    return LoaderResult(aux_updates={key: bars})
+
+
 def load_event_calendar(engine, ticker, fd, td, *, price_data, label,
                         key: str = "event_calendar", **_):
     """Mount mkt.EventCalendar rows (date, kind, label, source) under `key`. Non-blocking:
@@ -415,6 +444,7 @@ LOADERS: dict[str, LoaderFn] = {
     "macro":                  load_macro,
     "stock_bond_iv":          load_stock_bond_iv,
     "minute_bars":            load_minute_bars,
+    "option_minute_bars":     load_option_minute_bars,
     "event_calendar":         load_event_calendar,
     "daily_close":            load_daily_close,
 }

@@ -1337,8 +1337,9 @@ def polygon_ticker_for(symbol: str) -> str:
 
 def _polygon_minute_aggs(polygon_ticker: str, start: date, end: date, api_key: str) -> pd.DataFrame:
     """All 1-minute aggregates for [start, end] (inclusive), regular session only, as a frame
-    ts (naive US/Eastern bar START), open, high, low, close, volume. Paginates next_url,
-    backs off on 429."""
+    ts (naive US/Eastern bar START), open, high, low, close, volume, trades, vwap (the last two
+    are None for index feeds). Works for index (I:NDX), stock and option (O:NDXP...) tickers.
+    Paginates next_url, backs off on 429."""
     import time
     import requests
     url = f"https://api.polygon.io/v2/aggs/ticker/{polygon_ticker}/range/1/minute/{start}/{end}"
@@ -1358,11 +1359,13 @@ def _polygon_minute_aggs(polygon_ticker: str, start: date, end: date, api_key: s
         url = payload.get("next_url")
         params = {"apiKey": api_key}
     if not rows:
-        return pd.DataFrame(columns=["ts", "open", "high", "low", "close", "volume"])
+        return pd.DataFrame(columns=["ts", "open", "high", "low", "close", "volume", "trades", "vwap"])
     raw = pd.DataFrame(rows)
     ts = pd.to_datetime(raw["t"], unit="ms", utc=True).dt.tz_convert("US/Eastern").dt.tz_localize(None)
     df = pd.DataFrame({"ts": ts, "open": raw["o"], "high": raw["h"], "low": raw["l"], "close": raw["c"],
-                       "volume": raw["v"] if "v" in raw.columns else None})
+                       "volume": raw["v"] if "v" in raw.columns else None,
+                       "trades": raw["n"] if "n" in raw.columns else None,
+                       "vwap": raw["vw"] if "vw" in raw.columns else None})
     minute = df["ts"].dt.hour * 60 + df["ts"].dt.minute
     df = df[(minute >= 9 * 60 + 30) & (minute < 16 * 60) & (df["ts"].dt.weekday < 5)]
     return df.sort_values("ts").drop_duplicates("ts").reset_index(drop=True)
@@ -1425,6 +1428,160 @@ def sync_minute_bars(
     return {"status": "ok" if total_rows or cov else "no_data", "rows": total_rows, "months": months_pulled,
             "empty_months": empty_months,
             "coverage": (f"{cov[0]} .. {cov[1]}, {cov[2]} sessions" if cov else "none")}
+
+
+# ── Option minute bars (per-contract trade aggregates, Polygon) ──────────────
+
+OPTION_MINUTE_DEFAULT_START = date(2024, 10, 1)     # Options Starter: about two years of option minute bars
+
+#: Option root for the same-day (PM-settled) expiries of each index underlying.
+OPTION_ROOTS = {"NDX": "NDXP", "SPX": "SPXW", "RUT": "RUTW", "XSP": "XSP"}
+
+
+def parse_option_ticker(ticker: str) -> tuple[str, date, str, float]:
+    """'O:NDXP260826C29270000' -> ('NDXP', date(2026, 8, 26), 'C', 29270.0). OCC 21-character body."""
+    body = ticker.split(":", 1)[1] if ":" in ticker else ticker
+    i = 0
+    while i < len(body) and not body[i].isdigit():
+        i += 1
+    root, rest = body[:i], body[i:]
+    yy, mm, dd = int(rest[0:2]), int(rest[2:4]), int(rest[4:6])
+    right = rest[6].upper()
+    strike = int(rest[7:15]) / 1000.0
+    return root, date(2000 + yy, mm, dd), right, strike
+
+
+def select_option_strikes(strikes, ref_level: float, band: float = 400.0, step: int = 25) -> list[float]:
+    """Strikes within +-band of ref_level that sit on the `step` grid, ascending, deduplicated."""
+    out = set()
+    for k in strikes:
+        k = float(k)
+        if abs(k - ref_level) <= band and (step <= 0 or abs(k / step - round(k / step)) < 1e-9):
+            out.add(k)
+    return sorted(out)
+
+
+def _polygon_option_contracts(underlying: str, expiry: date, api_key: str) -> pd.DataFrame:
+    """Every listed option contract on `underlying` expiring on `expiry` (as of that day), as a
+    frame ticker, root, strike, right, expiry. Paginates next_url, backs off on 429."""
+    import time
+    import requests
+    url = "https://api.polygon.io/v3/reference/options/contracts"
+    params: dict = {"underlying_ticker": underlying.upper(), "expiration_date": expiry.isoformat(),
+                    "as_of": expiry.isoformat(), "limit": 1000, "apiKey": api_key}
+    if expiry < date.today():
+        params["expired"] = "true"
+    rows: list = []
+    while url:
+        resp = None
+        for attempt in range(6):
+            resp = requests.get(url, params=params, timeout=60)
+            if resp.status_code == 429:
+                time.sleep(2 ** attempt)
+                continue
+            resp.raise_for_status()
+            break
+        payload = resp.json()
+        rows += payload.get("results") or []
+        url = payload.get("next_url")
+        params = {"apiKey": api_key}
+    if not rows:
+        return pd.DataFrame(columns=["ticker", "root", "strike", "right", "expiry"])
+    out = []
+    for r in rows:
+        try:
+            root, exp, right, strike = parse_option_ticker(r["ticker"])
+        except Exception:
+            continue
+        out.append({"ticker": r["ticker"], "root": root, "strike": float(r.get("strike_price", strike)),
+                    "right": (r.get("contract_type") or right)[0].upper(), "expiry": exp})
+    return pd.DataFrame(out)
+
+
+def _session_ref_level(engine, symbol: str, day: date, ref_time: str = "13:00") -> Optional[float]:
+    """The underlying's close at `ref_time` on `day` from mkt.MinuteBar (first bar at or after it,
+    else the session's last close). None when the session has no bars."""
+    from alan_trader.db import client as _client
+    bars = _client.get_minute_bars(engine, symbol, day, day)
+    if bars.empty:
+        return None
+    hh, mm = (int(x) for x in ref_time.split(":"))
+    minute = bars["ts"].dt.hour * 60 + bars["ts"].dt.minute
+    at = bars[minute >= hh * 60 + mm]
+    return float(at["close"].iloc[0]) if len(at) else float(bars["close"].iloc[-1])
+
+
+def sync_option_minute_bars(
+    symbol: str,
+    api_key: str,
+    from_date: date = OPTION_MINUTE_DEFAULT_START,
+    to_date: Optional[date] = None,
+    band: float = 400.0,
+    step: int = 25,
+    ref_time: str = "13:00",
+    root: Optional[str] = None,
+    refresh: bool = False,
+    max_sessions: Optional[int] = None,
+    progress_cb: Callable[[str], None] = None,
+) -> dict:
+    """Pull per-contract 1-minute trade bars for the SAME-DAY expiry of `symbol` into
+    mkt.OptionMinuteBar, one session at a time, for the strikes on the `step` grid within
+    +-band of the underlying's `ref_time` level (from mkt.MinuteBar, which must be filled
+    first). Sessions already in mkt.OptionMinuteSession are skipped unless refresh=True.
+    About 60 to 70 requests per session on NDX; resumable. Returns rows, sessions, coverage."""
+    from alan_trader.db.client import (get_minute_bar_sessions, replace_option_minute_bars,
+                                       upsert_option_minute_session, get_option_minute_sessions,
+                                       get_option_minute_coverage)
+    if not api_key:
+        return {"status": "error", "rows": 0, "detail": "POLYGON_API_KEY missing"}
+    engine = get_engine()
+    to_date = to_date or date.today()
+    root = (root or OPTION_ROOTS.get(symbol.upper(), symbol.upper())).upper()
+    sessions = get_minute_bar_sessions(engine, symbol, from_date, to_date)
+    if not sessions:
+        return {"status": "error", "rows": 0,
+                "detail": f"no mkt.MinuteBar sessions for {symbol} in {from_date}..{to_date}; pull the index bars first"}
+    have = set() if refresh else set(get_option_minute_sessions(engine, symbol)["session"].tolist())
+    todo = [d for d in sessions if d not in have]
+    if max_sessions:
+        todo = todo[:max_sessions]
+    total_rows, done, failed = 0, 0, []
+    for day in todo:
+        if progress_cb:
+            progress_cb(f"{symbol} option minutes {day} ({root})…")
+        try:
+            ref = _session_ref_level(engine, symbol, day, ref_time)
+            contracts = _polygon_option_contracts(symbol, day, api_key)
+            sel = contracts[contracts["root"] == root] if len(contracts) else contracts
+            strikes = select_option_strikes(sel["strike"].tolist(), ref, band, step) if (ref is not None and len(sel)) else []
+            sel = sel[sel["strike"].isin(strikes)]
+            frames, with_prints = [], 0
+            for c in sel.itertuples(index=False):
+                bars = _polygon_minute_aggs(c.ticker, day, day, api_key)
+                if len(bars):
+                    with_prints += 1
+                    frames.append(bars.assign(right=c.right, strike=float(c.strike)))
+            df = pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
+            n = replace_option_minute_bars(engine, symbol, day, df, root=root)
+            upsert_option_minute_session(engine, symbol, day, day, root=root, ref_level=ref,
+                                         strike_lo=(min(strikes) if strikes else None),
+                                         strike_hi=(max(strikes) if strikes else None), strike_step=step,
+                                         contracts=len(sel), with_prints=with_prints, bars=n)
+            total_rows += n
+            done += 1
+            if progress_cb:
+                progress_cb(f"{symbol} {day}: {len(sel)} contracts, {with_prints} with prints, {n:,} bars")
+        except Exception as exc:                        # one bad session must not end a three-hour pull
+            failed.append((day.isoformat(), str(exc)[:120]))
+            if progress_cb:
+                progress_cb(f"{symbol} {day}: FAILED {str(exc)[:80]}")
+    log_sync(engine, "OptionMinuteBar", to_date, total_rows, symbol,
+             error=(f"{len(failed)} sessions failed" if failed else None))
+    cov = get_option_minute_coverage(engine, symbol)
+    return {"status": "ok" if (done or cov) else "no_data", "rows": total_rows, "sessions": done,
+            "skipped": len(sessions) - len(todo), "failed": failed,
+            "coverage": (f"{cov['first']} .. {cov['last']}, {cov['sessions']} sessions, "
+                         f"{cov['contracts']:,} contracts, {cov['bars']:,} bars" if cov else "none")}
 
 
 # ── Event calendar (trading-day filters) ─────────────────────────────────────

@@ -289,6 +289,71 @@ BEGIN
 END
 GO
 
+-- ============================================================
+-- mkt.OptionMinuteBar
+-- 1-minute trade aggregates per option contract (Polygon), keyed by the
+-- UNDERLYING ticker (e.g. NDX) plus expiry / right / strike. Root records the
+-- option root actually pulled (NDXP for the PM-settled NDX dailies).
+-- ============================================================
+
+IF OBJECT_ID('mkt.OptionMinuteBar', 'U') IS NULL
+BEGIN
+    CREATE TABLE mkt.OptionMinuteBar (
+        TickerId            SMALLINT        NOT NULL,
+        ExpirationDate      DATE            NOT NULL,
+        ContractType        CHAR(1)         NOT NULL,   -- C | P
+        Strike              DECIMAL(10,2)   NOT NULL,
+        BarTs               DATETIME2(0)    NOT NULL,   -- naive US/Eastern bar START
+        [Open]              DECIMAL(12,4)   NOT NULL,
+        High                DECIMAL(12,4)   NOT NULL,
+        Low                 DECIMAL(12,4)   NOT NULL,
+        [Close]             DECIMAL(12,4)   NOT NULL,
+        Volume              INT             NULL,
+        Trades              INT             NULL,
+        Vwap                DECIMAL(12,4)   NULL,
+        Root                VARCHAR(8)      NOT NULL DEFAULT 'NDXP',
+        Source              VARCHAR(20)     NOT NULL DEFAULT 'polygon',
+        CreatedAt           DATETIME2(0)    NOT NULL DEFAULT SYSUTCDATETIME(),
+
+        CONSTRAINT PK_OptionMinuteBar        PRIMARY KEY (TickerId, ExpirationDate, ContractType, Strike, BarTs),
+        CONSTRAINT FK_OptionMinuteBar_Ticker FOREIGN KEY (TickerId) REFERENCES mkt.Ticker(TickerId),
+        CONSTRAINT CK_OptionMinuteBar_Type   CHECK (ContractType IN ('C', 'P'))
+    );
+
+    CREATE INDEX IX_OptionMinuteBar_Ticker_Ts ON mkt.OptionMinuteBar (TickerId, BarTs);
+END
+GO
+
+-- ============================================================
+-- mkt.OptionMinuteSession
+-- Pull manifest: one row per (underlying, session, expiry) that the option
+-- minute sync has processed, with what was requested and what came back.
+-- The sync skips sessions present here unless asked to refresh.
+-- ============================================================
+
+IF OBJECT_ID('mkt.OptionMinuteSession', 'U') IS NULL
+BEGIN
+    CREATE TABLE mkt.OptionMinuteSession (
+        TickerId            SMALLINT        NOT NULL,
+        SessionDate         DATE            NOT NULL,
+        ExpirationDate      DATE            NOT NULL,
+        Root                VARCHAR(8)      NOT NULL,
+        RefLevel            DECIMAL(14,4)   NULL,       -- underlying level the strike band was centred on
+        StrikeLo            DECIMAL(10,2)   NULL,
+        StrikeHi            DECIMAL(10,2)   NULL,
+        StrikeStep          SMALLINT        NULL,
+        Contracts           INT             NOT NULL DEFAULT 0,
+        ContractsWithPrints INT             NOT NULL DEFAULT 0,
+        Bars                INT             NOT NULL DEFAULT 0,
+        Source              VARCHAR(20)     NOT NULL DEFAULT 'polygon',
+        PulledAt            DATETIME2(0)    NOT NULL DEFAULT SYSUTCDATETIME(),
+
+        CONSTRAINT PK_OptionMinuteSession        PRIMARY KEY (TickerId, SessionDate, ExpirationDate),
+        CONSTRAINT FK_OptionMinuteSession_Ticker FOREIGN KEY (TickerId) REFERENCES mkt.Ticker(TickerId)
+    );
+END
+GO
+
 
 -- ============================================================
 -- mkt.News

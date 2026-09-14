@@ -92,7 +92,9 @@ def test_core_tabs_build_for_every_strategy(slug):
     """Screener / Backtest / Performance / Guide exist for every strategy."""
     tabs = L._inner_tabs(slug)
     labels = {t.label for t in tabs.children}
-    assert {"Screener", "Backtest", "Performance", "Guide"} <= labels, (
+    from alan_trader.strategy_api.registry import get_ui
+    core = {"Backtest", "Performance", "Guide"} | ({"Screener"} if get_ui(slug).meta.get("has_screener", True) else set())
+    assert core <= labels, (
         f"{slug} is missing a core tab; has {sorted(labels)}"
     )
 

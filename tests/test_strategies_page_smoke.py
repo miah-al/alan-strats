@@ -63,7 +63,9 @@ def test_inner_tabs_build_for_every_visible_strategy():
     L = importlib.import_module("app.pages.strategies.layout")
     for slug in slugs:
         labels = {t.label for t in L._inner_tabs(slug).children}
-        assert {"Screener", "Backtest", "Performance", "Guide"} <= labels, (
+        from alan_trader.strategy_api.registry import get_ui
+        core = {"Backtest", "Performance", "Guide"} | ({"Screener"} if get_ui(slug).meta.get("has_screener", True) else set())
+        assert core <= labels, (
             f"{slug} is missing a core tab; has {sorted(labels)}")
 
 

@@ -33,3 +33,5 @@ Thumbs.db
 
 # Claude Code local config
 .claude/
+paper_state/
+logs/paper/

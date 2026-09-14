@@ -131,7 +131,20 @@ def main(argv=None) -> int:
     ap.add_argument("--events", action="store_true",
                     help="rebuild mkt.EventCalendar from mkt.FomcCalendar, db/seed/events/*.csv and third Fridays")
     ap.add_argument("--intraday-only", action="store_true",
-                    help="skip the daily sources; run only --intraday / --events")
+                    help="skip the daily sources; run only --intraday / --events / --option-minutes")
+    ap.add_argument("--option-minutes", nargs="*", metavar="SYMBOL",
+                    help="pull per-contract 1-minute option trade bars (Polygon) for the same-day expiry into "
+                         f"mkt.OptionMinuteBar (default with no symbols: {' '.join(INTRADAY_DEFAULT)}); needs the "
+                         "index minute bars first; about 3 hours for two years of NDX")
+    ap.add_argument("--option-minutes-from", default="2024-10-01",
+                    help="first session for --option-minutes (Options Starter serves about two years)")
+    ap.add_argument("--option-minutes-refresh", action="store_true",
+                    help="re-pull sessions already in mkt.OptionMinuteSession")
+    ap.add_argument("--option-minutes-band", type=float, default=400.0,
+                    help="strikes within +-band points of the 13:00 underlying level")
+    ap.add_argument("--option-minutes-step", type=int, default=25, help="strike grid step (25 = the traded grid)")
+    ap.add_argument("--option-minutes-max", type=int, default=None,
+                    help="stop after N new sessions (smoke tests)")
     args = ap.parse_args(argv)
 
     from db import sync
@@ -195,6 +208,30 @@ def main(argv=None) -> int:
             if out:
                 print(f"     coverage: {out.get('coverage')}  empty months: {out.get('empty_months')}")
         show_counts("── row counts after intraday sources ──")
+
+    if args.option_minutes is not None:
+        if not key:
+            print("\nPOLYGON_API_KEY missing — cannot pull option minute bars.")
+            return 1
+        symbols = args.option_minutes or INTRADAY_DEFAULT
+        print(f"\n── option 1-minute bars, same-day expiry (Polygon) from {args.option_minutes_from} ──")
+
+        def _p2(msg):
+            print(f"\r   {msg[:90]:<90}", end="", flush=True)
+
+        for sym in symbols:
+            out = _run(sym, sync.sync_option_minute_bars, sym, key,
+                       from_date=date.fromisoformat(args.option_minutes_from), to_date=END,
+                       band=args.option_minutes_band, step=args.option_minutes_step,
+                       refresh=args.option_minutes_refresh, max_sessions=args.option_minutes_max,
+                       progress_cb=_p2)
+            print()
+            if out:
+                print(f"     coverage: {out.get('coverage')}  new sessions: {out.get('sessions')}  "
+                      f"skipped: {out.get('skipped')}  failed: {len(out.get('failed') or [])}")
+                for d, err in (out.get("failed") or [])[:10]:
+                    print(f"       {d}: {err}")
+        show_counts("── row counts after option minute bars ──")
 
     if args.options or args.options_only:
         if not key:

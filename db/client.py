@@ -842,6 +842,165 @@ def get_minute_bar_months(engine: Engine, symbol: str) -> set[tuple[int, int]]:
 
 # ── EventCalendar ─────────────────────────────────────────────────────────────
 
+# ── OptionMinuteBar (per-contract 1-minute trade aggregates) ─────────────────
+
+_OMB_COLS = ["expiry", "right", "strike", "ts", "open", "high", "low", "close", "volume", "trades", "vwap"]
+
+
+def get_minute_bar_sessions(engine: Engine, symbol: str,
+                            from_date: Optional[date] = None,
+                            to_date: Optional[date] = None) -> list[date]:
+    """Distinct session dates with 1-minute bars for symbol, ascending, dates inclusive."""
+    tid = get_ticker_id(engine, symbol)
+    if tid is None:
+        return []
+    q = "SELECT DISTINCT CAST(BarTs AS date) AS d FROM mkt.MinuteBar WHERE TickerId = :tid"
+    params: dict = {"tid": tid}
+    if from_date is not None:
+        q += " AND BarTs >= :lo"; params["lo"] = datetime.combine(from_date, datetime.min.time())
+    if to_date is not None:
+        q += " AND BarTs < :hi"; params["hi"] = datetime.combine(to_date + timedelta(days=1), datetime.min.time())
+    q += " ORDER BY d"
+    with get_conn(engine) as conn:
+        rows = conn.execute(text(q), params).fetchall()
+    return [r[0] if isinstance(r[0], date) else pd.Timestamp(r[0]).date() for r in rows]
+
+
+def replace_option_minute_bars(engine: Engine, symbol: str, expiry: date, df: pd.DataFrame,
+                               root: str = "NDXP", source: str = "polygon",
+                               asset_class: str = "index") -> int:
+    """Write per-contract 1-minute bars for ONE expiry of the underlying `symbol`,
+    replacing every row the table holds for that (underlying, expiry). df columns:
+    right (C|P), strike, ts (naive US/Eastern bar START), open, high, low, close,
+    optional volume, trades, vwap. Returns rows written."""
+    tid = ensure_ticker(engine, symbol, asset_class=asset_class)
+    rows: list = []
+    if df is not None and not df.empty:
+        d = df.copy()
+        d.columns = [c.lower() for c in d.columns]
+        for c in ("volume", "trades", "vwap"):
+            if c not in d.columns:
+                d[c] = None
+        d["ts"] = pd.to_datetime(d["ts"])
+        d = d.sort_values(["right", "strike", "ts"]).drop_duplicates(["right", "strike", "ts"])
+        rows = [(tid, expiry, str(r.right).upper()[0], float(r.strike), r.ts.to_pydatetime(),
+                 float(r.open), float(r.high), float(r.low), float(r.close),
+                 (int(r.volume) if pd.notna(r.volume) else None),
+                 (int(r.trades) if pd.notna(r.trades) else None),
+                 (float(r.vwap) if pd.notna(r.vwap) else None), root, source)
+                for r in d.itertuples(index=False)]
+    with engine.begin() as conn:
+        conn.execute(text("DELETE FROM mkt.OptionMinuteBar WHERE TickerId = :tid AND ExpirationDate = :exp"),
+                     {"tid": tid, "exp": expiry})
+        if rows:
+            cur = conn.connection.cursor()
+            cur.fast_executemany = True
+            cur.executemany(
+                "INSERT INTO mkt.OptionMinuteBar (TickerId, ExpirationDate, ContractType, Strike, BarTs, "
+                "[Open], High, Low, [Close], Volume, Trades, Vwap, Root, Source) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", rows)
+    return len(rows)
+
+
+def get_option_minute_bars(engine: Engine, symbol: str,
+                           from_date: Optional[date] = None,
+                           to_date: Optional[date] = None,
+                           expiry: Optional[date] = None,
+                           strikes: Optional[list[float]] = None) -> pd.DataFrame:
+    """Per-contract 1-minute bars for the underlying `symbol`: expiry, right, strike, ts,
+    open, high, low, close, volume, trades, vwap. Bar dates inclusive; optional expiry and
+    strike-list filters. Empty frame when nothing is stored."""
+    tid = get_ticker_id(engine, symbol)
+    if tid is None:
+        return pd.DataFrame(columns=_OMB_COLS)
+    q = ("SELECT ExpirationDate AS expiry, ContractType AS [right], Strike AS strike, BarTs AS ts, "
+         "[Open] AS [open], High AS high, Low AS low, [Close] AS [close], Volume AS volume, "
+         "Trades AS trades, Vwap AS vwap FROM mkt.OptionMinuteBar WHERE TickerId = :tid")
+    params: dict = {"tid": tid}
+    if from_date is not None:
+        q += " AND BarTs >= :lo"; params["lo"] = datetime.combine(from_date, datetime.min.time())
+    if to_date is not None:
+        q += " AND BarTs < :hi"; params["hi"] = datetime.combine(to_date + timedelta(days=1), datetime.min.time())
+    if expiry is not None:
+        q += " AND ExpirationDate = :exp"; params["exp"] = expiry
+    if strikes:
+        names = []
+        for i, k in enumerate(strikes):
+            names.append(f":k{i}"); params[f"k{i}"] = float(k)
+        q += f" AND Strike IN ({', '.join(names)})"
+    q += " ORDER BY ExpirationDate, ContractType, Strike, BarTs"
+    with get_conn(engine) as conn:
+        result = conn.execute(text(q), params)
+        df = pd.DataFrame(result.fetchall(), columns=result.keys())
+    if df.empty:
+        return pd.DataFrame(columns=_OMB_COLS)
+    df["ts"] = pd.to_datetime(df["ts"])
+    df["expiry"] = pd.to_datetime(df["expiry"]).dt.date
+    df["right"] = df["right"].astype(str).str.strip()
+    for c in ("strike", "open", "high", "low", "close", "vwap"):
+        df[c] = pd.to_numeric(df[c], errors="coerce").astype(float)
+    for c in ("volume", "trades"):
+        df[c] = pd.to_numeric(df[c], errors="coerce")
+    return df[_OMB_COLS]
+
+
+def upsert_option_minute_session(engine: Engine, symbol: str, session: date, expiry: date, *,
+                                 root: str, ref_level: Optional[float], strike_lo: Optional[float],
+                                 strike_hi: Optional[float], strike_step: Optional[int],
+                                 contracts: int, with_prints: int, bars: int,
+                                 source: str = "polygon", asset_class: str = "index") -> None:
+    """Record (or replace) the pull manifest row for one (underlying, session, expiry)."""
+    tid = ensure_ticker(engine, symbol, asset_class=asset_class)
+    with engine.begin() as conn:
+        conn.execute(text("DELETE FROM mkt.OptionMinuteSession WHERE TickerId = :tid AND SessionDate = :s "
+                          "AND ExpirationDate = :e"), {"tid": tid, "s": session, "e": expiry})
+        conn.execute(text(
+            "INSERT INTO mkt.OptionMinuteSession (TickerId, SessionDate, ExpirationDate, Root, RefLevel, StrikeLo, "
+            "StrikeHi, StrikeStep, Contracts, ContractsWithPrints, Bars, Source) VALUES (:tid, :s, :e, :root, :ref, "
+            ":lo, :hi, :step, :n, :np, :bars, :src)"),
+            {"tid": tid, "s": session, "e": expiry, "root": root, "ref": ref_level, "lo": strike_lo,
+             "hi": strike_hi, "step": strike_step, "n": int(contracts), "np": int(with_prints),
+             "bars": int(bars), "src": source})
+
+
+def get_option_minute_sessions(engine: Engine, symbol: str) -> pd.DataFrame:
+    """The pull manifest for symbol: session, expiry, root, ref_level, strike_lo, strike_hi,
+    strike_step, contracts, with_prints, bars, pulled_at (ascending by session)."""
+    cols = ["session", "expiry", "root", "ref_level", "strike_lo", "strike_hi", "strike_step",
+            "contracts", "with_prints", "bars", "pulled_at"]
+    tid = get_ticker_id(engine, symbol)
+    if tid is None:
+        return pd.DataFrame(columns=cols)
+    with get_conn(engine) as conn:
+        result = conn.execute(text(
+            "SELECT SessionDate, ExpirationDate, Root, RefLevel, StrikeLo, StrikeHi, StrikeStep, Contracts, "
+            "ContractsWithPrints, Bars, PulledAt FROM mkt.OptionMinuteSession WHERE TickerId = :tid "
+            "ORDER BY SessionDate, ExpirationDate"), {"tid": tid})
+        df = pd.DataFrame(result.fetchall(), columns=cols)
+    if df.empty:
+        return pd.DataFrame(columns=cols)
+    for c in ("session", "expiry"):
+        df[c] = pd.to_datetime(df[c]).dt.date
+    for c in ("ref_level", "strike_lo", "strike_hi"):
+        df[c] = pd.to_numeric(df[c], errors="coerce").astype(float)
+    return df
+
+
+def get_option_minute_coverage(engine: Engine, symbol: str) -> Optional[dict]:
+    """{'first', 'last', 'sessions', 'contracts', 'bars'} over mkt.OptionMinuteBar for symbol, or None."""
+    tid = get_ticker_id(engine, symbol)
+    if tid is None:
+        return None
+    with get_conn(engine) as conn:
+        row = conn.execute(text(
+            "SELECT MIN(ExpirationDate), MAX(ExpirationDate), COUNT(DISTINCT ExpirationDate), "
+            "COUNT(DISTINCT CONCAT(ExpirationDate, ContractType, Strike)), COUNT(*) "
+            "FROM mkt.OptionMinuteBar WHERE TickerId = :tid"), {"tid": tid}).fetchone()
+    if row is None or row[0] is None:
+        return None
+    return {"first": row[0], "last": row[1], "sessions": int(row[2]), "contracts": int(row[3]), "bars": int(row[4])}
+
+
 def replace_event_calendar(engine: Engine, rows: list[dict]) -> int:
     """Replace mkt.EventCalendar with rows of {'date','kind','label','source'}."""
     data = [(pd.Timestamp(r["date"]).date(), str(r["kind"]).strip().lower()[:20],

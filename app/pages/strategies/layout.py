@@ -124,6 +124,14 @@ def _selector_group(title: str, icon: str, accent: str, element_id: str,
     ], style={"flex": "1 1 340px", "minWidth": "280px"})
 
 
+def _default_ticker(slug: str) -> str:
+    """The ticker a strategy's tabs start with: meta['default_ticker'], else SPY."""
+    try:
+        return str(get_ui(slug).meta.get("default_ticker") or "SPY").upper()
+    except Exception:
+        return "SPY"
+
+
 def _param_input(slug: str, p: dict) -> html.Div:
     """Single labelled number input for one screener filter param."""
     inp_id = {"type": f"str-{slug}-param", "index": p["id"]}
@@ -324,7 +332,7 @@ def _backtest_tab(slug: str) -> html.Div:
     controls = C.card([
         html.Div([
             html.Div([_lbl("Ticker"),
-                dbc.Input(id=f"str-{slug}-bt-ticker", value="SPY", placeholder="e.g. SPY",
+                dbc.Input(id=f"str-{slug}-bt-ticker", value=_default_ticker(slug), placeholder="e.g. SPY",
                           style={**_inp, "width": "100px"})]),
             html.Div([_lbl("From"),
                 dbc.Input(id=f"str-{slug}-bt-from", type="date", value="2022-01-01",
@@ -512,7 +520,7 @@ def _signal_alert_tab(slug: str) -> html.Div:
         html.Div("Current Signal & WhatsApp Alert", style={
             "fontSize": "15px", "fontWeight": "700", "color": T.TEXT_PRIMARY,
             "marginBottom": "6px"}),
-        html.P("Check today's BUY/HOLD verdict for SPY and (optionally) text it to "
+        html.P(f"Check today's verdict for {_default_ticker(slug)} and (optionally) text it to "
                "your phone. Manual — fires only when you click.",
                style={"color": T.TEXT_MUTED, "fontSize": "12px", "marginBottom": "12px"}),
         html.Div([
@@ -534,14 +542,16 @@ def _inner_tabs(slug: str) -> dbc.Tabs:
     ui = get_ui(slug)
     tab_style     = {"fontSize": "13px", "padding": "6px 14px"}
     tab_act_style = {**tab_style, "borderTop": f"2px solid {T.ACCENT}"}
-    tabs = [
-        dbc.Tab(
+    tabs = []
+    if ui.meta.get("has_screener", True):
+        tabs.append(dbc.Tab(
             _screener_layout(slug),
             label="Screener",
             tab_id=f"str-{slug}-inner-screener",
             tab_style=tab_style,
             active_tab_style=tab_act_style,
-        ),
+        ))
+    tabs += [
         dbc.Tab(
             _backtest_tab(slug),
             label="Backtest",

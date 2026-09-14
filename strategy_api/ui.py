@@ -16,6 +16,7 @@ Metadata keys the platform reads (all optional):
     ui_visible     bool         list the strategy on the Strategies page
     ui_label       str          selector label (falls back to display_name)
     review_status  str          ready | reviewed | reviewing | avoid
+    default_ticker str          the ticker the Backtest / Performance / Signal tabs start with (default SPY)
     score          (int, str)   credibility score + letter grade
     loaders        list         auxiliary-data loaders for backtests; each item
                                 is a loader name or ``(name, options)``; the

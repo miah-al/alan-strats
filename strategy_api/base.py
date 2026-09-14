@@ -139,6 +139,20 @@ class BaseStrategy(ABC):
         """
         return None
 
+    # ── live / paper trading hooks (optional; see strategy_api.live) ─────────
+    def session_gate(self, day, events: Optional[dict] = None) -> tuple[bool, str]:
+        """(blocked, reason) for a session: calendar, volatility gates, weekly caps. Default: open."""
+        return False, ""
+
+    def live_session(self, day, blocked_reason: str = "", bar_min: int = 1):
+        """A fresh quote-driven session engine for ``day`` (strategy_api.live.LiveSession), or
+        None when the strategy cannot be paper traded by the platform's runner."""
+        return None
+
+    def live_instrument(self) -> dict:
+        """What the runner must quote: {'underlying': 'NDX', 'root': 'NDXP', 'kind': 'vertical'}."""
+        return {}
+
     def is_ready(self) -> bool:
         return self.status == StrategyStatus.ACTIVE
 

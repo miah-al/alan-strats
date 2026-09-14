@@ -126,18 +126,19 @@ def _make_signal_alert_callback(slug: str):
             from engine.notify import whatsapp_configured
 
             label = R.get_ui(slug).label
-            close = load_close("SPY")
+            ticker = str(R.get_ui(slug).meta.get("default_ticker") or "SPY").upper()
+            close = load_close(ticker)
             sig = R.get_strategy(slug).current_signal(close)
             if not sig:
                 return html.Div("This strategy publishes no live signal.",
                                 style={"color": T.WARNING, "fontSize": "12px"}), ""
             sig = dict(sig)
-            sig["label"] = label; sig["ticker"] = "SPY"
+            sig["label"] = label; sig["ticker"] = ticker
 
             color = T.SUCCESS if sig.get("signal") == "BUY" else T.WARNING
             body = [
                 html.Div([
-                    html.Span(f"{label} · SPY: ", style={"color": T.TEXT_MUTED, "fontSize": "13px"}),
+                    html.Span(f"{label} · {ticker}: ", style={"color": T.TEXT_MUTED, "fontSize": "13px"}),
                     html.Span(sig.get("signal", "?"), style={"color": color, "fontWeight": "700",
                                                              "fontSize": "16px"}),
                     html.Span(f"  {sig.get('state','')}", style={"color": T.TEXT_MUTED, "fontSize": "12px"}),
@@ -153,7 +154,7 @@ def _make_signal_alert_callback(slug: str):
                                          "CALLMEBOT_APIKEY in .env to enable texting.",
                                          style={"color": T.WARNING, "fontSize": "12px", "marginTop": "8px"}))
                 else:
-                    ok, detail = send_trade_alert(f"📊 {label} · SPY\n" + format_signal_line(sig))
+                    ok, detail = send_trade_alert(f"📊 {label} · {ticker}\n" + format_signal_line(sig))
                     body.append(html.Div(("✅ Text sent to your phone." if ok
                                           else f"❌ Send failed: {detail}"),
                                          style={"color": T.SUCCESS if ok else T.DANGER,
