@@ -132,6 +132,22 @@ def _default_ticker(slug: str) -> str:
         return "SPY"
 
 
+def _default_from(slug: str, fallback: str = "2022-01-01") -> str:
+    """Start date for the Backtest / Performance tabs: meta['default_from'], else the platform's."""
+    try:
+        return str(get_ui(slug).meta.get("default_from") or fallback)
+    except Exception:
+        return fallback
+
+
+def _default_capital(slug: str, fallback: int = 10000) -> int:
+    """Starting capital for the Backtest / Performance tabs: meta['default_capital'], else the platform's."""
+    try:
+        return int(get_ui(slug).meta.get("default_capital") or fallback)
+    except Exception:
+        return fallback
+
+
 def _param_input(slug: str, p: dict) -> html.Div:
     """Single labelled number input for one screener filter param."""
     inp_id = {"type": f"str-{slug}-param", "index": p["id"]}
@@ -335,13 +351,13 @@ def _backtest_tab(slug: str) -> html.Div:
                 dbc.Input(id=f"str-{slug}-bt-ticker", value=_default_ticker(slug), placeholder="e.g. SPY",
                           style={**_inp, "width": "100px"})]),
             html.Div([_lbl("From"),
-                dbc.Input(id=f"str-{slug}-bt-from", type="date", value="2022-01-01",
+                dbc.Input(id=f"str-{slug}-bt-from", type="date", value=_default_from(slug),
                           style={**_inp, "width": "160px"})]),
             html.Div([_lbl("To"),
                 dbc.Input(id=f"str-{slug}-bt-to", type="date", value=today_str,
                           style={**_inp, "width": "160px"})]),
             html.Div([_lbl("Starting Capital ($)"),
-                dbc.Input(id=f"str-{slug}-bt-capital", type="number", value=10000,
+                dbc.Input(id=f"str-{slug}-bt-capital", type="number", value=_default_capital(slug),
                           min=1000, step=1000,
                           style={**_inp, "width": "160px"})]),
             html.Div([_lbl(" "),

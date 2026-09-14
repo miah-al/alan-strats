@@ -55,6 +55,14 @@ def _default_ticker(slug: str) -> str:
         return "SPY"
 
 
+def _meta_default(slug: str, key: str, fallback):
+    try:
+        from strategy_api.registry import get_ui
+        return get_ui(slug).meta.get(key) or fallback
+    except Exception:
+        return fallback
+
+
 def performance_tab(slug: str) -> html.Div:
     """Controls + output area. Analytics render on demand (a backtest is slow)."""
     inp = {"backgroundColor": T.BG_ELEVATED, "border": f"1px solid {T.BORDER}",
@@ -72,13 +80,13 @@ def performance_tab(slug: str) -> html.Div:
                       dbc.Input(id=f"str-{slug}-perf-ticker", value=_default_ticker(slug),
                                 style={**inp, "width": "100px"})]),
             html.Div([lbl("From"),
-                      dbc.Input(id=f"str-{slug}-perf-from", value=_DEF_FROM,
+                      dbc.Input(id=f"str-{slug}-perf-from", value=_meta_default(slug, "default_from", _DEF_FROM),
                                 type="text", style={**inp, "width": "130px"})]),
             html.Div([lbl("To"),
                       dbc.Input(id=f"str-{slug}-perf-to", value=_DEF_TO,
                                 type="text", style={**inp, "width": "130px"})]),
             html.Div([lbl("Capital"),
-                      dbc.Input(id=f"str-{slug}-perf-capital", value=100000,
+                      dbc.Input(id=f"str-{slug}-perf-capital", value=_meta_default(slug, "default_capital", 100000),
                                 type="number", style={**inp, "width": "120px"})]),
             html.Div([lbl(" "),
                       dbc.Button("Run analytics",

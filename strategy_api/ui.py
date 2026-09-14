@@ -17,6 +17,8 @@ Metadata keys the platform reads (all optional):
     ui_label       str          selector label (falls back to display_name)
     review_status  str          ready | reviewed | reviewing | avoid
     default_ticker str          the ticker the Backtest / Performance / Signal tabs start with (default SPY)
+    default_from   str          start date those tabs open with (ISO; default the platform's)
+    default_capital int         starting capital those tabs open with (default the platform's)
     score          (int, str)   credibility score + letter grade
     loaders        list         auxiliary-data loaders for backtests; each item
                                 is a loader name or ``(name, options)``; the
