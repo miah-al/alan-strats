@@ -327,6 +327,80 @@ def load_stock_bond_iv(engine, ticker, fd, td, *, price_data, label,
     return LoaderResult(aux_updates={"tlt": tlt_df, "atm_iv_spy": iv_spy, "atm_iv_tlt": iv_tlt})
 
 
+def load_minute_bars(engine, ticker, fd, td, *, price_data, label,
+                     symbol: str | None = None, key: str = "minute_bars",
+                     warmup_days: int = 0, **_):
+    """Mount 1-minute bars from mkt.MinuteBar under `key` (default 'minute_bars'):
+    columns ts (naive US/Eastern bar START), open, high, low, close, volume, bar_min=1.
+
+    Options: `symbol` overrides the backtest ticker (an index strategy on NDX declares
+    ("minute_bars", {"symbol": "NDX"})); `warmup_days` extends the window backwards.
+    Blocks the backtest when the table has no rows for the window, with the bootstrap
+    command that fills it.
+    """
+    from datetime import timedelta as _td
+    sym = (symbol or ticker or "").upper()
+    try:
+        from db.client import get_minute_bars
+        bars = get_minute_bars(engine, sym, fd - _td(days=int(warmup_days or 0)), td)
+    except Exception as exc:
+        logger.warning(f"{label}: minute bars load failed for {sym}: {exc}")
+        bars = pd.DataFrame()
+    if bars is None or bars.empty:
+        alert = dbc.Alert([
+            html.Strong(f"{label} requires 1-minute bars for {sym}. "), html.Br(),
+            f"No mkt.MinuteBar rows for {sym} between {fd} and {td}. Pull them with ",
+            html.Code(f"python -m scripts.bootstrap_market_data --intraday-only --intraday {sym}"),
+            " (Polygon; about ten minutes for the full history).",
+        ], color="warning")
+        return LoaderResult(alert=alert, is_blocking=True)
+    bars = bars.copy()
+    bars["bar_min"] = 1
+    return LoaderResult(aux_updates={key: bars})
+
+
+def load_event_calendar(engine, ticker, fd, td, *, price_data, label,
+                        key: str = "event_calendar", **_):
+    """Mount mkt.EventCalendar rows (date, kind, label, source) under `key`. Non-blocking:
+    an empty calendar mounts an empty frame so the strategy trades every session."""
+    try:
+        from db.client import get_event_calendar
+        ev = get_event_calendar(engine)
+    except Exception as exc:
+        logger.warning(f"{label}: event calendar load failed: {exc}")
+        ev = pd.DataFrame(columns=["date", "kind", "label", "source"])
+    if ev is None or ev.empty:
+        logger.warning(f"{label}: mkt.EventCalendar is empty; run bootstrap --events")
+        ev = pd.DataFrame(columns=["date", "kind", "label", "source"])
+    return LoaderResult(aux_updates={key: ev})
+
+
+def load_daily_close(engine, ticker, fd, td, *, price_data, label,
+                     symbol: str, key: str | None = None, warmup_days: int = 30,
+                     scale: float = 1.0, **_):
+    """Mount another ticker's daily close as a date-indexed Series under `key`
+    (default: the lower-cased symbol). Used for index levels stored as price bars,
+    e.g. ("daily_close", {"symbol": "VXN", "key": "vxn", "scale": 0.01}) mounts the
+    VXN close as a decimal vol. Blocks when the ticker has no bars in the window."""
+    from datetime import timedelta as _td
+    sym = symbol.upper()
+    try:
+        from db.client import get_price_bars
+        df = get_price_bars(engine, sym, fd - _td(days=int(warmup_days or 0)), td)
+    except Exception as exc:
+        logger.warning(f"{label}: {sym} daily close load failed: {exc}")
+        df = pd.DataFrame()
+    if df is None or df.empty:
+        return LoaderResult(alert=dbc.Alert([
+            html.Strong(f"{label} requires daily bars for {sym}. "), html.Br(),
+            f"No mkt.PriceBar rows for {sym} in the selected window. Sync it with the bootstrap ",
+            "(index levels are in its INDEX_DAILY list) or via Tools → Data Manager.",
+        ], color="warning"), is_blocking=True)
+    s = pd.Series(pd.to_numeric(df["close"], errors="coerce").values * float(scale),
+                  index=pd.to_datetime(df["date"]).dt.date, name=sym.lower()).dropna().sort_index()
+    return LoaderResult(aux_updates={(key or sym.lower()): s})
+
+
 # ── Loader registry ───────────────────────────────────────────────────────────
 
 LoaderFn = Callable[..., LoaderResult]
@@ -340,6 +414,9 @@ LOADERS: dict[str, LoaderFn] = {
     "atm_iv":                 load_atm_iv,
     "macro":                  load_macro,
     "stock_bond_iv":          load_stock_bond_iv,
+    "minute_bars":            load_minute_bars,
+    "event_calendar":         load_event_calendar,
+    "daily_close":            load_daily_close,
 }
 
 

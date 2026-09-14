@@ -33,6 +33,7 @@ def sync_price_bars(
     from_date: date = DEFAULT_START,
     to_date:   date = None,
     progress_cb: Callable[[str], None] = None,
+    source_symbol: Optional[str] = None,
 ) -> dict:
     """Fetch daily OHLCV from yfinance and store in mkt.PriceBar.
 
@@ -40,9 +41,12 @@ def sync_price_bars(
     endpoint is rate-limited to 5/min on this plan and frequently returns 0 bars,
     which silently left many universe tickers (QQQ/IWM/GLD/EEM…) with no history.
     `api_key` is retained for signature/UI compatibility and is unused here.
+    `source_symbol` is the yfinance ticker when it differs from the stored symbol
+    (index levels: NDX <- ^NDX, VXN <- ^VXN); YF_INDEX_SYMBOLS supplies it by default.
     """
     to_date = to_date or date.today()
     engine  = get_engine()
+    yf_symbol = source_symbol or YF_INDEX_SYMBOLS.get(symbol.upper(), symbol)
 
     # Incremental: re-sync last date (delete + re-insert) then continue forward
     from sqlalchemy import text as _t
@@ -66,7 +70,7 @@ def sync_price_bars(
     try:
         from alan_trader.data.stock_data import yf_daily_bars
         n_days = (date.today() - from_date).days + 5
-        df = yf_daily_bars(symbol, n_days=max(n_days, 30))
+        df = yf_daily_bars(yf_symbol, n_days=max(n_days, 30))
         if df is not None and not df.empty:
             df = df.copy()
             df["date"] = pd.to_datetime(df["date"]).dt.date
@@ -1315,6 +1319,184 @@ def sync_cpi(
 
 
 # ── Coverage summary ──────────────────────────────────────────────────────────
+
+# ── Intraday minute bars (Polygon aggregates) ────────────────────────────────
+
+#: Symbols served by Polygon's index feed (ticker prefix "I:") rather than the stock feed.
+INDEX_SYMBOLS = {"NDX", "SPX", "RUT", "DJI", "VIX", "VXN", "OEX", "XSP"}
+
+#: Daily bars for index levels come from yfinance under a caret symbol; the DB keeps the plain one.
+YF_INDEX_SYMBOLS = {"NDX": "^NDX", "VXN": "^VXN", "SPX": "^GSPC", "VIX": "^VIX", "RUT": "^RUT"}
+
+MINUTE_BARS_DEFAULT_START = date(2023, 10, 1)      # Polygon I:NDX 1-minute history starts here on this plan
+
+
+def polygon_ticker_for(symbol: str) -> str:
+    return f"I:{symbol}" if symbol.upper() in INDEX_SYMBOLS else symbol.upper()
+
+
+def _polygon_minute_aggs(polygon_ticker: str, start: date, end: date, api_key: str) -> pd.DataFrame:
+    """All 1-minute aggregates for [start, end] (inclusive), regular session only, as a frame
+    ts (naive US/Eastern bar START), open, high, low, close, volume. Paginates next_url,
+    backs off on 429."""
+    import time
+    import requests
+    url = f"https://api.polygon.io/v2/aggs/ticker/{polygon_ticker}/range/1/minute/{start}/{end}"
+    params = {"adjusted": "false", "sort": "asc", "limit": 50000, "apiKey": api_key}
+    rows: list = []
+    while url:
+        resp = None
+        for attempt in range(6):
+            resp = requests.get(url, params=params, timeout=60)
+            if resp.status_code == 429:
+                time.sleep(2 ** attempt)
+                continue
+            resp.raise_for_status()
+            break
+        payload = resp.json()
+        rows += payload.get("results") or []
+        url = payload.get("next_url")
+        params = {"apiKey": api_key}
+    if not rows:
+        return pd.DataFrame(columns=["ts", "open", "high", "low", "close", "volume"])
+    raw = pd.DataFrame(rows)
+    ts = pd.to_datetime(raw["t"], unit="ms", utc=True).dt.tz_convert("US/Eastern").dt.tz_localize(None)
+    df = pd.DataFrame({"ts": ts, "open": raw["o"], "high": raw["h"], "low": raw["l"], "close": raw["c"],
+                       "volume": raw["v"] if "v" in raw.columns else None})
+    minute = df["ts"].dt.hour * 60 + df["ts"].dt.minute
+    df = df[(minute >= 9 * 60 + 30) & (minute < 16 * 60) & (df["ts"].dt.weekday < 5)]
+    return df.sort_values("ts").drop_duplicates("ts").reset_index(drop=True)
+
+
+def sync_minute_bars(
+    symbol: str,
+    api_key: str,
+    from_date: date = MINUTE_BARS_DEFAULT_START,
+    to_date: Optional[date] = None,
+    refresh: bool = False,
+    progress_cb: Callable[[str], None] = None,
+) -> dict:
+    """Pull 1-minute bars for symbol from Polygon into mkt.MinuteBar, one calendar month at a
+    time. Months already present are skipped unless refresh=True; the current month is always
+    re-pulled. Index symbols (NDX, SPX, ...) use Polygon's I: feed. Returns rows, sessions, months."""
+    import calendar as _cal
+    import time
+    from alan_trader.db.client import replace_minute_bars, get_minute_bar_months, get_minute_bar_coverage
+    if not api_key:
+        return {"status": "error", "rows": 0, "detail": "POLYGON_API_KEY missing"}
+    engine = get_engine()
+    to_date = to_date or date.today()
+    pticker = polygon_ticker_for(symbol)
+    asset_class = "index" if symbol.upper() in INDEX_SYMBOLS else "etf"
+    have = set() if refresh else get_minute_bar_months(engine, symbol)
+    today = date.today()
+    y, m = from_date.year, from_date.month
+    total_rows, months_pulled, empty_months = 0, 0, []
+    while (y, m) <= (to_date.year, to_date.month):
+        current = (y, m) == (today.year, today.month)
+        if (y, m) in have and not current:
+            m += 1
+            if m == 13:
+                y, m = y + 1, 1
+            continue
+        start = max(from_date, date(y, m, 1))
+        end = min(to_date, date(y, m, _cal.monthrange(y, m)[1]))
+        if progress_cb:
+            progress_cb(f"{symbol} minute bars {y}-{m:02d} ({pticker})…")
+        df = pd.DataFrame()
+        for attempt in range(3):                       # Polygon occasionally returns an empty page
+            df = _polygon_minute_aggs(pticker, start, end, api_key)
+            if len(df):
+                break
+            time.sleep(3)
+        if len(df):
+            n = replace_minute_bars(engine, symbol, df, source="polygon", asset_class=asset_class)
+            total_rows += n
+            months_pulled += 1
+            if progress_cb:
+                progress_cb(f"{symbol} {y}-{m:02d}: {n:,} bars, {df['ts'].dt.date.nunique()} sessions")
+        else:
+            empty_months.append(f"{y}-{m:02d}")
+        m += 1
+        if m == 13:
+            y, m = y + 1, 1
+    log_sync(engine, "MinuteBar", to_date, total_rows, symbol)
+    cov = get_minute_bar_coverage(engine, symbol)
+    return {"status": "ok" if total_rows or cov else "no_data", "rows": total_rows, "months": months_pulled,
+            "empty_months": empty_months,
+            "coverage": (f"{cov[0]} .. {cov[1]}, {cov[2]} sessions" if cov else "none")}
+
+
+# ── Event calendar (trading-day filters) ─────────────────────────────────────
+
+EVENT_SEED_DIR = None   # resolved lazily: <repo>/db/seed/events
+
+
+def _event_seed_dir():
+    import os
+    return EVENT_SEED_DIR or os.path.join(os.path.dirname(os.path.abspath(__file__)), "seed", "events")
+
+
+def _third_fridays(start: date, end: date):
+    y, m = start.year, start.month
+    while date(y, m, 1) <= end:
+        d = date(y, m, 15)
+        while d.weekday() != 4:
+            d += timedelta(days=1)
+        if start <= d <= end:
+            yield d
+        m += 1
+        if m == 13:
+            y, m = y + 1, 1
+
+
+def sync_event_calendar(
+    from_date: date = date(2024, 1, 1),
+    to_date: date = date(2026, 12, 31),
+    seed_dir: Optional[str] = None,
+    progress_cb: Callable[[str], None] = None,
+) -> dict:
+    """Rebuild mkt.EventCalendar for [from_date, to_date] from: FOMC decision dates in
+    mkt.FomcCalendar; the hand-kept seed CSVs in db/seed/events (bls: cpi/nfp, bea: pce,
+    exchange: holiday/early_close, megacap: earnings reactions); and computed monthly third
+    Fridays (opex). Kinds are lower-cased; one row per (date, kind)."""
+    import csv
+    import os
+    from sqlalchemy import text as _t
+    from alan_trader.db.client import replace_event_calendar
+    engine = get_engine()
+    rows: list[dict] = []
+    with engine.connect() as conn:
+        for (d,) in conn.execute(_t("SELECT MeetingDate FROM mkt.FomcCalendar WHERE IsRateDecision = 1 ORDER BY MeetingDate")).fetchall():
+            rows.append({"date": str(d)[:10], "kind": "fomc", "label": "FOMC decision", "source": "mkt.FomcCalendar"})
+    sdir = seed_dir or _event_seed_dir()
+    seeds_read = {}
+    for name in ("bls", "bea", "exchange", "megacap"):
+        p = os.path.join(sdir, f"{name}.csv")
+        if not os.path.exists(p):
+            continue
+        with open(p, encoding="utf-8", newline="") as fh:
+            got = [r for r in csv.DictReader(fh) if r.get("date")]
+        seeds_read[name] = len(got)
+        rows += got
+    rows += [{"date": str(d), "kind": "opex", "label": "Third Friday", "source": "computed"} for d in _third_fridays(from_date, to_date)]
+    rows = [r for r in rows if from_date <= date.fromisoformat(str(r["date"])[:10]) <= to_date]
+    seen, out = set(), []
+    for r in sorted(rows, key=lambda r: (str(r["date"]), str(r["kind"]).lower())):
+        key = (str(r["date"])[:10], str(r["kind"]).strip().lower())
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append({"date": key[0], "kind": key[1], "label": r.get("label", ""), "source": r.get("source", "")})
+    n = replace_event_calendar(engine, out)
+    by_kind: dict[str, int] = {}
+    for r in out:
+        by_kind[r["kind"]] = by_kind.get(r["kind"], 0) + 1
+    log_sync(engine, "EventCalendar", to_date, n)
+    if progress_cb:
+        progress_cb(f"EventCalendar: {n} rows {by_kind}")
+    return {"status": "ok" if n else "no_data", "rows": n, "by_kind": by_kind, "seeds": seeds_read}
+
 
 def get_coverage_summary(symbols: list[str]) -> pd.DataFrame:
     """Return a DataFrame with data coverage per ticker for display in the UI."""

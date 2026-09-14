@@ -1,0 +1,41 @@
+date,kind,label,source
+2024-01-01,holiday,New Year's Day,NYSE
+2024-01-15,holiday,Martin Luther King Jr. Day,NYSE
+2024-02-19,holiday,Presidents' Day,NYSE
+2024-03-29,holiday,Good Friday,NYSE
+2024-05-27,holiday,Memorial Day,NYSE
+2024-06-19,holiday,Juneteenth,NYSE
+2024-07-03,early_close,Independence Day eve 13:00 close,NYSE
+2024-07-04,holiday,Independence Day,NYSE
+2024-09-02,holiday,Labor Day,NYSE
+2024-11-28,holiday,Thanksgiving,NYSE
+2024-11-29,early_close,Day after Thanksgiving 13:00 close,NYSE
+2024-12-24,early_close,Christmas Eve 13:00 close,NYSE
+2024-12-25,holiday,Christmas,NYSE
+2025-01-01,holiday,New Year's Day,NYSE
+2025-01-09,holiday,National day of mourning (Carter),NYSE
+2025-01-20,holiday,Martin Luther King Jr. Day,NYSE
+2025-02-17,holiday,Presidents' Day,NYSE
+2025-04-18,holiday,Good Friday,NYSE
+2025-05-26,holiday,Memorial Day,NYSE
+2025-06-19,holiday,Juneteenth,NYSE
+2025-07-03,early_close,Independence Day eve 13:00 close,NYSE
+2025-07-04,holiday,Independence Day,NYSE
+2025-09-01,holiday,Labor Day,NYSE
+2025-11-27,holiday,Thanksgiving,NYSE
+2025-11-28,early_close,Day after Thanksgiving 13:00 close,NYSE
+2025-12-24,early_close,Christmas Eve 13:00 close,NYSE
+2025-12-25,holiday,Christmas,NYSE
+2026-01-01,holiday,New Year's Day,NYSE
+2026-01-19,holiday,Martin Luther King Jr. Day,NYSE
+2026-02-16,holiday,Presidents' Day,NYSE
+2026-04-03,holiday,Good Friday,NYSE
+2026-05-25,holiday,Memorial Day,NYSE
+2026-06-19,holiday,Juneteenth,NYSE
+2026-07-02,early_close,Independence Day eve 13:00 close,NYSE
+2026-07-03,holiday,Independence Day (observed),NYSE
+2026-09-07,holiday,Labor Day,NYSE
+2026-11-26,holiday,Thanksgiving,NYSE
+2026-11-27,early_close,Day after Thanksgiving 13:00 close,NYSE
+2026-12-24,early_close,Christmas Eve 13:00 close,NYSE
+2026-12-25,holiday,Christmas,NYSE

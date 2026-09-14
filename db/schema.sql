@@ -240,6 +240,57 @@ GO
 
 
 -- ============================================================
+-- mkt.MinuteBar
+-- Intraday 1-minute OHLC bars for any ticker (indexes via Polygon
+-- I:<symbol>, stocks/ETFs via Polygon). BarTs is the bar START in
+-- US/Eastern, naive. Regular session only (09:30 .. 15:59).
+-- Written by db.sync.sync_minute_bars, read by db.client.get_minute_bars.
+-- ============================================================
+
+IF OBJECT_ID('mkt.MinuteBar', 'U') IS NULL
+BEGIN
+    CREATE TABLE mkt.MinuteBar (
+        TickerId        SMALLINT        NOT NULL,
+        BarTs           DATETIME2(0)    NOT NULL,
+        [Open]          DECIMAL(14,4)   NOT NULL,
+        High            DECIMAL(14,4)   NOT NULL,
+        Low             DECIMAL(14,4)   NOT NULL,
+        [Close]         DECIMAL(14,4)   NOT NULL,
+        Volume          BIGINT          NULL,
+        Source          VARCHAR(20)     NOT NULL DEFAULT 'polygon',
+        CreatedAt       DATETIME2(0)    NOT NULL DEFAULT SYSUTCDATETIME(),
+
+        CONSTRAINT PK_MinuteBar        PRIMARY KEY (TickerId, BarTs),
+        CONSTRAINT FK_MinuteBar_Ticker FOREIGN KEY (TickerId) REFERENCES mkt.Ticker(TickerId)
+    );
+END
+GO
+
+
+-- ============================================================
+-- mkt.EventCalendar
+-- Session-level event flags used as trading filters, one row per
+-- (EventDate, Kind). Kinds: fomc, cpi, nfp, pce, megacap, opex,
+-- early_close, holiday. Built by db.sync.sync_event_calendar from
+-- mkt.FomcCalendar, computed third Fridays and db/seed/events/*.csv.
+-- ============================================================
+
+IF OBJECT_ID('mkt.EventCalendar', 'U') IS NULL
+BEGIN
+    CREATE TABLE mkt.EventCalendar (
+        EventDate       DATE            NOT NULL,
+        Kind            VARCHAR(20)     NOT NULL,
+        Label           NVARCHAR(200)   NULL,
+        Source          NVARCHAR(100)   NULL,
+        CreatedAt       DATETIME2(0)    NOT NULL DEFAULT SYSUTCDATETIME(),
+
+        CONSTRAINT PK_EventCalendar PRIMARY KEY (EventDate, Kind)
+    );
+END
+GO
+
+
+-- ============================================================
 -- mkt.News
 -- News articles from Polygon, VADER-scored sentiment
 -- ============================================================

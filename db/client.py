@@ -6,7 +6,7 @@ Handles connection, upserts, and incremental sync tracking.
 import os
 import logging
 from contextlib import contextmanager
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from typing import Optional
 
 import pandas as pd
@@ -752,6 +752,129 @@ def upsert_vix_bars(engine: Engine, df: pd.DataFrame, progress_cb=None) -> int:
     if progress_cb:
         progress_cb(total, total, rows[-1].get("date") if rows else None)
     return inserted
+
+
+# ── MinuteBar ─────────────────────────────────────────────────────────────────
+
+def replace_minute_bars(engine: Engine, symbol: str, df: pd.DataFrame,
+                        source: str = "polygon", asset_class: str = "index") -> int:
+    """Write 1-minute bars for symbol, replacing whatever the table holds in
+    df's [min ts, max ts] range. df columns: ts (naive US/Eastern bar START),
+    open, high, low, close, optional volume. Returns rows written."""
+    if df is None or df.empty:
+        return 0
+    tid = ensure_ticker(engine, symbol, asset_class=asset_class)
+    df = df.copy()
+    df.columns = [c.lower() for c in df.columns]
+    df["ts"] = pd.to_datetime(df["ts"])
+    df = df.sort_values("ts").drop_duplicates("ts")
+    if "volume" not in df.columns:
+        df["volume"] = None
+    lo, hi = df["ts"].min().to_pydatetime(), df["ts"].max().to_pydatetime()
+    rows = [(tid, r.ts.to_pydatetime(), float(r.open), float(r.high), float(r.low), float(r.close),
+             (int(r.volume) if pd.notna(r.volume) else None), source)
+            for r in df.itertuples(index=False)]
+    with engine.begin() as conn:
+        conn.execute(text("DELETE FROM mkt.MinuteBar WHERE TickerId = :tid AND BarTs BETWEEN :lo AND :hi"),
+                     {"tid": tid, "lo": lo, "hi": hi})
+        cur = conn.connection.cursor()
+        cur.fast_executemany = True
+        cur.executemany(
+            "INSERT INTO mkt.MinuteBar (TickerId, BarTs, [Open], High, Low, [Close], Volume, Source) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)", rows)
+    return len(rows)
+
+
+def get_minute_bars(engine: Engine, symbol: str,
+                    from_date: Optional[date] = None,
+                    to_date: Optional[date] = None) -> pd.DataFrame:
+    """1-minute bars for symbol: ts (naive US/Eastern bar START), open, high, low,
+    close, volume. Dates inclusive. Empty frame when the ticker or rows are missing."""
+    cols = ["ts", "open", "high", "low", "close", "volume"]
+    tid = get_ticker_id(engine, symbol)
+    if tid is None:
+        return pd.DataFrame(columns=cols)
+    q = ("SELECT BarTs AS ts, [Open] AS [open], High AS high, Low AS low, [Close] AS [close], Volume AS volume "
+         "FROM mkt.MinuteBar WHERE TickerId = :tid")
+    params: dict = {"tid": tid}
+    if from_date is not None:
+        q += " AND BarTs >= :lo"; params["lo"] = datetime.combine(from_date, datetime.min.time())
+    if to_date is not None:
+        q += " AND BarTs < :hi"; params["hi"] = datetime.combine(to_date + timedelta(days=1), datetime.min.time())
+    q += " ORDER BY BarTs"
+    with get_conn(engine) as conn:
+        result = conn.execute(text(q), params)
+        df = pd.DataFrame(result.fetchall(), columns=result.keys())
+    if df.empty:
+        return pd.DataFrame(columns=cols)
+    df["ts"] = pd.to_datetime(df["ts"])
+    for c in ("open", "high", "low", "close"):
+        df[c] = pd.to_numeric(df[c], errors="coerce").astype(float)
+    df["volume"] = pd.to_numeric(df["volume"], errors="coerce")
+    return df
+
+
+def get_minute_bar_coverage(engine: Engine, symbol: str) -> Optional[tuple[date, date, int]]:
+    """(first session, last session, number of sessions) with minute bars, or None."""
+    tid = get_ticker_id(engine, symbol)
+    if tid is None:
+        return None
+    with get_conn(engine) as conn:
+        row = conn.execute(text(
+            "SELECT MIN(BarTs), MAX(BarTs), COUNT(DISTINCT CAST(BarTs AS date)) "
+            "FROM mkt.MinuteBar WHERE TickerId = :tid"), {"tid": tid}).fetchone()
+    if row is None or row[0] is None:
+        return None
+    return row[0].date(), row[1].date(), int(row[2])
+
+
+def get_minute_bar_months(engine: Engine, symbol: str) -> set[tuple[int, int]]:
+    """{(year, month)} that already hold minute bars for symbol."""
+    tid = get_ticker_id(engine, symbol)
+    if tid is None:
+        return set()
+    with get_conn(engine) as conn:
+        rows = conn.execute(text(
+            "SELECT DISTINCT YEAR(BarTs), MONTH(BarTs) FROM mkt.MinuteBar WHERE TickerId = :tid"),
+            {"tid": tid}).fetchall()
+    return {(int(y), int(m)) for y, m in rows}
+
+
+# ── EventCalendar ─────────────────────────────────────────────────────────────
+
+def replace_event_calendar(engine: Engine, rows: list[dict]) -> int:
+    """Replace mkt.EventCalendar with rows of {'date','kind','label','source'}."""
+    data = [(pd.Timestamp(r["date"]).date(), str(r["kind"]).strip().lower()[:20],
+             (r.get("label") or "")[:200], (r.get("source") or "")[:100]) for r in rows if r.get("date")]
+    with engine.begin() as conn:
+        conn.execute(text("DELETE FROM mkt.EventCalendar"))
+        if data:
+            cur = conn.connection.cursor()
+            cur.fast_executemany = True
+            cur.executemany("INSERT INTO mkt.EventCalendar (EventDate, Kind, Label, Source) VALUES (?, ?, ?, ?)", data)
+    return len(data)
+
+
+def get_event_calendar(engine: Engine, from_date: Optional[date] = None,
+                       to_date: Optional[date] = None) -> pd.DataFrame:
+    """Event flags: columns date, kind, label, source. Empty frame when none."""
+    cols = ["date", "kind", "label", "source"]
+    q = "SELECT EventDate AS [date], Kind AS kind, Label AS label, Source AS source FROM mkt.EventCalendar"
+    where, params = [], {}
+    if from_date is not None:
+        where.append("EventDate >= :lo"); params["lo"] = from_date
+    if to_date is not None:
+        where.append("EventDate <= :hi"); params["hi"] = to_date
+    if where:
+        q += " WHERE " + " AND ".join(where)
+    q += " ORDER BY EventDate, Kind"
+    with get_conn(engine) as conn:
+        result = conn.execute(text(q), params)
+        df = pd.DataFrame(result.fetchall(), columns=result.keys())
+    if df.empty:
+        return pd.DataFrame(columns=cols)
+    df["date"] = pd.to_datetime(df["date"]).dt.date
+    return df
 
 
 # ── SyncLog ───────────────────────────────────────────────────────────────────

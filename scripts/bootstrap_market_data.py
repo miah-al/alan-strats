@@ -55,6 +55,12 @@ EXTRA = ["GLD", "EEM", "AAPL", "F", "HOOD", "TSLA", "MARA", "BITO"]
 ALL_SYMBOLS = CORE + SECTOR_ETFS + EXTRA
 EARNINGS_SYMBOLS = ["F", "AAPL", "HOOD", "TSLA"]
 
+# Index levels stored as daily price bars (yfinance caret symbols, mapped in db.sync).
+INDEX_DAILY = ["NDX", "VXN"]
+# Intraday 1-minute bars pulled from Polygon (index feed for NDX). Off by default: ~10 minutes
+# for the full history, so it runs only with --intraday.
+INTRADAY_DEFAULT = ["NDX"]
+
 
 def _key() -> str:
     return os.environ.get("POLYGON_API_KEY", "")
@@ -114,6 +120,18 @@ def main(argv=None) -> int:
                          "correction: the resume logic skips (date, contract_type) "
                          "pairs already present, so without this a re-sync is a no-op "
                          "and stale values survive.")
+    ap.add_argument("--intraday", nargs="*", metavar="SYMBOL",
+                    help="pull 1-minute bars from Polygon into mkt.MinuteBar for these symbols "
+                         f"(default when given with no symbols: {' '.join(INTRADAY_DEFAULT)}); "
+                         "months already stored are skipped, the current month is re-pulled")
+    ap.add_argument("--intraday-from", default="2023-10-01",
+                    help="first month of minute history to pull (Polygon I:NDX starts 2023-10)")
+    ap.add_argument("--intraday-refresh", action="store_true",
+                    help="re-pull months already stored")
+    ap.add_argument("--events", action="store_true",
+                    help="rebuild mkt.EventCalendar from mkt.FomcCalendar, db/seed/events/*.csv and third Fridays")
+    ap.add_argument("--intraday-only", action="store_true",
+                    help="skip the daily sources; run only --intraday / --events")
     args = ap.parse_args(argv)
 
     from db import sync
@@ -122,9 +140,14 @@ def main(argv=None) -> int:
     print(f"POLYGON_API_KEY: {'present' if key else 'MISSING'}")
     print(f"window: {START} → {END}")
 
-    if not args.options_only:
+    if not args.options_only and not args.intraday_only:
         print("\n── price bars (yfinance) ──────────────────────────────────────")
         for sym in ALL_SYMBOLS:
+            _run(sym, sync.sync_price_bars, sym, key,
+                 from_date=START, to_date=END)
+
+        print("\n── index levels, daily (yfinance) ─────────────────────────────")
+        for sym in INDEX_DAILY:
             _run(sym, sync.sync_price_bars, sym, key,
                  from_date=START, to_date=END)
 
@@ -149,6 +172,29 @@ def main(argv=None) -> int:
                      from_date=START, to_date=END)
 
         show_counts("── row counts after fast sources ──")
+
+    if args.events or args.intraday_only:
+        print("\n── event calendar (FOMC table + db/seed/events + third Fridays) ──")
+        _run("events", sync.sync_event_calendar)
+
+    if args.intraday is not None:
+        if not key:
+            print("\nPOLYGON_API_KEY missing — cannot pull minute bars.")
+            return 1
+        symbols = args.intraday or INTRADAY_DEFAULT
+        print(f"\n── 1-minute bars (Polygon) from {args.intraday_from} ────────────────")
+
+        def _p(msg):
+            print(f"\r   {msg[:90]:<90}", end="", flush=True)
+
+        for sym in symbols:
+            out = _run(sym, sync.sync_minute_bars, sym, key,
+                       from_date=date.fromisoformat(args.intraday_from), to_date=END,
+                       refresh=args.intraday_refresh, progress_cb=_p)
+            print()
+            if out:
+                print(f"     coverage: {out.get('coverage')}  empty months: {out.get('empty_months')}")
+        show_counts("── row counts after intraday sources ──")
 
     if args.options or args.options_only:
         if not key:

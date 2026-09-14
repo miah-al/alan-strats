@@ -111,7 +111,9 @@ class TestVolArbParityCircularFix:
 
 class TestVixSpikeFadeSignal:
     def _strategy(self):
-        from alan_trader_strategies.strategies.vix_spike_fade.strategy import VIXSpikeFadeStrategy as VixSpikeFadeStrategy
+        mod = pytest.importorskip("alan_trader_strategies.strategies.vix_spike_fade.strategy",
+                                 reason="vix_spike_fade lives on the plugin's all-strategies branch")
+        VixSpikeFadeStrategy = mod.VIXSpikeFadeStrategy
         return VixSpikeFadeStrategy()
     def test_signal_fires_without_vix_20d_avg(self):
         """If vix_20d_avg is absent, should still BUY when VIX > spike_threshold."""
@@ -155,7 +157,9 @@ class TestVixSpikeFadeSignal:
 
 class TestIVRConfidenceGating:
     def _strategy(self):
-        from alan_trader_strategies.strategies.ivr_credit_spread.strategy import IVRCreditSpreadStrategy
+        mod = pytest.importorskip("alan_trader_strategies.strategies.ivr_credit_spread.strategy",
+                                 reason="ivr_credit_spread lives on the plugin's all-strategies branch")
+        IVRCreditSpreadStrategy = mod.IVRCreditSpreadStrategy
         return IVRCreditSpreadStrategy(ivr_min=0.40)
     def test_low_confidence_ivr_stricter_threshold(self):
         """With VIX-fallback IVR just above ivr_min, should HOLD due to stricter effective threshold."""
