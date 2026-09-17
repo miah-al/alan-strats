@@ -949,3 +949,14 @@ GO
 
 
 PRINT 'AlanStrats schema created / verified successfully.';
+
+-- 2026-09-17: the Paper Trading page records deposits/withdrawals as Balance rows with a BalanceType,
+-- an Amount and a BusinessDate (callbacks.record_cash, data.py). The runner's daily snapshots keep
+-- BalanceType NULL; a filtered unique index replaces the (AccountId, BalanceDate) constraint so a
+-- deposit and a snapshot may share a date.
+IF COL_LENGTH('portfolio.Balance', 'BalanceType') IS NULL
+    ALTER TABLE portfolio.Balance ADD BalanceType VARCHAR(20) NULL, Amount DECIMAL(14,2) NULL, BusinessDate DATE NULL;
+IF EXISTS (SELECT 1 FROM sys.key_constraints WHERE name = 'UQ_Balance_Date')
+    ALTER TABLE portfolio.Balance DROP CONSTRAINT UQ_Balance_Date;
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'UX_Balance_Snapshot')
+    CREATE UNIQUE INDEX UX_Balance_Snapshot ON portfolio.Balance (AccountId, BalanceDate) WHERE BalanceType IS NULL;

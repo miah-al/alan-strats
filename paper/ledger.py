@@ -20,15 +20,31 @@ COMMISSION_PER_LEG = 1.00
 MULT = 100.0
 
 
-def ensure_paper_account(engine, name: str = "Paper Account", broker: str = "Paper") -> int:
+def ensure_paper_account(engine, name: str = "Paper Account", broker: str = "Paper", starting_cash: Optional[float] = None) -> int:
+    """The paper account, created on first use. ``starting_cash`` seeds one Cash deposit row (the
+    strategy's risk capital) when the account has none, so the Paper Trading page shows an account
+    value and a P&L percentage instead of zeros."""
     with engine.begin() as conn:
         row = conn.execute(text("SELECT AccountId FROM portfolio.Account WHERE Name = :n"), {"n": name}).fetchone()
         if row:
+            _seed_cash(conn, int(row[0]), starting_cash)
             return int(row[0])
         conn.execute(text("INSERT INTO portfolio.Account (Name, BrokerName, AccountType, Notes) VALUES (:n, :b, 'paper', 'automated paper runner')"),
                      {"n": name, "b": broker})
         row = conn.execute(text("SELECT AccountId FROM portfolio.Account WHERE Name = :n"), {"n": name}).fetchone()
+        _seed_cash(conn, int(row[0]), starting_cash)
         return int(row[0])
+
+
+def _seed_cash(conn, account_id: int, starting_cash: Optional[float]) -> None:
+    if not starting_cash or starting_cash <= 0:
+        return
+    has = conn.execute(text("SELECT 1 FROM portfolio.Balance WHERE AccountId = :a AND BalanceType = 'Cash'"), {"a": account_id}).fetchone()
+    if has:
+        return
+    today = date.today()
+    conn.execute(text("INSERT INTO portfolio.Balance (AccountId, BalanceDate, CashBalance, PortfolioValue, TotalEquity, BalanceType, Amount, BusinessDate) "
+                      "VALUES (:a, :d, :c, 0, :c, 'Cash', :c, :d)"), {"a": account_id, "d": today, "c": float(starting_cash)})
 
 
 def _security_id(conn, underlying: str) -> int:
@@ -136,11 +152,12 @@ def record_session(engine, day: date, underlying: str, slug: str, blocked: bool,
 
 def record_day_balance(engine, account_id: int, day: date, day_pnl: float) -> None:
     with engine.begin() as conn:
-        prev = conn.execute(text("SELECT TOP 1 TotalEquity, RealizedYTD FROM portfolio.Balance WHERE AccountId = :a AND BalanceDate < :d ORDER BY BalanceDate DESC"),
+        prev = conn.execute(text("SELECT TOP 1 TotalEquity, RealizedYTD FROM portfolio.Balance WHERE AccountId = :a AND BalanceDate < :d AND BalanceType IS NULL ORDER BY BalanceDate DESC"),
                             {"a": account_id, "d": day}).fetchone()
-        base_eq = float(prev[0]) if prev and prev[0] is not None else 100_000.0
+        seed = conn.execute(text("SELECT TOP 1 Amount FROM portfolio.Balance WHERE AccountId = :a AND BalanceType = 'Cash' ORDER BY BusinessDate DESC"), {"a": account_id}).fetchone()
+        base_eq = float(prev[0]) if prev and prev[0] is not None else (float(seed[0]) if seed and seed[0] is not None else 100_000.0)
         ytd = float(prev[1]) if prev and prev[1] is not None else 0.0
-        conn.execute(text("DELETE FROM portfolio.Balance WHERE AccountId = :a AND BalanceDate = :d"), {"a": account_id, "d": day})
+        conn.execute(text("DELETE FROM portfolio.Balance WHERE AccountId = :a AND BalanceDate = :d AND BalanceType IS NULL"), {"a": account_id, "d": day})
         conn.execute(text("""INSERT INTO portfolio.Balance (AccountId, BalanceDate, CashBalance, PortfolioValue, TotalEquity, DayPnL, RealizedYTD)
                              VALUES (:a, :d, :c, 0, :e, :p, :y)"""),
                      {"a": account_id, "d": day, "c": base_eq + day_pnl, "e": base_eq + day_pnl, "p": day_pnl, "y": ytd + day_pnl})

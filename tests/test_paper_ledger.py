@@ -48,3 +48,24 @@ def test_open_add_close_round_trip():
         n = L.delete_paper_day(eng, SLUG, DAY)
         assert n >= 1
         assert L.load_paper_positions(eng, SLUG, from_date=DAY).empty
+
+
+def test_paper_account_is_seeded_once_with_starting_cash():
+    """The first call with a starting cash writes one Cash deposit row; later calls never add another."""
+    eng = _db()
+    from paper import ledger as L
+    from sqlalchemy import text
+    name = "Paper Account (seed test)"
+    with eng.begin() as c:
+        row = c.execute(text("SELECT AccountId FROM portfolio.Account WHERE Name = :n"), {"n": name}).fetchone()
+        if row:
+            c.execute(text("DELETE FROM portfolio.Balance WHERE AccountId = :a"), {"a": row[0]})
+            c.execute(text("DELETE FROM portfolio.Account WHERE AccountId = :a"), {"a": row[0]})
+    aid = L.ensure_paper_account(eng, name=name, starting_cash=150_000.0)
+    L.ensure_paper_account(eng, name=name, starting_cash=150_000.0)
+    L.ensure_paper_account(eng, name=name)
+    with eng.begin() as c:
+        rows = c.execute(text("SELECT BalanceType, Amount FROM portfolio.Balance WHERE AccountId = :a"), {"a": aid}).fetchall()
+        assert [(r[0], float(r[1])) for r in rows] == [("Cash", 150_000.0)]
+        c.execute(text("DELETE FROM portfolio.Balance WHERE AccountId = :a"), {"a": aid})
+        c.execute(text("DELETE FROM portfolio.Account WHERE AccountId = :a"), {"a": aid})

@@ -968,7 +968,7 @@ def _build_equity_curve(df: "pd.DataFrame | None" = None):
     series (DataFrame[BusinessDate, Amount]); see data.mtm_equity_series."""
     if df is None or len(df) == 0:
         return html.P(
-            "No account history yet — record a deposit in Transactions to start.",
+            "No trades yet — the equity curve starts with the first paper session (the account is seeded with the strategy's capital).",
             style={"color": T.TEXT_MUTED, "fontSize": "13px", "padding": "10px 0"},
         )
     df = df.copy()

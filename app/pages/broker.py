@@ -238,6 +238,42 @@ def _account_panel(data: dict, broker_label: str) -> html.Div:
     ], style={"marginTop": "10px"})
 
 
+def _paper_runner_block() -> html.Div:
+    """What a paper trader needs at a glance on every page: are the broker quote credentials in
+    place, and is the automated runner alive. Reads the runner's heartbeat files; no strategy names."""
+    import json
+    from datetime import datetime
+    from pathlib import Path
+    creds = bool(os.environ.get("TT_SECRET")) and bool(os.environ.get("TT_REFRESH"))
+    rows = [html.Div([
+        _dot(T.SUCCESS if creds else T.DANGER),
+        html.Span("tastytrade quotes", style={"color": T.TEXT_PRIMARY, "fontSize": "12px", "fontWeight": "600"}),
+        html.Div("credentials present" if creds else "TT_SECRET / TT_REFRESH missing in .env",
+                 style={"color": T.SUCCESS if creds else T.DANGER, "fontSize": "10px", "marginLeft": "14px"}),
+    ], style={"marginBottom": "8px"})]
+    state_dir = Path(__file__).resolve().parents[2] / "paper_state"
+    beats = sorted(state_dir.glob("heartbeat_*.json")) if state_dir.exists() else []
+    if not beats:
+        rows.append(html.Div("runner: no session yet", style={"color": T.TEXT_MUTED, "fontSize": "10px"}))
+    for hbp in beats:
+        try:
+            hb = json.loads(hbp.read_text(encoding="utf-8"))
+            age = int((datetime.now() - datetime.fromisoformat(hb["at"])).total_seconds() // 60)
+            finished = hb.get("note") == "finished"
+            alive = age <= 2 and not finished
+            color = T.SUCCESS if alive else T.TEXT_MUTED if finished else T.WARNING
+            txt = "alive" if alive else ("finished" if finished else f"last seen {age} min ago")
+            note = str(hb.get("note") or "")[:40]
+            rows.append(html.Div([
+                _dot(color),
+                html.Span(hbp.stem.replace("heartbeat_", ""), style={"color": T.TEXT_PRIMARY, "fontSize": "12px", "fontWeight": "600"}),
+                html.Div(f"runner {txt}" + (f" · {note}" if note and not finished else ""), style={"color": color, "fontSize": "10px", "marginLeft": "14px"}),
+            ], style={"marginBottom": "8px"}))
+        except Exception:
+            continue
+    return html.Div(rows)
+
+
 def _setup_help() -> html.Div:
     code_style = {
         "color": T.TEXT_MUTED, "fontSize": "9px",
@@ -290,7 +326,7 @@ def build_broker_panel() -> html.Div:
         children=[
             # Header
             html.Div(
-                html.Div("BROKER", style={
+                html.Div("EXECUTION", style={
                     "color": T.TEXT_PRIMARY, "fontSize": "11px",
                     "fontWeight": "700", "letterSpacing": "0.1em",
                 }),
@@ -303,7 +339,9 @@ def build_broker_panel() -> html.Div:
 
             html.Div([
                 # Status dots
-                _section_label("Status"),
+                _section_label("Paper runner"),
+                _paper_runner_block(),
+                _section_label("Brokers"),
                 _broker_status_row("RobinHood", rh_cfg, rh_ok, "robin_stocks"),
                 _broker_status_row("Webull",    wb_cfg, wb_ok, "webull"),
 
@@ -353,7 +391,7 @@ def build_broker_panel() -> html.Div:
 
                 # Setup help shown only when nothing is configured
                 html.Div(
-                    _setup_help(),
+                    html.Details([html.Summary("Broker setup", style={"color": T.TEXT_MUTED, "fontSize": "10px", "cursor": "pointer"}), _setup_help()]),
                     style={"display": "none" if any_ok else "block"},
                 ),
             ], style={"padding": "0 12px 16px"}),

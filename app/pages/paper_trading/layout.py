@@ -49,7 +49,7 @@ def layout() -> html.Div:
     return html.Div([
         C.page_header(
             "Paper Trading",
-            "Your portfolio — positions are opened from the Strategy screens; review and close them here.",
+            "Paper positions: the automated runner opens and closes them (Strategies → Paper tab); review them here.",
             actions=[
                 dbc.Button(
                     "Refresh", id="pt-refresh-btn", size="sm", outline=True,
@@ -81,8 +81,8 @@ def layout() -> html.Div:
             ]),
             dbc.Tab(label="Transactions", tab_id="txns", children=[
                 html.Div(style={"height": "12px"}),
-                # Delete controls
-                dbc.Row([
+                # Delete controls: destructive, so they live behind a collapsed danger zone
+                dbc.Accordion([dbc.AccordionItem([dbc.Row([
                     dbc.Col(dbc.Card(dbc.CardBody([
                         html.Div("Delete by date", style={"color": T.TEXT_SEC, "fontSize": "11px",
                                                            "fontWeight": "600", "marginBottom": "8px"}),
@@ -111,6 +111,7 @@ def layout() -> html.Div:
                     ]), style={**T.STYLE_CARD, "padding": "12px"}), width=4),
                 ], className="g-2", style={"marginBottom": "12px"}),
                 html.Div(id="pt-delete-status-msg", style={"marginBottom": "8px"}),
+                ], title="Danger zone: delete transactions")], start_collapsed=True, flush=True, style={"marginBottom": "12px"}),
                 # Cash record form
                 dbc.Card(dbc.CardBody([
                     html.Div("Record Cash Movement", style={

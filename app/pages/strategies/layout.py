@@ -116,7 +116,8 @@ def _selector_group(title: str, icon: str, accent: str, element_id: str,
         dbc.Checklist(
             id=element_id,
             options=_checklist_options_with_status(strategies),
-            value=[],
+            # one strategy installed: it is what the user came for, so it starts selected
+            value=[s["value"] for s in strategies] if len(strategies) == 1 else [],
             # Block items (not inline) so CSS columns can pack them densely.
             inline=False,
             className="strat-list",

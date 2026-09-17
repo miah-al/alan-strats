@@ -149,5 +149,6 @@ if __name__ == "__main__":
     # manual restart. Set RELOAD=0 to disable if the watcher is noisy.
     import os as _os
     _reload = _os.environ.get("RELOAD", "1") != "0"
-    app.run(debug=True, host="0.0.0.0", port=8051, threaded=True,
+    _debug = _reload or _os.environ.get("DASH_DEBUG", "0") == "1"   # RELOAD=0 = a quiet, production-like run without the dev-tools bar
+    app.run(debug=_debug, host="0.0.0.0", port=8051, threaded=True,
             use_reloader=_reload)

@@ -42,7 +42,7 @@ logger = logging.getLogger(__name__)
 # Matches scripts/rank_strategies.py so the tab and the ranking agree.
 WARMUP_DAYS = 420
 _DEF_FROM = "2021-01-01"
-_DEF_TO = "2026-06-30"
+_DEF_TO = date.today().isoformat()      # the latest stored session is the natural end of the window
 
 
 # ── layout ────────────────────────────────────────────────────────────────────

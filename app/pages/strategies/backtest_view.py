@@ -79,12 +79,15 @@ def _render_backtest_results(result, slug: str) -> html.Div:
         _card("Profit Factor", f"{pf:.3f}" if pf != float("inf") else "∞",
               T.SUCCESS if pf >= 1.5 else T.WARNING if pf >= 1.0 else T.DANGER),
         _card("Total Trades",  str(n_trades)),
+        # a strategy can add cards in its own units (dollars per lot, sessions, worst day) via result.extra["cards"]
+        *[_card(str(c.get("label", "")), str(c.get("value", "")), {"good": T.SUCCESS, "bad": T.DANGER, "warn": T.WARNING}.get(c.get("tone"), T.TEXT_PRIMARY))
+          for c in ((getattr(result, "extra", None) or {}).get("cards") or []) if isinstance(c, dict)],
     ], style={"display": "flex", "gap": "10px", "flexWrap": "wrap", "marginBottom": "16px"})
 
     # ── Equity curve + Capital Deployment ─────────────────────────────────────
     eq        = result.equity_curve
     cash_s    = result.extra.get("cash_curve",   _pd.Series(dtype=float))
-    start_cap = float(eq.iloc[0]) if not eq.empty else 100_000
+    start_cap = float(result.extra.get("starting_capital") or (eq.iloc[0] if not eq.empty else 100_000))
 
     has_breakdown = not cash_s.empty and not eq.empty
 
@@ -179,6 +182,8 @@ def _render_backtest_results(result, slug: str) -> html.Div:
                        .apply(lambda x: (1 + x).prod() - 1)
                        .reset_index())
             pivot = monthly.pivot(index="year", columns="month", values="ret").fillna(0)
+            pivot = pivot.loc[(pivot != 0).any(axis=1)] if (pivot != 0).any(axis=1).any() else pivot   # years with no sessions add nothing
+            _zmax = float(max(abs(pivot.values.min()), abs(pivot.values.max()), 1e-9) * 100)                # symmetric scale on the data, not a fixed +-50%
             month_labels = ["Jan","Feb","Mar","Apr","May","Jun",
                             "Jul","Aug","Sep","Oct","Nov","Dec"]
             col_labels = [month_labels[c - 1] for c in pivot.columns]
@@ -188,7 +193,7 @@ def _render_backtest_results(result, slug: str) -> html.Div:
                 x=col_labels,
                 y=[str(y) for y in pivot.index],
                 colorscale="RdYlGn",
-                zmid=0,
+                zmid=0, zmin=-_zmax, zmax=_zmax,
                 hovertemplate="%{y} %{x}: %{z:.2f}%<extra></extra>",
                 colorbar=dict(
                     tickformat=".1f",
@@ -203,7 +208,7 @@ def _render_backtest_results(result, slug: str) -> html.Div:
                 font=dict(color=T.TEXT_PRIMARY, family="Inter, sans-serif", size=11),
                 height=max(180, 40 + 35 * len(pivot)),
                 margin=dict(l=10, r=60, t=30, b=10),
-                title=dict(text="Monthly Returns (%)", font=dict(size=12, color=T.TEXT_MUTED)),
+                title=dict(text="Monthly return, % of capital (colour scale fits the data)", font=dict(size=12, color=T.TEXT_MUTED)),
                 xaxis=dict(side="top"),
                 template="plotly_dark",
             )
@@ -246,6 +251,10 @@ def _render_backtest_results(result, slug: str) -> html.Div:
                             "margin_reserved", "ticker", "status"]
         cols_lower = {c.lower(): c for c in trades_df.columns}
         display_cols = []
+        _declared = (getattr(result, "extra", None) or {}).get("trade_columns") or []       # [(field, header), ...] in display order
+        for field, header in _declared:
+            if field in trades_df.columns and field not in display_cols:
+                display_cols.append(field); _COL_CONFIG[field.lower()] = (header, 100, None)
         for key in _preferred_order:
             orig = cols_lower.get(key)
             if orig and orig not in _SKIP:
@@ -450,7 +459,8 @@ def _make_backtest_callback(slug: str):
         if not rate_df.empty:
             rate_df.index = _pd.to_datetime(rate_df.index)
 
-        auxiliary_data = {"vix": vix_df, "rate10y": rate_df, "ticker": ticker}
+        auxiliary_data = {"vix": vix_df, "rate10y": rate_df, "ticker": ticker,
+                          "report_from": from_date, "report_to": to_date}   # the window the user asked for; bars before it are warm-up
 
         # ── Strategy-declared auxiliary-data loaders ──────────────────────────
         # Loader logic lives in app/pages/backtest_loaders.py — one pure

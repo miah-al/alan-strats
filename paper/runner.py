@@ -66,7 +66,7 @@ class PaperSession:
     """Runs one strategy for one session against one provider."""
 
     def __init__(self, slug: str, provider, engine_db=None, *, write_ledger: bool = True, log_dir: Optional[Path] = None,
-                 account_name: str = "Paper Account", params: Optional[dict] = None, state_dir: Optional[Path] = None,
+                 account_name: str = "Paper Account", params: Optional[dict] = None, state_dir: Optional[Path] = None, starting_cash: Optional[float] = None,
                  notify: bool = False):
         self.slug = slug
         self.provider = provider
@@ -77,7 +77,7 @@ class PaperSession:
             self.strategy = type(self.strategy)(**{**self.strategy.get_params(), **params})
         inst = self.strategy.live_instrument() or {}
         self.underlying = str(inst.get("underlying", getattr(provider, "underlying", "NDX"))).upper()
-        self.account_id = L.ensure_paper_account(engine_db, account_name) if self.write_ledger else None
+        self.account_id = L.ensure_paper_account(engine_db, account_name, starting_cash=starting_cash) if self.write_ledger else None
         folder = self._strategy_folder(slug)
         self.log_dir = Path(log_dir) if log_dir else (folder / "paper_log" if folder else STATE_DIR / "paper_log")
         self.log_dir.mkdir(parents=True, exist_ok=True)
@@ -115,6 +115,14 @@ class PaperSession:
     def _log(self, day: date, row: dict) -> None:
         p = self._log_path(day)
         new = not p.exists()
+        if not new:                                             # an older column set in the file: rewrite it on the current one
+            with p.open("r", newline="", encoding="utf-8") as f:
+                r = csv.DictReader(f); old_cols = r.fieldnames or []; old_rows = list(r) if old_cols != LOG_COLS else []
+            if old_cols != LOG_COLS:
+                with p.open("w", newline="", encoding="utf-8") as f:
+                    w = csv.DictWriter(f, fieldnames=LOG_COLS); w.writeheader()
+                    for o in old_rows:
+                        w.writerow({k: o.get(k, "") for k in LOG_COLS})
         with p.open("a", newline="", encoding="utf-8") as f:
             w = csv.DictWriter(f, fieldnames=LOG_COLS)
             if new:

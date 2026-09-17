@@ -52,6 +52,10 @@ def main(argv=None) -> int:
     from strategy_api import registry as R
 
     params = {}
+    try:
+        starting_cash = float(R.get_ui(args.strategy).meta.get("default_capital") or 0) or None   # seeds the paper account once
+    except Exception:
+        starting_cash = None
     for kv in args.param:
         k, v = kv.split("=", 1)
         try:
@@ -76,7 +80,7 @@ def main(argv=None) -> int:
         if log_dir is None:                                   # replays are dry runs: keep them out of the real paper log
             folder = PaperSession._strategy_folder(args.strategy)
             log_dir = (folder / "paper_log" / "replay") if folder else None
-        ps = PaperSession(args.strategy, prov, engine, write_ledger=args.ledger, params=params, log_dir=log_dir)
+        ps = PaperSession(args.strategy, prov, engine, write_ledger=args.ledger, params=params, log_dir=log_dir, starting_cash=starting_cash)
         res = ps.run_replay(day, resume=args.resume)
     else:
         try:
@@ -110,7 +114,7 @@ def main(argv=None) -> int:
                 except Exception as exc:
                     print(f"AI gate hooks raised: {exc}"); problems.append("ai hooks")
             return 0 if (n and not problems) else 1
-        ps = PaperSession(args.strategy, prov, engine, write_ledger=not args.no_ledger, params=params, notify=args.notify, log_dir=log_dir)
+        ps = PaperSession(args.strategy, prov, engine, write_ledger=not args.no_ledger, params=params, notify=args.notify, log_dir=log_dir, starting_cash=starting_cash)
         res = ps.run_live(poll_seconds=args.poll)
 
     print(f"\n{res.slug} {res.day} [{res.provider}] {'BLOCKED: ' + res.reason if res.blocked else 'traded'}")

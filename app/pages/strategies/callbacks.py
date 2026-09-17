@@ -135,7 +135,8 @@ def _make_signal_alert_callback(slug: str):
             sig = dict(sig)
             sig["label"] = label; sig["ticker"] = ticker
 
-            color = T.SUCCESS if sig.get("signal") == "BUY" else T.WARNING
+            _s = str(sig.get("signal", "")).upper()
+            color = T.SUCCESS if _s in ("BUY", "OPEN", "TRADE") else T.DANGER if _s in ("SELL", "SKIP", "BLOCKED") else T.WARNING
             body = [
                 html.Div([
                     html.Span(f"{label} · {ticker}: ", style={"color": T.TEXT_MUTED, "fontSize": "13px"}),
