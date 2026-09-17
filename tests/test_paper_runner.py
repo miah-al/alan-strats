@@ -74,8 +74,13 @@ def test_replay_matches_backtest_for_a_stored_day(tmp_path):
     assert abs(res.day_pnl - bt["day_pnl"]) < 1e-6
     # the paper log has one row per event and the state file can be restored
     log = pd.read_csv(res.log_path)
-    assert len(log) == len(res.fills)
-    assert (log.event.isin(["rest", "open", "add", "close", "cancel"])).all()
+    assert (log.event == "features").sum() == 1                      # one ex-ante feature row per session
+    events = log[log.event != "features"]
+    assert len(events) == len(res.fills)
+    assert (events.event.isin(["rest", "open", "add", "close", "cancel"])).all()
+    import json as _json
+    feats = _json.loads(log[log.event == "features"].note.iloc[0])
+    assert {"am_range_pct", "gap_pct", "vxn_prev"} <= set(feats)
     import json
     st = json.loads(open(res.state_path, encoding="utf-8").read())
     restored = type(s.live_session(day)).from_dict(s.params, st["state"])

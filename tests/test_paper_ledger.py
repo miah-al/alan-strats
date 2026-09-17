@@ -43,7 +43,7 @@ def test_open_add_close_round_trip():
         from sqlalchemy import text
         with eng.connect() as c:
             assert c.execute(text("SELECT COUNT(*) FROM portfolio.Leg WHERE PositionId = :p"), {"p": pid}).scalar() == 6
-            assert c.execute(text("SELECT COUNT(*) FROM portfolio.[Transaction] WHERE PositionId = :p"), {"p": pid}).scalar() == 3
+            assert c.execute(text("SELECT COUNT(*) FROM portfolio.[Transaction] WHERE PositionId = :p"), {"p": pid}).scalar() == 6   # one row per leg per fill
     finally:
         n = L.delete_paper_day(eng, SLUG, DAY)
         assert n >= 1

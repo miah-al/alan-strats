@@ -79,6 +79,8 @@ class PaperSession:
         self._tgids: dict[tuple, list[str]] = {}
         self._written = 0
         self._last_quote: dict = {}
+        self._day_bars: list = []
+        self._features_logged = False
 
     # ── helpers ───────────────────────────────────────────────────────────────
     @staticmethod
@@ -151,6 +153,42 @@ class PaperSession:
             elif f["kind"] == "open":                                   # no ledger: still track the unit
                 self._tgids.setdefault(self._unit_key(f), []).append(-1)
 
+    def _log_session_features(self, session, day: date, minute: int) -> None:
+        """Once per session, at the strategy's first entry minute: the ex-ante features a gate model
+        could use (prior VXN, overnight gap, prior-day move, morning range), written as a `features`
+        row in the CSV log and appended to the session's ModelSignal note. The day's outcome is in
+        the same log, so a shadow gate can be scored later without re-running anything."""
+        if self._features_logged or not self._day_bars:
+            return
+        start_min = int(getattr(self.strategy.params, "entry_start_min", 11 * 60))
+        if minute < start_min:
+            return
+        self._features_logged = True
+        feats: dict = {"minute": minute}
+        try:
+            o = self._day_bars[0].open; hi = max(b.high for b in self._day_bars); lo = min(b.low for b in self._day_bars); last = self._day_bars[-1].close
+            feats.update(am_range_pct=round((hi - lo) / last * 100, 3), am_move_pct=round((last / o - 1) * 100, 3), open=round(o, 2), level=round(last, 2))
+            if self.db is not None:
+                from db.client import get_price_bars
+                from datetime import timedelta
+                px = get_price_bars(self.db, self.underlying, day - timedelta(days=10), day - timedelta(days=1))
+                if len(px) >= 2:
+                    c1, c2 = float(px["close"].iloc[-1]), float(px["close"].iloc[-2])
+                    feats.update(gap_pct=round((o / c1 - 1) * 100, 3), prev_day_pct=round((c1 / c2 - 1) * 100, 3), prev_close=round(c1, 2))
+                vx = get_price_bars(self.db, "VXN", day - timedelta(days=10), day - timedelta(days=1))
+                if len(vx):
+                    feats["vxn_prev"] = round(float(vx["close"].iloc[-1]), 2)
+        except Exception as exc:
+            feats["error"] = str(exc)[:80]
+        self._log(day, dict(ts=str(datetime.combine(day, dtime(0, 0)) + timedelta(minutes=minute)), minute=minute, event="features",
+                            ndx=feats.get("level", ""), note=json.dumps(feats)))
+        if self.write_ledger:
+            try:
+                L.record_session(self.db, day, self.underlying, self.slug, bool(session.blocked_reason), session.blocked_reason,
+                                 note=f"features {json.dumps(feats)}")
+            except Exception as exc:
+                logger.warning("session features not recorded: %s", exc)
+
     def _save_state(self, session, day: date, finished: bool = False) -> None:
         try:
             self._state_path(day).write_text(json.dumps({"state": session.to_dict(), "written": self._written,
@@ -209,6 +247,8 @@ class PaperSession:
                 break
             n += 1
             minute = _minute_of(bar.ts) + 1
+            self._day_bars.append(bar)
+            self._log_session_features(session, day, minute)
             session.on_bar(minute, bar.close, quote_fn, is_last=prov.is_last_bar(), high=bar.high, low=bar.low)
             self._write_new_fills(session, day, prov.expiry, bar.close, prov.leg_symbols)
         self._save_state(session, day, finished=True)
@@ -279,6 +319,8 @@ class PaperSession:
                 if bar is not None:
                     minute = _minute_of(bar.ts) + 1
                     is_last = minute >= SESSION_CLOSE_MIN
+                    self._day_bars.append(bar)
+                    self._log_session_features(session, day, minute)
                     session.on_bar(minute, bar.close, quote_fn, is_last=is_last, high=bar.high, low=bar.low)
                     n += 1
                     self._write_new_fills(session, day, prov.expiry or day, bar.close, prov.leg_symbols)

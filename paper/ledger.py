@@ -40,6 +40,17 @@ def _security_id(conn, underlying: str) -> int:
     return int(conn.execute(text("SELECT TickerId FROM mkt.Ticker WHERE Symbol = :s"), {"s": underlying.upper()}).fetchone()[0])
 
 
+def _page_security_id(conn, symbol: str, underlying: str, cp: str, strike: float, expiry: date) -> int:
+    """portfolio.Security row per option contract (what the Paper Trading page joins on)."""
+    row = conn.execute(text("SELECT SecurityId FROM portfolio.Security WHERE Symbol = :s AND SecurityType = 'Option'"), {"s": symbol[:40]}).fetchone()
+    if row:
+        return int(row[0])
+    conn.execute(text("INSERT INTO portfolio.Security (Symbol, Underlying, SecurityType, OptionType, Strike, Expiration, Multiplier) "
+                      "VALUES (:s, :u, 'Option', :ot, :k, :e, 100)"),
+                 {"s": symbol[:40], "u": underlying, "ot": ("CALL" if cp == "C" else "PUT"), "k": float(strike), "e": expiry})
+    return int(conn.execute(text("SELECT SecurityId FROM portfolio.Security WHERE Symbol = :s AND SecurityType = 'Option'"), {"s": symbol[:40]}).fetchone()[0])
+
+
 def _legs(fill: dict) -> tuple[str, float, float]:
     cp = "C" if fill["direction"] == "bull" else "P"
     long_k, short_k = (fill["kl"], fill["kh"]) if cp == "C" else (fill["kh"], fill["kl"])
@@ -82,12 +93,21 @@ def record_fill(engine, account_id: int, slug: str, underlying: str, expiry: dat
                 VALUES (:p, :u, :os, 'option', :a, :n, :k, :e, :cp, :fp, :c, :d, :lo)"""),
                 {"p": position_id, "u": underlying, "os": sym[:30], "a": action, "n": lots, "k": k, "e": expiry, "cp": cp, "fp": fpx,
                  "c": (COMMISSION_PER_LEG * lots if opening else 0.0), "d": day, "lo": min(255, n_legs + i + 1)})
-        conn.execute(text("""
-            INSERT INTO portfolio.[Transaction] (AccountId, SecurityId, PositionId, TransactionDate, Action, Quantity, Price, Amount,
-                                                 Commission, StrategyName, Notes)
-            VALUES (:aid, :sid, :p, :d, :a, :q, :px, :amt, :c, :s, :n)"""),
-            {"aid": account_id, "sid": sid, "p": position_id, "d": day, "a": ("BUY" if opening else "SELL"), "q": lots, "px": px,
-             "amt": float(fill["cash"]), "c": comm, "s": slug, "n": notes})
+        # One transaction per leg, in the layout the Paper Trading page groups (TradeGroupId = the
+        # unit's PositionId); the spread price rides on the long leg, the short leg carries 0.
+        tgid = f"{underlying[:4]}-{slug[:8].upper()}-{position_id}"
+        src = "Paper" if opening else {"target": "Target", "stop": "Stop", "daycap": "DayCap", "time": "Time", "settle": "Settle"}.get(fill["reason"], "Close")
+        page_notes = (("" if opening else "CLOSE ") + notes)[:500]
+        for i, (sym, action, k, fpx) in enumerate(leg_rows):
+            psid = _page_security_id(conn, sym, underlying, cp, k, expiry)
+            conn.execute(text("""
+                INSERT INTO portfolio.[Transaction] (AccountId, SecurityId, PositionId, TransactionDate, Action, Quantity, Price, Amount,
+                                                     Commission, StrategyName, Notes, BusinessDate, TradeGroupId, Direction, TransactionPrice,
+                                                     LegType, Source)
+                VALUES (:aid, :sid, :p, :d, :a, :q, :px, :amt, :c, :s, :n, :d, :tg, :dir, :px, :lt, :src)"""),
+                {"aid": account_id, "sid": psid, "p": position_id, "d": day, "a": ("BUY" if opening else "SELL"), "q": lots, "px": fpx,
+                 "amt": (float(fill["cash"]) if i == 0 else 0.0), "c": (COMMISSION_PER_LEG * lots if opening else 0.0), "s": slug, "n": page_notes,
+                 "tg": tgid, "dir": (("Buy" if action.startswith("B") else "Sell")), "lt": ("LongLeg" if i == 0 else "ShortLeg"), "src": src})
         if kind == "add":
             row = conn.execute(text("SELECT Quantity, AvgEntryPrice, Commission FROM portfolio.Position WHERE PositionId = :p"), {"p": position_id}).fetchone()
             q0, px0, c0 = float(row[0]), float(row[1]), float(row[2])

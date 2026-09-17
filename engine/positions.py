@@ -207,6 +207,11 @@ def fetch_stock_price(api_key: str, symbol: str, max_wait: float | None = 3.0) -
     api_key / max_wait kept for signature compatibility with the option path."""
     try:
         from data.stock_data import yf_stock_price
+        try:                                   # index underlyings (NDX, SPX, VIX, ...) live under a caret on yfinance
+            from db.sync import YF_INDEX_SYMBOLS
+            symbol = YF_INDEX_SYMBOLS.get(str(symbol).upper(), symbol)
+        except Exception:
+            pass
         return yf_stock_price(symbol)
     except Exception:
         return None

@@ -48,6 +48,10 @@ def _get_ui_params_for_slug(slug: str) -> list:
         return []
 
 
+#: The last backtest's trades per strategy, served by the "Download CSV" button.
+_LAST_TRADES: dict[str, "pd.DataFrame"] = {}
+
+
 def _render_backtest_results(result, slug: str) -> html.Div:
     """Build the full results display: metric cards, equity curve, monthly heatmap, trades table."""
     m = result.metrics
@@ -311,7 +315,14 @@ def _render_backtest_results(result, slug: str) -> html.Div:
                 },
             },
         )
-        trades_card = C.section("Trades", [trades_grid])
+        _LAST_TRADES[slug] = trades_df.copy()
+        export_bar = html.Div([
+            dbc.Button("⬇ Download CSV", id=f"str-{slug}-bt-trades-btn", size="sm", outline=True, color="secondary", n_clicks=0),
+            html.Span(f"  {len(trades_df)} trades, every column the strategy records",
+                      style={"color": T.TEXT_MUTED, "fontSize": "11px", "marginLeft": "10px"}),
+            dcc.Download(id=f"str-{slug}-bt-trades-dl"),
+        ], style={"marginBottom": "6px"})
+        trades_card = C.section("Trades", [export_bar, trades_grid])
 
     # ── Strategy-specific panels ─────────────────────────────────────────────
     try:
@@ -359,6 +370,17 @@ def _make_backtest_callback(slug: str):
             return str(round(float(v), 4)).rstrip("0").rstrip(".")
 
         _update_val.__name__ = f"_bt_val_{slug}_{key}"
+
+    @callback(
+        Output(f"str-{slug}-bt-trades-dl", "data"),
+        Input(f"str-{slug}-bt-trades-btn", "n_clicks"),
+        prevent_initial_call=True,
+    )
+    def _download_trades(n):
+        df = _LAST_TRADES.get(slug)
+        if not n or df is None or df.empty:
+            return no_update
+        return dcc.send_data_frame(df.to_csv, f"{slug}_backtest_trades.csv", index=False)
 
     @callback(
         Output(results_id, "children"),

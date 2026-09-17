@@ -715,6 +715,53 @@ GO
 -- Current position snapshot per account + security
 -- ============================================================
 
+-- ============================================================
+-- portfolio.Security + per-leg Transaction columns
+-- The Paper Trading page (engine/positions.py) reads transactions per leg,
+-- joined to a Security row per option contract and grouped by TradeGroupId.
+-- The paper runner writes both this layout and Position/Leg.
+-- ============================================================
+
+IF OBJECT_ID('portfolio.Security', 'U') IS NULL
+BEGIN
+    CREATE TABLE portfolio.Security (
+        SecurityId      BIGINT          NOT NULL IDENTITY(1,1),
+        Symbol          VARCHAR(40)     NOT NULL,
+        Underlying      VARCHAR(10)     NULL,
+        SecurityType    VARCHAR(10)     NOT NULL DEFAULT 'Option',   -- Equity | Option | cash
+        OptionType      VARCHAR(4)      NULL,                        -- CALL | PUT
+        Strike          DECIMAL(10,2)   NULL,
+        Expiration      DATE            NULL,
+        Multiplier      INT             NOT NULL DEFAULT 100,
+        CreatedAt       DATETIME2(0)    NOT NULL DEFAULT SYSUTCDATETIME(),
+        CONSTRAINT PK_Security PRIMARY KEY (SecurityId)
+    );
+    CREATE INDEX IX_Security_Symbol ON portfolio.Security (Symbol, SecurityType);
+END
+GO
+
+IF COL_LENGTH('portfolio.[Transaction]', 'TradeGroupId') IS NULL
+BEGIN
+    ALTER TABLE portfolio.[Transaction] ADD
+        BusinessDate     DATE            NULL,
+        TradeGroupId     VARCHAR(50)     NULL,
+        Direction        VARCHAR(5)      NULL,       -- Buy | Sell
+        TransactionPrice DECIMAL(10,4)   NULL,
+        LegType          VARCHAR(12)     NULL,       -- LongLeg | ShortLeg | ...
+        Source           VARCHAR(20)     NULL;       -- Paper | Close | Settle | Target | Stop | DayCap
+END
+GO
+IF EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID('portfolio.[Transaction]') AND name = 'Action' AND is_nullable = 0)
+BEGIN
+    ALTER TABLE portfolio.[Transaction] ALTER COLUMN Action VARCHAR(10) NULL;
+    ALTER TABLE portfolio.[Transaction] ALTER COLUMN TransactionDate DATE NULL;
+    ALTER TABLE portfolio.[Transaction] ALTER COLUMN Amount DECIMAL(14,2) NULL;
+END
+GO
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_Transaction_Group')
+    CREATE INDEX IX_Transaction_Group ON portfolio.[Transaction] (TradeGroupId);
+GO
+
 IF OBJECT_ID('portfolio.Holding', 'U') IS NULL
 BEGIN
     CREATE TABLE portfolio.Holding (
