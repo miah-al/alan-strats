@@ -360,6 +360,28 @@ GO
 -- News articles from Polygon, VADER-scored sentiment
 -- ============================================================
 
+-- ============================================================
+-- mkt.Dividend — cash dividends per ticker (written by db.sync.sync_dividends)
+-- ============================================================
+
+IF OBJECT_ID('mkt.Dividend', 'U') IS NULL
+BEGIN
+    CREATE TABLE mkt.Dividend (
+        TickerId        SMALLINT        NOT NULL,
+        ExDate          DATE            NOT NULL,
+        PayDate         DATE            NULL,
+        DeclaredDate    DATE            NULL,
+        RecordDate      DATE            NULL,
+        CashAmount      DECIMAL(12,6)   NULL,
+        DividendType    VARCHAR(10)     NULL,
+        Frequency       SMALLINT        NULL,
+        CreatedAt       DATETIME2(0)    NOT NULL DEFAULT SYSUTCDATETIME(),
+        CONSTRAINT PK_Dividend        PRIMARY KEY (TickerId, ExDate),
+        CONSTRAINT FK_Dividend_Ticker FOREIGN KEY (TickerId) REFERENCES mkt.Ticker(TickerId)
+    );
+END
+GO
+
 IF OBJECT_ID('mkt.News', 'U') IS NULL
 BEGIN
     CREATE TABLE mkt.News (

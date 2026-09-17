@@ -81,6 +81,11 @@ def test_replay_matches_backtest_for_a_stored_day(tmp_path):
     import json as _json
     feats = _json.loads(log[log.event == "features"].note.iloc[0])
     assert {"am_range_pct", "gap_pct", "vxn_prev"} <= set(feats)
+    ai = feats.get("ai") or {}
+    assert ai.get("mode") in ("shadow", "on", "off")
+    if ai.get("mode") != "off" and ai.get("model"):
+        assert ai.get("verdict") in ("trade", "skip") and 0.0 <= float(ai.get("p")) <= 1.0
+        assert "vxn_prev" in (feats.get("ai_features") or {})
     import json
     st = json.loads(open(res.state_path, encoding="utf-8").read())
     restored = type(s.live_session(day)).from_dict(s.params, st["state"])

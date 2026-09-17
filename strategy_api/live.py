@@ -26,6 +26,7 @@ class Quote:
     ask: float
     last: float
     age: int = 0
+    legs: Optional[tuple] = None   # ((bid, ask, age), (bid, ask, age)) of the long and short leg when the quote came from leg quotes
 
     @property
     def mid(self) -> float:

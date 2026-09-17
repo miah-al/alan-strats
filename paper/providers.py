@@ -24,6 +24,7 @@ from strategy_api.live import Quote
 
 logger = logging.getLogger("paper.providers")
 ET = "US/Eastern"
+MAX_SPREAD_PTS = 20.0        # a vertical quoted wider than this (points) is treated as unquoted
 
 
 def now_et() -> datetime:
@@ -56,8 +57,13 @@ def vertical_quote(long_leg: LegQuote, short_leg: LegQuote, now: datetime, carry
     leg has not printed), age = minutes since the older of the two legs' last prints/updates."""
     if long_leg.bid is None or long_leg.ask is None or short_leg.bid is None or short_leg.ask is None:
         return None
+    for leg in (long_leg, short_leg):                       # a crossed, empty or one-sided leg quote is no quote
+        if leg.ask <= 0 or leg.bid < 0 or leg.ask < leg.bid:
+            return None
     bid = float(long_leg.bid) - float(short_leg.ask)
     ask = float(long_leg.ask) - float(short_leg.bid)
+    if ask - bid > MAX_SPREAD_PTS:                          # a vertical quoted wider than this is not tradeable
+        return None
     mid = (bid + ask) / 2.0
     lasts, ages = [], []
     for leg in (long_leg, short_leg):
@@ -68,7 +74,8 @@ def vertical_quote(long_leg: LegQuote, short_leg: LegQuote, now: datetime, carry
     age = max(0, max(ages))
     if age > carry_min:
         return None
-    return Quote(bid=bid, ask=ask, last=last, age=age)
+    legs = tuple((float(leg.bid), float(leg.ask), max(0, a)) for leg, a in zip((long_leg, short_leg), ages))
+    return Quote(bid=bid, ask=ask, last=last, age=age, legs=legs)
 
 
 # ── replay ────────────────────────────────────────────────────────────────────
@@ -178,6 +185,7 @@ class TastytradeProvider:
         if not secret or not refresh:
             raise RuntimeError("tastytrade credentials missing: set TT_SECRET and TT_REFRESH in .env (OAuth provider secret and refresh token)")
         from tastytrade import Session
+        self._creds = (secret, refresh, is_test)
         self.session = Session(secret, refresh, is_test=is_test)
         self._chain: dict = {}
         self._samples: list[tuple[datetime, float]] = []
@@ -187,9 +195,9 @@ class TastytradeProvider:
     def load_chain(self, day: date) -> int:
         from tastytrade.instruments import get_option_chain
         chain = get_option_chain(self.session, self.underlying)
+        # only the configured (PM-settled) root: an AM-settled monthly on a third Friday settles on the
+        # open and cannot be traded as a same-day expiry, so a day without the root is a blocked day
         opts = [o for o in chain.get(day, []) if str(o.root_symbol).upper() == self.root]
-        if not opts:                                   # third Fridays before mid-2025 listed only the AM root
-            opts = list(chain.get(day, []))
         self._chain = {(str(o.option_type.value if hasattr(o.option_type, "value") else o.option_type)[0].upper(), float(o.strike_price)): o
                        for o in opts}
         self.expiry = day
@@ -204,10 +212,26 @@ class TastytradeProvider:
         long_k, short_k = (k_low, k_high) if kind == "call" else (k_high, k_low)
         return self._symbol(cp, long_k), self._symbol(cp, short_k)
 
+    def _relogin(self) -> None:
+        """A fresh OAuth session (the access token expires during a long day)."""
+        from tastytrade import Session
+        secret, refresh, is_test = self._creds
+        self.session = Session(secret, refresh, is_test=is_test)
+        logger.info("tastytrade session re-created")
+
     # one REST call: the underlying plus every option symbol requested
     def fetch(self, option_symbols: list[str]) -> dict[str, LegQuote]:
         from tastytrade.market_data import get_market_data_by_type
-        rows = get_market_data_by_type(self.session, indices=[self.underlying], options=[s for s in option_symbols if s])
+        syms = [s for s in option_symbols if s]
+        try:
+            rows = get_market_data_by_type(self.session, indices=[self.underlying], options=syms)
+        except Exception as exc:                       # 401 / expired token / dropped connection: one re-login, one retry
+            msg = str(exc).lower()
+            if any(k in msg for k in ("401", "unauthor", "token", "expired", "forbidden", "connection")):
+                self._relogin()
+                rows = get_market_data_by_type(self.session, indices=[self.underlying], options=syms)
+            else:
+                raise
         out: dict[str, LegQuote] = {}
 
         def et(ts):
@@ -232,6 +256,24 @@ class TastytradeProvider:
         if px is not None:
             self._samples.append((when, float(px)))
         return px
+
+    def backfill_bars(self, day: date, until: datetime) -> list[Bar]:
+        """Today's earlier 1-minute bars from Polygon (index aggregates, delayed on the Starter plan),
+        for a runner that starts after 09:30: the engine's 30-minute lookback needs them. Returns
+        the bars strictly before ``until``; empty when the key or the data is missing."""
+        try:
+            from app import get_polygon_api_key
+            from db.sync import _polygon_minute_aggs, polygon_ticker_for
+            key = get_polygon_api_key()
+            if not key:
+                return []
+            df = _polygon_minute_aggs(polygon_ticker_for(self.underlying), day, day, key)
+            df = df[df["ts"] < until]
+            return [Bar(ts=pd.Timestamp(r.ts).to_pydatetime(), open=float(r.open), high=float(r.high), low=float(r.low), close=float(r.close))
+                    for r in df.itertuples(index=False)]
+        except Exception as exc:
+            logger.warning("backfill failed: %s", exc)
+            return []
 
     def close_minute(self, minute_start: datetime) -> Optional[Bar]:
         """Build the 1-minute bar for ``minute_start`` from the samples taken during it."""

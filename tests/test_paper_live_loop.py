@@ -110,6 +110,11 @@ def test_live_loop_with_a_fake_provider_matches_the_replay(tmp_path):
     res = ps.run_live(day=DAY, poll_seconds=20, now_fn=now_fn, sleep_fn=sleep_fn)
     assert res.bars >= 380 and fake.fetch_calls > 1000
     assert len(res.trades) > 0
+    # every event row carries the quoted spread and has room for the leg quotes behind it
+    import pandas as pd
+    log = pd.read_csv(tmp_path / "live" / f"{DAY.isoformat()}.csv")
+    assert {"spread", "long_bid", "long_ask", "long_age", "short_bid", "short_ask", "short_age"} <= set(log.columns)
+    assert (log.loc[log.event.isin(["open", "add", "close"]), "spread"].astype(float) > 0).all()
     # the replay of the same day: same rules, same prints, same half spread
     ps2 = PaperSession(SLUG, ReplayProvider(eng, "NDX", DAY, half_spread=0.5), eng, write_ledger=False, log_dir=tmp_path / "replay", state_dir=tmp_path / "state2")
     rep = ps2.run_replay(DAY)

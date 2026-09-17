@@ -75,6 +75,11 @@ def sync_price_bars(
             df = df.copy()
             df["date"] = pd.to_datetime(df["date"]).dt.date
             df = df[(df["date"] >= from_date) & (df["date"] <= to_date)]
+            # yfinance includes the current session as a partial bar while the market is open; a
+            # daily close is only stored once the session is over (16:15 US/Eastern)
+            _now_et = pd.Timestamp.now(tz="US/Eastern")
+            if _now_et.hour * 60 + _now_et.minute < 16 * 60 + 15:
+                df = df[df["date"] < _now_et.date()]
         if df is None or df.empty:
             log_sync(engine, "PriceBar", to_date, 0, symbol)
             return {"status": "no_data", "rows": 0,

@@ -6,8 +6,9 @@
     python -m scripts.paper_runner --strategy ndx_0dte_tasty --check              # credentials, chain, one quote; no trading
 
 Live needs TT_SECRET and TT_REFRESH (tastytrade OAuth) in .env. Fills, quotes and cancels go to
-<strategy folder>/paper_log/YYYY-MM-DD.csv; the ledger to portfolio.Transaction (Paper Trading page);
-state to paper_state/ so a restart resumes the session.
+<strategy folder>/paper_log/YYYY-MM-DD.csv (replays: paper_log/replay/); the ledger to the portfolio
+schema (Paper Trading page); state to paper_state/ so a restart resumes the session. A first live
+day with credentials can be kept out of the record with --log-dir <somewhere> --no-ledger.
 """
 from __future__ import annotations
 
@@ -35,6 +36,8 @@ def main(argv=None) -> int:
     ap.add_argument("--check", action="store_true", help="live: verify credentials, today's chain and one quote, then exit")
     ap.add_argument("--resume", action="store_true", help="replay: resume from saved state if present")
     ap.add_argument("--param", action="append", default=[], metavar="KEY=VALUE", help="override a strategy parameter")
+    ap.add_argument("--notify", action="store_true", help="live: WhatsApp the gate verdict, every fill and the day's end (engine.notify)")
+    ap.add_argument("--log-dir", default=None, help="where the CSV paper log goes (default: the strategy's paper_log/; replays use paper_log/replay/)")
     ap.add_argument("-v", "--verbose", action="store_true")
     args = ap.parse_args(argv)
 
@@ -63,13 +66,23 @@ def main(argv=None) -> int:
     underlying, root = inst.get("underlying", "NDX"), inst.get("root", "NDXP")
     engine = get_engine()
 
+    log_dir = Path(args.log_dir) if args.log_dir else None
     if args.replay:
         day = date.fromisoformat(args.replay)
-        prov = ReplayProvider(engine, underlying, day, half_spread=args.half_spread, root=root)
-        ps = PaperSession(args.strategy, prov, engine, write_ledger=args.ledger, params=params)
+        try:
+            prov = ReplayProvider(engine, underlying, day, half_spread=args.half_spread, root=root)
+        except RuntimeError as exc:                          # a weekend, a holiday, or a day not yet pulled
+            print(f"cannot replay {day}: {exc}"); return 1
+        if log_dir is None:                                   # replays are dry runs: keep them out of the real paper log
+            folder = PaperSession._strategy_folder(args.strategy)
+            log_dir = (folder / "paper_log" / "replay") if folder else None
+        ps = PaperSession(args.strategy, prov, engine, write_ledger=args.ledger, params=params, log_dir=log_dir)
         res = ps.run_replay(day, resume=args.resume)
     else:
-        prov = TastytradeProvider(underlying, root, is_test=args.test_env, poll_seconds=args.poll)
+        try:
+            prov = TastytradeProvider(underlying, root, is_test=args.test_env, poll_seconds=args.poll)
+        except RuntimeError as exc:
+            print(f"cannot start: {exc}"); return 1
         if args.check:
             day = date.today()
             n = prov.load_chain(day)
@@ -78,8 +91,26 @@ def main(argv=None) -> int:
             q = prov.fetch(syms)
             for s, lq in q.items():
                 print(f"  {s}: bid {lq.bid} ask {lq.ask} last {lq.last} last_time {lq.last_time} updated {lq.updated}")
-            return 0
-        ps = PaperSession(args.strategy, prov, engine, write_ledger=not args.no_ledger, params=params)
+            ps = PaperSession(args.strategy, prov, engine, write_ledger=False, params=params)
+            problems = ps._preflight(day)
+            blocked, why = ps._gate(day)
+            print("preflight:", "ok" if not problems else "; ".join(problems))
+            print(f"gate for {day}: {'BLOCKED ' + why if blocked else 'open'}")
+            try:
+                from engine.notify import whatsapp_configured
+                print("WhatsApp alerts:", "configured" if whatsapp_configured() else "not configured (optional)")
+            except Exception:
+                pass
+            if hasattr(strategy, "ai_features") and hasattr(strategy, "ai_verdict"):
+                try:
+                    feats = strategy.ai_features(day, [], engine)
+                    ai = strategy.ai_verdict(feats)
+                    print(f"AI gate: mode {ai.get('mode')}, model {ai.get('model')}, verdict {ai.get('verdict')} (p={ai.get('p')}); "
+                          f"features ok: {'error' not in feats}")
+                except Exception as exc:
+                    print(f"AI gate hooks raised: {exc}"); problems.append("ai hooks")
+            return 0 if (n and not problems) else 1
+        ps = PaperSession(args.strategy, prov, engine, write_ledger=not args.no_ledger, params=params, notify=args.notify, log_dir=log_dir)
         res = ps.run_live(poll_seconds=args.poll)
 
     print(f"\n{res.slug} {res.day} [{res.provider}] {'BLOCKED: ' + res.reason if res.blocked else 'traded'}")
@@ -88,6 +119,10 @@ def main(argv=None) -> int:
         print(f"  {t['entry_time']}-{t['exit_time']} {t['direction']:4s} {t['k_low']:.0f}/{t['k_high']:.0f} x{t['units']} "
               f"{t['entry_px']:.2f} -> {t['exit_px']:.2f} {t['exit_reason']:7s} {t['pnl']:+,.0f}")
     print(f"log: {res.log_path}\nstate: {res.state_path}")
+    halted = getattr(ps, "halted", None)
+    if halted:
+        print(f"HALTED: {halted}")
+        return 3
     return 0
 
 

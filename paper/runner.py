@@ -22,6 +22,8 @@ from datetime import date, datetime, time as dtime, timedelta
 from pathlib import Path
 from typing import Callable, Optional
 
+import pandas as pd
+
 from strategy_api.live import Quote
 from strategy_api import registry as R
 from .providers import ReplayProvider, TastytradeProvider, Bar, now_et
@@ -31,9 +33,13 @@ logger = logging.getLogger("paper.runner")
 
 SESSION_OPEN = dtime(9, 30)
 SESSION_CLOSE_MIN = 16 * 60
+MAX_FILLS_PER_SESSION = 60          # runaway guard: more fills than this in a day means bad data, not trading
+VXN_MAX_AGE_DAYS = 4                # the gate's VXN close must be at most this many days old
+QUOTE_SILENCE_ALERT_MIN = 5         # alert when no quote fetch has succeeded for this long during the session
 STATE_DIR = Path(os.path.dirname(os.path.dirname(__file__))) / "paper_state"
 LOG_COLS = ["ts", "minute", "event", "ndx", "k_low", "k_high", "kind", "direction", "bid", "ask", "last", "age",
-            "limit", "fill", "lots", "cash", "reason", "tgid", "long_symbol", "short_symbol", "note"]
+            "limit", "fill", "lots", "cash", "reason", "tgid", "long_symbol", "short_symbol", "note",
+            "spread", "long_bid", "long_ask", "long_age", "short_bid", "short_ask", "short_age"]   # quoted width and the legs behind it
 
 
 def _minute_of(ts: datetime) -> int:
@@ -60,7 +66,8 @@ class PaperSession:
     """Runs one strategy for one session against one provider."""
 
     def __init__(self, slug: str, provider, engine_db=None, *, write_ledger: bool = True, log_dir: Optional[Path] = None,
-                 account_name: str = "Paper Account", params: Optional[dict] = None, state_dir: Optional[Path] = None):
+                 account_name: str = "Paper Account", params: Optional[dict] = None, state_dir: Optional[Path] = None,
+                 notify: bool = False):
         self.slug = slug
         self.provider = provider
         self.db = engine_db
@@ -81,6 +88,8 @@ class PaperSession:
         self._last_quote: dict = {}
         self._day_bars: list = []
         self._features_logged = False
+        self.notify = bool(notify)
+        self.halted: Optional[str] = None
 
     # ── helpers ───────────────────────────────────────────────────────────────
     @staticmethod
@@ -138,7 +147,11 @@ class PaperSession:
                        k_low=f["kl"], k_high=f["kh"], kind=kind_cp, direction=f["direction"],
                        bid=(round(q.bid, 2) if q else ""), ask=(round(q.ask, 2) if q else ""), last=(round(q.last, 2) if q else ""), age=(q.age if q else ""),
                        limit=(f["px"] if f["kind"] in ("rest", "cancel") else ""), fill=(f["px"] if f["kind"] in ("open", "add", "close") else ""),
-                       lots=f["lots"], cash=f["cash"], reason=f["reason"], tgid=tg, long_symbol=ls or "", short_symbol=ss or "", note="")
+                       lots=f["lots"], cash=f["cash"], reason=f["reason"], tgid=tg, long_symbol=ls or "", short_symbol=ss or "", note="",
+                       spread=(round(q.ask - q.bid, 2) if q else ""))
+            if q is not None and getattr(q, "legs", None):
+                (lb, la, lage), (sb, sa, sage) = q.legs
+                row.update(long_bid=lb, long_ask=la, long_age=lage, short_bid=sb, short_ask=sa, short_age=sage)
             self._log(day, row)
             logger.info("%s %s %s %s/%s @ %s (%s)", row["ts"][11:16], f["kind"], f["direction"], f["kl"], f["kh"], f["px"], f["reason"])
             if self.write_ledger and f["kind"] in ("open", "add", "close"):
@@ -152,6 +165,60 @@ class PaperSession:
                     logger.error("ledger write failed: %s", exc)
             elif f["kind"] == "open":                                   # no ledger: still track the unit
                 self._tgids.setdefault(self._unit_key(f), []).append(-1)
+
+    def _alert(self, text: str) -> None:
+        """WhatsApp (engine.notify) when --notify is on and configured; always logged."""
+        logger.info("ALERT %s", text)
+        if not self.notify:
+            return
+        try:
+            from engine.notify import whatsapp_configured
+            from engine.signal_alerts import send_trade_alert
+            if whatsapp_configured():
+                send_trade_alert(f"📄 paper {self.slug}: {text}")
+        except Exception as exc:
+            logger.warning("alert failed: %s", exc)
+
+    def _preflight(self, day: date) -> list[str]:
+        """Checks before a live session: database, VXN freshness for the gate, the strategy's live hooks."""
+        problems = []
+        if self.db is None:
+            problems.append("no database engine")
+        else:
+            try:
+                from db.client import get_price_bars
+                from datetime import timedelta
+                vx = get_price_bars(self.db, "VXN", day - timedelta(days=30), day - timedelta(days=1))
+                if vx is None or len(vx) == 0:
+                    problems.append("no VXN daily bars: run scripts.bootstrap_market_data")
+                else:
+                    last = pd.Timestamp(vx["date"].iloc[-1]).date()
+                    if (day - last).days > VXN_MAX_AGE_DAYS:
+                        problems.append(f"VXN close is stale ({last}); run scripts.bootstrap_market_data")
+            except Exception as exc:
+                problems.append(f"VXN check failed: {exc}")
+        if not self.strategy.live_instrument():
+            problems.append("strategy exposes no live instrument")
+        return problems
+
+    def _step(self, session, minute: int, bar: Bar, quote_fn, is_last: bool, day: date, expiry: date, symbols_fn) -> bool:
+        """One bar through the engine with the guards. Returns False when the session must halt."""
+        if self.halted:
+            return False
+        try:
+            session.on_bar(minute, bar.close, quote_fn, is_last=is_last, high=bar.high, low=bar.low)
+        except Exception as exc:
+            self.halted = f"engine error at {bar.ts:%H:%M}: {exc}"
+            logger.exception("engine error; halting the session")
+            self._alert(self.halted)
+            return False
+        self._write_new_fills(session, day, expiry, bar.close, symbols_fn)
+        if len(session.fills) > MAX_FILLS_PER_SESSION:
+            self.halted = f"runaway guard: {len(session.fills)} fills"
+            logger.error(self.halted)
+            self._alert(self.halted)
+            return False
+        return True
 
     def _log_session_features(self, session, day: date, minute: int) -> None:
         """Once per session, at the strategy's first entry minute: the ex-ante features a gate model
@@ -180,14 +247,54 @@ class PaperSession:
                     feats["vxn_prev"] = round(float(vx["close"].iloc[-1]), 2)
         except Exception as exc:
             feats["error"] = str(exc)[:80]
+        # the strategy's own feature set and gate-model verdict (shadow unless the strategy says "on")
+        ai = {}
+        try:
+            if hasattr(self.strategy, "ai_features") and hasattr(self.strategy, "ai_verdict"):
+                sf = self.strategy.ai_features(day, list(self._day_bars), self.db)
+                ai = self.strategy.ai_verdict(sf)
+                feats["ai"] = {k: v for k, v in ai.items() if k != "features"}
+                feats["ai_features"] = {k: (round(v, 4) if isinstance(v, float) else v) for k, v in sf.items()}
+                if ai.get("mode") == "on" and ai.get("verdict") == "skip":
+                    session.ai_blocked = f"ai gate skip (p={ai.get('p')})"
+                    logger.info("AI gate ON: skip today (p=%s); no new entries", ai.get("p"))
+                    self._alert(f"AI gate: skip today (p={ai.get('p')})")
+                elif ai.get("mode") == "shadow":
+                    logger.info("AI gate shadow: %s (p=%s, model %s)", ai.get("verdict"), ai.get("p"), ai.get("model"))
+        except Exception as exc:
+            feats["ai_error"] = str(exc)[:80]
         self._log(day, dict(ts=str(datetime.combine(day, dtime(0, 0)) + timedelta(minutes=minute)), minute=minute, event="features",
-                            ndx=feats.get("level", ""), note=json.dumps(feats)))
+                            ndx=feats.get("level", ""), note=json.dumps(feats, default=str)))
         if self.write_ledger:
             try:
                 L.record_session(self.db, day, self.underlying, self.slug, bool(session.blocked_reason), session.blocked_reason,
                                  note=f"features {json.dumps(feats)}")
             except Exception as exc:
                 logger.warning("session features not recorded: %s", exc)
+
+    def _heartbeat(self, day: date, now: datetime, session, note: str = "") -> None:
+        """A small file the Paper tab reads: when the runner last polled, what it holds, the day so far."""
+        try:
+            hb = {"slug": self.slug, "day": str(day), "at": now.isoformat(timespec="seconds"), "provider": getattr(self.provider, "name", "?"),
+                  "open_positions": len(session.positions), "fills": len(session.fills), "trades": len(session.trades),
+                  "marked": round(session.marked(), 0), "day_pnl": round(session.day_pnl, 0), "halted": self.halted or "", "note": note}
+            (self.state_dir / f"heartbeat_{self.slug}.json").write_text(json.dumps(hb), encoding="utf-8")
+        except Exception:
+            pass
+
+    def _force_settlement(self, session, day: date, quote_fn, expiry: date, symbols_fn, why: str) -> None:
+        """The session is over but positions are still open (a missed final bar, a halt): settle
+        them now at the last known spot so the ledger and the state never carry a unit overnight."""
+        if not session.positions:
+            return
+        S = float(session.closes[-1]) if session.closes else 0.0
+        logger.warning("%d position(s) still open at session end (%s); settling at the last spot %.2f", len(session.positions), why, S)
+        try:
+            session.on_bar(SESSION_CLOSE_MIN, S, quote_fn, is_last=True)
+        except Exception as exc:
+            logger.exception("forced settlement failed: %s", exc)
+        self._write_new_fills(session, day, expiry, S, symbols_fn)
+        self._alert(f"{day}: {why}; open units settled at the last spot; day P&L {session.day_pnl:+,.0f}")
 
     def _save_state(self, session, day: date, finished: bool = False) -> None:
         try:
@@ -249,8 +356,8 @@ class PaperSession:
             minute = _minute_of(bar.ts) + 1
             self._day_bars.append(bar)
             self._log_session_features(session, day, minute)
-            session.on_bar(minute, bar.close, quote_fn, is_last=prov.is_last_bar(), high=bar.high, low=bar.low)
-            self._write_new_fills(session, day, prov.expiry, bar.close, prov.leg_symbols)
+            if not self._step(session, minute, bar, quote_fn, prov.is_last_bar(), day, prov.expiry, prov.leg_symbols):
+                break
         self._save_state(session, day, finished=True)
         res.trades, res.fills, res.day_pnl, res.bars = session.trades, session.fills, session.day_pnl, n
         res.n_fills_written, res.log_path, res.state_path = self._written, str(self._log_path(day)), str(self._state_path(day))
@@ -266,9 +373,22 @@ class PaperSession:
         prov = self.provider
         poll = int(poll_seconds or getattr(prov, "poll_seconds", 15))
         day = day or now_fn().date()
+        problems = self._preflight(day)
+        for pr in problems:
+            logger.error("preflight: %s", pr)
         blocked, why = self._gate(day)
-        n_chain = prov.load_chain(day)
+        if not blocked and any("VXN" in pr for pr in problems):
+            blocked, why = True, "stale or missing VXN (preflight)"
+        n_chain = 0
+        for attempt in range(3):                                   # the chain call can fail on a flaky connection
+            try:
+                n_chain = prov.load_chain(day); break
+            except Exception as exc:
+                logger.warning("chain load failed (%d/3): %s", attempt + 1, exc); sleep_fn(20)
+        if n_chain == 0 and not blocked:
+            blocked, why = True, f"no {prov.root} contracts expire today"
         logger.info("%s %s: gate %s; %d contracts in today's %s chain", self.slug, day, (f"BLOCKED ({why})" if blocked else "open"), n_chain, prov.root)
+        self._alert(f"{day} gate {'BLOCKED: ' + why if blocked else 'open'}; {n_chain} contracts")
         if self.write_ledger:
             L.record_session(self.db, day, self.underlying, self.slug, blocked, why, note=f"live {prov.name}, {n_chain} contracts")
         session = self._restore(day, why) or self.strategy.live_session(day, blocked_reason=why)
@@ -276,6 +396,17 @@ class PaperSession:
         carry = int(getattr(self.strategy.params, "carry_min", 30))
         cur_minute: Optional[datetime] = None
         quotes: dict = {}
+        # late start: feed the engine today's earlier bars so its lookback and the features are complete
+        start_now = now_fn()
+        if not session.closes and start_now.time() > SESSION_OPEN and hasattr(prov, "backfill_bars"):
+            back = prov.backfill_bars(day, start_now.replace(second=0, microsecond=0))
+            if back:
+                logger.info("late start %s: backfilling %d bars from %s", start_now.strftime("%H:%M"), len(back), back[0].ts.strftime("%H:%M"))
+                for b in back:
+                    m = _minute_of(b.ts) + 1
+                    self._day_bars.append(b)
+                    session.closes.append(float(b.close))        # history only: no decisions on backfilled bars
+                    session.last_minute = m
 
         def quote_fn(S, k_low, k_high, kind, minute):
             nonlocal quotes
@@ -300,16 +431,26 @@ class PaperSession:
             return [s for s in syms if s]
 
         n = 0
+        last_good_fetch: Optional[datetime] = None
+        silence_alerted = False
         while True:
             now = now_fn()
             if now.time() >= until:
                 break
             if now.time() < SESSION_OPEN:
+                self._heartbeat(day, now, session, "waiting for the open")
                 sleep_fn(min(60, poll)); continue
             try:
                 quotes = prov.fetch(watched_symbols())
+                last_good_fetch = now
+                silence_alerted = False
             except Exception as exc:
-                logger.warning("fetch failed: %s", exc); sleep_fn(poll); continue
+                logger.warning("fetch failed: %s", exc)
+                if last_good_fetch is not None and not silence_alerted and (now - last_good_fetch).total_seconds() >= QUOTE_SILENCE_ALERT_MIN * 60:
+                    self._alert(f"no quotes for {QUOTE_SILENCE_ALERT_MIN} minutes ({exc}); {len(session.positions)} open"); silence_alerted = True
+                self._heartbeat(day, now, session, f"fetch failing: {str(exc)[:60]}")
+                sleep_fn(poll); continue
+            self._heartbeat(day, now, session)
             prov.sample_underlying(quotes, now)
             this_minute = now.replace(second=0, microsecond=0)
             if cur_minute is None:
@@ -321,8 +462,12 @@ class PaperSession:
                     is_last = minute >= SESSION_CLOSE_MIN
                     self._day_bars.append(bar)
                     self._log_session_features(session, day, minute)
-                    session.on_bar(minute, bar.close, quote_fn, is_last=is_last, high=bar.high, low=bar.low)
+                    if not self._step(session, minute, bar, quote_fn, is_last, day, prov.expiry or day, prov.leg_symbols):
+                        break
                     n += 1
+                    for f in session.fills[-3:]:
+                        if f["m"] == minute and f["kind"] in ("open", "add", "close"):
+                            self._alert(f"{bar.ts:%H:%M} {f['kind']} {f['direction']} {f['kl']:.0f}/{f['kh']:.0f} @ {f['px']:.2f} ({f['reason']}); day {session.day_pnl:+,.0f}")
                     self._write_new_fills(session, day, prov.expiry or day, bar.close, prov.leg_symbols)
                     self._save_state(session, day)
                     if n % 15 == 0 or session.fills:
@@ -330,10 +475,16 @@ class PaperSession:
                                     len(session.positions), session.marked(), len(session.fills))
                 cur_minute = this_minute
             sleep_fn(poll)
+        if session.positions and now_fn().time() >= dtime(16, 0):
+            self._force_settlement(session, day, quote_fn, prov.expiry or day, prov.leg_symbols,
+                                   "session ended with open units" + (f" ({self.halted})" if self.halted else ""))
         self._save_state(session, day, finished=True)
+        self._heartbeat(day, now_fn(), session, "finished")
         res.trades, res.fills, res.day_pnl, res.bars = session.trades, session.fills, session.day_pnl, n
         res.n_fills_written, res.log_path, res.state_path = self._written, str(self._log_path(day)), str(self._state_path(day))
         if self.write_ledger:
             L.record_day_balance(self.db, self.account_id, day, session.day_pnl)
-        logger.info("session done: %d bars, %d trades, day P&L %+.0f", n, len(session.trades), session.day_pnl)
+        logger.info("session done: %d bars, %d trades, day P&L %+.0f%s", n, len(session.trades), session.day_pnl, (f"; HALTED: {self.halted}" if self.halted else ""))
+        self._alert(f"{day} done: {len(session.trades)} trades, day P&L {session.day_pnl:+,.0f}" + (f"; HALTED: {self.halted}" if self.halted else ""))
+        res.reason = res.reason or (self.halted or "")
         return res

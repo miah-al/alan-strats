@@ -1,0 +1,115 @@
+"""TastytradeProvider against a mocked SDK: chain filtering by root, quote row mapping (UTC to ET,
+bid/ask/last/last_trade_time), one re-login on an auth error, minute bars from samples. No network."""
+from __future__ import annotations
+
+import sys
+import types
+from datetime import date, datetime, timedelta
+from decimal import Decimal
+
+import pytest
+
+
+class _Opt:
+    def __init__(self, symbol, root, strike, right, exp):
+        self.symbol, self.root_symbol, self.strike_price, self.option_type, self.expiration_date = symbol, root, Decimal(strike), right, exp
+        self.streamer_symbol = "." + symbol
+
+
+class _Row:
+    def __init__(self, symbol, bid, ask, last, last_trade_time, updated_at):
+        self.symbol, self.bid, self.ask, self.last = symbol, bid, ask, last
+        self.last_trade_time, self.updated_at = last_trade_time, updated_at
+
+
+@pytest.fixture
+def fake_sdk(monkeypatch):
+    """A tastytrade package with Session, instruments.get_option_chain and market_data.get_market_data_by_type."""
+    calls = {"sessions": 0, "fetches": 0, "fail_next": False}
+
+    class Session:
+        def __init__(self, secret, refresh, is_test=False):
+            calls["sessions"] += 1
+            self.args = (secret, refresh, is_test)
+
+    tt = types.ModuleType("tastytrade"); tt.Session = Session
+    inst = types.ModuleType("tastytrade.instruments")
+    day = date(2026, 9, 17)
+
+    def get_option_chain(session, symbol):
+        return {day: [_Opt("NDXP260917C29100000", "NDXP", "29100", "C", day), _Opt("NDXP260917C29200000", "NDXP", "29200", "C", day),
+                      _Opt("NDXP260917P29100000", "NDXP", "29100", "P", day), _Opt("NDX260917C29100000", "NDX", "29100", "C", day)]}
+    inst.get_option_chain = get_option_chain
+    md = types.ModuleType("tastytrade.market_data")
+
+    def get_market_data_by_type(session, indices=None, options=None, **kw):
+        calls["fetches"] += 1
+        if calls["fail_next"]:
+            calls["fail_next"] = False
+            raise RuntimeError("401 Unauthorized: token expired")
+        utc = datetime(2026, 9, 17, 17, 30, 0)                    # 13:30 ET
+        rows = [_Row("NDX", None, None, Decimal("29150.25"), None, utc)]
+        for s in options or []:
+            rows.append(_Row(s, Decimal("170.0"), Decimal("172.0"), Decimal("171.0"), utc - timedelta(minutes=2), utc))
+        return rows
+    md.get_market_data_by_type = get_market_data_by_type
+    monkeypatch.setitem(sys.modules, "tastytrade", tt)
+    monkeypatch.setitem(sys.modules, "tastytrade.instruments", inst)
+    monkeypatch.setitem(sys.modules, "tastytrade.market_data", md)
+    monkeypatch.setenv("TT_SECRET", "s"); monkeypatch.setenv("TT_REFRESH", "r")
+    return calls
+
+
+def test_chain_quotes_and_bars(fake_sdk):
+    from paper.providers import TastytradeProvider
+    p = TastytradeProvider("NDX", "NDXP", poll_seconds=15)
+    assert fake_sdk["sessions"] == 1
+    day = date(2026, 9, 17)
+    assert p.load_chain(day) == 3                                   # the AM root NDX is excluded
+    assert p.leg_symbols("call", 29100.0, 29200.0) == ("NDXP260917C29100000", "NDXP260917C29200000")
+    assert p.leg_symbols("call", 29300.0, 29400.0) == (None, None)  # not in the chain
+    q = p.fetch(["NDXP260917C29100000", "NDXP260917C29200000"])
+    assert set(q) == {"NDX", "NDXP260917C29100000", "NDXP260917C29200000"}
+    leg = q["NDXP260917C29100000"]
+    assert (leg.bid, leg.ask, leg.last) == (170.0, 172.0, 171.0)
+    assert leg.updated == datetime(2026, 9, 17, 13, 30) and leg.last_time == datetime(2026, 9, 17, 13, 28)   # UTC -> ET, naive
+    now = datetime(2026, 9, 17, 13, 30, 10)
+    vq = p.quote_vertical("call", 29100.0, 29200.0, q, now)
+    assert vq is not None and vq.bid == -2.0 and vq.ask == 2.0 and vq.last == 0.0 and vq.age == 2
+    # minute bars from samples
+    assert p.sample_underlying(q, datetime(2026, 9, 17, 13, 30, 5)) == 29150.25
+    p._samples.append((datetime(2026, 9, 17, 13, 30, 40), 29152.0))
+    bar = p.close_minute(datetime(2026, 9, 17, 13, 30))
+    assert (bar.open, bar.high, bar.low, bar.close) == (29150.25, 29152.0, 29150.25, 29152.0)
+    assert p.close_minute(datetime(2026, 9, 17, 13, 31)) is None
+
+
+def test_fetch_relogins_once_on_auth_error(fake_sdk):
+    from paper.providers import TastytradeProvider
+    p = TastytradeProvider("NDX", "NDXP")
+    fake_sdk["fail_next"] = True
+    q = p.fetch(["NDXP260917C29100000"])
+    assert "NDX" in q and fake_sdk["sessions"] == 2 and fake_sdk["fetches"] == 2
+
+
+def test_missing_credentials_is_a_clean_error(monkeypatch, fake_sdk):
+    monkeypatch.delenv("TT_SECRET"); monkeypatch.delenv("TT_REFRESH")
+    import paper.providers as pv
+    monkeypatch.setattr(pv, "_load_env_for_tests", None, raising=False)
+    from paper.providers import TastytradeProvider
+    with pytest.raises(RuntimeError, match="TT_SECRET"):
+        TastytradeProvider("NDX", "NDXP")
+
+
+def test_vertical_quote_carries_its_legs():
+    """The vertical's quote keeps the leg quotes and ages it was built from, so the paper log can show
+    what the NBBO looked like on each leg at every fill (the print-synchrony question, settled live)."""
+    from datetime import datetime, timedelta
+    from paper.providers import LegQuote, vertical_quote
+    now = datetime(2026, 9, 17, 11, 30)
+    long_leg = LegQuote("NDXP260917C29100000", 170.0, 172.0, 171.0, now - timedelta(minutes=2), now)
+    short_leg = LegQuote("NDXP260917C29150000", 140.0, 141.0, 140.5, now, now)
+    q = vertical_quote(long_leg, short_leg, now)
+    assert (q.bid, q.ask, q.last) == (29.0, 32.0, 30.5) and q.age == 2
+    assert q.legs == ((170.0, 172.0, 2), (140.0, 141.0, 0))
+    assert vertical_quote(LegQuote("x", None, 1.0, None, None, now), short_leg, now) is None
