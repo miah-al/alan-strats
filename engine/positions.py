@@ -46,7 +46,7 @@ def load_transactions(engine, account_id: int = 1) -> pd.DataFrame:
     Returns a DataFrame with columns:
       TransactionId, BusinessDate, TradeGroupId, StrategyName, SecurityId,
       Symbol, Underlying, SecurityType, OptionType, Strike, Expiration, Multiplier,
-      Direction, Quantity, TransactionPrice, Commission, LegType, Source, Notes
+      Direction, Quantity, TransactionPrice, Commission, Amount, LegType, Source, Notes
     """
     from sqlalchemy import text
     try:
@@ -69,6 +69,7 @@ def load_transactions(engine, account_id: int = 1) -> pd.DataFrame:
                     t.Quantity,
                     t.TransactionPrice,
                     t.Commission,
+                    t.Amount,
                     t.LegType,
                     t.Source,
                     t.Notes,
@@ -169,6 +170,11 @@ def get_closed_trade_groups(txns_df: pd.DataFrame) -> list[dict]:
         net_entry = _signed_cost(opening)
         net_exit  = _signed_cost(closing)
         pnl       = net_entry + net_exit
+        # the paper runner books each leg's net cash (price, commission and fees) in Amount: when every
+        # leg carries it, that sum is the trade's P&L to the cent; price arithmetic alone is gross of costs
+        amt = pd.to_numeric(group.get("Amount", pd.Series(dtype=float)), errors="coerce") if "Amount" in group.columns else pd.Series(dtype=float)
+        if len(amt) == len(group) and len(group) and amt.notna().all():
+            pnl = float(amt.sum())
 
         rows.append({
             "TradeGroupId": tgid,
@@ -324,7 +330,14 @@ def compute_position_alerts(
 
     if min_dte is not None:
         is_spread = any(x in sl for x in ("condor", "spread", "strangle", "butterfly"))
-        if min_dte <= 0:
+        # cash-settled index options (NDX, SPX, XSP, RUT, VIX): no assignment, and a same-day expiry is
+        # the design of a 0DTE strategy, not an emergency
+        _cash_idx = ("NDX", "NDXP", "SPX", "SPXW", "XSP", "RUT", "RUTW", "VIX", "VIXW")
+        _syms = [str(x).upper() for x in list(grp.get("Underlying", pd.Series(dtype=str)).dropna()) + list(grp.get("Symbol", pd.Series(dtype=str)).dropna())]
+        cash_settled = any(s == c or s.startswith(c) for s in _syms for c in _cash_idx)
+        if min_dte <= 0 and cash_settled:
+            alerts.append({"level": "warning", "msg": f"Expires at today's close ({min_dte} DTE); cash-settled index option, no assignment. Settles at intrinsic if held."})
+        elif min_dte <= 0:
             if is_spread:
                 alerts.append({"level": "error",
                                "msg": f"EXPIRED ({min_dte} DTE) — close now to avoid messy expiry fills. No assignment risk (defined-risk spread)."})

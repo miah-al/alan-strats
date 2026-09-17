@@ -153,7 +153,11 @@ def refresh_all(_n, _btn):
             qty  = float(r.get("Quantity") or 0)
             px   = float(r.get("TransactionPrice") or 0)
             mult = float(r.get("Multiplier") or 1)
-            trade_cf += (1.0 if dirn == "SELL" else -1.0) * qty * px * mult
+            amt  = r.get("Amount")
+            if amt is not None and amt == amt:                 # the runner books net cash (price, commission, fees) per leg
+                trade_cf += float(amt)
+            else:
+                trade_cf += (1.0 if dirn == "SELL" else -1.0) * qty * px * mult
     cash_bal = deposit_cash + trade_cf
 
     # market_value was accumulated per-position above (live mark-to-market;

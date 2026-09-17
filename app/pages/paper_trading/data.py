@@ -399,6 +399,36 @@ def position_risk(grp: "pd.DataFrame") -> float | None:
     return risk if risk > 1e-9 else None
 
 
+def _vertical_bound(grp) -> "tuple[float, float] | None":
+    """For a two-leg same-type, same-expiry, equal-size option vertical: the no-arbitrage range of its
+    liquidation value, (0, width*mult*qty) for a debit spread and (-width*mult*qty, 0) for a credit."""
+    try:
+        legs = grp[grp["SecurityType"].astype(str).str.lower() == "option"] if "SecurityType" in grp.columns else grp.iloc[0:0]
+        if len(legs) != 2:
+            return None
+        a, b = legs.iloc[0], legs.iloc[1]
+        same = (str(a.get("OptionType", "")).upper()[:1] == str(b.get("OptionType", "")).upper()[:1]
+                and str(a.get("Expiration"))[:10] == str(b.get("Expiration"))[:10]
+                and abs(float(a.get("Quantity") or 0)) == abs(float(b.get("Quantity") or 0))
+                and str(a.get("Direction", "")).upper() != str(b.get("Direction", "")).upper())
+        if not same:
+            return None
+        width = abs(float(a.get("Strike") or 0) - float(b.get("Strike") or 0))
+        qty = abs(float(a.get("Quantity") or 0)); mult = float(a.get("Multiplier") or 100)
+        if width <= 0:
+            return None
+        # debit spread = the bought leg is the one worth more: long the lower call / higher put
+        cp = str(a.get("OptionType", "")).upper()[:1]
+        buy_leg = a if str(a.get("Direction", "")).upper() == "BUY" else b
+        sell_leg = b if buy_leg is a else a
+        kb, ks = float(buy_leg.get("Strike") or 0), float(sell_leg.get("Strike") or 0)
+        debit = (kb < ks) if cp == "C" else (kb > ks)
+        cap = width * mult * qty
+        return (0.0, cap) if debit else (-cap, 0.0)
+    except Exception:
+        return None
+
+
 def live_market_value(open_groups: dict) -> tuple[float, bool, int, int]:
     """Live mark-to-market *liquidation* value of all open positions.
 
@@ -435,6 +465,7 @@ def live_market_value(open_groups: dict) -> tuple[float, bool, int, int]:
             except Exception:
                 live_opt = {}
         spots: dict[str, float | None] = {}
+        grp_live, grp_entry, grp_all_live, grp_n = 0.0, 0.0, True, 0
         for _, r in grp.iterrows():
             stype = str(r.get("SecurityType", "")).lower()
             if stype == "cash":
@@ -461,13 +492,21 @@ def live_market_value(open_groups: dict) -> tuple[float, bool, int, int]:
                         spots[und] = None
                 cur = spots.get(und)
 
-            n_total += 1
+            n_total += 1; grp_n += 1
+            grp_entry += liq_sign * entry_px * qty * mult
             if cur is not None:
                 n_priced += 1
-                px = float(cur)
+                grp_live += liq_sign * float(cur) * qty * mult
             else:
-                px = entry_px
-            mv += liq_sign * px * qty * mult
+                grp_all_live = False
+        # all legs live: the live value; otherwise the group's net entry value (never a mix)
+        if grp_n:
+            gv = grp_live if grp_all_live else grp_entry
+            bound = _vertical_bound(grp)
+            if bound is not None:                       # a vertical is worth between 0 and its width, whatever two stale quotes say
+                lo, hi = bound
+                gv = min(hi, max(lo, gv))
+            mv += gv
 
     is_live = n_total > 0 and n_priced == n_total
     return round(mv, 2), is_live, n_priced, n_total
@@ -584,7 +623,10 @@ def mtm_equity_series(txns_df: "pd.DataFrame", start_date, end_date=None) -> "pd
         def _sq(r):  # signed quantity: BUY +, SELL −
             return (1 if str(r["Direction"]).upper() == "BUY" else -1) * float(r["Quantity"] or 0)
 
-        def _cf(r):  # cash flow: SELL +, BUY −
+        def _cf(r):  # cash flow: the booked net cash when the runner wrote it, else SELL +, BUY −
+            amt = r.get("Amount") if hasattr(r, "get") else None
+            if amt is not None and amt == amt:
+                return float(amt)
             return ((1 if str(r["Direction"]).upper() == "SELL" else -1)
                     * float(r["Quantity"] or 0) * float(r["TransactionPrice"] or 0) * mult)
 
@@ -717,5 +759,8 @@ def position_pnl(grp, api_key=None) -> dict:
         prior += sign * float(prior_px) * qty * mult
 
     ne = _net_entry(grp)
+    _b = _vertical_bound(grp)
+    if _b is not None:                                  # two stale leg quotes cannot make a vertical worth more than its width
+        cur = min(_b[1], max(_b[0], cur)); prior = min(_b[1], max(_b[0], prior))
     return {"value": cur, "since_open": ne + cur, "dod": cur - prior,
             "is_live": n > 0 and priced == n}

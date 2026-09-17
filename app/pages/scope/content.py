@@ -65,7 +65,11 @@ def document_options() -> list[dict]:
 
 
 def default_document() -> str | None:
+    """A strategy's scope document before any review or plan."""
     options = document_options()
+    for o in options:
+        if "scope" in Path(o["value"]).stem.lower():
+            return o["value"]
     return options[0]["value"] if options else None
 
 

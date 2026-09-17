@@ -208,7 +208,7 @@ def _render_backtest_results(result, slug: str) -> html.Div:
                 font=dict(color=T.TEXT_PRIMARY, family="Inter, sans-serif", size=11),
                 height=max(180, 40 + 35 * len(pivot)),
                 margin=dict(l=10, r=60, t=30, b=10),
-                title=dict(text="Monthly return, % of capital (colour scale fits the data)", font=dict(size=12, color=T.TEXT_MUTED)),
+                title=dict(text="Monthly return, % of equity at the time (colour scale fits the data)", font=dict(size=12, color=T.TEXT_MUTED)),
                 xaxis=dict(side="top"),
                 template="plotly_dark",
             )
