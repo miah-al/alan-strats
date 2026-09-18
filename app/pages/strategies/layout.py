@@ -435,6 +435,9 @@ def _backtest_tab(slug: str) -> html.Div:
         html.Div(id=f"str-{slug}-bt-results"),
         type="circle",
         color=T.ACCENT,
+        # only the results container's own update shows the spinner; callbacks inside the results (the
+        # replay clock, downloads) must not blank the whole tab on every tick
+        target_components={f"str-{slug}-bt-results": "children"},
     )
 
     return html.Div([controls] + slider_cards + [results_area], style={"padding": "4px 0"})
