@@ -8,7 +8,7 @@ location outside both repositories.
     python -m scripts.archive_paper_day --strategy ndx_0dte_tasty --day 2026-09-22 --backup-dir D:\\paper_backups
 
 Archive folder: <strategy folder>/paper_log/archive/<date>/ (tracked by git, committed with the daily review).
-Backup zip:     <backup-dir>/<slug>_<date>.zip (default: ~/Documents/alan_trader_paper_archive/).
+Backup zip:     <backup-dir>/<slug>_<date>.zip (default: alan_trader_paper_archive/, a folder beside the alan_trader repo).
 Exit code 1 when the day has no event log at all (nothing ran), so a scheduler can see it.
 """
 from __future__ import annotations
@@ -68,14 +68,14 @@ def main(argv=None) -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--strategy", required=True)
     ap.add_argument("--day", default=None)
-    ap.add_argument("--backup-dir", default=None, help="where the dated zip goes (default: ~/Documents/alan_trader_paper_archive)")
+    ap.add_argument("--backup-dir", default=None, help="where the dated zip goes (default: alan_trader_paper_archive beside the alan_trader repo)")
     args = ap.parse_args(argv)
     from paper.runner import PaperSession
     folder = PaperSession._strategy_folder(args.strategy)
     if folder is None:
         print(f"cannot archive: strategy folder for {args.strategy} not found"); return 1
     day = date.fromisoformat(args.day) if args.day else date.today()
-    backup_dir = Path(args.backup_dir) if args.backup_dir else Path.home() / "Documents" / "alan_trader_paper_archive"
+    backup_dir = Path(args.backup_dir) if args.backup_dir else ROOT.parent / "alan_trader_paper_archive"   # parallel to the repos, outside both
     r = gather(args.strategy, day, folder, backup_dir)
     print(f"{day} archived to {r['archive']}; backup {r['zip']}")
     print("  saved:", ", ".join(r["saved"]) or "nothing")
