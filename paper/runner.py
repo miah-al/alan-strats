@@ -402,6 +402,11 @@ class PaperSession:
             blocked, why = True, f"no {prov.root} contracts expire today"
         logger.info("%s %s: gate %s; %d contracts in today's %s chain", self.slug, day, (f"BLOCKED ({why})" if blocked else "open"), n_chain, prov.root)
         self._alert(f"{day} gate {'BLOCKED: ' + why if blocked else 'open'}; {n_chain} contracts")
+        try:                                                    # the exact rules this session ran with, in its own diary
+            _pp = self.strategy.params; _pd = _pp.as_dict() if hasattr(_pp, "as_dict") else dict(vars(_pp))
+            logger.info("%s %s: params %s", self.slug, day, json.dumps(_pd, default=str, sort_keys=True))
+        except Exception:
+            pass
         if self.write_ledger:
             L.record_session(self.db, day, self.underlying, self.slug, blocked, why, note=f"live {prov.name}, {n_chain} contracts")
         session = self._restore(day, why) or self.strategy.live_session(day, blocked_reason=why)
