@@ -35,6 +35,9 @@ SESSION_OPEN = dtime(9, 30)
 SESSION_CLOSE_MIN = 16 * 60
 MAX_FILLS_PER_SESSION = 60          # runaway guard: more fills than this in a day means bad data, not trading
 VXN_MAX_AGE_DAYS = 4                # the gate's VXN close must be at most this many days old
+FETCH_BACKOFF_MAX_S = 300          # a failing quote feed is polled less and less often, never faster than this cap
+FETCH_FAILURES_TO_HALT = 12        # ~25 minutes of backoff-spaced failures: stop asking, alert, keep the state
+MIN_POLL_S = 10                    # the broker's API is never polled faster than this, whatever the flag says
 QUOTE_SILENCE_ALERT_MIN = 5         # alert when no quote fetch has succeeded for this long during the session
 STATE_DIR = Path(os.path.dirname(os.path.dirname(__file__))) / "paper_state"
 LOG_COLS = ["ts", "minute", "event", "ndx", "k_low", "k_high", "kind", "direction", "bid", "ask", "last", "age",
@@ -379,7 +382,8 @@ class PaperSession:
         """Follow the clock (``now_fn``, injectable for tests) with a real-time provider: poll quotes,
         build the underlying's minute bars, drive the engine at each minute's end."""
         prov = self.provider
-        poll = int(poll_seconds or getattr(prov, "poll_seconds", 15))
+        poll = max(MIN_POLL_S, int(poll_seconds or getattr(prov, "poll_seconds", 15)))
+        fetch_failures = 0
         day = day or now_fn().date()
         problems = self._preflight(day)
         for pr in problems:
@@ -453,11 +457,20 @@ class PaperSession:
                 last_good_fetch = now
                 silence_alerted = False
             except Exception as exc:
-                logger.warning("fetch failed: %s", exc)
+                fetch_failures += 1
+                logger.warning("fetch failed (%d in a row): %s", fetch_failures, exc)
                 if last_good_fetch is not None and not silence_alerted and (now - last_good_fetch).total_seconds() >= QUOTE_SILENCE_ALERT_MIN * 60:
                     self._alert(f"no quotes for {QUOTE_SILENCE_ALERT_MIN} minutes ({exc}); {len(session.positions)} open"); silence_alerted = True
-                self._heartbeat(day, now, session, f"fetch failing: {str(exc)[:60]}")
-                sleep_fn(poll); continue
+                # a rejected credential is never retried: re-asking cannot fix it and looks like abuse to the broker
+                if "rejected the credentials" in str(exc) or fetch_failures >= FETCH_FAILURES_TO_HALT:
+                    self.halted = f"quote feed halted after {fetch_failures} failures: {str(exc)[:120]}"
+                    logger.error(self.halted); self._alert(self.halted)
+                    self._heartbeat(day, now, session, "halted: quote feed"); self._save_state(session, day, finished=False)
+                    break
+                wait = min(FETCH_BACKOFF_MAX_S, poll * (2 ** min(fetch_failures - 1, 5)))     # 15, 30, 60, 120, 240, 300 ...
+                self._heartbeat(day, now, session, f"fetch failing ({fetch_failures}), next try in {wait}s: {str(exc)[:60]}")
+                sleep_fn(wait); continue
+            fetch_failures = 0
             self._heartbeat(day, now, session)
             prov.sample_underlying(quotes, now)
             this_minute = now.replace(second=0, microsecond=0)

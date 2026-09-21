@@ -126,3 +126,49 @@ def test_live_loop_with_a_fake_provider_matches_the_replay(tmp_path):
     assert abs(res.day_pnl - rep.day_pnl) < 1e-6
     # strikes chosen on the fly were fetched on demand
     assert any(sym.startswith("NDXP") for sym in fake.symbols_seen)
+
+
+def test_failing_quote_feed_backs_off_and_halts(tmp_path, monkeypatch):
+    """A broken feed is polled less and less often and the session halts after a bounded number of
+    failures; a rejected credential halts at once. The broker is never hammered. No network: the
+    provider here is a stub that always fails."""
+    from datetime import date as _date
+    from paper import runner as R
+    from paper.runner import PaperSession
+
+    class DeadProvider:
+        name = "fake-live"; underlying = "NDX"; root = "NDXP"; poll_seconds = 20
+        def __init__(self, message):
+            self.message = message; self.fetch_calls = 0; self.expiry = DAY
+        def load_chain(self, day): return 64
+        def leg_symbols(self, kind, k_low, k_high): return (None, None)
+        def fetch(self, symbols):
+            self.fetch_calls += 1; raise RuntimeError(self.message)
+        def sample_underlying(self, quotes, when): return None
+        def close_minute(self, minute): return None
+        def backfill_bars(self, day, until): return []
+
+    monkeypatch.setattr(PaperSession, "_preflight", lambda self, day: [])
+    monkeypatch.setattr(PaperSession, "_gate", lambda self, day: (False, ""))
+    t = [datetime.combine(DAY, datetime.min.time()) + timedelta(hours=11)]
+    sleeps = []
+    def now_fn(): return t[0]
+    def sleep_fn(sec): sleeps.append(sec); t[0] = t[0] + timedelta(seconds=sec)
+
+    # 1. a feed that keeps failing: exponential backoff, then a halt
+    prov = DeadProvider("connection reset")
+    ps = PaperSession(SLUG, prov, None, write_ledger=False, log_dir=tmp_path / "a", state_dir=tmp_path / "sa")
+    res = ps.run_live(day=DAY, poll_seconds=20, now_fn=now_fn, sleep_fn=sleep_fn)
+    assert ps.halted and "quote feed halted" in ps.halted
+    assert prov.fetch_calls == R.FETCH_FAILURES_TO_HALT
+    assert sleeps[:6] == [20, 40, 80, 160, 300, 300]                 # doubling from the poll, capped at FETCH_BACKOFF_MAX_S
+    # 2. a rejected credential: one failure, no retry at all
+    prov2 = DeadProvider("tastytrade rejected the credentials (Client secret mismatch)")
+    ps2 = PaperSession(SLUG, prov2, None, write_ledger=False, log_dir=tmp_path / "b", state_dir=tmp_path / "sb")
+    ps2.run_live(day=DAY, poll_seconds=20, now_fn=now_fn, sleep_fn=sleep_fn)
+    assert prov2.fetch_calls == 1 and "rejected the credentials" in ps2.halted
+    # 3. the poll rate has a floor whatever the flag says
+    prov3 = DeadProvider("x")
+    ps3 = PaperSession(SLUG, prov3, None, write_ledger=False, log_dir=tmp_path / "c", state_dir=tmp_path / "sc")
+    n_before = len(sleeps); ps3.run_live(day=DAY, poll_seconds=1, now_fn=now_fn, sleep_fn=sleep_fn)
+    assert min(sleeps[n_before:]) >= R.MIN_POLL_S

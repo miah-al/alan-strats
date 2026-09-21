@@ -47,7 +47,7 @@ def main(argv=None) -> int:
     fh.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s")); logging.getLogger().addHandler(fh)
 
     from db.client import get_engine
-    from paper.runner import PaperSession
+    from paper.runner import PaperSession, now_et
     from paper.providers import ReplayProvider, TastytradeProvider
     from strategy_api import registry as R
 
@@ -91,10 +91,23 @@ def main(argv=None) -> int:
             day = date.today()
             n = prov.load_chain(day)
             print(f"tastytrade session ok; {n} {root} contracts expiring {day}")
-            syms = [o.symbol for o in list(prov._chain.values())[:2]]
-            q = prov.fetch(syms)
-            for s, lq in q.items():
-                print(f"  {s}: bid {lq.bid} ask {lq.ask} last {lq.last} last_time {lq.last_time} updated {lq.updated}")
+            # one quote request, on the structure the strategy trades: the underlying, then the two legs of a
+            # near-the-money vertical (read-only; the runner never places an order)
+            spot_q = prov.fetch([]).get(underlying)
+            spot = float(spot_q.last) if spot_q is not None and spot_q.last is not None else None
+            inst = strategy.live_instrument() if hasattr(strategy, "live_instrument") else {}
+            width = float(inst.get("width") or 50.0); itm = float(getattr(getattr(strategy, "params", None), "itm_offset", 24.0))
+            if spot is None:
+                print("  no underlying price (market closed?); skipping the leg quotes")
+            else:
+                ls, ss, kl, kh = prov.near_the_money_vertical(spot, width, itm)
+                q = prov.fetch([s for s in (ls, ss) if s])
+                for s in (ls, ss):
+                    lq = q.get(s) if s else None
+                    print(f"  {s}: bid {lq.bid} ask {lq.ask} last {lq.last} last_time {lq.last_time} updated {lq.updated}" if lq else f"  {s}: no quote")
+                from paper.providers import vertical_quote
+                v = vertical_quote(q[ls], q[ss], now_et()) if ls in q and ss in q else None
+                print(f"  NDX {spot:,.2f}; bull call vertical {kl:.0f}/{kh:.0f}: " + (f"bid {v.bid:.2f} ask {v.ask:.2f} quoted spread {v.ask - v.bid:.2f} pts, leg ages {v.legs[0][2]} / {v.legs[1][2]} min (backtest assumed 1.0 pt)" if v else "no two-sided quote"))
             ps = PaperSession(args.strategy, prov, engine, write_ledger=False, params=params)
             problems = ps._preflight(day)
             blocked, why = ps._gate(day)
