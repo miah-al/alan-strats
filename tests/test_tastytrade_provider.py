@@ -175,3 +175,30 @@ def test_paper_path_never_imports_order_or_account_apis():
             assert mod in allowed, f"{src.name} imports {mod}"
         for word in ("place_order", "new_order", "NewOrder", "submit_order", "OrderAction", "/orders", "get_accounts", "Account.get"):
             assert word not in text, f"{src.name} mentions {word}"
+
+
+def test_request_budget_floors_spaces_and_caps_calls():
+    """No caller can exceed the broker budget: a floor between calls, a per-minute cap, a per-day cap."""
+    from paper.providers import RequestBudget
+    clock = [1000.0]; slept = []
+    b = RequestBudget(min_interval_s=5.0, per_minute=3, per_day=5, clock=lambda: clock[0], sleep=lambda s: (slept.append(s), clock.__setitem__(0, clock[0] + s)))
+    b.take(); b.take()                                   # the second call waits out the 5 s floor
+    assert slept == [5.0] and b.calls_today == 2
+    clock[0] += 5; b.take()                              # third call within the minute: allowed
+    clock[0] += 5; b.take()                              # fourth: the per-minute cap makes it wait for the window to roll
+    assert slept[-1] > 40 and b.calls_today == 4
+    clock[0] += 5; b.take()
+    with pytest.raises(RuntimeError, match="budget spent"):
+        b.take()                                         # the day's cap: no sleeping, no call, a plain error
+
+
+def test_provider_counts_every_broker_call_against_the_budget(fake_sdk):
+    from datetime import date
+    from paper.providers import TastytradeProvider, RequestBudget
+    p = TastytradeProvider("NDX", "NDXP")
+    p.budget = RequestBudget(min_interval_s=0.0, per_minute=100, per_day=100, clock=lambda: 0.0, sleep=lambda s: None)
+    p.load_chain(date(2026, 9, 17)); p.fetch(["NDXP260917C29100000"])
+    fake_sdk["fail_next"] = True; p.fetch(["NDXP260917C29100000"])          # one failure, one re-login, one retry
+    assert p.budget.calls_today == 4                                          # chain + fetch + failed fetch + retry
+    with pytest.raises(RuntimeError, match="101 option symbols"):
+        p.fetch([f"S{i}" for i in range(101)])

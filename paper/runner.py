@@ -288,7 +288,8 @@ class PaperSession:
         try:
             hb = {"slug": self.slug, "day": str(day), "at": now.isoformat(timespec="seconds"), "provider": getattr(self.provider, "name", "?"),
                   "open_positions": len(session.positions), "fills": len(session.fills), "trades": len(session.trades),
-                  "marked": round(session.marked(), 0), "day_pnl": round(session.day_pnl, 0), "halted": self.halted or "", "note": note}
+                  "marked": round(session.marked(), 0), "day_pnl": round(session.day_pnl, 0), "halted": self.halted or "", "note": note,
+                  "api_calls_today": getattr(getattr(self.provider, "budget", None), "calls_today", None)}   # how many broker requests so far
             (self.state_dir / f"heartbeat_{self.slug}.json").write_text(json.dumps(hb), encoding="utf-8")
         except Exception:
             pass
