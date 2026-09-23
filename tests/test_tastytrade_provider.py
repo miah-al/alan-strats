@@ -168,7 +168,11 @@ def test_paper_path_never_imports_order_or_account_apis():
     import pathlib, re
     root = pathlib.Path(__file__).resolve().parents[1]
     sources = [root / "paper" / "providers.py", root / "paper" / "runner.py", root / "scripts" / "paper_runner.py"]
-    allowed = {"tastytrade", "tastytrade.instruments", "tastytrade.market_data", "tastytrade.utils"}
+    # tastytrade.dxfeed holds the streamed market-data event types (Candle, Quote, Trade, TimeAndSale,
+    # Greeks, Profile, Summary, TheoPrice, Underlying) and nothing else -- audited 2026-09-23, when the
+    # bar backfill moved from Polygon to the broker's own candle feed. It carries no order, account or
+    # execution code; the forbidden-word check below still guards against any of that appearing.
+    allowed = {"tastytrade", "tastytrade.instruments", "tastytrade.market_data", "tastytrade.utils", "tastytrade.dxfeed"}
     for src in sources:
         text = src.read_text(encoding="utf-8")
         for mod in re.findall(r"^\s*(?:from|import)\s+(tastytrade[\w.]*)", text, flags=re.M):
@@ -202,3 +206,19 @@ def test_provider_counts_every_broker_call_against_the_budget(fake_sdk):
     assert p.budget.calls_today == 4                                          # chain + fetch + failed fetch + retry
     with pytest.raises(RuntimeError, match="101 option symbols"):
         p.fetch([f"S{i}" for i in range(101)])
+
+
+def test_request_budget_day_cap_holds_across_processes(tmp_path):
+    """Two budgets sharing one day file -- two processes -- cannot each spend the whole day's allowance."""
+    from paper.providers import RequestBudget
+    shared = tmp_path / "broker_calls.json"
+    a = RequestBudget(min_interval_s=0, per_minute=1000, per_day=5, shared_path=shared, sleep=lambda s: None)
+    b = RequestBudget(min_interval_s=0, per_minute=1000, per_day=5, shared_path=shared, sleep=lambda s: None)
+    for _ in range(3):
+        a.take()
+    for _ in range(2):
+        b.take()
+    assert b.shared_calls == 5
+    import pytest
+    with pytest.raises(RuntimeError, match="across all processes"):
+        b.take()

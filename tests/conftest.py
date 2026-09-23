@@ -1,0 +1,19 @@
+"""Shared test isolation.
+
+The paper provider keeps a day-long count of broker requests in a file shared by every process, so that
+a paper session, a streamer and any ad-hoc script cannot each spend the whole daily budget. Tests must
+never touch the real one: they would read the live runner's count and fail against their own small caps,
+and every request they made would come out of the live session's budget.
+"""
+import pytest
+
+
+@pytest.fixture(autouse=True)
+def _isolated_broker_budget(tmp_path, monkeypatch):
+    try:
+        import paper.providers as providers
+    except Exception:
+        yield
+        return
+    monkeypatch.setattr(providers, "BUDGET_STATE_DIR", str(tmp_path / "budget"))
+    yield

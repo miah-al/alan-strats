@@ -288,12 +288,21 @@ class PaperSession:
             except Exception as exc:
                 logger.warning("session features not recorded: %s", exc)
 
-    def _heartbeat(self, day: date, now: datetime, session, note: str = "") -> None:
-        """A small file the Paper tab reads: when the runner last polled, what it holds, the day so far."""
+    def _heartbeat(self, day: date, now: datetime, session, note: str = "", live_marks: dict | None = None,
+                   live_legs: dict | None = None, spot: float | None = None) -> None:
+        """A small file the Paper tab reads: when the runner last polled, what it holds, the day so far.
+
+        ``live_marks`` carries each open position's mark from the quote in hand at THIS poll. The
+        engine only remarks a position when a minute bar closes, so without this the page could show
+        a price up to a minute old however often it was refreshed, and would sit unchanged through
+        three perfectly good quotes. These are for display only; the engine still decides on bars.
+        """
         try:
             hb = {"slug": self.slug, "day": str(day), "at": now.isoformat(timespec="seconds"), "provider": getattr(self.provider, "name", "?"),
                   "open_positions": len(session.positions), "fills": len(session.fills), "trades": len(session.trades),
                   "marked": round(session.marked(), 0), "day_pnl": round(session.day_pnl, 0), "halted": self.halted or "", "note": note,
+                  "live_marks": live_marks or {}, "live_legs": live_legs or {}, "spot": spot, "underlying": self.underlying,
+                  "marks_at": now.isoformat(timespec="seconds") if live_marks else "",
                   "api_calls_today": getattr(getattr(self.provider, "budget", None), "calls_today", None)}   # how many broker requests so far
             (self.state_dir / f"heartbeat_{self.slug}.json").write_text(json.dumps(hb), encoding="utf-8")
         except Exception:
@@ -421,10 +430,18 @@ class PaperSession:
         quotes: dict = {}
         # late start: feed the engine today's earlier bars so its lookback and the features are complete
         start_now = now_fn()
-        if not session.closes and start_now.time() > SESSION_OPEN and hasattr(prov, "backfill_bars"):
+        # Not "no history" but "not enough history": a session restarted mid-morning resumes holding
+        # the handful of bars it had polled before stopping, which is worse than none -- it looks
+        # populated, so the backfill is skipped, and the engine then waits out the whole lookback
+        # again before it can signal. The backfill runs to now, so it supersedes that partial history.
+        need = int(getattr(self.strategy.params, "lookback_min", 30))
+        if len(session.closes) < need and start_now.time() > SESSION_OPEN and hasattr(prov, "backfill_bars"):
             back = prov.backfill_bars(day, start_now.replace(second=0, microsecond=0))
             if back:
-                logger.info("late start %s: backfilling %d bars from %s", start_now.strftime("%H:%M"), len(back), back[0].ts.strftime("%H:%M"))
+                logger.info("late start %s: backfilling %d bars from %s (had %d)",
+                            start_now.strftime("%H:%M"), len(back), back[0].ts.strftime("%H:%M"), len(session.closes))
+                session.closes.clear()
+                self._day_bars.clear()
                 for b in back:
                     m = _minute_of(b.ts) + 1
                     self._day_bars.append(b)
@@ -482,7 +499,26 @@ class PaperSession:
                 self._heartbeat(day, now, session, f"fetch failing ({fetch_failures}), next try in {wait}s: {str(exc)[:60]}")
                 sleep_fn(wait); continue
             fetch_failures = 0
-            self._heartbeat(day, now, session)
+            # Remark every open position off the quote just fetched, so the page moves with the
+            # market rather than in once-a-minute steps. Costs nothing: these quotes are in hand.
+            live_marks: dict = {}
+            live_legs: dict = {}
+            for pos in session.positions:
+                try:
+                    qv = prov.quote_vertical(pos.kind, pos.k_low, pos.k_high, quotes, now, carry)
+                    if qv is not None:
+                        live_marks[f"{pos.direction}|{float(pos.k_low)}|{float(pos.k_high)}"] = round(float(qv.last), 2)
+                    # the legs too, so the position popup can price each one without opening its own
+                    # broker connection from inside the web process
+                    for sym in prov.leg_symbols(pos.kind, pos.k_low, pos.k_high):
+                        lq = quotes.get(sym) if sym else None
+                        if lq is not None and lq.bid is not None and lq.ask is not None and lq.ask >= lq.bid:
+                            live_legs[str(sym)] = round((float(lq.bid) + float(lq.ask)) / 2.0, 2)
+                except Exception:
+                    pass
+            iq = quotes.get(self.underlying)
+            spot_now = float(iq.last) if (iq is not None and iq.last is not None) else None
+            self._heartbeat(day, now, session, live_marks=live_marks, live_legs=live_legs, spot=spot_now)
             prov.sample_underlying(quotes, now)
             this_minute = now.replace(second=0, microsecond=0)
             if cur_minute is None:

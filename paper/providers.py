@@ -25,6 +25,10 @@ from strategy_api.live import Quote
 logger = logging.getLogger("paper.providers")
 ET = "US/Eastern"
 MAX_SPREAD_PTS = 20.0        # a vertical quoted wider than this (points) is treated as unquoted
+# Where the cross-process count of broker requests is kept for the day. A module setting rather than a
+# hard-coded path so the test suite can point it at a temporary folder: tests must neither read the live
+# runner's count (and fail against their own small caps) nor add to it (and spend its budget).
+BUDGET_STATE_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "paper_state")
 
 
 def now_et() -> datetime:
@@ -51,10 +55,20 @@ class LegQuote:
     updated: Optional[datetime]       # naive ET
 
 
-def vertical_quote(long_leg: LegQuote, short_leg: LegQuote, now: datetime, carry_min: int = 30) -> Optional[Quote]:
+def vertical_quote(long_leg: LegQuote, short_leg: LegQuote, now: datetime, carry_min: int = 30,
+                   max_width: Optional[float] = None) -> Optional[Quote]:
     """Two-sided quote of a LONG vertical from its legs: bid = bid(long) - ask(short),
-    ask = ask(long) - bid(short), last = last(long) - last(short) (falls back to the mid when a
-    leg has not printed), age = minutes since the older of the two legs' last prints/updates."""
+    ask = ask(long) - bid(short), last = the midpoint, age = minutes since the older leg updated.
+
+    ``last`` is deliberately NOT last(long) - last(short). The two legs' prints happen at different
+    times -- the snapshot feed carries no trade timestamp at all, so a leg that has not traded for an
+    hour still reports one -- and subtracting them produces numbers that cannot exist: measured on
+    2026-09-23, that construction valued a 50-wide vertical at 226 points. The midpoint is both
+    well defined and, on that day's evidence, where spreads actually transact: of 1,458 two-leg
+    verticals rebuilt from the day's multi-leg prints, the median filled at the derived mid, and
+    whoever crossed paid about 1.2 points with the long leg 25+ points in the money, about 0.1
+    nearer. So the mid is a live vertical's price (a strategy that crosses adds its own cost to
+    it), and a synthetic "last" is not."""
     if long_leg.bid is None or long_leg.ask is None or short_leg.bid is None or short_leg.ask is None:
         return None
     for leg in (long_leg, short_leg):                       # a crossed, empty or one-sided leg quote is no quote
@@ -62,15 +76,43 @@ def vertical_quote(long_leg: LegQuote, short_leg: LegQuote, now: datetime, carry
             return None
     bid = float(long_leg.bid) - float(short_leg.ask)
     ask = float(long_leg.ask) - float(short_leg.bid)
-    if ask - bid > MAX_SPREAD_PTS:                          # a vertical quoted wider than this is not tradeable
+    # A derived width is the two legs' widths ADDED, not a spread anyone quotes, and it is widest
+    # exactly when one leg is deep in the money -- which is this structure by design. A flat 20-point
+    # cap threw away good quotes at the worst moment: with no quote the engine cannot check the target,
+    # the adds or the stop on that bar. On 2026-09-23 the strategy's own 50-wide verticals quoted up
+    # to 22.2 points wide at two of its target exits (median 7.5, p99 16.2 across 127 polls), so 20
+    # would have blocked both.
+    #
+    # The cap scales with the structure instead: 60% of the strike width, 30 points on a 50-wide. That
+    # leaves a third of headroom over anything observed, and still refuses a quote so wide that its
+    # midpoint says nothing -- a leg quoted 0/100 would otherwise produce a mark that could fire a
+    # target on its own.
+    cap = max(float(MAX_SPREAD_PTS), 0.6 * float(max_width)) if max_width else float(MAX_SPREAD_PTS)
+    if ask - bid > cap:
         return None
+    # A long vertical is worth between nothing and the distance between its strikes -- that is
+    # arbitrage, not an assumption. Leg quotes that disagree can in principle produce a midpoint
+    # outside those bounds (a safeguard: no live mark has been seen to do it), and every decision
+    # reads that midpoint: the target through ``last``, and the engine's own mark, add trigger and
+    # daily loss cap through (bid + ask) / 2.
+    #
+    # So the MIDPOINT is what gets bounded, and the quote is shifted so that (bid + ask) / 2 lands
+    # exactly on it, width unchanged. Clamping bid and ask separately -- the first version of this
+    # -- is wrong: it drags the mid toward the middle of the range, so a raw 44/58 on a 50-wide
+    # (mid 51, fairly worth at most 50) came out at 47, understating exactly the near-max marks
+    # where targets are hit. A quote whose midpoint is already in range is left untouched.
     mid = (bid + ask) / 2.0
-    lasts, ages = [], []
+    if max_width:
+        w = float(max_width)
+        bounded = min(max(mid, 0.0), w)
+        if bounded != mid:
+            shift = bounded - mid
+            bid, ask, mid = bid + shift, ask + shift, bounded
+    ages = []
     for leg in (long_leg, short_leg):
         ref = leg.last_time or leg.updated
         ages.append(int((now - ref).total_seconds() // 60) if ref is not None else carry_min + 1)
-        lasts.append(float(leg.last) if leg.last is not None else None)
-    last = (lasts[0] - lasts[1]) if (lasts[0] is not None and lasts[1] is not None) else mid
+    last = mid
     age = max(0, max(ages))
     if age > carry_min:
         return None
@@ -165,9 +207,22 @@ class ReplayProvider:
 
 # ── tastytrade ────────────────────────────────────────────────────────────────
 
+_SDK_LOOP = None            # one loop for the whole process: asyncio.run() per call closes the SDK's
+                            # pooled connections under it and the next call dies on "Event loop is closed"
+
+
+def _sdk_loop():
+    import asyncio
+    global _SDK_LOOP
+    if _SDK_LOOP is None or _SDK_LOOP.is_closed():
+        _SDK_LOOP = asyncio.new_event_loop()
+    return _SDK_LOOP
+
+
 def _sdk_call(fn, *args, **kwargs):
     """Call a tastytrade SDK function and return its result, awaiting it when the installed SDK made it a
-    coroutine (13.x did); a synchronous SDK or a test fake passes straight through."""
+    coroutine (13.x did); a synchronous SDK or a test fake passes straight through. Every await runs on
+    one long-lived loop, so the SDK's HTTP connection pool survives between calls."""
     import asyncio
     import inspect
     result = fn(*args, **kwargs)
@@ -175,7 +230,7 @@ def _sdk_call(fn, *args, **kwargs):
         try:
             asyncio.get_running_loop()
         except RuntimeError:
-            return asyncio.run(result)
+            return _sdk_loop().run_until_complete(result)
         raise RuntimeError("TastytradeProvider is synchronous and cannot be driven from inside a running event loop")
     return result
 
@@ -199,7 +254,8 @@ class RequestBudget:
     publishes no per-endpoint quota and suggests 50/s as a client-side ceiling; the paper runner
     needs about 4 a minute, so these are set far below what would ever draw a 429."""
 
-    def __init__(self, min_interval_s: float = 5.0, per_minute: int = 20, per_day: int = 3000, clock=None, sleep=None):
+    def __init__(self, min_interval_s: float = 5.0, per_minute: int = 20, per_day: int = 3000, clock=None, sleep=None,
+                 shared_path: Optional["Path"] = None):
         import time as _time
         self.min_interval_s = float(min_interval_s); self.per_minute = int(per_minute); self.per_day = int(per_day)
         self._clock = clock or _time.monotonic; self._sleep = sleep or _time.sleep
@@ -207,11 +263,62 @@ class RequestBudget:
         self._minute: list[float] = []            # monotonic times of calls in the last 60 s
         self.calls_today = 0
         self.waits = 0
+        # The day's cap has to hold across PROCESSES, not just within one: a paper session, a streamer
+        # and an ad-hoc script each counting to 3000 privately is three times the intended ceiling.
+        # A small shared file keeps one running total for the day; if it cannot be used the budget
+        # still works, just per process, so a filesystem problem never blocks trading.
+        if shared_path is None:
+            from pathlib import Path as _Path
+            shared_path = _Path(BUDGET_STATE_DIR) / f"broker_calls_{date.today().isoformat()}.json"
+        self.shared_path = shared_path
+        self.shared_calls = 0
+
+    def _bump_shared(self) -> int:
+        """Add one to the day's cross-process total and return it (0 when the file is unusable)."""
+        import json
+        import os
+        try:
+            self.shared_path.parent.mkdir(parents=True, exist_ok=True)
+            lock = self.shared_path.with_suffix(".lock")
+            for _ in range(50):                       # a brief spin: every writer holds the lock for microseconds
+                try:
+                    fd = os.open(str(lock), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+                    break
+                except FileExistsError:
+                    self._sleep(0.01)
+            else:
+                try:                                  # a stale lock from a killed process must not wedge the day
+                    os.unlink(str(lock))
+                except OSError:
+                    pass
+                return self.shared_calls
+            try:
+                total = 0
+                if self.shared_path.exists():
+                    try:
+                        total = int(json.loads(self.shared_path.read_text(encoding="utf-8")).get("calls", 0))
+                    except (ValueError, OSError):
+                        total = 0
+                total += 1
+                self.shared_path.write_text(json.dumps({"date": date.today().isoformat(), "calls": total}), encoding="utf-8")
+                self.shared_calls = total
+                return total
+            finally:
+                os.close(fd)
+                try:
+                    os.unlink(str(lock))
+                except OSError:
+                    pass
+        except OSError:
+            return self.shared_calls
 
     def take(self) -> None:
         """Block until a call is allowed, then count it. Raises when the day's budget is spent."""
         if self.calls_today >= self.per_day:
             raise RuntimeError(f"tastytrade request budget spent: {self.calls_today} calls today (cap {self.per_day}); not calling again today")
+        if self.shared_calls >= self.per_day:
+            raise RuntimeError(f"tastytrade request budget spent across all processes: {self.shared_calls} calls today "
+                               f"(cap {self.per_day}); not calling again today")
         now = self._clock()
         if self._last is not None and now - self._last < self.min_interval_s:
             self._sleep(self.min_interval_s - (now - self._last)); self.waits += 1; now = self._clock()
@@ -220,6 +327,7 @@ class RequestBudget:
             self._sleep(60.0 - (now - self._minute[0]) + 0.01); self.waits += 1; now = self._clock()
             self._minute = [x for x in self._minute if now - x < 60.0]
         self._last = now; self._minute.append(now); self.calls_today += 1
+        self._bump_shared()
 
 
 class TastytradeProvider:
@@ -328,12 +436,17 @@ class TastytradeProvider:
             t = t.tz_convert(ET) if t.tzinfo is not None else t.tz_localize("UTC").tz_convert(ET)
             return t.tz_localize(None).to_pydatetime()
 
+        self._last_rows = {str(r.symbol): r for r in rows}        # the SDK rows, for anything that wants sizes or volume
         for r in rows:
             out[str(r.symbol)] = LegQuote(symbol=str(r.symbol), bid=(float(r.bid) if r.bid is not None else None),
                                           ask=(float(r.ask) if r.ask is not None else None),
                                           last=(float(r.last) if r.last is not None else None),
                                           last_time=et(getattr(r, "last_trade_time", None)), updated=et(getattr(r, "updated_at", None)))
         return out
+
+    def last_row(self, symbol):
+        """The raw SDK row from the most recent fetch (bid and ask sizes, volume, last trade), or None."""
+        return getattr(self, "_last_rows", {}).get(str(symbol)) if symbol else None
 
     def sample_underlying(self, quotes: dict[str, LegQuote], when: datetime) -> Optional[float]:
         q = quotes.get(self.underlying)
@@ -345,21 +458,49 @@ class TastytradeProvider:
         return px
 
     def backfill_bars(self, day: date, until: datetime) -> list[Bar]:
-        """Today's earlier 1-minute bars from Polygon (index aggregates, delayed on the Starter plan),
-        for a runner that starts after 09:30: the engine's 30-minute lookback needs them. Returns
-        the bars strictly before ``until``; empty when the key or the data is missing."""
+        """Today's earlier 1-minute bars, for a runner that starts after 09:30: the engine's 30-minute
+        lookback needs them, and without them it cannot signal until it has polled its own history.
+
+        The broker's own candle feed, deliberately and only. A live session takes every number from
+        the venue it trades on, so its bars cannot disagree with its quotes; Polygon belongs to
+        backtests and stored history, not here. Returns the bars strictly before ``until``."""
+        bars = self._backfill_from_stream(day, until)
+        if bars:
+            logger.info("backfilled %d bars from the broker's candle feed (%s to %s)",
+                        len(bars), bars[0].ts.strftime("%H:%M"), bars[-1].ts.strftime("%H:%M"))
+        return bars
+
+    def _backfill_from_stream(self, day: date, until: datetime) -> list[Bar]:
+        """Today's 1-minute candles over DXLink. Costs no REST budget: it is a market-data subscription
+        that replays from ``fromTime``, then goes quiet once it has sent what it holds."""
+        async def _pull() -> list[Bar]:
+            import anyio
+            from tastytrade import DXLinkStreamer
+            from tastytrade.dxfeed import Candle
+            start = datetime.combine(day, dtime(9, 30))
+            out: dict[datetime, Bar] = {}
+            async with DXLinkStreamer(self.session) as st:
+                await st.subscribe_candle([self.underlying], "1m", start_time=start)
+                quiet = 0
+                while quiet < 12 and len(out) < 500:      # stop after ~3 s with nothing new
+                    await anyio.sleep(0.25)
+                    fresh = False
+                    c = st.get_event_nowait(Candle)
+                    while c is not None:
+                        if c.time and c.close:
+                            ts = datetime.fromtimestamp(c.time / 1000)
+                            if start <= ts < until:
+                                out[ts] = Bar(ts=ts, open=float(c.open), high=float(c.high),
+                                              low=float(c.low), close=float(c.close))
+                                fresh = True
+                        c = st.get_event_nowait(Candle)
+                    quiet = 0 if fresh else quiet + 1
+            return [out[k] for k in sorted(out)]
+
         try:
-            from app import get_polygon_api_key
-            from db.sync import _polygon_minute_aggs, polygon_ticker_for
-            key = get_polygon_api_key()
-            if not key:
-                return []
-            df = _polygon_minute_aggs(polygon_ticker_for(self.underlying), day, day, key)
-            df = df[df["ts"] < until]
-            return [Bar(ts=pd.Timestamp(r.ts).to_pydatetime(), open=float(r.open), high=float(r.high), low=float(r.low), close=float(r.close))
-                    for r in df.itertuples(index=False)]
+            return _sdk_loop().run_until_complete(_pull())
         except Exception as exc:
-            logger.warning("backfill failed: %s", exc)
+            logger.warning("backfill from the broker's candle feed failed: %s", exc)
             return []
 
     def close_minute(self, minute_start: datetime) -> Optional[Bar]:
@@ -375,4 +516,5 @@ class TastytradeProvider:
         ls, ss = self.leg_symbols(kind, k_low, k_high)
         if not ls or not ss or ls not in quotes or ss not in quotes:
             return None
-        return vertical_quote(quotes[ls], quotes[ss], now, carry_min)
+        # the strikes give the arbitrage bound on how wide this vertical's quote can sensibly be
+        return vertical_quote(quotes[ls], quotes[ss], now, carry_min, max_width=abs(float(k_high) - float(k_low)))
