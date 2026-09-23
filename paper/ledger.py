@@ -67,6 +67,32 @@ def _page_security_id(conn, symbol: str, underlying: str, cp: str, strike: float
     return int(conn.execute(text("SELECT SecurityId FROM portfolio.Security WHERE Symbol = :s AND SecurityType = 'Option'"), {"s": symbol[:40]}).fetchone()[0])
 
 
+def _leg_prices(px: float, extra: dict | None) -> tuple[float, float]:
+    """Split a spread's fill price across its two legs, at each leg's own market.
+
+    The long leg used to carry the whole debit and the short leg a flat 0.00. Cash and net entry
+    came out right, so nothing downstream that only reads totals ever noticed -- but anything
+    reading a single leg saw a position nobody holds: a naked long put and a worthless short. That
+    is what the greeks, the payoff chart and the position popup all read.
+
+    Each leg is booked at its own mid, both shifted by half of whatever gap remains, so the two
+    still difference to exactly the spread price that was paid. Without leg quotes the old
+    convention stands, since a wrong split would be worse than an obviously conventional one.
+    """
+    e = extra or {}
+    try:
+        lb, la = float(e["long_bid"]), float(e["long_ask"])
+        sb, sa = float(e["short_bid"]), float(e["short_ask"])
+    except (KeyError, TypeError, ValueError):
+        return float(px), 0.0
+    lm, sm = (lb + la) / 2.0, (sb + sa) / 2.0
+    gap = (lm - sm) - float(px)          # the mids need not difference to what was actually paid
+    lpx, spx = lm - gap / 2.0, sm + gap / 2.0
+    if lpx <= 0 or spx < 0:              # a split that prices a leg at or below zero is not a split
+        return float(px), 0.0
+    return round(lpx, 4), round(spx, 4)
+
+
 def _legs(fill: dict) -> tuple[str, float, float]:
     cp = "C" if fill["direction"] == "bull" else "P"
     long_k, short_k = (fill["kl"], fill["kh"]) if cp == "C" else (fill["kh"], fill["kl"])
@@ -101,7 +127,8 @@ def record_fill(engine, account_id: int, slug: str, underlying: str, expiry: dat
         if position_id is None:
             raise ValueError(f"{kind} without a position id")
         n_legs = int(conn.execute(text("SELECT COUNT(*) FROM portfolio.Leg WHERE PositionId = :p"), {"p": position_id}).fetchone()[0])
-        leg_rows = [(long_symbol, "BTO" if opening else "STC", long_k, px), (short_symbol, "STO" if opening else "BTC", short_k, 0.0)]
+        lpx, spx = _leg_prices(px, extra)
+        leg_rows = [(long_symbol, "BTO" if opening else "STC", long_k, lpx), (short_symbol, "STO" if opening else "BTC", short_k, spx)]
         for i, (sym, action, k, fpx) in enumerate(leg_rows):
             conn.execute(text("""
                 INSERT INTO portfolio.Leg (PositionId, Symbol, OptionSymbol, InstrumentType, Action, Contracts, Strike, Expiration,
@@ -110,7 +137,9 @@ def record_fill(engine, account_id: int, slug: str, underlying: str, expiry: dat
                 {"p": position_id, "u": underlying, "os": sym[:30], "a": action, "n": lots, "k": k, "e": expiry, "cp": cp, "fp": fpx,
                  "c": (COMMISSION_PER_LEG * lots if opening else 0.0), "d": day, "lo": min(255, n_legs + i + 1)})
         # One transaction per leg, in the layout the Paper Trading page groups (TradeGroupId = the
-        # unit's PositionId); the spread price rides on the long leg, the short leg carries 0.
+        # unit's PositionId). Each leg carries its own price (see _leg_prices); the net cash stays
+        # whole on the long leg, because the page sums Amount to get cash and that total is the one
+        # number here that has always been right.
         tgid = f"{underlying[:4]}-{slug[:8].upper()}-{position_id}"
         src = "Paper" if opening else {"target": "Target", "stop": "Stop", "daycap": "DayCap", "time": "Time", "settle": "Settle"}.get(fill["reason"], "Close")
         page_notes = (("" if opening else "CLOSE ") + notes)[:500]
@@ -132,7 +161,14 @@ def record_fill(engine, account_id: int, slug: str, underlying: str, expiry: dat
         elif kind == "close":
             row = conn.execute(text("SELECT Quantity, AvgEntryPrice, Commission FROM portfolio.Position WHERE PositionId = :p"), {"p": position_id}).fetchone()
             q0, px0, c0 = float(row[0]), float(row[1]), float(row[2])
-            pnl = (px - px0) * MULT * q0 - c0
+            # Realised P&L is the cash this position actually moved -- every leg of every fill,
+            # closing row included. Recomputing it from entry and exit prices and then subtracting
+            # the Commission column misses anything that is not commission: the per-round-trip fees
+            # leave cash but live in no column, so the figure read $3 better than the account did and
+            # would have drifted further with every trade. Summing Amount cannot disagree with cash.
+            cash_pnl = conn.execute(text("SELECT SUM(Amount) FROM portfolio.[Transaction] WHERE PositionId = :p"),
+                                    {"p": position_id}).fetchone()[0]
+            pnl = float(cash_pnl) if cash_pnl is not None else ((px - px0) * MULT * q0 - c0)
             conn.execute(text("""UPDATE portfolio.Position SET Status = :st, CloseDate = :d, AvgExitPrice = :px, RealizedPnL = :pnl,
                                  UpdatedAt = SYSUTCDATETIME() WHERE PositionId = :p"""),
                          {"st": ("expired" if fill["reason"] == "settle" else "closed"), "d": day, "px": px, "pnl": pnl, "p": position_id})
