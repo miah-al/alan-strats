@@ -169,7 +169,12 @@ class PaperSession:
                 try:
                     new_pid = L.record_fill(self.db, self.account_id, self.slug, self.underlying, expiry, day, f,
                                             ls or f"{self.underlying}-{f['kl']:.0f}", ss or f"{self.underlying}-{f['kh']:.0f}", position_id=pid,
-                                            extra={"provider": getattr(self.provider, "name", "?"), "bid": (q.bid if q else None), "ask": (q.ask if q else None), "last": (q.last if q else None)})
+                                            extra={"provider": getattr(self.provider, "name", "?"), "bid": (q.bid if q else None), "ask": (q.ask if q else None), "last": (q.last if q else None),
+                                                   # per-leg quotes so the ledger can book each leg at its own
+                                                   # price instead of hanging the whole debit on the long one
+                                                   **({"long_bid": q.legs[0][0], "long_ask": q.legs[0][1],
+                                                       "short_bid": q.legs[1][0], "short_ask": q.legs[1][1]}
+                                                      if (q is not None and getattr(q, "legs", None)) else {})})
                     if f["kind"] == "open" and new_pid is not None:
                         self._tgids.setdefault(self._unit_key(f), []).append(int(new_pid))
                 except Exception as exc:
