@@ -94,8 +94,8 @@ def test_fetch_relogins_once_on_auth_error(fake_sdk):
 
 def test_missing_credentials_is_a_clean_error(monkeypatch, fake_sdk):
     monkeypatch.delenv("TT_SECRET"); monkeypatch.delenv("TT_REFRESH")
-    import paper.providers as pv
-    monkeypatch.setattr(pv, "_load_env_for_tests", None, raising=False)
+    import app
+    monkeypatch.setattr(app, "_load_env", lambda: None)          # the machine's real .env must not leak in
     from paper.providers import TastytradeProvider
     with pytest.raises(RuntimeError, match="TT_SECRET"):
         TastytradeProvider("NDX", "NDXP")
@@ -113,3 +113,92 @@ def test_vertical_quote_carries_its_legs():
     assert (q.bid, q.ask, q.last) == (29.0, 32.0, 30.5) and q.age == 2
     assert q.legs == ((170.0, 172.0, 2), (140.0, 141.0, 0))
     assert vertical_quote(LegQuote("x", None, 1.0, None, None, now), short_leg, now) is None
+
+
+def test_async_sdk_calls_are_awaited(fake_sdk, monkeypatch):
+    """tastytrade >= 13 made get_option_chain and get_market_data_by_type coroutines; the provider must
+    give the same answers whether the SDK is sync (older SDKs, these fakes) or async."""
+    import sys
+    from datetime import date
+    inst, md = sys.modules["tastytrade.instruments"], sys.modules["tastytrade.market_data"]
+    sync_chain, sync_md = inst.get_option_chain, md.get_market_data_by_type
+
+    async def a_chain(session, symbol):
+        return sync_chain(session, symbol)
+
+    async def a_md(session, indices=None, options=None, **kw):
+        return sync_md(session, indices=indices, options=options, **kw)
+    monkeypatch.setattr(inst, "get_option_chain", a_chain); monkeypatch.setattr(md, "get_market_data_by_type", a_md)
+    from paper.providers import TastytradeProvider
+    p = TastytradeProvider("NDX", "NDXP")
+    assert p.load_chain(date(2026, 9, 17)) == 3
+    q = p.fetch(["NDXP260917C29100000"])
+    assert q["NDXP260917C29100000"].bid == 170.0 and fake_sdk["fetches"] == 1
+
+
+def test_wrong_secret_is_one_plain_sentence(fake_sdk, monkeypatch):
+    """A regenerated OAuth application with the Client ID pasted as the secret: no traceback, no re-login loop."""
+    import sys
+    from datetime import date
+    inst = sys.modules["tastytrade.instruments"]
+
+    def bad_chain(session, symbol):
+        raise RuntimeError("Couldn't parse response: {'error_code': 'invalid_grant', 'error_description': 'Client secret mismatch'}")
+    monkeypatch.setattr(inst, "get_option_chain", bad_chain)
+    from paper.providers import TastytradeProvider
+    p = TastytradeProvider("NDX", "NDXP")
+    with pytest.raises(RuntimeError) as e:
+        p.load_chain(date(2026, 9, 17))
+    assert "Client Secret shown once" in str(e.value) and "Client secret mismatch" in str(e.value)
+    assert fake_sdk["sessions"] == 1                                # no re-login attempted
+
+
+def test_near_the_money_vertical_uses_the_chain_grid(fake_sdk):
+    from datetime import date
+    from paper.providers import TastytradeProvider
+    p = TastytradeProvider("NDX", "NDXP"); p.load_chain(date(2026, 9, 17))
+    long_sym, short_sym, k_low, k_high = p.near_the_money_vertical(spot=29_174.0, width=100.0, itm_offset=24.0)
+    assert (k_low, k_high) == (29_100.0, 29_200.0)
+    assert long_sym == "NDXP260917C29100000" and short_sym == "NDXP260917C29200000"
+
+
+def test_paper_path_never_imports_order_or_account_apis():
+    """The paper runner is quotes-only by construction: the only tastytrade modules it touches are the
+    session, the option chain and market data. No order, account or trading module, ever."""
+    import pathlib, re
+    root = pathlib.Path(__file__).resolve().parents[1]
+    sources = [root / "paper" / "providers.py", root / "paper" / "runner.py", root / "scripts" / "paper_runner.py"]
+    allowed = {"tastytrade", "tastytrade.instruments", "tastytrade.market_data", "tastytrade.utils"}
+    for src in sources:
+        text = src.read_text(encoding="utf-8")
+        for mod in re.findall(r"^\s*(?:from|import)\s+(tastytrade[\w.]*)", text, flags=re.M):
+            assert mod in allowed, f"{src.name} imports {mod}"
+        for word in ("place_order", "new_order", "NewOrder", "submit_order", "OrderAction", "/orders", "get_accounts", "Account.get"):
+            assert word not in text, f"{src.name} mentions {word}"
+
+
+def test_request_budget_floors_spaces_and_caps_calls():
+    """No caller can exceed the broker budget: a floor between calls, a per-minute cap, a per-day cap."""
+    from paper.providers import RequestBudget
+    clock = [1000.0]; slept = []
+    b = RequestBudget(min_interval_s=5.0, per_minute=3, per_day=5, clock=lambda: clock[0], sleep=lambda s: (slept.append(s), clock.__setitem__(0, clock[0] + s)))
+    b.take(); b.take()                                   # the second call waits out the 5 s floor
+    assert slept == [5.0] and b.calls_today == 2
+    clock[0] += 5; b.take()                              # third call within the minute: allowed
+    clock[0] += 5; b.take()                              # fourth: the per-minute cap makes it wait for the window to roll
+    assert slept[-1] > 40 and b.calls_today == 4
+    clock[0] += 5; b.take()
+    with pytest.raises(RuntimeError, match="budget spent"):
+        b.take()                                         # the day's cap: no sleeping, no call, a plain error
+
+
+def test_provider_counts_every_broker_call_against_the_budget(fake_sdk):
+    from datetime import date
+    from paper.providers import TastytradeProvider, RequestBudget
+    p = TastytradeProvider("NDX", "NDXP")
+    p.budget = RequestBudget(min_interval_s=0.0, per_minute=100, per_day=100, clock=lambda: 0.0, sleep=lambda s: None)
+    p.load_chain(date(2026, 9, 17)); p.fetch(["NDXP260917C29100000"])
+    fake_sdk["fail_next"] = True; p.fetch(["NDXP260917C29100000"])          # one failure, one re-login, one retry
+    assert p.budget.calls_today == 4                                          # chain + fetch + failed fetch + retry
+    with pytest.raises(RuntimeError, match="101 option symbols"):
+        p.fetch([f"S{i}" for i in range(101)])

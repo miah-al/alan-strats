@@ -165,6 +165,63 @@ class ReplayProvider:
 
 # ── tastytrade ────────────────────────────────────────────────────────────────
 
+def _sdk_call(fn, *args, **kwargs):
+    """Call a tastytrade SDK function and return its result, awaiting it when the installed SDK made it a
+    coroutine (13.x did); a synchronous SDK or a test fake passes straight through."""
+    import asyncio
+    import inspect
+    result = fn(*args, **kwargs)
+    if inspect.isawaitable(result):
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            return asyncio.run(result)
+        raise RuntimeError("TastytradeProvider is synchronous and cannot be driven from inside a running event loop")
+    return result
+
+
+_CRED_HINT = ("tastytrade rejected the credentials ({why}). TT_SECRET is the Client Secret shown once when the OAuth "
+              "application is created (not the Client ID); TT_REFRESH is the refresh token from Create Grant on that "
+              "same application. A regenerated application needs both values replaced.")
+
+
+def _credential_error(exc: Exception) -> Optional[RuntimeError]:
+    msg = str(exc)
+    low = msg.lower()
+    if any(k in low for k in ("invalid_grant", "secret mismatch", "invalid_client", "invalid_grant_type")):
+        return RuntimeError(_CRED_HINT.format(why=msg.strip()[:160]))
+    return None
+
+
+class RequestBudget:
+    """A hard ceiling on calls to the broker's API, enforced where the request is made so no caller
+    can exceed it: a floor between calls, a cap per minute and a cap per session day. tastytrade
+    publishes no per-endpoint quota and suggests 50/s as a client-side ceiling; the paper runner
+    needs about 4 a minute, so these are set far below what would ever draw a 429."""
+
+    def __init__(self, min_interval_s: float = 5.0, per_minute: int = 20, per_day: int = 3000, clock=None, sleep=None):
+        import time as _time
+        self.min_interval_s = float(min_interval_s); self.per_minute = int(per_minute); self.per_day = int(per_day)
+        self._clock = clock or _time.monotonic; self._sleep = sleep or _time.sleep
+        self._last: Optional[float] = None
+        self._minute: list[float] = []            # monotonic times of calls in the last 60 s
+        self.calls_today = 0
+        self.waits = 0
+
+    def take(self) -> None:
+        """Block until a call is allowed, then count it. Raises when the day's budget is spent."""
+        if self.calls_today >= self.per_day:
+            raise RuntimeError(f"tastytrade request budget spent: {self.calls_today} calls today (cap {self.per_day}); not calling again today")
+        now = self._clock()
+        if self._last is not None and now - self._last < self.min_interval_s:
+            self._sleep(self.min_interval_s - (now - self._last)); self.waits += 1; now = self._clock()
+        self._minute = [x for x in self._minute if now - x < 60.0]
+        if len(self._minute) >= self.per_minute:
+            self._sleep(60.0 - (now - self._minute[0]) + 0.01); self.waits += 1; now = self._clock()
+            self._minute = [x for x in self._minute if now - x < 60.0]
+        self._last = now; self._minute.append(now); self.calls_today += 1
+
+
 class TastytradeProvider:
     """Real-time quotes through the tastytrade API. Needs TT_SECRET and TT_REFRESH (OAuth) in the
     environment or .env; ``is_test`` selects the certification environment. Polls the REST
@@ -190,11 +247,19 @@ class TastytradeProvider:
         self._chain: dict = {}
         self._samples: list[tuple[datetime, float]] = []
         self.expiry: Optional[date] = None
+        self.budget = RequestBudget()                 # every REST call goes through it (see RequestBudget)
 
     # chain for today's expiry
     def load_chain(self, day: date) -> int:
         from tastytrade.instruments import get_option_chain
-        chain = get_option_chain(self.session, self.underlying)
+        self.budget.take()
+        try:
+            chain = _sdk_call(get_option_chain, self.session, self.underlying)
+        except Exception as exc:
+            err = _credential_error(exc)
+            if err is not None:
+                raise err from None
+            raise
         # only the configured (PM-settled) root: an AM-settled monthly on a third Friday settles on the
         # open and cannot be traded as a same-day expiry, so a day without the root is a blocked day
         opts = [o for o in chain.get(day, []) if str(o.root_symbol).upper() == self.root]
@@ -202,6 +267,21 @@ class TastytradeProvider:
                        for o in opts}
         self.expiry = day
         return len(self._chain)
+
+    def near_the_money_vertical(self, spot: float, width: float, itm_offset: float, kind: str = "call") -> tuple[Optional[str], Optional[str], float, float]:
+        """The strategy's own structure at ``spot``: strikes on the loaded chain's grid, the long leg
+        ``itm_offset`` past the mid-strike. Returns (long_symbol, short_symbol, k_low, k_high)."""
+        cp = "C" if kind == "call" else "P"
+        strikes = sorted(K for (c, K) in self._chain if c == cp)
+        if len(strikes) < 2:
+            return None, None, 0.0, 0.0
+        mid_target = spot - itm_offset if kind == "call" else spot + itm_offset
+        k_low = min(strikes, key=lambda K: abs((K + width / 2) - mid_target))
+        k_high = k_low + width
+        if (cp, k_high) not in self._chain:                 # the grid may skip a strike: take the nearest one listed
+            k_high = min(strikes, key=lambda K: abs(K - (k_low + width)))
+        long_sym, short_sym = self.leg_symbols(kind, k_low, k_high)
+        return long_sym, short_sym, k_low, k_high
 
     def _symbol(self, cp: str, K: float) -> Optional[str]:
         o = self._chain.get((cp, float(K)))
@@ -223,13 +303,20 @@ class TastytradeProvider:
     def fetch(self, option_symbols: list[str]) -> dict[str, LegQuote]:
         from tastytrade.market_data import get_market_data_by_type
         syms = [s for s in option_symbols if s]
+        if len(syms) > 100:                            # the endpoint takes up to 100 symbols per call; more would mean two
+            raise RuntimeError(f"{len(syms)} option symbols in one fetch; the paper runner watches a handful, this is a bug")
+        self.budget.take()
         try:
-            rows = get_market_data_by_type(self.session, indices=[self.underlying], options=syms)
+            rows = _sdk_call(get_market_data_by_type, self.session, indices=[self.underlying], options=syms)
         except Exception as exc:                       # 401 / expired token / dropped connection: one re-login, one retry
+            err = _credential_error(exc)               # a wrong secret is not fixed by logging in again
+            if err is not None:
+                raise err from None
             msg = str(exc).lower()
             if any(k in msg for k in ("401", "unauthor", "token", "expired", "forbidden", "connection")):
                 self._relogin()
-                rows = get_market_data_by_type(self.session, indices=[self.underlying], options=syms)
+                self.budget.take()
+                rows = _sdk_call(get_market_data_by_type, self.session, indices=[self.underlying], options=syms)
             else:
                 raise
         out: dict[str, LegQuote] = {}

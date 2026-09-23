@@ -29,3 +29,7 @@ $today = (Get-Date).ToString("yyyy-MM-dd")
 & $Python -m scripts.check_data_day --day $today --notify
 Set-Location "D:\Work\Project Dream\alan_trader_strategies"
 & $Python strategies\ndx_0dte_tasty\scripts\reconcile_paper.py $today --out "strategies\ndx_0dte_tasty\paper_log\reconcile_$today.md"
+# archive the day: event log, runner diary, state, heartbeat, reconciliation and the ledger rows into
+# strategies\ndx_0dte_tasty\paper_log\archive\<date>\ plus a dated zip in D:\Work\Project Dream\alan-trader-logs
+Set-Location "D:\Work\Project Dream\alan_trader"
+& $Python -m scripts.archive_paper_day --strategy ndx_0dte_tasty --day $today
