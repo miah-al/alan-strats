@@ -42,7 +42,11 @@ def test_vertical_quote_from_legs():
     long_leg = LegQuote("L", bid=170.0, ask=172.0, last=171.0, last_time=datetime(2026, 8, 26, 13, 29), updated=now)
     short_leg = LegQuote("S", bid=108.0, ask=110.0, last=109.5, last_time=datetime(2026, 8, 26, 13, 25), updated=now)
     q = vertical_quote(long_leg, short_leg, now)
-    assert q.bid == 60.0 and q.ask == 64.0 and q.last == 61.5 and q.age == 5
+    # last is the MIDPOINT, not last(long) - last(short). Those two prints are four minutes apart
+    # here, and in live data the gap can be hours with no timestamp to reveal it; differencing them
+    # produced vertical prices that cannot exist. The mid is defined at every instant, and is where
+    # multi-leg orders were measured to transact.
+    assert q.bid == 60.0 and q.ask == 64.0 and q.last == 62.0 and q.age == 5
     assert vertical_quote(LegQuote("L", None, None, None, None, None), short_leg, now) is None
     stale = LegQuote("S", 108.0, 110.0, None, None, datetime(2026, 8, 26, 12, 0))
     assert vertical_quote(long_leg, stale, now, carry_min=30) is None
@@ -90,3 +94,23 @@ def test_replay_matches_backtest_for_a_stored_day(tmp_path):
     st = json.loads(open(res.state_path, encoding="utf-8").read())
     restored = type(s.live_session(day)).from_dict(s.params, st["state"])
     assert len(restored.trades) == len(res.trades) and restored.day_pnl == res.day_pnl
+
+
+def test_vertical_quote_bounds_the_midpoint_and_scales_the_width_cap():
+    """Every decision reads the vertical's midpoint -- the target through ``last``, the engine's mark,
+    add trigger and loss cap through (bid + ask) / 2 -- so the midpoint is what must respect arbitrage
+    (0 <= value <= strike width), and the two must agree. Width is capped at 60% of the strike width."""
+    from datetime import datetime
+    from paper.providers import LegQuote, vertical_quote
+    now = datetime(2026, 9, 23, 13, 0)
+    def q(l, s, w):
+        return vertical_quote(LegQuote("L", *l, None, None, now), LegQuote("S", *s, None, None, now), now, max_width=w)
+    v = q((94.8, 104.7), (59.1, 67.3), 50)                     # in range: untouched
+    assert (v.bid, v.ask) == (27.5, 45.6) and abs(v.last - 36.55) < 1e-9
+    v = q((102.0, 110.0), (52.0, 58.0), 50)                    # raw mid 51 on a 50-wide: bounded to 50
+    assert v.last == 50.0 and abs((v.bid + v.ask) / 2 - 50.0) < 1e-9 and abs((v.ask - v.bid) - 14.0) < 1e-9
+    v = q((1.0, 3.0), (2.0, 4.0), 50)                          # raw mid -1: bounded to 0
+    assert v.last == 0.0 and abs((v.bid + v.ask) / 2) < 1e-9
+    assert q((60.0, 90.5), (40.0, 40.0), 50) is None           # 30.5 wide on a 50-wide: over the 30-point cap
+    assert q((60.0, 89.5), (40.0, 40.0), 50) is not None       # 29.5 wide: usable
+    assert q((60.0, 81.0), (40.0, 40.0), None) is None         # no width known: the flat 20-point cap

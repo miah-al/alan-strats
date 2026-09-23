@@ -68,6 +68,12 @@ def main(argv=None) -> int:
     if not inst:
         print(f"{args.strategy} does not expose a live session (live_instrument is empty)"); return 2
     underlying, root = inst.get("underlying", "NDX"), inst.get("root", "NDXP")
+    # A strategy may declare how it wants to be run LIVE (live_instrument()["live_params"]) -- for
+    # instance a fill model priced off the live mid, where a backtest brackets minute prints. They
+    # apply to live sessions and the --check preflight only, so a replay still reproduces the backtest;
+    # --param still wins. Declared by the strategy so that every way of starting a session gets them:
+    # a runner started by hand without the right flags would otherwise quietly price fills another way.
+    live_params = dict(inst.get("live_params") or {})
     engine = get_engine()
 
     log_dir = Path(args.log_dir) if args.log_dir else None
@@ -107,7 +113,10 @@ def main(argv=None) -> int:
                     print(f"  {s}: bid {lq.bid} ask {lq.ask} last {lq.last} last_time {lq.last_time} updated {lq.updated}" if lq else f"  {s}: no quote")
                 from paper.providers import vertical_quote
                 v = vertical_quote(q[ls], q[ss], now_et()) if ls in q and ss in q else None
-                print(f"  NDX {spot:,.2f}; bull call vertical {kl:.0f}/{kh:.0f}: " + (f"bid {v.bid:.2f} ask {v.ask:.2f} quoted spread {v.ask - v.bid:.2f} pts, leg ages {v.legs[0][2]} / {v.legs[1][2]} min (backtest assumed 1.0 pt)" if v else "no two-sided quote"))
+                # the width printed here is DERIVED (both legs' widths added), not a market anyone quotes; spreads
+                # were measured to trade at the mid, crossing in costing ~1.2 pts deep in the money (2026-09-23)
+                print(f"  NDX {spot:,.2f}; bull call vertical {kl:.0f}/{kh:.0f}: " + (f"mid {v.last:.2f} (derived bid {v.bid:.2f} / ask {v.ask:.2f}: "
+                      f"the legs' widths added, {v.ask - v.bid:.2f} pts, not a market), leg ages {v.legs[0][2]} / {v.legs[1][2]} min" if v else "no two-sided quote"))
             ps = PaperSession(args.strategy, prov, engine, write_ledger=False, params=params)
             problems = ps._preflight(day)
             blocked, why = ps._gate(day)
@@ -126,12 +135,24 @@ def main(argv=None) -> int:
                           f"features ok: {'error' not in feats}")
                 except Exception as exc:
                     print(f"AI gate hooks raised: {exc}"); problems.append("ai hooks")
+            if live_params:
+                print("live parameters declared by the strategy:", ", ".join(f"{k}={v}" for k, v in sorted({**live_params, **params}.items())))
             return 0 if (n and not problems) else 1
-        ps = PaperSession(args.strategy, prov, engine, write_ledger=not args.no_ledger, params=params, notify=args.notify, log_dir=log_dir, starting_cash=starting_cash)
+        if live_params:
+            print("live parameters declared by the strategy:", ", ".join(f"{k}={v}" for k, v in sorted(live_params.items())),
+                  "" if not params else f"(overridden by --param: {', '.join(sorted(set(params) & set(live_params))) or 'none'})")
+        live_run_params = {**live_params, **params}
+        ps = PaperSession(args.strategy, prov, engine, write_ledger=not args.no_ledger, params=live_run_params, notify=args.notify, log_dir=log_dir, starting_cash=starting_cash)
         res = ps.run_live(poll_seconds=args.poll)
 
     print(f"\n{res.slug} {res.day} [{res.provider}] {'BLOCKED: ' + res.reason if res.blocked else 'traded'}")
-    print(f"bars {res.bars}; fills {len(res.fills)} (ledger rows written for {res.n_fills_written}); trades {len(res.trades)}; day P&L {res.day_pnl:+,.0f}")
+    # n_fills_written counts rows written to the CSV paper log, which happens either way; whether the
+    # portfolio ledger was touched is a different question, and saying "ledger rows written" when it
+    # was not sends someone looking for records to delete from a live account.
+    wrote_ledger = bool(getattr(ps, "write_ledger", False))
+    print(f"bars {res.bars}; fills {len(res.fills)} logged {res.n_fills_written}"
+          f"{'; ledger updated' if wrote_ledger else '; ledger untouched (dry run)'}"
+          f"; trades {len(res.trades)}; day P&L {res.day_pnl:+,.0f}")
     for t in res.trades:
         print(f"  {t['entry_time']}-{t['exit_time']} {t['direction']:4s} {t['k_low']:.0f}/{t['k_high']:.0f} x{t['units']} "
               f"{t['entry_px']:.2f} -> {t['exit_px']:.2f} {t['exit_reason']:7s} {t['pnl']:+,.0f}")
