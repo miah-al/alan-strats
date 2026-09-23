@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import shutil
 import sys
 import zipfile
@@ -26,6 +27,33 @@ for p in (str(ROOT.parent), str(ROOT)):
     if p not in sys.path:
         sys.path.insert(0, p)
 
+# credentials carried in a query string, as urllib3's DEBUG log prints them
+_SECRET_IN_URL = re.compile(rb"(?i)((?:api[_-]?key|access_token|refresh_token|client_secret)=)[^&\s\"')]+")
+
+
+_RECORD_START = re.compile(rb"^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2},\d{3} ([A-Z]+) ")
+
+
+def _without_debug(log: bytes) -> bytes:
+    """The runner's diary without DEBUG records. A session run with -v logs every HTTP exchange (2.5 of
+    2026-09-23's 2.8 MB); the full file stays in logs/paper/. A traceback's lines go with their record."""
+    keep, out = True, []
+    for line in log.splitlines(keepends=True):
+        m = _RECORD_START.match(line)
+        if m:
+            keep = m.group(1) != b"DEBUG"
+        if keep:
+            out.append(line)
+    return b"".join(out)
+
+
+def _day_of(path: Path):
+    """The session day a heartbeat was written for, or None when it cannot be read."""
+    try:
+        return json.loads(path.read_text(encoding="utf-8")).get("day")
+    except Exception:
+        return None
+
 
 def gather(slug: str, day: date, strategy_folder: Path, backup_dir: Path) -> dict:
     """Copy the day's files into the archive folder and zip it. Returns what was saved and what was missing."""
@@ -35,6 +63,7 @@ def gather(slug: str, day: date, strategy_folder: Path, backup_dir: Path) -> dic
     archive.mkdir(parents=True, exist_ok=True)
     sources = {
         "events.csv": log_dir / f"{d}.csv",
+        "marks.csv": log_dir / f"marks_{d}.csv",          # every poll's mark against the target, between bar checks
         "reconcile.md": log_dir / f"reconcile_{d}.md",
         "runner.log": ROOT / "logs" / "paper" / f"{slug}_{d}.log",
         "state.json": ROOT / "paper_state" / f"{slug}_{d}.json",
@@ -42,10 +71,20 @@ def gather(slug: str, day: date, strategy_folder: Path, backup_dir: Path) -> dic
     }
     saved, missing = [], []
     for name, src in sources.items():
-        if src.exists():
-            shutil.copy2(src, archive / name); saved.append(name)
-        else:
+        if not src.exists():
             missing.append(name)
+        elif name == "heartbeat.json" and _day_of(src) not in (None, d):
+            # one file per strategy, rewritten every session: a later day's must not be filed under this one;
+            # a copy saved when this day was first archived is kept
+            if _day_of(archive / name) == d:
+                saved.append(name)
+            else:
+                missing.append(f"heartbeat.json (holds {_day_of(src)})")
+        elif name == "runner.log":
+            # the archive is committed, and a DEBUG line prints whole request URLs, key and all (2026-09-23)
+            (archive / name).write_bytes(_SECRET_IN_URL.sub(rb"\1REDACTED", _without_debug(src.read_bytes()))); saved.append(name)
+        else:
+            shutil.copy2(src, archive / name); saved.append(name)
     # the ledger rows the runner wrote for the day, as the page will show them
     try:
         from db.client import get_engine

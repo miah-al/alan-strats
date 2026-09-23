@@ -288,6 +288,29 @@ class PaperSession:
             except Exception as exc:
                 logger.warning("session features not recorded: %s", exc)
 
+    def _log_mark(self, day: date, now: datetime, pos, q) -> None:
+        """One row per poll per open position: the quote, and the target it is being measured against.
+
+        The engine acts on bar closes; this records what the price did between them, so "the target
+        was available but the bar had passed" becomes a number instead of an impression.
+        """
+        try:
+            avg = float(getattr(pos, "avg_px", 0.0) or 0.0)
+            target = avg + float(getattr(self.strategy.params, "target_pts", 5.0))
+            p = self.log_dir / f"marks_{day.isoformat()}.csv"
+            new = not p.exists()
+            with p.open("a", newline="", encoding="utf-8") as f:
+                w = csv.writer(f)
+                if new:
+                    w.writerow(["ts", "direction", "k_low", "k_high", "units", "avg_px", "target",
+                                "bid", "ask", "mid", "age", "at_target"])
+                w.writerow([now.isoformat(timespec="seconds"), pos.direction, pos.k_low, pos.k_high,
+                            getattr(pos, "units", ""), round(avg, 2), round(target, 2),
+                            round(float(q.bid), 2), round(float(q.ask), 2), round(float(q.last), 2),
+                            q.age, int(float(q.last) >= target)])
+        except Exception:
+            pass
+
     def _heartbeat(self, day: date, now: datetime, session, note: str = "", live_marks: dict | None = None,
                    live_legs: dict | None = None, spot: float | None = None) -> None:
         """A small file the Paper tab reads: when the runner last polled, what it holds, the day so far.
@@ -508,6 +531,11 @@ class PaperSession:
                     qv = prov.quote_vertical(pos.kind, pos.k_low, pos.k_high, quotes, now, carry)
                     if qv is not None:
                         live_marks[f"{pos.direction}|{float(pos.k_low)}|{float(pos.k_high)}"] = round(float(qv.last), 2)
+                        # Every poll's mark against the target the engine will only check at the next
+                        # bar close. Near expiry the quote can travel several points inside a minute,
+                        # so the question of how much a bar-close check leaves on the table is real --
+                        # and unanswerable without keeping the intra-bar prices somewhere.
+                        self._log_mark(day, now, pos, qv)
                     # the legs too, so the position popup can price each one without opening its own
                     # broker connection from inside the web process
                     for sym in prov.leg_symbols(pos.kind, pos.k_low, pos.k_high):
