@@ -1,0 +1,143 @@
+"""
+api/app.py — the FastAPI application factory.
+
+``create_app()`` bootstraps the platform (sys.path, .env, the strategy plugin by
+path, the read-only DB guard), mounts every router under ``/api``, and owns the
+two process-wide services: the WebSocket event hub and the job manager.
+"""
+from __future__ import annotations
+
+import asyncio
+import json
+import logging
+import os
+import platform
+import subprocess
+from contextlib import asynccontextmanager
+
+from api.bootstrap import WORKING_COPY, BootstrapError, ReadOnlyViolation, bootstrap, install_db_read_only_guard
+
+logger = logging.getLogger("alan_trader.api")
+
+CONTRACT_VERSION = "1"
+
+
+def _git(*args: str) -> str:
+    try:
+        out = subprocess.run(["git", *args], cwd=str(WORKING_COPY), capture_output=True, text=True, timeout=5)
+        return out.stdout.strip() if out.returncode == 0 else ""
+    except Exception:
+        return ""
+
+
+def build_info() -> dict:
+    return {"version": _git("rev-parse", "--short", "HEAD") or "unknown",
+            "branch": _git("rev-parse", "--abbrev-ref", "HEAD") or "unknown",
+            "python": platform.python_version()}
+
+
+def create_app():
+    info = bootstrap()
+    install_db_read_only_guard()
+
+    from fastapi import FastAPI, Request
+    from fastapi.exceptions import RequestValidationError
+    from fastapi.responses import JSONResponse
+    from starlette.exceptions import HTTPException as StarletteHTTPException
+
+    from api.events import EventHub, LogForwarder
+    from api.jobs import JobManager
+    from api.serialize import to_jsonable
+    from api.services.db import DatabaseUnavailable
+    from api.services.market import MissingData, NeedsApiKey
+
+    class SafeJSONResponse(JSONResponse):
+        """JSON with NaN/±inf → null and numpy/pandas/date values converted."""
+
+        def render(self, content) -> bytes:
+            return json.dumps(to_jsonable(content), ensure_ascii=False, allow_nan=False,
+                              separators=(",", ":")).encode("utf-8")
+
+    build = build_info()
+    # The service's own records (job started / finished / failed) always reach the event
+    # stream, whatever the host process configured for the root logger.
+    svc_log = logging.getLogger("alan_trader.api")
+    if svc_log.getEffectiveLevel() > logging.INFO:
+        svc_log.setLevel(logging.INFO)
+    hub = EventHub()
+    hub.version = build["version"]
+    jobs = JobManager(max_workers=int(os.environ.get("ALAN_TRADER_API_JOB_WORKERS", "2") or 2),
+                      publish=hub.publish)
+    forwarder = LogForwarder(hub)
+
+    @asynccontextmanager
+    async def lifespan(app):
+        hub.bind(asyncio.get_running_loop())
+        root = logging.getLogger()
+        root.addHandler(forwarder)
+        beat = asyncio.create_task(hub.heartbeat_forever())
+        logger.info("alan_trader service %s (%s) up; strategies from %s",
+                    build["version"], build["branch"], info.get("strategies_dir"))
+        try:
+            yield
+        finally:
+            beat.cancel()
+            root.removeHandler(forwarder)
+            jobs.shutdown()
+            hub.unbind()
+
+    app = FastAPI(title="alan_trader service", version=f"contract v{CONTRACT_VERSION} · {build['version']}",
+                  default_response_class=SafeJSONResponse, lifespan=lifespan,
+                  docs_url="/api/docs", openapi_url="/api/openapi.json", redoc_url=None)
+    app.state.hub = hub
+    app.state.jobs = jobs
+    app.state.build = build
+    app.state.bootstrap = info
+    app.state.json_response = SafeJSONResponse
+
+    def _err(status: int, detail: str):
+        return SafeJSONResponse(status_code=status, content={"detail": detail})
+
+    @app.exception_handler(StarletteHTTPException)
+    async def _http_exc(request: Request, exc: StarletteHTTPException):
+        return _err(exc.status_code, str(exc.detail))
+
+    @app.exception_handler(RequestValidationError)
+    async def _validation(request: Request, exc: RequestValidationError):
+        parts = []
+        for e in exc.errors():
+            loc = ".".join(str(x) for x in e.get("loc", []) if x not in ("body", "query", "path"))
+            parts.append(f"{loc}: {e.get('msg')}" if loc else str(e.get("msg")))
+        return _err(422, "; ".join(parts) or "invalid request")
+
+    @app.exception_handler(DatabaseUnavailable)
+    async def _db_down(request: Request, exc: DatabaseUnavailable):
+        return _err(503, str(exc))
+
+    @app.exception_handler(MissingData)
+    async def _missing(request: Request, exc: MissingData):
+        return _err(422, str(exc.args[0]) if exc.args else "no data")
+
+    @app.exception_handler(NeedsApiKey)
+    async def _no_key(request: Request, exc: NeedsApiKey):
+        return _err(422, str(exc))
+
+    @app.exception_handler(ReadOnlyViolation)
+    async def _ro(request: Request, exc: ReadOnlyViolation):
+        logger.error("blocked a database write: %s", exc)
+        return _err(500, str(exc))
+
+    @app.exception_handler(Exception)
+    async def _unhandled(request: Request, exc: Exception):
+        logger.exception("unhandled error on %s %s", request.method, request.url.path)
+        return _err(500, f"{type(exc).__name__}: {exc}")
+
+    from api.routers import data, health, jobs as jobs_router, market, paper, strategies
+    for r in (health.router, strategies.router, jobs_router.router, paper.router, market.router, data.router):
+        app.include_router(r, prefix="/api")
+    from api.routers import events as events_router
+    app.include_router(events_router.router, prefix="/api")
+    return app
+
+
+__all__ = ["create_app", "BootstrapError", "CONTRACT_VERSION"]

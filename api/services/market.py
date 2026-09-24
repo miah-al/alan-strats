@@ -1,0 +1,364 @@
+"""
+api/services/market.py — market data: the database first, the network where the
+Market page goes to it.
+
+  tickers / bars      mkt.PriceBar, mkt.MinuteBar (Polygon aggregates when the DB has none)
+  quote               yfinance (the Market page's source), DB last closes as fallback
+  movers              Polygon grouped daily (the Market page's ``_fetch_grouped_movers``)
+  yield curve         mkt.MacroBar (FRED, the Market page's source, as fallback)
+  IV                  engine.iv_metrics (Polygon option snapshots) on DB / yfinance bars
+  GEX                 analytics.gex_engine on the latest stored mkt.OptionSnapshot chain
+                      (Polygon's live snapshot, as the Market page uses, when none is stored)
+"""
+from __future__ import annotations
+
+import datetime as _dt
+import logging
+import math
+from typing import Optional
+
+import numpy as np
+import pandas as pd
+
+from api.serialize import table_from_df, table_from_rows, to_jsonable
+from api.services.db import require_db
+
+logger = logging.getLogger("alan_trader.api.market")
+
+NY = "America/New_York"
+_VIX_ALIASES = {"VIX", "^VIX", "I:VIX"}
+_MAX_MINUTE_DAYS = 31
+
+
+class MissingData(LookupError):
+    """No data for the request; routers answer 422 with the reason."""
+
+
+class NeedsApiKey(RuntimeError):
+    pass
+
+
+def _api_key(required: bool = True) -> str:
+    from app import get_polygon_api_key
+    key = get_polygon_api_key()
+    if required and not key:
+        raise NeedsApiKey("No Polygon API key configured (POLYGON_API_KEY in .env).")
+    return key
+
+
+def _d(s: Optional[str], default: _dt.date) -> _dt.date:
+    if not s:
+        return default
+    return _dt.date.fromisoformat(str(s)[:10])
+
+
+# ── Tickers ───────────────────────────────────────────────────────────────────
+
+def tickers() -> list[dict]:
+    from sqlalchemy import text
+    with require_db().connect() as c:
+        rows = c.execute(text("""
+            SELECT t.Symbol, MIN(pb.BarDate), MAX(pb.BarDate), COUNT(*)
+            FROM   mkt.PriceBar pb
+            JOIN   mkt.Ticker t ON t.TickerId = pb.TickerId
+            GROUP BY t.Symbol
+            ORDER BY t.Symbol
+        """)).fetchall()
+    return to_jsonable([{"ticker": r[0], "first": r[1], "last": r[2], "bars": int(r[3])} for r in rows])
+
+
+# ── Bars ──────────────────────────────────────────────────────────────────────
+
+def _ohlcv(ticker: str, interval: str, source: str, df: pd.DataFrame, tcol: str) -> dict:
+    t = df[tcol]
+    if interval == "1m":
+        ts = pd.to_datetime(t)
+        if getattr(ts.dt, "tz", None) is None:
+            ts = ts.dt.tz_localize(NY, ambiguous="NaT", nonexistent="shift_forward")
+        else:
+            ts = ts.dt.tz_convert(NY)
+        tv = [x.isoformat() if not pd.isna(x) else None for x in ts]
+    else:
+        tv = [pd.Timestamp(x).date().isoformat() for x in t]
+
+    def col(name):
+        if name not in df.columns:
+            return [None] * len(df)
+        return [to_jsonable(v) for v in pd.to_numeric(df[name], errors="coerce").tolist()]
+
+    return {"ticker": ticker, "interval": interval, "source": source, "t": tv,
+            "o": col("open"), "h": col("high"), "l": col("low"), "c": col("close"), "v": col("volume")}
+
+
+def _polygon_aggs(ticker: str, fd: _dt.date, td: _dt.date, timespan: str) -> pd.DataFrame:
+    from data.polygon_client import PolygonClient
+    c = PolygonClient(api_key=_api_key())
+    data = c._get(f"/v2/aggs/ticker/{ticker}/range/1/{timespan}/{fd}/{td}",
+                  {"adjusted": "true", "sort": "asc", "limit": 50000})
+    res = data.get("results", []) or []
+    if not res:
+        return pd.DataFrame()
+    df = pd.DataFrame(res).rename(columns={"o": "open", "h": "high", "l": "low", "c": "close", "v": "volume"})
+    if timespan == "minute":
+        df["ts"] = pd.to_datetime(df["t"], unit="ms", utc=True).dt.tz_convert(NY)
+    else:
+        df["ts"] = pd.to_datetime(df["t"], unit="ms").dt.date
+    return df
+
+
+def bars(ticker: str, from_date: Optional[str], to_date: Optional[str], interval: str = "1d") -> dict:
+    from db.client import get_minute_bars, get_price_bars, get_vix_bars
+    ticker = ticker.upper().strip()
+    if interval not in ("1d", "1m"):
+        raise ValueError("interval must be 1d or 1m")
+    td = _d(to_date, _dt.date.today())
+    fd = _d(from_date, td - _dt.timedelta(days=5 if interval == "1m" else 365))
+    if fd > td:
+        raise ValueError("from must not be after to")
+    eng = require_db()
+    if interval == "1d":
+        df = get_price_bars(eng, ticker, fd, td)
+        if (df is None or df.empty) and ticker in _VIX_ALIASES:
+            v = get_vix_bars(eng, fd, td)
+            if not v.empty:
+                df = v.reset_index()
+        if df is not None and not df.empty:
+            return _ohlcv(ticker, interval, "db", df, "date")
+        pdf = _polygon_aggs(ticker if ticker not in _VIX_ALIASES else "I:VIX", fd, td, "day")
+        if pdf.empty:
+            raise MissingData(f"No daily bars for {ticker} between {fd} and {td}: none stored in "
+                              f"mkt.PriceBar and Polygon returned none.")
+        return _ohlcv(ticker, interval, "polygon", pdf, "ts")
+    if (td - fd).days > _MAX_MINUTE_DAYS:
+        raise ValueError(f"1m bars are limited to {_MAX_MINUTE_DAYS} days per request")
+    df = get_minute_bars(eng, ticker, fd, td)
+    if df is not None and not df.empty:
+        return _ohlcv(ticker, interval, "db", df, "ts")
+    pdf = _polygon_aggs(ticker, fd, td, "minute")
+    if pdf.empty:
+        raise MissingData(f"No 1-minute bars for {ticker} between {fd} and {td}: none stored in "
+                          f"mkt.MinuteBar and Polygon returned none.")
+    return _ohlcv(ticker, interval, "polygon", pdf, "ts")
+
+
+# ── Quote ─────────────────────────────────────────────────────────────────────
+
+def quote(ticker: str) -> dict:
+    ticker = ticker.upper().strip()
+    q = None
+    try:
+        from data.stock_data import yf_quote
+        q = yf_quote(ticker)
+    except Exception as exc:
+        logger.warning("yfinance quote %s failed: %s", ticker, exc)
+    if q:
+        return to_jsonable({"ticker": ticker, "source": "yfinance", **q})
+    from db.client import get_price_bars
+    df = get_price_bars(require_db(), ticker, _dt.date.today() - _dt.timedelta(days=14), _dt.date.today())
+    if df is None or df.empty:
+        raise MissingData(f"No quote for {ticker}: yfinance returned nothing and no bars are stored.")
+    last = df.iloc[-1]
+    prev = float(df["close"].iloc[-2]) if len(df) > 1 else float(last["close"])
+    close = float(last["close"])
+    return to_jsonable({"ticker": ticker, "source": "db", "close": close, "open": last.get("open"),
+                        "high": last.get("high"), "low": last.get("low"), "volume": last.get("volume"),
+                        "vwap": last.get("vwap"), "prev_close": prev, "change": close - prev,
+                        "change_pct": (close - prev) / prev * 100 if prev else 0.0,
+                        "asof": last["date"], "live": False})
+
+
+# ── Movers ────────────────────────────────────────────────────────────────────
+
+def movers(top_n: int = 12) -> dict:
+    from app.pages.market.data import _fetch_grouped_movers
+    mv = _fetch_grouped_movers(_api_key(), top_n=top_n)
+    if not mv:
+        raise MissingData("Polygon grouped daily returned no sessions in the last 8 days.")
+    rows = ([{**r, "side": "gainer"} for r in mv["gainers"]] +
+            [{**r, "side": "loser"} for r in mv["losers"]])
+    t = table_from_rows(rows, field_order=["ticker", "price", "change_pct", "volume", "side"],
+                        headers={"ticker": "Ticker", "price": "Price", "change_pct": "Change %",
+                                 "volume": "Volume", "side": "Side"},
+                        formats={"price": "price", "change_pct": "pct", "volume": "int"})
+    t.update({"asof": mv.get("asof"), "universe": len(mv.get("all") or [])})
+    return t
+
+
+# ── Yield curve ───────────────────────────────────────────────────────────────
+
+_TENORS = [("3M", 0.25, "rate_3m"), ("6M", 0.5, "rate_6m"), ("1Y", 1.0, "rate_1y"), ("2Y", 2.0, "rate_2y"),
+           ("5Y", 5.0, "rate_5y"), ("10Y", 10.0, "rate_10y"), ("30Y", 30.0, "rate_30y")]
+
+
+def yield_curve() -> dict:
+    from db.client import get_macro_bars
+    try:
+        m = get_macro_bars(require_db(), _dt.date.today() - _dt.timedelta(days=30), _dt.date.today())
+    except Exception as exc:
+        logger.warning("macro bars unavailable: %s", exc)
+        m = pd.DataFrame()
+    if m is not None and not m.empty:
+        cols = [c for _, _, c in _TENORS if c in m.columns]
+        m = m.dropna(subset=cols, how="all")
+        if not m.empty:
+            row = m.iloc[-1]
+            ten = [(t, y, c) for t, y, c in _TENORS if c in m.columns and pd.notna(row.get(c))]
+            return to_jsonable({"asof": m.index[-1], "tenors": [t for t, _, _ in ten],
+                                "yields": [float(row[c]) * 100.0 for _, _, c in ten],
+                                "years": [y for _, y, _ in ten], "units": "pct", "source": "db"})
+    from app.pages.market.data import _load_yield_curve
+    df = _load_yield_curve()
+    if df is None or df.empty:
+        raise MissingData("No yield curve: mkt.MacroBar is empty and FRED returned nothing.")
+    cols = [c for _, _, c in _TENORS if c in df.columns]
+    df = df.dropna(subset=cols, how="all")
+    row = df.iloc[-1]
+    ten = [(t, y, c) for t, y, c in _TENORS if c in df.columns and pd.notna(row.get(c))]
+    return to_jsonable({"asof": row["date"], "tenors": [t for t, _, _ in ten],
+                        "yields": [float(row[c]) for _, _, c in ten], "years": [y for _, y, _ in ten],
+                        "units": "pct", "source": "fred"})
+
+
+# ── IV metrics ────────────────────────────────────────────────────────────────
+
+def iv(ticker: str) -> dict:
+    from db.client import get_price_bars
+    from engine.iv_metrics import get_ticker_iv_metrics
+    ticker = ticker.upper().strip()
+    df = get_price_bars(require_db(), ticker, _dt.date.today() - _dt.timedelta(days=120), _dt.date.today())
+    price_source = "db"
+    if df is None or df.empty:
+        from engine.screener import _fetch_ohlcv
+        df = _fetch_ohlcv(ticker, "", bars=60)
+        price_source = "yfinance"
+        if df is None or df.empty:
+            raise MissingData(f"No price history for {ticker} (DB and yfinance empty).")
+    else:
+        df = df.set_index(pd.to_datetime(df["date"])).sort_index()
+    m = get_ticker_iv_metrics(ticker, _api_key(), price_df=df)
+    spot = float(df["close"].iloc[-1])
+    return to_jsonable({"ticker": ticker, "spot": spot, "spot_asof": df.index[-1],
+                        "price_source": price_source, **m})
+
+
+# ── GEX ───────────────────────────────────────────────────────────────────────
+
+def _db_chain(ticker: str):
+    """(chain, spot, snapshot date) from the latest stored option snapshot, or None."""
+    from db.client import get_option_coverage, get_option_snapshots, get_price_bars
+    eng = require_db()
+    cov = get_option_coverage(eng, ticker)
+    if not cov:
+        return None
+    snap_day = cov[1]
+    chain = get_option_snapshots(eng, ticker, snap_day)
+    if chain is None or chain.empty:
+        return None
+    px = get_price_bars(eng, ticker, snap_day - _dt.timedelta(days=10), snap_day)
+    if px is None or px.empty:
+        return None
+    spot = float(px["close"].iloc[-1])
+    chain = chain.rename(columns={"expiration": "expiry"})
+    chain["expiry"] = pd.to_datetime(chain["expiry"])
+    chain["dte"] = (chain["expiry"] - pd.Timestamp(snap_day)).dt.days
+    chain["open_interest"] = pd.to_numeric(chain["open_interest"], errors="coerce")
+    chain["volume"] = pd.to_numeric(chain.get("volume"), errors="coerce")
+    chain = chain[(chain["dte"] >= 0) & (chain["dte"] <= 60)
+                  & (chain["strike"] >= spot * 0.85) & (chain["strike"] <= spot * 1.15)]
+    return (chain, spot, snap_day) if not chain.empty else None
+
+
+def _polygon_chain(ticker: str):
+    """The Market page's GEX source: Polygon's option snapshot, 0-60 DTE, spot ±15%."""
+    from data.polygon_client import PolygonClient
+    from data.stock_data import yf_stock_price
+    c = PolygonClient(api_key=_api_key())
+    spot = yf_stock_price(ticker)
+    if not spot:
+        raise MissingData(f"Could not fetch spot price for {ticker}.")
+    today = _dt.date.today()
+    results, url = [], f"/v3/snapshot/options/{ticker}"
+    params = {"expiration_date.gte": str(today),
+              "expiration_date.lte": str(today + _dt.timedelta(days=60)),
+              "strike_price.gte": round(spot * 0.85, 0), "strike_price.lte": round(spot * 1.15, 0),
+              "limit": 250}
+    while url:
+        data = c._get(url, params)
+        results.extend(data.get("results", []))
+        nxt = (data.get("next_url") or "").replace(c.BASE, "")
+        url, params = (nxt or None), {}
+    rows = []
+    for r in results:
+        det = r.get("details") or {}
+        if not det.get("strike_price"):
+            continue
+        rows.append({"strike": float(det["strike_price"]), "contract_type": str(det.get("contract_type", "")).lower(),
+                     "expiry": det.get("expiration_date"), "gamma": (r.get("greeks") or {}).get("gamma"),
+                     "open_interest": r.get("open_interest") or 0, "iv": r.get("implied_volatility")})
+    if not rows:
+        return None
+    chain = pd.DataFrame(rows)
+    chain["expiry"] = pd.to_datetime(chain["expiry"])
+    chain["dte"] = (chain["expiry"] - pd.Timestamp(today)).dt.days
+    return chain, float(spot), today
+
+
+#: A stored chain older than this is not "the market now"; auto mode goes to Polygon instead.
+GEX_DB_MAX_AGE_DAYS = 5
+
+
+def gex(ticker: str, source: str = "auto") -> dict:
+    """``source``: ``auto`` (a recent stored chain, else Polygon's live snapshot as the
+    Market page uses, else a stale stored chain with a warning), ``db`` or ``polygon``."""
+    from analytics.gex_engine import _compute_gamma_column, _normalize_chain, compute_dealer_gex, _GEX_NOTIONAL_SCALE
+    ticker = ticker.upper().strip()
+    notes: list[str] = []
+    got, used = None, None
+    if source in ("auto", "db"):
+        got, used = _db_chain(ticker), "db"
+        if got is not None and source == "auto":
+            age = (_dt.date.today() - got[2]).days
+            if age > GEX_DB_MAX_AGE_DAYS and _api_key(required=False):
+                live = _polygon_chain(ticker)
+                if live is not None:
+                    got, used = live, "polygon"
+                else:
+                    notes.append(f"stored chain is {age} days old and Polygon returned none")
+            elif age > GEX_DB_MAX_AGE_DAYS:
+                notes.append(f"stored chain is {age} days old (no Polygon key for a live one)")
+    if got is None and source in ("auto", "polygon"):
+        got, used = _polygon_chain(ticker), "polygon"
+    if got is None:
+        raise MissingData(f"No option chain for {ticker} (source={source}): nothing usable stored in "
+                          f"mkt.OptionSnapshot and/or Polygon returned no contracts.")
+    chain, spot, asof = got
+    source = used
+    snap = compute_dealer_gex(chain, spot)
+
+    # per-strike call / put split, on the same gamma and OI the engine used
+    cols = _normalize_chain(chain)
+    g = pd.to_numeric(chain[cols["gamma"]], errors="coerce") if cols["gamma"] else None
+    gamma = (g.fillna(0.0).to_numpy() if g is not None and g.notna().any() and (g.abs() > 0).any()
+             else _compute_gamma_column(chain, cols, spot, 0.045))
+    oi = pd.to_numeric(chain[cols["oi"]], errors="coerce").fillna(0.0).to_numpy() if cols["oi"] else np.zeros(len(chain))
+    is_call = chain[cols["type"]].astype(str).str.lower().str.startswith("c").to_numpy()
+    per = gamma * oi * 100 * spot * spot * _GEX_NOTIONAL_SCALE
+    df = pd.DataFrame({"strike": pd.to_numeric(chain[cols["strike"]], errors="coerce"),
+                       "call_gex": np.where(is_call, per, 0.0), "put_gex": np.where(~is_call, -per, 0.0),
+                       "call_oi": np.where(is_call, oi, 0.0), "put_oi": np.where(~is_call, oi, 0.0)})
+    agg = df.groupby("strike", as_index=False).sum().sort_values("strike")
+    agg["net_gex"] = agg["call_gex"] + agg["put_gex"]
+    agg = agg[["strike", "call_gex", "put_gex", "net_gex", "call_oi", "put_oi"]]
+    table = table_from_df(agg, headers={"strike": "Strike", "call_gex": "Call GEX", "put_gex": "Put GEX",
+                                        "net_gex": "Net GEX", "call_oi": "Call OI", "put_oi": "Put OI"},
+                          formats={"strike": "price", "call_gex": "money", "put_gex": "money",
+                                   "net_gex": "money", "call_oi": "int", "put_oi": "int"})
+    flip = snap.flip_level if snap.flip_level and math.isfinite(snap.flip_level) else None
+    return to_jsonable({
+        "ticker": ticker, "spot": spot, "flip": flip, "table": table,
+        "asof": asof, "source": source, "net_gex": snap.net_gex, "call_gex": snap.call_gex,
+        "put_gex": snap.put_gex, "call_wall": snap.call_wall, "put_wall": snap.put_wall,
+        "net_gex_0dte": snap.net_gex_0dte, "dist_to_flip_pct": snap.dist_to_flip_pct,
+        "units": "$ per 1% move (dealer-signed)", "contracts": int(len(chain)),
+        "warnings": list(snap.warnings) + notes,
+    })

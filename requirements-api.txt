@@ -1,0 +1,23 @@
+# Service API (api/) + the platform, on a Windows venv:
+#   uv venv .venv-win --python 3.14
+#   uv pip install --python .venv-win -r requirements-api.txt
+-r requirements.txt
+
+# HTTP / WebSocket service
+fastapi>=0.115
+uvicorn[standard]>=0.30
+httpx>=0.27
+
+# Database (read-only from the service): SQL Server via ODBC
+sqlalchemy>=2.0
+pyodbc>=5.1
+
+# The Dash app's own imports that requirements.txt does not list
+dash-mantine-react-table>=0.0.1
+
+# alan_trader_strategies plugin dependencies (see its pyproject.toml)
+hmmlearn>=0.3
+xgboost>=2.0
+
+# tests
+pytest>=8

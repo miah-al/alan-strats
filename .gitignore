@@ -35,3 +35,5 @@ Thumbs.db
 .claude/
 paper_state/
 logs/paper/
+.venv-win/
+.pycache/
