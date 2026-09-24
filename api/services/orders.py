@@ -246,27 +246,8 @@ def _payoff_frame(order: Order, quotes: list[dict]) -> pd.DataFrame:
 
 
 def economics(order: Order, quotes: list[dict], spot: Optional[float]) -> dict:
-    from paper.views import _expiry_payoff_pnl, position_risk
-    grp = _payoff_frame(order, quotes)
-    strikes = sorted({float(l.strike) for l in order.legs if l.is_option})
-    ref = spot or (strikes[len(strikes) // 2] if strikes else None) or 1.0
-    far = max([ref] + strikes) * 3.0
-    pts = sorted({0.0, *strikes, ref, far})
-    vals = [_expiry_payoff_pnl(grp, S) for S in pts]
-    beyond = _expiry_payoff_pnl(grp, far * 2.0)
-    unbounded_up = beyond > vals[-1] + 1e-6
-    max_profit = None if unbounded_up else max(vals)
-    risk = position_risk(grp)
-    max_loss = -risk if risk is not None else None       # negative dollars (None = unbounded)
-    breakevens = []
-    for (s0, v0), (s1, v1) in zip(zip(pts, vals), zip(pts[1:], vals[1:])):
-        if v0 == 0 and s0 not in breakevens and s0 > 0:
-            breakevens.append(round(s0, 4))
-        elif (v0 < 0 < v1) or (v0 > 0 > v1):
-            breakevens.append(round(s0 + (s1 - s0) * (-v0) / (v1 - v0), 4))
-    return {"max_profit": round(max_profit, 2) if max_profit is not None else None,
-            "max_loss": round(max_loss, 2) if max_loss is not None else None,
-            "breakevens": breakevens}
+    from api.services.risk import payoff_stats
+    return payoff_stats(_payoff_frame(order, quotes), spot)
 
 
 def buying_power(order: Order, quotes: list[dict], spot: Optional[float], econ: dict) -> tuple[float, list[str]]:

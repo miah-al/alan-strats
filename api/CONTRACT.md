@@ -335,3 +335,22 @@ clarifications of what the service does where the spec leaves room.
   `quotes_asof` (newest streamed quote time), `stale` (market closed, or streamed quotes > 2 min old), `quoted` /
   `contracts` (two-sided quotes / contracts shown); `source` is the provider that gave the strikes. Warnings say when the
   quotes are stale, yfinance-delayed, or missing for some contracts.
+- **Position risk** (`GET /api/paper/positions`, open rows; all existing columns kept): `managed_by` is now `runner | manual`
+  (the runner's feed name moved to `runner_feed`); `structure` is a trader's name built from the netted legs — `put credit
+  spread 750/745` (short strike first for a credit, long first for a debit), `iron condor 740/745/790/795`, `short straddle`,
+  `long strangle`, `long call 770`, `covered call`, `… butterfly`, `… calendar`, `custom (n legs)`. Added: `spot`,
+  `direction` (bullish / bearish / neutral from the position delta), `units` (the legs' common quantity),
+  `entry_credit_debit` (net entry per unit in points, credit positive, commissions included) and `entry_type`
+  (credit | debit), `pnl_pct_of_max` (P&L as a percent of max profit), `max_profit` / `max_loss` (dollars at expiry;
+  max_loss negative; null = unbounded), `breakevens` and `short_strikes` (arrays; column format `list`), `short_delta` (the
+  delta of the most-tested short leg), `nearest_short_strike`, `sigma_to_short` (distance from spot to the nearest short
+  strike in σ·√T units of that leg's IV, positive while out of the money; on expiry day T is the session time left),
+  `delta` (shares), `gamma` (shares per $1), `theta` ($ per day), `vega` ($ per vol point) — position totals, null when a
+  leg has no greeks — `beta_spy` (1-year daily beta from stored bars) and `beta_delta_spy` (delta as SPY shares),
+  `greeks_source`. Leg greeks come from the market-data hub (the broker's streamed greeks, else yfinance's
+  Black-Scholes), else Black-Scholes on the leg's quoted IV, else on the IV implied by its mark. Closed rows add
+  `max_profit`, `max_loss`, `breakevens`, `short_strikes`, `pnl_pct_of_max` and the same `structure` names.
+- **Legs** rows add `iv`, `delta`, `gamma`, `theta`, `vega` (per share of the contract) and `greeks_source`; an open leg the
+  runner does not price gets a `mark` from the hub (`mark_source` "market data (<provider>)").
+- Polygon serves option *quotes* only after a snapshot has shown bid/ask (this plan has none); it always serves chains,
+  greeks, IV and OI.

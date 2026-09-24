@@ -22,9 +22,9 @@ def paper_positions(request: Request, status: Literal["open", "closed", "all"] =
 
 
 @router.get("/paper/positions/{trade_group_id}/legs")
-def paper_legs(trade_group_id: str):
+def paper_legs(trade_group_id: str, request: Request):
     try:
-        return P.legs(trade_group_id)
+        return P.legs(trade_group_id, hub=getattr(request.app.state, "market", None))
     except P.UnknownTradeGroup:
         raise HTTPException(404, f"unknown trade group {trade_group_id!r}")
 

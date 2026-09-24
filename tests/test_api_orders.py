@@ -285,6 +285,19 @@ def test_orders_end_to_end_on_a_throwaway_account(client, test_account):
     assert mine and mine[0]["underlying"] == UND and mine[0]["contracts"] == 2
     assert mine[0]["priced_by"].startswith("market data") and mine[0]["market_value"] == pytest.approx(400.0)
     assert mine[0]["pnl"] == pytest.approx(-2.0)                                            # the two commissions
+    m = mine[0]
+    assert m["structure"] == "call debit spread 100/105" and m["managed_by"] == "manual" and m["runner_feed"] is None
+    assert m["spot"] == pytest.approx(102.0) and m["units"] == 2 and m["entry_type"] == "debit"
+    assert m["entry_credit_debit"] == pytest.approx(-2.01)                                 # per unit, commission in
+    assert m["max_profit"] == pytest.approx(598.0) and m["max_loss"] == pytest.approx(-402.0)
+    assert m["breakevens"] == [pytest.approx(102.01)] and m["short_strikes"] == [105.0]
+    assert m["pnl_pct_of_max"] == pytest.approx(-2.0 / 598.0 * 100)
+    # the fake feed quotes no greeks: Black-Scholes on each leg's implied vol; a debit call spread is long delta
+    assert m["delta"] > 0 and m["gamma"] is not None and m["short_delta"] > 0 and m["sigma_to_short"] > 0
+    assert "implied vol" in m["greeks_source"]
+    lg = client.get(f"/api/paper/positions/{tg}/legs").json()
+    assert {"iv", "delta", "gamma", "theta", "vega", "mark", "greeks_source"} <= set(lg["rows"][0])
+    assert all(r["delta"] is not None and r["mark"] is not None for r in lg["rows"])
     summ = client.get("/api/paper/summary").json()
     assert summ["open_positions"] >= 1
 

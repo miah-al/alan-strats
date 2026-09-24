@@ -125,14 +125,22 @@ def _leg_symbol(r) -> Optional[str]:
         return None
 
 
-def _hub_quotes(open_groups: dict, runner_marks: dict, hub) -> dict:
+def _hub_quotes(open_groups: dict, runner_marks: dict, hub, all_groups: bool = False) -> dict:
+    """One snapshot of the open groups' legs (runner-held groups too with ``all_groups``: their greeks),
+    their underlyings and SPY."""
     if hub is None or not getattr(hub, "providers", None) or not open_groups:
         return {}
     pd_ = PD()
     today = _today()
     syms: set[str] = set()
+    if all_groups:
+        syms.add("SPY")
+        for grp in open_groups.values():
+            u = grp["Underlying"].dropna() if "Underlying" in grp.columns else pd.Series(dtype=str)
+            if not u.empty:
+                syms.add(_canon(str(u.iloc[0])))
     for tgid, grp in open_groups.items():
-        if pd_.runner_mark_for(runner_marks, tgid) is not None:
+        if not all_groups and pd_.runner_mark_for(runner_marks, tgid) is not None:
             continue
         for _, r in _noncash(grp).iterrows():
             exp = r.get("Expiration")
@@ -254,21 +262,40 @@ def summary(hub=None) -> dict:
 
 _POS_FIELDS = ["trade_group_id", "strategy", "strategy_label", "underlying", "structure", "expiry", "dte",
                "contracts", "opened", "closed", "entry_net", "mark", "market_value", "pnl", "pnl_pct",
-               "max_risk", "managed_by", "status", "priced_by", "is_live", "legs", "alert"]
+               "max_risk", "managed_by", "status", "priced_by", "is_live", "legs", "alert",
+               # position risk (v2)
+               "spot", "direction", "units", "entry_credit_debit", "entry_type", "pnl_pct_of_max", "max_profit",
+               "max_loss", "breakevens", "short_strikes", "short_delta", "nearest_short_strike", "sigma_to_short",
+               "delta", "gamma", "theta", "vega", "beta_spy", "beta_delta_spy", "greeks_source", "runner_feed"]
 _POS_HEADERS = {"trade_group_id": "Trade Group", "strategy": "Strategy (slug)", "strategy_label": "Strategy",
                 "underlying": "Underlying", "structure": "Structure", "expiry": "Expiry", "dte": "DTE",
                 "contracts": "Contracts", "opened": "Opened", "closed": "Closed", "entry_net": "Net Entry",
                 "mark": "Mark", "market_value": "Market Value", "pnl": "P&L", "pnl_pct": "P&L %",
                 "max_risk": "Max Risk", "managed_by": "Managed By", "status": "Status",
-                "priced_by": "Priced By", "is_live": "Live", "legs": "Legs", "alert": "Alert"}
+                "priced_by": "Priced By", "is_live": "Live", "legs": "Legs", "alert": "Alert",
+                "spot": "Spot", "direction": "Direction", "units": "Units", "entry_credit_debit": "Entry (per unit)",
+                "entry_type": "Credit/Debit", "pnl_pct_of_max": "% of Max Profit", "max_profit": "Max Profit",
+                "max_loss": "Max Loss", "breakevens": "Breakevens", "short_strikes": "Short Strikes",
+                "short_delta": "Short Δ", "nearest_short_strike": "Nearest Short", "sigma_to_short": "σ to Short",
+                "delta": "Delta", "gamma": "Gamma", "theta": "Theta", "vega": "Vega", "beta_spy": "Beta (SPY)",
+                "beta_delta_spy": "β-Δ (SPY shs)", "greeks_source": "Greeks From", "runner_feed": "Runner Feed"}
 _POS_FORMATS = {"entry_net": "money", "market_value": "money", "pnl": "money", "max_risk": "money",
-                "pnl_pct": "pct", "mark": "price", "contracts": "int", "dte": "int", "legs": "int"}
+                "pnl_pct": "pct", "mark": "price", "contracts": "int", "dte": "int", "legs": "int",
+                "spot": "price", "entry_credit_debit": "price", "pnl_pct_of_max": "pct", "max_profit": "money",
+                "max_loss": "money", "breakevens": "list", "short_strikes": "list", "nearest_short_strike": "price",
+                "theta": "money", "vega": "money", "units": "int"}
 _POS_TYPES = {"trade_group_id": "string", "strategy": "string", "strategy_label": "string",
               "underlying": "string", "structure": "string", "expiry": "date", "dte": "integer",
               "contracts": "number", "opened": "date", "closed": "date", "entry_net": "number",
               "mark": "number", "market_value": "number", "pnl": "number", "pnl_pct": "number",
               "max_risk": "number", "managed_by": "string", "status": "string", "priced_by": "string",
-              "is_live": "bool", "legs": "integer", "alert": "string"}
+              "is_live": "bool", "legs": "integer", "alert": "string",
+              "spot": "number", "direction": "string", "units": "integer", "entry_credit_debit": "number",
+              "entry_type": "string", "pnl_pct_of_max": "number", "max_profit": "number", "max_loss": "number",
+              "breakevens": "string", "short_strikes": "string", "short_delta": "number",
+              "nearest_short_strike": "number", "sigma_to_short": "number", "delta": "number", "gamma": "number",
+              "theta": "number", "vega": "number", "beta_spy": "number", "beta_delta_spy": "number",
+              "greeks_source": "string", "runner_feed": "string"}
 
 
 def _closing_mask(grp: pd.DataFrame) -> pd.Series:
@@ -330,7 +357,7 @@ def _alert_level(grp, label, upnl, ne) -> str:
 
 
 def _open_row(tgid: str, grp: pd.DataFrame, runner_marks: dict, labels: dict,
-              hub_quotes: Optional[dict] = None) -> dict:
+              hub_quotes: Optional[dict] = None, hub=None) -> dict:
     pd_ = PD()
     slug = str(grp["StrategyName"].iloc[0]) if not grp.empty else ""
     label = labels.get(slug, slug)
@@ -355,16 +382,60 @@ def _open_row(tgid: str, grp: pd.DataFrame, runner_marks: dict, labels: dict,
     else:
         mark = (mv / (n * _multiplier(grp))) if n else None
         priced_by = hv[1] if hv is not None else "entry price"
+    feed = pd_.managed_by_runner(tgid)
+    rk = _risk(grp, str(und), hub_quotes, hub)
+    maxp = rk.get("max_profit")
     return {
         "trade_group_id": str(tgid), "strategy": slug, "strategy_label": label, "underlying": str(und),
-        "structure": pd_.structure_label(grp), "expiry": exp,
+        "expiry": exp,
         "dte": (exp - _today()).days if exp else None, "contracts": n,
         "opened": str(grp["BusinessDate"].min())[:10] if "BusinessDate" in grp.columns else None,
         "closed": None, "entry_net": ne, "mark": mark, "market_value": mv, "pnl": upnl,
         "pnl_pct": (upnl / basis * 100.0) if basis else None, "max_risk": risk,
-        "managed_by": pd_.managed_by_runner(tgid), "status": "open", "priced_by": priced_by,
+        "status": "open", "priced_by": priced_by,
         "is_live": bool(is_live), "legs": int(len(_noncash(grp))), "alert": _alert_level(grp, label, upnl, ne),
+        **{k: v for k, v in rk.items() if k != "first_expiry"},
+        "structure": rk.get("structure") or pd_.structure_label(grp),
+        "pnl_pct_of_max": (upnl / maxp * 100.0) if (maxp and maxp > 0) else None,
+        "managed_by": "runner" if feed else "manual", "runner_feed": feed,
     }
+
+
+def _risk(grp: pd.DataFrame, und: str, quotes: Optional[dict], hub) -> dict:
+    """The position-risk fields (api/services/risk.py) on the quotes already fetched for the table."""
+    from api.services import risk as RK
+    try:
+        quotes = quotes or {}
+        legs = RK.net_legs(_noncash(grp))
+        spot = _quote_price(quotes.get(_canon(und)), index=_is_index(und))
+        spy = _quote_price(quotes.get("SPY"))
+        greeks = RK.leg_greeks(hub, legs, spot, wait=0.0, quotes=quotes)
+        return RK.position_risk_fields(hub, _noncash(grp), und, spot=spot, spy=spy, greeks=greeks)
+    except Exception as exc:  # noqa: BLE001 — a risk figure must never cost the row
+        logger.warning("risk for a %s position failed: %s", und, exc)
+        return {}
+
+
+def _canon(sym: str) -> str:
+    from api.marketdata import symbols as SYM
+    try:
+        return SYM.normalize(sym)
+    except ValueError:
+        return sym
+
+
+def _is_index(sym: str) -> bool:
+    from api.marketdata import symbols as SYM
+    return SYM.is_index(_canon(sym))
+
+
+def _quote_price(q: Optional[dict], index: bool = False) -> Optional[float]:
+    if not q:
+        return None
+    for k in (("last", "mid") if index else ("mid", "last")):
+        if q.get(k) is not None:
+            return float(q[k])
+    return None
 
 
 def _closed_row(r: dict, txns: pd.DataFrame, labels: dict) -> dict:
@@ -379,9 +450,23 @@ def _closed_row(r: dict, txns: pd.DataFrame, labels: dict) -> dict:
     basis = risk if (risk and risk > 0) else (abs(ne) if ne else None)
     exp = _expiry(grp)
     od, cd = r.get("Open Date"), r.get("Close Date")
+    extra: dict = {}
+    if not opening.empty:
+        try:
+            from api.services import risk as RK
+            legs_ = RK.net_legs(opening)
+            extra = {"structure": RK.describe_structure(legs_) or pd_.structure_label(opening),
+                     **{k: v for k, v in RK.payoff_stats(opening, None).items()},
+                     "short_strikes": sorted({l.strike for l in legs_ if l.is_option and l.qty < 0})}
+            maxp = extra.get("max_profit")
+            extra["pnl_pct_of_max"] = (pnl / maxp * 100.0) if (maxp and maxp > 0) else None
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("closed-row figures failed: %s", exc)
     return {
+        **extra,
         "trade_group_id": str(tgid), "strategy": slug, "strategy_label": labels.get(slug, slug),
-        "underlying": str(r.get("Underlying", "?")), "structure": pd_.structure_label(opening) if not opening.empty else "",
+        "underlying": str(r.get("Underlying", "?")),
+        "structure": extra.get("structure") or (pd_.structure_label(opening) if not opening.empty else ""),
         "expiry": exp, "dte": None, "contracts": _contracts(opening) if not opening.empty else None,
         "opened": str(od)[:10] if od is not None else None, "closed": str(cd)[:10] if cd is not None else None,
         "entry_net": ne, "mark": None, "market_value": 0.0, "pnl": pnl,
@@ -397,8 +482,8 @@ def positions(status: str = "open", hub=None) -> dict:
     rows: list[dict] = []
     if status in ("open", "all"):
         marks = PD().paper_runner_marks()
-        hq = _hub_quotes(open_groups, marks, hub)
-        opened = [_open_row(t, g, marks, labels, hq) for t, g in open_groups.items()]
+        hq = _hub_quotes(open_groups, marks, hub, all_groups=True)
+        opened = [_open_row(t, g, marks, labels, hq, hub) for t, g in open_groups.items()]
         rows += sorted(opened, key=lambda x: (x["opened"] or "", x["trade_group_id"]), reverse=True)
     if status in ("closed", "all"):
         closed = [_closed_row(r, txns, labels) for r in closed_rows or []]
@@ -421,14 +506,17 @@ _LEG_HEADERS = {"transaction_id": "Txn", "date": "Date", "symbol": "Symbol", "un
                 "security_type": "Security", "type": "Type", "strike": "Strike", "expiry": "Expiry",
                 "side": "Side", "quantity": "Qty", "multiplier": "Mult", "entry_price": "Entry Price",
                 "mark": "Mark", "mark_source": "Mark Source", "pnl": "P&L", "commission": "Commission",
-                "amount": "Amount", "leg_type": "Leg", "source": "Source", "closing": "Closing", "notes": "Notes"}
+                "amount": "Amount", "leg_type": "Leg", "source": "Source", "closing": "Closing", "notes": "Notes",
+                "iv": "IV", "delta": "Delta", "gamma": "Gamma", "theta": "Theta", "vega": "Vega",
+                "greeks_source": "Greeks From"}
 _LEG_TYPES = {"transaction_id": "integer", "date": "date", "strike": "number", "expiry": "date",
               "quantity": "number", "multiplier": "number", "entry_price": "number", "mark": "number",
               "mark_source": "string", "pnl": "number", "commission": "number", "amount": "number",
-              "closing": "bool"}
+              "closing": "bool", "iv": "number", "delta": "number", "gamma": "number", "theta": "number",
+              "vega": "number", "greeks_source": "string"}
 
 
-def legs(trade_group_id: str) -> dict:
+def legs(trade_group_id: str, hub=None) -> dict:
     pd_ = PD()
     open_groups, _closed, txns = load()
     if txns.empty or "TradeGroupId" not in txns.columns:
@@ -441,6 +529,21 @@ def legs(trade_group_id: str) -> dict:
     live, spot = pd_.live_leg_prices(grp) if is_open else ({}, None)
     closing = _closing_mask(grp)
     settle_cache: dict = {}
+    greeks: dict = {}
+    if is_open:
+        from api.services import risk as RK
+        und = str(grp["Underlying"].dropna().iloc[0]) if "Underlying" in grp.columns and not grp["Underlying"].dropna().empty else ""
+        try:
+            nl = RK.net_legs(grp)
+            q = {}
+            if hub is not None and getattr(hub, "providers", None):
+                q = {m["symbol"]: m for m in hub.snapshot([_canon(und)] + [l.symbol for l in nl], wait=2.0)}
+            if spot is None:
+                spot = _quote_price(q.get(_canon(und)), index=_is_index(und))
+            by_ledger = RK.leg_greeks(hub, nl, spot, wait=0.0, quotes=q)
+            greeks = {l.ledger_symbol: by_ledger.get(l.symbol) or {} for l in nl}
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("leg greeks for %s failed: %s", trade_group_id, exc)
     rows = []
     for idx, r in grp.iterrows():
         st = str(r.get("SecurityType") or "").lower()
@@ -458,6 +561,9 @@ def legs(trade_group_id: str) -> dict:
                 ex = pd_._expired_option_intrinsic(r, None, settle_cache)
                 if ex is not None:
                     mark, src = float(ex), "expiry settlement"
+        g = greeks.get(sym) or {}
+        if is_open and mark is None and g.get("mark") is not None:
+            mark, src = float(g["mark"]), f"market data ({g.get('mark_source')})"
         pnl = ((1.0 if side == "BUY" else -1.0) * (mark - entry) * qty * mult) if mark is not None else None
         rows.append({
             "transaction_id": r.get("TransactionId"), "date": r.get("BusinessDate"), "symbol": sym,
@@ -467,10 +573,12 @@ def legs(trade_group_id: str) -> dict:
             "multiplier": mult, "entry_price": entry, "mark": mark, "mark_source": src, "pnl": pnl,
             "commission": r.get("Commission"), "amount": r.get("Amount"), "leg_type": r.get("LegType"),
             "source": r.get("Source"), "closing": bool(closing.loc[idx]), "notes": r.get("Notes"),
+            "iv": g.get("iv"), "delta": g.get("delta"), "gamma": g.get("gamma"), "theta": g.get("theta"),
+            "vega": g.get("vega"), "greeks_source": g.get("source"),
         })
     table = table_from_rows(rows, headers=_LEG_HEADERS, types=_LEG_TYPES,
                             formats={"entry_price": "price", "mark": "price", "pnl": "money",
-                                     "amount": "money", "commission": "money", "strike": "price"})
+                                     "amount": "money", "commission": "money", "strike": "price", "iv": "ratio"})
     table.update({"trade_group_id": str(trade_group_id), "status": "open" if is_open else "closed",
                   "spot": spot})
     return to_jsonable(table)
