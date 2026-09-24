@@ -275,3 +275,21 @@ clarifications of what the service does where the spec leaves room.
   means N strikes at-or-below spot and N above. A chain nobody can produce is a 422 with each provider's reason.
   Polygon's plan here carries no bid/ask for options (last, IV, greeks, OI, volume only).
 - A request refused by the request gate (a provider over budget / backing off) is a **503** with `Retry-After`.
+- **Orders.** `limit_price` and the preview's `net_mid` are per *unit*: the legs' quantities divided by their greatest
+  common divisor (a 2-lot vertical is 2 units of a 1:1 spread). Paper fills are at each leg's **mid** (a stock with no
+  bid/ask: its last trade); a limit order fills when `net_mid <= limit_price` (debit-positive), at the mid. The preview
+  adds `underlying`, `spot`, `units`, `ratios`, `net_total` (dollars), `order_type`, `limit_price`, and per leg `last`,
+  `source`; `max_loss` is negative dollars (null = unbounded), `max_profit` null = unbounded, `buying_power_effect` is
+  the defined risk or, for undefined risk, a Reg-T style estimate (a warning says so). `ok` is false when a leg has no
+  two-sided quote. The order result adds `client_order_id`, `fill_price` (net per unit), `closes_trade_group_id` and
+  `order` (the stored order: legs, status, times). An order the service cannot accept as sent is a 422 (not stored);
+  one it accepts but cannot fill (a market order with an unquoted leg) is stored as `rejected`. `tif` is `day | gtc`;
+  a `day` order placed after the close belongs to the next session. `GET /api/orders` also takes
+  `status=cancelled|rejected`. `DELETE` of an order that is not working is a 409; unknown id 404.
+- **Close** (`POST /api/paper/positions/{tgid}/close`): body optional (default a market order); 409 when the group is
+  closed already, a closing order is working, or a live paper runner holds it; 404 unknown group. Legs that have expired
+  settle at intrinsic.
+- Order changes are pushed on `WS /api/events` as `{"type": "order", "order": {...}}`.
+- `/api/paper/positions` rows: a position no runner prices is marked at the hub's mids (`priced_by`
+  `"market data (<provider>)"`, `is_live` true).
+- `/api/health` adds `paper_account_id`, `working_orders` and `db.write_allow_list`.

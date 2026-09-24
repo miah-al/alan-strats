@@ -230,7 +230,7 @@ class ProviderLimits:
     def snapshot(self) -> dict:
         return {"name": self.name, "state": self.state(), "requests_last_min": self.requests_last_min(),
                 "budget_remaining": self.budget_remaining(), "last_error": self.last_error,
-                "detail": self.detail, "requests_today": self.calls_today,
+                "detail": self.disabled_reason or self.detail, "requests_today": self.calls_today,
                 "daily_budget": self.policy.per_day, "per_min": self.policy.per_min,
                 "backoff_s": max(0.0, round(self.backoff_until - self._clock(), 1)),
                 "last_error_at": self.last_error_at, "last_ok_at": self.last_ok_at}

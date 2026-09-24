@@ -33,6 +33,12 @@ def PD():
     return views
 
 
+def account_id() -> int:
+    """The paper account shown and traded (``ALAN_TRADER_PAPER_ACCOUNT_ID``, default the runner's)."""
+    from api.config import paper_account_id
+    return paper_account_id()
+
+
 def _labels() -> dict[str, str]:
     from api.services.strategies import labels
     try:
@@ -50,7 +56,7 @@ def load() -> tuple[dict, list, pd.DataFrame]:
     (the page's own loader turns every failure into 'no data')."""
     from engine.positions import get_closed_trade_groups, get_open_trade_groups, load_transactions
     eng = require_db()
-    txns = load_transactions(eng, PD()._ACCOUNT_ID)
+    txns = load_transactions(eng, account_id())
     if txns is None or txns.empty:
         return {}, [], pd.DataFrame()
     return get_open_trade_groups(txns), get_closed_trade_groups(txns), txns
@@ -63,7 +69,7 @@ def _deposit_cash() -> float:
             SELECT TOP 1 Amount FROM portfolio.Balance
             WHERE AccountId = :aid AND BalanceType = 'Cash'
             ORDER BY BusinessDate DESC
-        """), {"aid": PD()._ACCOUNT_ID}).fetchone()
+        """), {"aid": account_id()}).fetchone()
     return float(row[0]) if row and row[0] is not None else 0.0
 
 
@@ -88,12 +94,107 @@ def _trade_cash_flow(txns: pd.DataFrame) -> float:
     return total
 
 
+# ── Groups for the order book ─────────────────────────────────────────────────
+
+def open_group(trade_group_id: str) -> Optional[pd.DataFrame]:
+    """The open trade group's ledger rows (non-cash), or None when it is not open."""
+    open_groups, _c, _t = load()
+    grp = open_groups.get(str(trade_group_id))
+    if grp is None:
+        return None
+    return _noncash(grp)
+
+
+def known_group(trade_group_id: str) -> bool:
+    _o, _c, txns = load()
+    return (not txns.empty and "TradeGroupId" in txns.columns
+            and bool((txns["TradeGroupId"].astype(str) == str(trade_group_id)).any()))
+
+
+# ── Live marks from the market-data hub ───────────────────────────────────────
+# A position no paper runner prices (one placed through the service, say) is marked at the hub's
+# current mids — the same quotes its paper fills came from — instead of at its entry price. A group
+# the runner holds keeps the runner's own mark; an expired leg settles at intrinsic; a group with any
+# leg the hub cannot price keeps the page's entry-value fallback (never a mix).
+
+def _leg_symbol(r) -> Optional[str]:
+    from api.marketdata import symbols as SYM
+    try:
+        return SYM.normalize(str(r.get("Symbol") or ""))
+    except ValueError:
+        return None
+
+
+def _hub_quotes(open_groups: dict, runner_marks: dict, hub) -> dict:
+    if hub is None or not getattr(hub, "providers", None) or not open_groups:
+        return {}
+    pd_ = PD()
+    today = _today()
+    syms: set[str] = set()
+    for tgid, grp in open_groups.items():
+        if pd_.runner_mark_for(runner_marks, tgid) is not None:
+            continue
+        for _, r in _noncash(grp).iterrows():
+            exp = r.get("Expiration")
+            if exp is not None and not pd.isna(exp) and pd.Timestamp(exp).date() < today:
+                continue
+            s = _leg_symbol(r)
+            if s:
+                syms.add(s)
+    if not syms:
+        return {}
+    try:
+        return {q["symbol"]: q for q in hub.snapshot(sorted(syms), wait=2.0)}
+    except Exception as exc:
+        logger.warning("hub marks unavailable: %s", exc)
+        return {}
+
+
+def _hub_value(tgid, grp: pd.DataFrame, runner_marks: dict, quotes: Optional[dict]):
+    """(liquidation value, "market data (<source>)", legs) or None."""
+    if not quotes:
+        return None
+    pd_ = PD()
+    if pd_.runner_mark_for(runner_marks, tgid) is not None:
+        return None
+    today = _today()
+    mv, sources, n = 0.0, set(), 0
+    cache: dict = {}
+    for _, r in _noncash(grp).iterrows():
+        st = str(r.get("SecurityType") or "").lower()
+        qty = abs(float(r.get("Quantity") or 0))
+        mult = float(r.get("Multiplier") or (100 if st == "option" else 1))
+        sign = 1.0 if str(r.get("Direction", "")).upper().startswith("B") else -1.0
+        exp = r.get("Expiration")
+        px = None
+        if st == "option" and exp is not None and not pd.isna(exp) and pd.Timestamp(exp).date() < today:
+            px = pd_._expired_option_intrinsic(r, None, cache)
+            src = "expiry settlement"
+        else:
+            q = quotes.get(_leg_symbol(r) or "") or {}
+            px = q.get("mid")
+            if px is None and st != "option":
+                px = q.get("last")
+            src = q.get("source")
+        if px is None:
+            return None
+        mv += sign * qty * float(px) * mult
+        n += 1
+        if src:
+            sources.add(str(src))
+    bound = pd_._vertical_bound(grp)
+    if bound is not None:
+        mv = min(bound[1], max(bound[0], mv))
+    return round(mv, 2), "market data (" + ", ".join(sorted(sources)) + ")", n
+
+
 # ── Summary ───────────────────────────────────────────────────────────────────
 
-def summary() -> dict:
+def summary(hub=None) -> dict:
     pd_ = PD()
     open_groups, closed_rows, txns = load()
     runner_marks = pd_.paper_runner_marks()
+    hub_quotes = _hub_quotes(open_groups, runner_marks, hub)
     market_value = total_entry = 0.0
     n_priced = n_total = 0
     for tgid, grp in open_groups.items():
@@ -102,6 +203,9 @@ def summary() -> dict:
             mv, _live, np_, nt = pd_.live_market_value({tgid: grp})
         except Exception:
             mv, np_, nt = 0.0, 0, 0
+        hv = _hub_value(tgid, grp, runner_marks, hub_quotes)
+        if hv is not None:
+            mv, np_, nt = hv[0], hv[2], hv[2]
         market_value += mv
         n_priced += np_
         n_total += nt
@@ -225,7 +329,8 @@ def _alert_level(grp, label, upnl, ne) -> str:
     return "error" if "error" in levels else ("warning" if "warning" in levels else "ok")
 
 
-def _open_row(tgid: str, grp: pd.DataFrame, runner_marks: dict, labels: dict) -> dict:
+def _open_row(tgid: str, grp: pd.DataFrame, runner_marks: dict, labels: dict,
+              hub_quotes: Optional[dict] = None) -> dict:
     pd_ = PD()
     slug = str(grp["StrategyName"].iloc[0]) if not grp.empty else ""
     label = labels.get(slug, slug)
@@ -236,6 +341,9 @@ def _open_row(tgid: str, grp: pd.DataFrame, runner_marks: dict, labels: dict) ->
         mv, is_live, _, _ = pd_.live_market_value({tgid: grp})
     except Exception:
         mv, is_live = 0.0, False
+    hv = _hub_value(tgid, grp, runner_marks, hub_quotes)
+    if hv is not None:
+        mv, is_live = hv[0], True
     upnl = ne + mv
     risk = pd_.position_risk(grp)
     basis = risk if (risk and risk > 0) else (abs(ne) if ne else None)
@@ -246,7 +354,7 @@ def _open_row(tgid: str, grp: pd.DataFrame, runner_marks: dict, labels: dict) ->
         mark, priced_by = float(rm[0]), rm[2]
     else:
         mark = (mv / (n * _multiplier(grp))) if n else None
-        priced_by = "entry price"
+        priced_by = hv[1] if hv is not None else "entry price"
     return {
         "trade_group_id": str(tgid), "strategy": slug, "strategy_label": label, "underlying": str(und),
         "structure": pd_.structure_label(grp), "expiry": exp,
@@ -283,13 +391,14 @@ def _closed_row(r: dict, txns: pd.DataFrame, labels: dict) -> dict:
     }
 
 
-def positions(status: str = "open") -> dict:
+def positions(status: str = "open", hub=None) -> dict:
     open_groups, closed_rows, txns = load()
     labels = _labels()
     rows: list[dict] = []
     if status in ("open", "all"):
         marks = PD().paper_runner_marks()
-        opened = [_open_row(t, g, marks, labels) for t, g in open_groups.items()]
+        hq = _hub_quotes(open_groups, marks, hub)
+        opened = [_open_row(t, g, marks, labels, hq) for t, g in open_groups.items()]
         rows += sorted(opened, key=lambda x: (x["opened"] or "", x["trade_group_id"]), reverse=True)
     if status in ("closed", "all"):
         closed = [_closed_row(r, txns, labels) for r in closed_rows or []]
@@ -413,7 +522,7 @@ def _cash_series(txns: pd.DataFrame, start, end) -> pd.Series:
             SELECT BusinessDate, Amount FROM portfolio.Balance
             WHERE AccountId = :aid AND BalanceType = 'Cash'
             ORDER BY BusinessDate ASC
-        """), conn, params={"aid": PD()._ACCOUNT_ID})
+        """), conn, params={"aid": account_id()})
     if not dep.empty:
         dep["BusinessDate"] = pd.to_datetime(dep["BusinessDate"])
         dep["Amount"] = pd.to_numeric(dep["Amount"], errors="coerce")
@@ -431,7 +540,7 @@ def equity(from_date: Optional[str], to_date: Optional[str]) -> dict:
     start = _dt.date.fromisoformat(from_date) if from_date else end - _dt.timedelta(days=30)
     if txns.empty:
         return {"series": [series(None, "equity"), series(None, "cash")], "from": start, "to": end}
-    df = PD().mtm_equity_series(txns, start, end)
+    df = PD().mtm_equity_series(txns, start, end, account_id=account_id())
     eq = pd.Series(df["Amount"].values, index=pd.to_datetime(df["BusinessDate"])) if not df.empty else None
     cash = _cash_series(txns, start, end)
     return to_jsonable({"series": [series(eq, "equity"), series(cash, "cash")], "from": start, "to": end,
@@ -446,45 +555,56 @@ def state_dir() -> Path:
 
 
 def runner(limit: int = 30) -> dict:
-    d = state_dir()
+    """Runner sessions from every state directory the service reads: this checkout's
+    ``paper_state`` and other checkouts' (read only) — a runner started elsewhere shows here too."""
+    dirs = [Path(x) for x in PD().state_dirs()]
+    d = dirs[0]
     sessions = []
     heartbeats: dict[str, dict] = {}
-    if d.is_dir():
-        for hb in d.glob("heartbeat_*.json"):
+    files = []
+    for sd in dirs:
+        if not sd.is_dir():
+            continue
+        for hb in sd.glob("heartbeat_*.json"):
             try:
-                heartbeats[hb.stem[len("heartbeat_"):]] = json.loads(hb.read_text(encoding="utf-8"))
+                h = json.loads(hb.read_text(encoding="utf-8"))
             except (ValueError, OSError):
                 continue
-        files = sorted((f for f in d.glob("*_????-??-??.json") if not f.name.startswith("heartbeat_")),
-                       key=lambda f: f.stem.rsplit("_", 1)[-1], reverse=True)[:limit]
-        for f in files:
-            slug, day = f.stem.rsplit("_", 1)
+            slug = hb.stem[len("heartbeat_"):]
+            if slug not in heartbeats or str(h.get("at") or "") > str(heartbeats[slug].get("at") or ""):
+                heartbeats[slug] = h
+        files += [f for f in sd.glob("*_????-??-??.json")
+                  if not f.name.startswith("heartbeat_") and not f.name.startswith("broker_calls_")]
+    files = sorted(files, key=lambda f: (f.stem.rsplit("_", 1)[-1], f.stat().st_mtime), reverse=True)[:limit]
+    for f in files:
+        slug, day = f.stem.rsplit("_", 1)
+        try:
+            st = json.loads(f.read_text(encoding="utf-8"))
+        except (ValueError, OSError) as exc:
+            sessions.append({"strategy": slug, "date": day, "state": "unreadable", "detail": {"error": str(exc)}})
+            continue
+        session = st.get("state") or {}
+        hb = heartbeats.get(slug) if (heartbeats.get(slug) or {}).get("day") == day else None
+        if st.get("finished"):
+            state = "finished"
+        elif hb and hb.get("halted"):
+            state = "halted"
+        elif hb and hb.get("at"):
             try:
-                st = json.loads(f.read_text(encoding="utf-8"))
-            except (ValueError, OSError) as exc:
-                sessions.append({"strategy": slug, "date": day, "state": "unreadable", "detail": {"error": str(exc)}})
-                continue
-            session = st.get("state") or {}
-            hb = heartbeats.get(slug) if (heartbeats.get(slug) or {}).get("day") == day else None
-            if st.get("finished"):
-                state = "finished"
-            elif hb and hb.get("halted"):
-                state = "halted"
-            elif hb and hb.get("at"):
-                try:
-                    age = (_dt.datetime.now() - _dt.datetime.fromisoformat(hb["at"])).total_seconds()
-                except ValueError:
-                    age = None
-                state = "running" if age is not None and age <= 120 else "stale"
-            else:
-                state = "saved"
-            detail = {"provider": st.get("provider"), "finished": bool(st.get("finished")),
-                      "written": st.get("written"),
-                      "open_positions": len(session.get("positions") or []),
-                      "fills": len(session.get("fills") or []), "trades": len(session.get("trades") or []),
-                      "day_pnl": session.get("day_pnl"), "blocked_reason": session.get("blocked_reason"),
-                      "heartbeat": hb}
-            sessions.append({"strategy": slug, "date": day, "state": state, "detail": detail})
+                age = (_dt.datetime.now() - _dt.datetime.fromisoformat(hb["at"])).total_seconds()
+            except ValueError:
+                age = None
+            state = "running" if age is not None and age <= 120 else "stale"
+        else:
+            state = "saved"
+        detail = {"provider": st.get("provider"), "finished": bool(st.get("finished")),
+                  "written": st.get("written"),
+                  "open_positions": len(session.get("positions") or []),
+                  "fills": len(session.get("fills") or []), "trades": len(session.get("trades") or []),
+                  "day_pnl": session.get("day_pnl"), "blocked_reason": session.get("blocked_reason"),
+                  "heartbeat": hb}
+        detail["state_dir"] = str(f.parent)
+        sessions.append({"strategy": slug, "date": day, "state": state, "detail": detail})
     marks = {k: {"mark": v[0], "units": v[1], "source": v[2]} for k, v in PD().paper_runner_marks().items()}
     return to_jsonable({"sessions": sessions, "marks": marks, "state_dir": str(d), "state_dir_exists": d.is_dir(),
-                        "heartbeats": heartbeats})
+                        "state_dirs": [str(x) for x in dirs], "heartbeats": heartbeats})

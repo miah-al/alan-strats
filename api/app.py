@@ -75,6 +75,14 @@ def create_app():
     from data import request_gate
     market_hub = build_hub()
 
+    # other checkouts' runner state (read only): their positions stay priced and owned by them here
+    from api.config import external_state_dirs, paper_account_id
+    from paper import views as paper_views
+    paper_views.EXTRA_STATE_DIRS = external_state_dirs()
+
+    from api.services.orders import OrderBook
+    order_book = OrderBook(market_hub, paper_account_id, publish=hub.publish)
+
     from api.redact import RedactingFilter, install_redaction, redact
     forwarder.addFilter(RedactingFilter())
 
@@ -87,6 +95,7 @@ def create_app():
         request_gate.install(market_hub.gate)          # every requests / yfinance call now passes the gate
         request_gate.install_hooks()
         market_hub.start(asyncio.get_running_loop())
+        order_book.start()
         beat = asyncio.create_task(hub.heartbeat_forever())
         logger.info("alan_trader service %s (%s) up; strategies from %s",
                     build["version"], build["branch"], info.get("strategies_dir"))
@@ -94,6 +103,7 @@ def create_app():
             yield
         finally:
             beat.cancel()
+            order_book.stop()
             await market_hub.stop()
             if request_gate.installed() is market_hub.gate:
                 request_gate.install(None)
@@ -107,6 +117,7 @@ def create_app():
     app.state.hub = hub
     app.state.jobs = jobs
     app.state.market = market_hub
+    app.state.orders = order_book
     app.state.build = build
     app.state.bootstrap = info
     app.state.json_response = SafeJSONResponse
@@ -176,9 +187,9 @@ def create_app():
         logger.exception("unhandled error on %s %s", request.method, request.url.path)
         return _err(500, redact(f"{type(exc).__name__}: {exc}"))
 
-    from api.routers import data, health, jobs as jobs_router, market, options, paper, strategies
-    for r in (health.router, strategies.router, jobs_router.router, paper.router, market.router, options.router,
-              data.router):
+    from api.routers import data, health, jobs as jobs_router, market, options, orders, paper, strategies
+    for r in (health.router, strategies.router, jobs_router.router, paper.router, orders.router, market.router,
+              options.router, data.router):
         app.include_router(r, prefix="/api")
     from api.routers import events as events_router, stream as stream_router
     app.include_router(events_router.router, prefix="/api")

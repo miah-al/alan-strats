@@ -6,8 +6,10 @@ HTTP + WebSocket API over the platform, for the WPF desktop client
 
 The service never places, modifies or cancels a broker order. Its only broker traffic is
 market data (the tastytrade DXLink streamer and option chains) within the platform's request
-budget. It never writes to the AlanStrats database: every SQLAlchemy statement passes a guard
-that refuses INSERT/UPDATE/DELETE/DDL/EXEC.
+budget. It is the single writer to AlanStrats, through an allow-list: every SQLAlchemy statement
+in the process passes a guard that admits writes only to the paper ledger, the market-data tables
+`db/sync.py` fills and its own `app` schema, and refuses everything else (other tables, DROP,
+TRUNCATE, EXEC, SELECT INTO, DDL outside `app`).
 
 ## Run (Windows)
 
@@ -87,6 +89,10 @@ installed for their screener hooks; without it the registry falls back to the ge
 | GET | `/market/providers` | per provider: state, requests in the last minute, budget left, last error |
 | GET | `/options/{u}/expirations` | `{underlying, spot, expirations: [{expiry, dte}], source}` |
 | GET | `/options/{u}/chain?expiry=&strikes=30` | Table, one row per strike: call_/put_ bid ask mid last iv greeks oi volume symbol |
+| POST | `/orders/preview` | legs quoted, net mid, debit / credit, max profit / loss, breakevens, buying power, warnings |
+| POST | `/orders` | a paper order: fills at the hub's mids (limit: when marketable, else `working`); idempotent on `client_order_id` |
+| GET | `/orders?status=working\|filled\|cancelled\|rejected\|all` · DELETE `/orders/{id}` | orders Table · cancel a working order |
+| POST | `/paper/positions/{tgid}/close` | close a paper position at the mids (refused for a group a live runner holds) |
 
 Errors are `{"detail": "..."}`: 404 unknown strategy / job / trade group, 422 invalid
 request or missing data (with the real reason), 503 database unreachable.
@@ -118,6 +124,23 @@ backing off, over budget or disconnected is `degraded` / `down` and its symbols 
 | `ALAN_TRADER_LIMIT_<P>_PER_MIN` / `_PER_DAY` | see `limits.py` | per-provider limits (P = TASTYTRADE, POLYGON, YFINANCE, FRED) |
 | `ALAN_TRADER_EXTERNAL_STATE_DIRS` | the main checkout's `paper_state` | other checkouts' runner state, read only |
 
+## Paper orders (api/services/orders.py)
+
+A fill is written to the same paper ledger the Paper views and the runner use: one trade group per
+order (`engine.positions.insert_paper_legs`; a close is `insert_closing_transactions`), each row
+booking its own cash in `Amount` with the platform's $1 commission per leg, so a group's P&L is the
+cash it moved. Orders live in `app.PaperOrder` (created by the first order). Limit orders work until
+marketable at mid — re-checked on every quote for their legs and every 15 s — and a `day` order
+still working at the close is cancelled. A position a live paper runner holds (its session state,
+here or in another checkout's `paper_state`) can only be closed by that runner: 409.
+Positions no runner prices are marked at the hub's mids (`priced_by: market data (<provider>)`).
+`account: live` is a 403: live trading is not armed.
+
+| Variable | Default | |
+|---|---|---|
+| `ALAN_TRADER_PAPER_ACCOUNT_ID` | the runner's `Paper Account` (1) | the account `/paper/*` shows and `/orders` trades |
+| `ALAN_TRADER_PROTECTED_ACCOUNTS` | (none; the test suite sets `1`) | accounts the DB guard refuses any ledger / `app` write for |
+
 ## Layout
 
 ```
@@ -145,4 +168,7 @@ into headless modules both use: `engine/strategy_scan.py` (the screener scan) an
 No DB writes, no broker, no Polygon: the scan test runs a toy strategy on synthetic
 data; tests that read the shared database skip when it is unreachable. The market-data
 hub runs with fake providers (`tests/test_api_marketdata.py`); `tests/conftest.py` sets
-`ALAN_TRADER_PROVIDERS=none` so no test opens a live stream.
+`ALAN_TRADER_PROVIDERS=none` so no test opens a live stream, and `ALAN_TRADER_PROTECTED_ACCOUNTS=1`
+so the guard refuses any write for the real paper account. The order tests
+(`tests/test_api_orders.py`) trade a throwaway account on a made-up underlying and delete every
+row they wrote.

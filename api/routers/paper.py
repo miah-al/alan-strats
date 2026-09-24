@@ -1,10 +1,10 @@
-"""/api/paper — the paper account (read-only)."""
+"""/api/paper — the paper account (orders and closing a position: api/routers/orders.py)."""
 from __future__ import annotations
 
 from datetime import date
 from typing import Literal, Optional
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Request
 
 from api.services import paper as P
 
@@ -12,13 +12,13 @@ router = APIRouter(tags=["paper"])
 
 
 @router.get("/paper/summary")
-def paper_summary():
-    return P.summary()
+def paper_summary(request: Request):
+    return P.summary(hub=getattr(request.app.state, "market", None))
 
 
 @router.get("/paper/positions")
-def paper_positions(status: Literal["open", "closed", "all"] = "open"):
-    return P.positions(status)
+def paper_positions(request: Request, status: Literal["open", "closed", "all"] = "open"):
+    return P.positions(status, hub=getattr(request.app.state, "market", None))
 
 
 @router.get("/paper/positions/{trade_group_id}/legs")

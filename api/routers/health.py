@@ -16,7 +16,7 @@ router = APIRouter(tags=["health"])
 def health(request: Request):
     from alan_trader.strategy_api import registry as R
     from engine.env import get_polygon_api_key
-    from api.bootstrap import db_guard_installed
+    from api.bootstrap import db_guard_installed, write_allow_list
     from api.services.db import ping, server_and_database
 
     ok, err = ping()
@@ -29,7 +29,8 @@ def health(request: Request):
         "branch": build["branch"],
         "python": build["python"],
         "time": now_iso(),
-        "db": {"ok": ok, "server": server, "database": database, "error": err, "read_only_guard": db_guard_installed()},
+        "db": {"ok": ok, "server": server, "database": database, "error": err, "read_only_guard": db_guard_installed(),
+               "write_allow_list": write_allow_list()},
         "polygon_key": bool(get_polygon_api_key()),
         "tastytrade_creds": bool(os.environ.get("TT_SECRET") and os.environ.get("TT_REFRESH")),
         "strategies": {"plugins": [p.name for p in R.plugins()], "count": len(R.STRATEGY_METADATA),
@@ -40,6 +41,8 @@ def health(request: Request):
         "jobs": {"workers": request.app.state.jobs._pool._max_workers,
                  "active": sum(1 for j in request.app.state.jobs.list() if j.status in ("queued", "running"))},
         "event_clients": request.app.state.hub.client_count,
+        "paper_account_id": request.app.state.orders.account_id(),
+        "working_orders": request.app.state.orders.working_count(),
         "market_data": [{"name": p["name"], "state": p["state"], "detail": p["detail"]}
                         for p in request.app.state.market.providers_status()],
     }
