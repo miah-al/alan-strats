@@ -16,7 +16,8 @@ otherwise. The service never imports the Dash app (``app/``).
 
 Everything here is idempotent; ``bootstrap()`` may be called any number of times.
 ``install_db_read_only_guard()`` makes every SQLAlchemy engine in the process refuse
-statements that could write (the database is shared with the live system).
+any write outside the service's allow-list (the paper ledger, the market-data tables the sync
+jobs fill, the service's own ``app`` schema) — the database is shared with the live system.
 """
 from __future__ import annotations
 
@@ -145,30 +146,143 @@ def _assert_paths(plugin_dir: Optional[Path]) -> None:
         raise BootstrapError("refusing to start: " + "; ".join(problems))
 
 
-# ── read-only database guard ──────────────────────────────────────────────────
+# ── database write guard (an allow-list) ──────────────────────────────────────
+#
+# The service is the single writer to AlanStrats, but only to what it owns: the paper ledger the
+# Paper views and the runner use, the market-data tables db/sync.py fills, and its own ``app``
+# schema (watchlists, alerts, orders). Every statement on every SQLAlchemy engine in the process
+# is screened before it reaches the server: each write clause's target table must be on the list,
+# and any write the screen cannot attribute to an allowed table (DROP, TRUNCATE, EXEC, SELECT INTO,
+# DDL outside ``app`` …) is refused, as before.
+
+#: the paper ledger (paper/ledger.py, engine/positions.py, db/portfolio_client.py's paper paths)
+LEDGER_TABLES = frozenset({
+    "portfolio.account", "portfolio.balance", "portfolio.position", "portfolio.leg", "portfolio.transaction",
+    "portfolio.security", "portfolio.modelsignal", "portfolio.dailymark",
+})
+#: the market-data tables db/sync.py (and the db/client upserts it calls) write
+MARKET_TABLES = frozenset({
+    "mkt.ticker", "mkt.pricebar", "mkt.optionsnapshot", "mkt.vixbar", "mkt.macrobar", "mkt.news", "mkt.dividend",
+    "mkt.earnings", "mkt.vixfuture", "mkt.fomccalendar", "mkt.treasurybar", "mkt.cpibar", "mkt.minutebar",
+    "mkt.optionminutebar", "mkt.optionminutesession", "mkt.eventcalendar", "mkt.synclog",
+})
+APP_SCHEMA = "app"
+DATABASE = "alanstrats"
 
 _WRITE_SQL = re.compile(
     r"\b(INSERT|UPDATE|DELETE|MERGE|CREATE|ALTER|DROP|TRUNCATE|EXEC|EXECUTE|GRANT|REVOKE|DENY|"
     r"BULK|RESTORE|BACKUP|DBCC|SP_EXECUTESQL|INTO)\b", re.I)
 _SQL_COMMENT = re.compile(r"--[^\n]*|/\*.*?\*/", re.S)
 _SQL_STRING = re.compile(r"'(?:[^']|'')*'")
+_IDENT = r'(?:\[[^\]]+\]|"[^"]+"|[A-Za-z_#@][\w$#@]*)'
+_QNAME = rf"{_IDENT}(?:\s*\.\s*{_IDENT}){{0,2}}"
+_CLAUSES = [
+    ("INSERT", re.compile(rf"\bINSERT\s+(?:INTO\s+)?({_QNAME})", re.I)),
+    ("UPDATE", re.compile(rf"\bUPDATE\s+({_QNAME})\s+SET\b", re.I)),
+    ("DELETE", re.compile(rf"\bDELETE\s+(?:FROM\s+)?({_QNAME})", re.I)),
+    ("MERGE", re.compile(rf"\bMERGE\s+(?:INTO\s+)?({_QNAME})", re.I)),
+    ("CREATE SCHEMA", re.compile(rf"\bCREATE\s+SCHEMA\s+({_IDENT})", re.I)),
+    ("CREATE TABLE", re.compile(rf"\bCREATE\s+TABLE\s+({_QNAME})", re.I)),
+    ("CREATE INDEX", re.compile(rf"\bCREATE\s+(?:UNIQUE\s+)?(?:(?:NON)?CLUSTERED\s+)?INDEX\s+{_IDENT}\s+ON\s+({_QNAME})", re.I)),
+    ("ALTER TABLE", re.compile(rf"\bALTER\s+TABLE\s+({_QNAME})", re.I)),
+]
 
 
 class ReadOnlyViolation(RuntimeError):
-    """The service attempted a statement that could write to the shared database."""
+    """The service attempted a statement its write allow-list does not cover (the name is kept
+    from the read-only days; routers answer 500 and log it)."""
+
+
+WriteRefused = ReadOnlyViolation
+
+
+def _table_name(raw: str) -> str:
+    parts = [p.strip().strip("[]").strip('"').lower() for p in re.split(r"\s*\.\s*", raw.strip())]
+    if len(parts) == 3:
+        if parts[0] != DATABASE:
+            return f"{parts[0]}.{parts[1]}.{parts[2]}"      # another database: never allowed
+        parts = parts[1:]
+    if len(parts) == 1:
+        parts = ["dbo", parts[0]]
+    return ".".join(parts)
+
+
+def _allowed(kind: str, table: str) -> bool:
+    if kind == "CREATE SCHEMA":
+        return table.split(".")[-1] == APP_SCHEMA
+    if table.startswith(APP_SCHEMA + "."):
+        return True
+    if kind in ("CREATE TABLE", "CREATE INDEX", "ALTER TABLE"):
+        return False                                       # DDL only in the service's own schema
+    return table in LEDGER_TABLES or table in MARKET_TABLES
+
+
+def write_targets(statement: str) -> list[tuple[str, str]]:
+    """[(clause, table)] a statement writes, or raises ReadOnlyViolation for a write the screen
+    cannot attribute to a table (DROP, TRUNCATE, EXEC, SELECT … INTO, …)."""
+    body = _SQL_STRING.sub("''", _SQL_COMMENT.sub(" ", str(statement)))
+    spans, out = [], []
+    for kind, rx in _CLAUSES:
+        for m in rx.finditer(body):
+            spans.append((m.start(), m.end()))
+            out.append((kind, _table_name(m.group(1))))
+    for m in _WRITE_SQL.finditer(body):
+        if not any(a <= m.start() < b for a, b in spans):
+            raise ReadOnlyViolation(
+                f"refused a {m.group(1).upper()} statement the service's write allow-list does not cover: "
+                f"{' '.join(str(statement).split())[:160]}")
+    return out
+
+
+def check_statement(statement: str) -> list[tuple[str, str]]:
+    """The allow-list verdict on one statement: its write targets, or ReadOnlyViolation."""
+    targets = write_targets(statement)
+    for kind, table in targets:
+        if not _allowed(kind, table):
+            raise ReadOnlyViolation(
+                f"refused a {kind} on {table}: not in the service's write allow-list "
+                f"(paper ledger, market data, app.*): {' '.join(str(statement).split())[:160]}")
+    return targets
+
+
+def _protected_accounts() -> set[int]:
+    """Accounts no statement of this process may write for (ALAN_TRADER_PROTECTED_ACCOUNTS — the
+    test suite sets it to the real paper account)."""
+    raw = os.environ.get("ALAN_TRADER_PROTECTED_ACCOUNTS", "")
+    return {int(x) for x in re.findall(r"\d+", raw)}
+
+
+def _account_params(context) -> set[int]:
+    found: set[int] = set()
+    for params in (getattr(context, "compiled_parameters", None) or []):
+        for k, v in (params or {}).items():
+            key = str(k).lower()
+            if key in ("aid", "a") or "account" in key:
+                try:
+                    found.add(int(v))
+                except (TypeError, ValueError):
+                    pass
+    return found
 
 
 def _guard(conn, cursor, statement, parameters, context, executemany):
-    body = _SQL_STRING.sub("''", _SQL_COMMENT.sub(" ", str(statement)))
-    m = _WRITE_SQL.search(body)
-    if m:
-        raise ReadOnlyViolation(
-            f"read-only service refused a {m.group(1).upper()} statement: {' '.join(str(statement).split())[:160]}")
+    targets = check_statement(statement)
+    protected = _protected_accounts()
+    if protected and any(t in LEDGER_TABLES or t.startswith(APP_SCHEMA + ".") for _, t in targets):
+        hit = _account_params(context) & protected
+        if hit:
+            raise ReadOnlyViolation(f"refused a write for protected account {sorted(hit)} "
+                                    f"(ALAN_TRADER_PROTECTED_ACCOUNTS): {' '.join(str(statement).split())[:120]}")
+
+
+def write_allow_list() -> dict:
+    return {"ledger": sorted(LEDGER_TABLES), "market_data": sorted(MARKET_TABLES), "schema": f"{APP_SCHEMA}.*",
+            "protected_accounts": sorted(_protected_accounts())}
 
 
 def install_db_read_only_guard() -> bool:
-    """Reject every SQL statement that could write, on every SQLAlchemy engine in the
-    process. The service reads the shared AlanStrats database and must never change it."""
+    """Screen every SQL statement on every SQLAlchemy engine in the process against the write
+    allow-list (the historical name: it is the service's only DB guard)."""
     if _STATE.get("guard"):
         return True
     try:
@@ -179,6 +293,9 @@ def install_db_read_only_guard() -> bool:
     event.listen(Engine, "before_cursor_execute", _guard)
     _STATE["guard"] = True
     return True
+
+
+install_db_write_guard = install_db_read_only_guard
 
 
 def uninstall_db_read_only_guard() -> None:
@@ -198,7 +315,7 @@ def db_guard_installed() -> bool:
 def bootstrap() -> dict:
     """Arrange sys.path, load .env, load the plugin by path and assert where everything
     resolves. Returns what it found. (The service's ``create_app`` also installs the
-    read-only DB guard.)"""
+    DB write guard.)"""
     if _STATE["done"]:
         return _STATE["info"]
     _fix_sys_path()

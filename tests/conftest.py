@@ -12,6 +12,9 @@ import pytest
 # The service's market-data hub starts no live provider under test (no DXLink stream, no polling):
 # hub tests inject fakes. A developer who really wants live providers sets the variable explicitly.
 os.environ.setdefault("ALAN_TRADER_PROVIDERS", "none")
+# The runner's real paper account (AccountId 1): the service's DB guard refuses any ledger / app write
+# for it while the suite runs. Service tests trade a throwaway account of their own and delete it.
+os.environ.setdefault("ALAN_TRADER_PROTECTED_ACCOUNTS", "1")
 
 
 @pytest.fixture(autouse=True)
