@@ -93,6 +93,8 @@ installed for their screener hooks; without it the registry falls back to the ge
 | POST | `/orders` | a paper order: fills at the hub's mids (limit: when marketable, else `working`); idempotent on `client_order_id` |
 | GET | `/orders?status=working\|filled\|cancelled\|rejected\|all` · DELETE `/orders/{id}` | orders Table · cancel a working order |
 | POST | `/paper/positions/{tgid}/close` | close a paper position at the mids (refused for a group a live runner holds) |
+| GET · PUT · DELETE | `/watchlists` · `/watchlists/{name}` | named symbol lists (`app.Watchlist`) |
+| GET · POST · DELETE | `/alerts` · `/alerts/{id}` | alerts on `last` / `change_pct` / `iv`, evaluated on the hub's quotes; fired on `/events` |
 
 Errors are `{"detail": "..."}`: 404 unknown strategy / job / trade group, 422 invalid
 request or missing data (with the real reason), 503 database unreachable.
@@ -140,6 +142,16 @@ Positions no runner prices are marked at the hub's mids (`priced_by: market data
 |---|---|---|
 | `ALAN_TRADER_PAPER_ACCOUNT_ID` | the runner's `Paper Account` (1) | the account `/paper/*` shows and `/orders` trades |
 | `ALAN_TRADER_PROTECTED_ACCOUNTS` | (none; the test suite sets `1`) | accounts the DB guard refuses any ledger / `app` write for |
+
+## Watchlists and alerts
+
+Both live in the service's `app` schema (created by the first write; reading never creates it).
+Alerts are evaluated on every quote the hub pushes for their symbol (one upstream subscription per
+symbol however many alerts share it): `>` / `<` fire when the condition *becomes* true, `crosses_*`
+when the value moves across the threshold (the first value seen is only a baseline). `iv` is an
+option's implied volatility, or a stock / index's ATM IV from the IV metrics every 5 minutes. A
+`once` alert switches itself off when it fires; every firing is recorded and pushed on
+`/api/events` as `{"type": "alert", "alert", "value", "time"}`.
 
 ## Layout
 

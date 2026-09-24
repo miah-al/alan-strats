@@ -43,6 +43,7 @@ def health(request: Request):
         "event_clients": request.app.state.hub.client_count,
         "paper_account_id": request.app.state.orders.account_id(),
         "working_orders": request.app.state.orders.working_count(),
+        "active_alerts": request.app.state.alerts.active_count(),
         "market_data": [{"name": p["name"], "state": p["state"], "detail": p["detail"]}
                         for p in request.app.state.market.providers_status()],
     }

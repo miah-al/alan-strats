@@ -293,3 +293,10 @@ clarifications of what the service does where the spec leaves room.
 - `/api/paper/positions` rows: a position no runner prices is marked at the hub's mids (`priced_by`
   `"market data (<provider>)"`, `is_live` true).
 - `/api/health` adds `paper_account_id`, `working_orders` and `db.write_allow_list`.
+- **Watchlists**: symbols are stored in canonical spelling, in order, duplicates dropped; an invalid symbol is a 422
+  naming it. Rows add `created` / `updated`. `GET /api/watchlists/{name}` returns one. `PUT` creates or replaces and
+  returns the list; `DELETE` answers `{"deleted": name}`, 404 when unknown.
+- **Alerts**: `field` defaults to `last`, `once` and `active` to true. `iv` values are fractions. `>` / `<` fire on the
+  transition into the condition (not on every quote while it holds); `crosses_*` need a previous value (the first quote
+  only sets it). Rows add `last_value` and `trigger_count`; `triggered` is the last firing. `DELETE` answers
+  `{"deleted": id}`, 404 when unknown. `/api/health` adds `active_alerts`.
