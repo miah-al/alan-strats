@@ -37,6 +37,9 @@ class PolygonProvider(Provider):
         super().__init__(limits)
         self.api_key = api_key
         self.stock_snapshot: Optional[bool] = None       # None = not probed yet
+        #: whether option snapshots carry a two-sided quote on this plan (None = not seen yet); without
+        #: one Polygon still answers chains (greeks, IV, OI) but leaves option *quotes* to the next provider
+        self.option_quotes: Optional[bool] = None
         if not api_key:
             limits.disable("no Polygon API key (POLYGON_API_KEY in .env)")
 
@@ -48,7 +51,7 @@ class PolygonProvider(Provider):
         if not self.available():
             return False
         if SYM.is_option(symbol):
-            return True
+            return self.option_quotes is not False
         if SYM.is_index(symbol):
             return False
         return self.stock_snapshot is not False
@@ -65,6 +68,7 @@ class PolygonProvider(Provider):
         for (und, exp), legs in groups.items():
             ks = [o.strike for o in legs]
             results = self._snapshot(und, exp, min(ks), max(ks))
+            self._note_quotes(results)
             by = {r.get("details", {}).get("ticker", ""): r for r in results}
             for o in legs:
                 r = by.get(o.polygon)
@@ -110,6 +114,15 @@ class PolygonProvider(Provider):
             url, params = nxt, {}
         return results
 
+    def _note_quotes(self, results: list[dict]) -> None:
+        if not results or self.option_quotes is not None:
+            return
+        quoted = any((r.get("last_quote") or {}).get("bid") is not None for r in results)
+        self.option_quotes = quoted
+        if not quoted:
+            self.limits.note("option snapshots carry no bid/ask on this plan: chains and greeks only; "
+                             "option quotes come from the next provider")
+
     @staticmethod
     def _fields(r: dict) -> dict:
         lq, lt, day, g = r.get("last_quote") or {}, r.get("last_trade") or {}, r.get("day") or {}, r.get("greeks") or {}
@@ -146,6 +159,7 @@ class PolygonProvider(Provider):
         if not spot:
             raise ProviderUnavailable(self.name, f"no spot price for {underlying} to centre the chain on")
         results = self._snapshot(underlying, expiry, round(spot * (1 - CHAIN_BAND), 2), round(spot * (1 + CHAIN_BAND), 2))
+        self._note_quotes(results)
         by_k: dict[float, dict] = defaultdict(dict)
         for r in results:
             d = r.get("details") or {}

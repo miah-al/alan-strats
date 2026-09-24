@@ -474,3 +474,16 @@ def test_one_streamer_per_checkout_across_processes(tmp_path):
     assert a.acquire() and a.holder()["pid"] == a.pid   # stale lock taken over
     b.release()                                         # not b's: left alone
     assert (tmp_path / "tt.lock").exists()
+
+
+def test_polygon_leaves_option_quotes_to_the_next_provider_when_its_plan_has_none(monkeypatch):
+    from api.marketdata.providers.polygon import PolygonProvider
+    p = PolygonProvider(_limits("polygon"), api_key="k")
+    occ = SYM.make_option("SPY", _dt.date.today() + _dt.timedelta(days=30), "C", 700).occ
+    assert p.supports(occ)                                          # not seen yet: it may
+    snap = [{"details": {"ticker": "O:" + occ, "strike_price": 700, "contract_type": "call"},
+             "day": {"close": 5.0}, "greeks": {"delta": 0.5}, "implied_volatility": 0.2}]
+    monkeypatch.setattr(p, "_snapshot", lambda *a, **k: snap)
+    got = p.poll([occ])
+    assert got[occ]["fields"]["iv"] == 0.2 and got[occ]["fields"]["bid"] is None
+    assert p.option_quotes is False and not p.supports(occ) and "no bid/ask" in p.limits.detail
