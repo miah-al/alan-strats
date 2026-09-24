@@ -72,6 +72,7 @@ installed for their screener hooks; without it the registry falls back to the ge
 | GET | `/paper/transactions?limit=` | Table of raw ledger rows |
 | GET | `/paper/equity?from=&to=` | `{series: [equity, cash]}` |
 | GET | `/paper/runner` | runner sessions + marks from `paper_state/` |
+| GET | `/paper/strategy-stats?from=&to=` | per strategy: trades, win rate, P&L, profit factor, drawdown, days held, vs its stored backtest |
 | GET | `/market/tickers` | daily-bar coverage per ticker |
 | GET | `/market/bars/{ticker}?from=&to=&interval=1d\|1m` | OHLCV arrays (DB, Polygon fallback) |
 | GET | `/market/quote/{ticker}` | yfinance quote (DB fallback) |

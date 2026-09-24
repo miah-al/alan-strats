@@ -438,6 +438,8 @@ def backtest_job(ctx: JobContext, slug: str, ticker: str, from_date: str, to_dat
     extra = getattr(result, "extra", None) or {}
     safe_extra, dropped = _safe_extra(extra)
     warnings = performance_warnings(perf)
+    from api.services.strategy_stats import record_backtest
+    record_backtest(slug, ticker, from_date, to_date, capital, perf["params"], perf["metrics"], perf["trades"])
     return {
         "slug": slug, "ticker": ticker, "from": from_date, "to": to_date, "capital": float(capital),
         "params": perf["params"],

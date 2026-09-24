@@ -8,6 +8,7 @@ everything else — DDL is allowed in this schema only:
   app.Watchlist    named symbol lists
   app.Alert        price / change / IV alerts and when they fired
   app.IvHistory    each symbol's daily 30-day ATM IV (vol-stats' IV rank / percentile history)
+  app.BacktestRun  a summary of every backtest job that succeeded (strategy-stats' expectation)
 """
 from __future__ import annotations
 
@@ -71,6 +72,26 @@ _TABLES = {
             Iv30        FLOAT          NOT NULL,
             UpdatedAt   DATETIME2      NOT NULL CONSTRAINT DF_IvHistory_Updated DEFAULT SYSUTCDATETIME(),
             CONSTRAINT PK_IvHistory PRIMARY KEY (Symbol, TradeDate)
+        )""",
+    "BacktestRun": """
+        CREATE TABLE app.BacktestRun (
+            RunId          INT IDENTITY(1,1) NOT NULL CONSTRAINT PK_BacktestRun PRIMARY KEY,
+            Slug           NVARCHAR(80)   NOT NULL,
+            Ticker         NVARCHAR(20)   NOT NULL,
+            FromDate       DATE           NOT NULL,
+            ToDate         DATE           NOT NULL,
+            Capital        FLOAT          NULL,
+            ParamsJson     NVARCHAR(MAX)  NULL,
+            Trades         INT            NULL,
+            WinRate        FLOAT          NULL,
+            AvgPnl         FLOAT          NULL,
+            AvgWin         FLOAT          NULL,
+            AvgLoss        FLOAT          NULL,
+            ProfitFactor   FLOAT          NULL,
+            TotalReturnPct FLOAT          NULL,
+            Sharpe         FLOAT          NULL,
+            MaxDrawdownPct FLOAT          NULL,
+            RunAt          DATETIME2      NOT NULL CONSTRAINT DF_BacktestRun_RunAt DEFAULT SYSUTCDATETIME()
         )""",
 }
 _INDEXES = {

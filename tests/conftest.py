@@ -15,6 +15,8 @@ os.environ.setdefault("ALAN_TRADER_PROVIDERS", "none")
 # The runner's real paper account (AccountId 1): the service's DB guard refuses any ledger / app write
 # for it while the suite runs. Service tests trade a throwaway account of their own and delete it.
 os.environ.setdefault("ALAN_TRADER_PROTECTED_ACCOUNTS", "1")
+# Backtest jobs run under test do not leave app.BacktestRun rows behind.
+os.environ.setdefault("ALAN_TRADER_STORE_BACKTESTS", "0")
 
 
 @pytest.fixture(autouse=True)

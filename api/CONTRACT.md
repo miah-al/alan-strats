@@ -369,3 +369,13 @@ clarifications of what the service does where the spec leaves room.
   Chains are the merged chains of `/api/options/{u}/chain`. Each symbol is cached 10 min while the market is open (60 min
   when closed) and computed on a 3-worker pool; a request waits up to 20 s — symbols still computing come back `pending`
   (or `stale`, the previous values) and are ready on the next request.
+- **`GET /api/paper/strategy-stats?from=&to=`** → `{"from", "to", "account_id", "strategies": [...], "total": {...},
+  "table": Table}`. Per strategy (the ledger's strategy name; the service's own orders are `manual` unless the order names
+  a strategy), over the trades **closed** in the window (open-ended when omitted): `strategy, strategy_label, trades, wins,
+  win_rate` (fraction), `pnl, avg_win, avg_loss` (dollars), `profit_factor` (null without losses), `max_drawdown` (the
+  deepest fall of cumulative closed P&L from its running peak, dollars ≤ 0), `avg_days_held, open_positions` (open now,
+  whatever the window) and `backtest_expectation` — the latest backtest the service ran for the strategy
+  (`{"ticker", "from", "to", "capital", "trades", "win_rate", "avg_pnl", "avg_win", "avg_loss", "profit_factor",
+  "total_return_pct", "sharpe", "max_drawdown_pct", "ran"}`) or null. Every successful backtest job now stores that summary in
+  `app.BacktestRun`. `total` is the same numbers over all strategies. The `table` flattens the expectation into `bt_win_rate,
+  bt_avg_pnl, bt_trades, bt_ran`. 422 for a bad date or from > to.

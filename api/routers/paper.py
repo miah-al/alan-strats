@@ -48,3 +48,18 @@ def paper_equity(from_: Optional[str] = Query(default=None, alias="from"), to: O
 @router.get("/paper/runner")
 def paper_runner():
     return P.runner()
+
+
+@router.get("/paper/strategy-stats")
+def paper_strategy_stats(from_: Optional[str] = Query(default=None, alias="from"), to: Optional[str] = None):
+    from api.services import strategy_stats as SS
+    for v in (from_, to):
+        if v:
+            try:
+                date.fromisoformat(v[:10])
+            except ValueError:
+                raise HTTPException(422, f"{v!r} is not an ISO date (YYYY-MM-DD)")
+    try:
+        return SS.stats(from_, to)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc))
