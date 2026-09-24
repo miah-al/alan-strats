@@ -379,3 +379,12 @@ clarifications of what the service does where the spec leaves room.
   "total_return_pct", "sharpe", "max_drawdown_pct", "ran"}`) or null. Every successful backtest job now stores that summary in
   `app.BacktestRun`. `total` is the same numbers over all strategies. The `table` flattens the expectation into `bt_win_rate,
   bt_avg_pnl, bt_trades, bt_ran`. 422 for a bad date or from > to.
+- **`GET /api/market/events?days=14&symbols=AAPL,MSFT`** → `[{"date", "time", "kind", "symbol", "title", "source"}]`
+  for [today, today + days] (days 0–366; at most 40 symbols), sorted by date then time. `time` is US/Eastern `HH:MM` or
+  null (earnings: yfinance does not say before / after the bell). `kind`: `fomc | cpi | nfp | pce | gdp` from the
+  checked-in `data/macro_calendar.json` (2026: CPI / NFP / PCE / FOMC are the platform's seed schedules, GDP from BEA's
+  release schedule; a test keeps the JSON and the seeds in step); `opex` computed — the third Friday of each month, the
+  Thursday before when the exchange is closed, "quarterly … (triple witching)" in Mar / Jun / Sep / Dec; `other` for
+  exchange holidays and early closes (db/seed/events/exchange.csv); `earnings` per requested symbol from yfinance's
+  calendar (cached a day; a two-date range means unconfirmed). Warnings (a year without a macro calendar, earnings still
+  loading) come in the `X-Warnings` response header as a JSON array.

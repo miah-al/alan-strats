@@ -64,6 +64,21 @@ def market_vol_stats(request: Request, symbols: str = Query(..., description="co
         raise HTTPException(422, str(exc))
 
 
+@router.get("/market/events")
+def market_events(request: Request, days: int = Query(default=14, ge=0, le=366),
+                  symbols: Optional[str] = Query(default=None, description="comma-separated, for earnings (at most 40)")):
+    import json as _json
+    from api.services import calendar_events as CE
+    try:
+        rows, warnings = CE.events(days, [x for x in (symbols or "").split(",") if x.strip()])
+    except ValueError as exc:
+        raise HTTPException(422, str(exc))
+    resp = request.app.state.json_response(content=rows)
+    if warnings:
+        resp.headers["X-Warnings"] = _json.dumps(warnings, ensure_ascii=True)[:4000]
+    return resp
+
+
 @router.get("/market/movers")
 def market_movers(top: int = Query(default=12, ge=1, le=50)):
     return cached(("movers", top), DAILY_TTL, lambda: M.movers(top), cache_errors=_NO_DATA)
