@@ -25,7 +25,7 @@ from app.grid_helpers import mrt_grid
 
 logger = logging.getLogger(__name__)
 
-_GUIDE_DIR = Path(__file__).parent.parent.parent / "guide_articles"
+from engine.guides import PLATFORM_GUIDE_DIR as _GUIDE_DIR   # the articles live in docs/guides
 _COVERAGE_SYMBOLS = ["HOOD", "SPY", "QQQ", "AAPL", "TSLA", "MARA", "TLT"]
 _PORTFOLIO_HISTORY = Path(__file__).parent.parent.parent / "portfolio_history.json"
 

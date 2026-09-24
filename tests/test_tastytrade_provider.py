@@ -94,8 +94,8 @@ def test_fetch_relogins_once_on_auth_error(fake_sdk):
 
 def test_missing_credentials_is_a_clean_error(monkeypatch, fake_sdk):
     monkeypatch.delenv("TT_SECRET"); monkeypatch.delenv("TT_REFRESH")
-    import app
-    monkeypatch.setattr(app, "_load_env", lambda: None)          # the machine's real .env must not leak in
+    import engine.env
+    monkeypatch.setattr(engine.env, "load_env", lambda *a, **k: False)   # the machine's real .env must not leak in
     from paper.providers import TastytradeProvider
     with pytest.raises(RuntimeError, match="TT_SECRET"):
         TastytradeProvider("NDX", "NDXP")

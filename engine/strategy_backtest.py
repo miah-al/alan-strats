@@ -3,7 +3,7 @@ engine/strategy_backtest.py — run a strategy through the production backtest p
 
 The Performance tab (``app/pages/strategies/performance.py``) and the service API
 both come through ``run_backtest``: price bars with a warm-up, VIX / rates, the
-strategy's declared auxiliary-data loaders (``app.pages.backtest_loaders``), the
+strategy's declared auxiliary-data loaders (``engine.backtest_loaders``), the
 strategy's own ``backtest()``, then metrics on the reporting window only, against
 buy & hold on the identical window.
 
@@ -41,7 +41,7 @@ class LoaderBlocked(ValueError):
 
 
 def component_text(node: Any) -> str:
-    """Plain text of a rendered component tree (a loader's dbc.Alert, say): the
+    """Plain text of a rendered component tree (a loader's LoaderAlert, a Dash alert): the
     strings in ``children``, depth first. Works on anything shaped like a Dash
     component without importing Dash."""
     out: list[str] = []
@@ -102,7 +102,7 @@ def run_backtest(slug: str, ticker: str, from_date: str, to_date: str, capital: 
     strategy that does not need the warm-up bars can skip them.
     """
     from db.client import get_engine, get_price_bars, get_vix_bars, get_macro_bars
-    from app.pages.backtest_loaders import run_loaders_for
+    from engine.backtest_loaders import run_loaders_for
     from alan_trader.strategy_api.base import StubStrategy
     from alan_trader.strategy_api.registry import get_strategy
     from risk.metrics import compute_all_metrics

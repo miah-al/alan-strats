@@ -25,7 +25,8 @@ from app.grid_helpers import mrt_grid
 # _course_tab (verbatim from the original) to avoid any import-cycle surprises.
 from app.pages.tools.data import _col, _metric_card, _compute_risk_metrics
 
-_BROKER_GUIDE = Path(__file__).parent.parent.parent / "guide_articles" / "broker_integration.md"
+from engine.guides import PLATFORM_GUIDE_DIR as _PLATFORM_GUIDE_DIR   # the articles live in docs/guides
+_BROKER_GUIDE = _PLATFORM_GUIDE_DIR / "broker_integration.md"
 
 
 def _card_header(txt: str) -> html.Span:

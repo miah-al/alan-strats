@@ -1,7 +1,7 @@
 """
 Consolidated PDF builder for strategy guides — one PDF with cover + TOC +
 all 89 guides concatenated in sorted order.
-Usage:  python app/guide_articles/_make_pdfs.py
+Usage:  python docs/guides/_make_pdfs.py
 """
 from __future__ import annotations
 import re

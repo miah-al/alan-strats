@@ -342,8 +342,8 @@ class TastytradeProvider:
         self.root = root.upper()
         self.poll_seconds = int(poll_seconds)
         try:
-            from app import _load_env                     # the platform's own .env reader (no python-dotenv needed)
-            _load_env()
+            from engine.env import load_env               # the platform's own .env reader (no python-dotenv needed)
+            load_env()
         except Exception:
             pass
         secret, refresh = os.environ.get("TT_SECRET"), os.environ.get("TT_REFRESH")
