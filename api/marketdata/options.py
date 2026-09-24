@@ -48,9 +48,9 @@ def _chain_providers(hub: MarketDataHub):
 
 
 def expirations(hub: MarketDataHub, underlying: str) -> dict:
-    u = SYM.normalize(underlying)
-    if SYM.is_option(u):
+    if SYM.is_option(SYM.normalize(underlying)):
         raise ValueError(f"{underlying!r} is an option; ask for its underlying's expirations")
+    u, root = SYM.underlying_and_root(underlying)
     spot = _spot(hub, u)
     notes: list[str] = []
     for p in _chain_providers(hub):
@@ -58,8 +58,8 @@ def expirations(hub: MarketDataHub, underlying: str) -> dict:
             notes.append("tastytrade: not connected")
             continue
         try:
-            exps = cached(("expirations", p.name, u), EXPIRATIONS_TTL, lambda p=p: p.expirations(u, spot=spot)
-                          if p.name != "tastytrade" else p.expirations(u))
+            exps = cached(("expirations", p.name, u, root), EXPIRATIONS_TTL, lambda p=p: p.expirations(u, spot=spot)
+                          if not p.streaming else p.expirations(u, root=root))
         except (ProviderUnavailable, NotImplementedError) as exc:
             notes.append(f"{p.name}: {getattr(exc, 'reason', exc) or type(exc).__name__}")
             continue
@@ -70,18 +70,23 @@ def expirations(hub: MarketDataHub, underlying: str) -> dict:
             notes.append(f"{p.name}: no expirations")
             continue
         today = _dt.date.today()
-        return to_jsonable({"underlying": u, "spot": spot, "source": p.name,
+        return to_jsonable({"underlying": u, "root": root, "spot": spot, "source": p.name,
                             "expirations": [{"expiry": d, "dte": (d - today).days} for d in exps],
                             "warnings": notes})
     raise NoChain(f"No option expirations for {u}: " + ("; ".join(notes) or "no chain provider available"))
 
 
 def _streamed_chain(hub: MarketDataHub, p, u: str, expiry: _dt.date, spot: Optional[float], n: int,
-                    linger: float = CHAIN_LINGER_S) -> Optional[dict]:
-    contracts = p.chain_contracts(u, expiry)
+                    linger: float = CHAIN_LINGER_S, root: Optional[str] = None,
+                    band: Optional[tuple[float, float, int]] = None) -> Optional[dict]:
+    try:
+        contracts = p.chain_contracts(u, expiry, root=root)
+    except TypeError:                                      # a provider without root support
+        contracts = p.chain_contracts(u, expiry)
     if not contracts:
         return None
-    picked = _pick([k for k, _, _ in contracts], spot, n)
+    picked = _band(sorted({k for k, _, _ in contracts}), spot, band) if band else \
+        _pick([k for k, _, _ in contracts], spot, n)
     picked = [c for c in contracts if c[0] in picked]
     syms = [s for _, c, pt in picked for s in (c, pt)]
     owner = f"chain:{u}:{expiry.isoformat()}:{time.monotonic()}"
@@ -116,6 +121,23 @@ def _streamed_chain(hub: MarketDataHub, p, u: str, expiry: _dt.date, spot: Optio
     finally:
         hub.unwatch(owner, syms)
     return {"rows": rows, "source": p.name}
+
+
+def _band(strikes: list[float], spot: Optional[float], band: tuple[float, float, int]) -> set:
+    """Strikes within ``±wide`` of spot, every one within ``±dense`` and an even sample beyond, at most ``cap``."""
+    dense, wide, cap = band
+    if not spot:
+        return set(strikes[: cap])
+    near = [k for k in strikes if abs(k - spot) <= dense * spot]
+    far = [k for k in strikes if dense * spot < abs(k - spot) <= wide * spot]
+    room = max(cap - len(near), 0)
+    if len(near) > cap:
+        near = sorted(near, key=lambda k: abs(k - spot))[:cap]
+        far = []
+    elif len(far) > room:
+        step = len(far) / room if room else len(far) + 1
+        far = [far[int(i * step)] for i in range(room)] if room else []
+    return set(near) | set(far)
 
 
 def _pick(strikes: list[float], spot: Optional[float], n: int) -> set:
@@ -157,11 +179,16 @@ def _coverage(rows: list[dict], test) -> float:
     return (sum(1 for q in sides if test(q)) / len(sides)) if sides else 0.0
 
 
-def _source_rows(hub: MarketDataHub, p, u: str, exp: _dt.date, spot: Optional[float], n: int) -> Optional[list]:
+def _source_rows(hub: MarketDataHub, p, u: str, exp: _dt.date, spot: Optional[float], n: int,
+                 root: Optional[str] = None, band=None, linger: bool = True) -> Optional[list]:
     if p.streaming:
-        got = _streamed_chain(hub, p, u, exp, spot, n)
+        got = _streamed_chain(hub, p, u, exp, spot, n, linger=CHAIN_LINGER_S if linger else 0, root=root, band=band)
     else:
         got = cached(("chain", p.name, u, exp, n, round(spot or 0, 0)), CHAIN_TTL, lambda: p.chain(u, exp, spot, n))
+        if got and root:                                   # a provider that mixes roots: keep the one asked for
+            rows = [r for r in got.get("rows") or []
+                    if any(str((r.get(s) or {}).get("symbol") or "").startswith(root) for s in ("call", "put"))]
+            got = dict(got, rows=rows or got.get("rows"))
     return (got or {}).get("rows") or None
 
 
@@ -231,7 +258,8 @@ def _market_open(now=None) -> bool:
 
 
 def merged_chain(hub: MarketDataHub, u: str, exp: _dt.date, spot: Optional[float], n: int,
-                 notes: list[str], linger: bool = True) -> tuple[list[dict], list[str]]:
+                 notes: list[str], linger: bool = True, root: Optional[str] = None,
+                 band: Optional[tuple[float, float, int]] = None) -> tuple[list[dict], list[str]]:
     """The chain's rows for ``n`` strikes either side of spot, merged across providers. Returns
     (rows, sources used). Secondary sources are fetched only for a field group the first ones lack."""
     provs = {p.name: p for p in _chain_providers(hub)}
@@ -248,8 +276,7 @@ def merged_chain(hub: MarketDataHub, u: str, exp: _dt.date, spot: Optional[float
             notes.append(f"{name}: not connected")
             return None
         try:
-            rows = _source_rows(hub, p, u, exp, spot, count) if (not p.streaming or linger) else \
-                (_streamed_chain(hub, p, u, exp, spot, count, linger=0) or {}).get("rows")
+            rows = _source_rows(hub, p, u, exp, spot, count, root=root, band=band, linger=linger)
         except (ProviderUnavailable, NotImplementedError) as exc:
             notes.append(f"{name}: {getattr(exc, 'reason', exc) or type(exc).__name__}")
             return None
@@ -266,7 +293,8 @@ def merged_chain(hub: MarketDataHub, u: str, exp: _dt.date, spot: Optional[float
         rows = fetch(name, n)
         if rows:
             sources[name] = rows
-            picked = _pick([r["strike"] for r in rows], spot, n)
+            ks = [r["strike"] for r in rows]
+            picked = _band(sorted(set(ks)), spot, band) if band else _pick(ks, spot, n)
             skeleton = [r for r in rows if r["strike"] in picked]
             break
     if skeleton is None:
@@ -288,7 +316,9 @@ def merged_chain(hub: MarketDataHub, u: str, exp: _dt.date, spot: Optional[float
 
 
 def chain(hub: MarketDataHub, underlying: str, expiry: str, strikes: int = 30) -> dict:
-    u = SYM.normalize(underlying)
+    if SYM.is_option(SYM.normalize(underlying)):
+        raise ValueError(f"{underlying!r} is an option; ask for its underlying's chain")
+    u, root = SYM.underlying_and_root(underlying)
     try:
         exp = _dt.date.fromisoformat(str(expiry)[:10])
     except ValueError:
@@ -298,7 +328,7 @@ def chain(hub: MarketDataHub, underlying: str, expiry: str, strikes: int = 30) -
     n = max(1, min(int(strikes), 200))
     spot = _spot(hub, u)
     notes: list[str] = []
-    rows, used = merged_chain(hub, u, exp, spot, n, notes)
+    rows, used = merged_chain(hub, u, exp, spot, n, notes, root=root)
     if not rows:
         raise NoChain(f"No option chain for {u} {exp}: " + ("; ".join(notes) or "no chain provider available"))
     flat = _flatten(rows)
@@ -328,7 +358,7 @@ def chain(hub: MarketDataHub, underlying: str, expiry: str, strikes: int = 30) -
         notes.append("bid/ask from yfinance (about 15 minutes delayed)")
     table = table_from_rows(flat, field_order=list(_TYPES), headers=_HEADERS, formats=_FORMATS, types=_TYPES)
     today = _dt.date.today()
-    return to_jsonable({"underlying": u, "spot": spot, "expiry": exp, "dte": (exp - today).days,
+    return to_jsonable({"underlying": u, "root": root, "spot": spot, "expiry": exp, "dte": (exp - today).days,
                         "asof": _dt.datetime.now().astimezone().isoformat(timespec="seconds"),
                         "source": used[0] if used else None, "sources": used,
                         "quote_source": quote_source, "greeks_source": greeks_source,

@@ -400,3 +400,22 @@ clarifications of what the service does where the spec leaves room.
   (absolute, with the request's host); links to nothing are left as written and listed in `unresolved_links` (the long
   guides still cite files from the pre-plugin repo). `GET /api/guides/{slug}/files/{path}` serves those files (images,
   pdf, csv, txt, json, md), confined to the article's folder. 404 for an unknown slug or file.
+- **Index GEX and index chains.** `/api/market/gex/{ticker}` takes an index (`NDX`, `SPX`, `RUT`, …) or a root (`NDXP`,
+  `SPXW` — the index with that root preferred). The spot comes from the market-data hub (the broker's index quote; the
+  session's last one after hours; yfinance `^NDX` otherwise), no longer from a yfinance stock lookup. In `auto` an index
+  goes to the hub's live chain; an equity goes to Polygon's snapshot, then the hub's chain; a stored chain is used when
+  recent. New `source=hub`. The hub chain is the merged chain path (broker-streamed OI and greeks when connected, else
+  yfinance quotes / OI and Polygon greeks): every expiry in the first week then Fridays to 60 days (≤ 10 expiries), every
+  strike within ±1.5% of spot and a sample to ±8% (≤ 90 per expiry). Same sign convention and units as before. The
+  response adds `underlying` and `root`; `source` is `hub:<providers>` for this path.
+- `/api/options/{u}/expirations` and `/chain` accept a root as the underlying (`NDXP`, `SPXW`): the index's chain,
+  that root's expiries / contracts; both responses add `root`. Streamer subscriptions are sent in chunks of 250.
+- **`GET /api/market/gex/{ticker}/history?days=365`** → `{"ticker", "units", "method", "first", "last", "days",
+  "caveats", "points": [{"date", "net_gex", "flip", "call_wall", "put_wall", "spot", "regime", "dist_to_flip_pct",
+  "call_gex", "put_gex", "implied_move_1d", "contracts"}]}` — a daily dealer-GEX history from the stored end-of-day option
+  snapshots (today only SPY, 2024-08-01 → 2026-07-10; 422 for a ticker without stored snapshots). The stored snapshots
+  have no open interest: OI is each contract's volume over its last 20 snapshot days, so this is a **proxy** regime
+  (same engine, sign and units as `/api/market/gex`). Expiries under 7 days are not in the snapshots. Spot is the
+  snapshot's own put-call-parity spot (the stored daily closes are dividend-adjusted). `implied_move_1d` = the nearest
+  expiry's ATM straddle / √(trading days), as a fraction of spot. Built once a day and cached; `days` counts back from
+  the last stored day.

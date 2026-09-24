@@ -289,12 +289,102 @@ def _db_chain(ticker: str):
     return (chain, spot, snap_day) if not chain.empty else None
 
 
-def _polygon_chain(ticker: str):
+def gex_spot(ticker: str, hub=None) -> Optional[float]:
+    """The underlying's price for GEX: the market-data hub (an index at its last level — the broker's index
+    quote, or the session's last one after hours), else yfinance, else the last stored close."""
+    from api.marketdata import symbols as SYM
+    if hub is not None and getattr(hub, "providers", None):
+        try:
+            px = hub.price(ticker, wait=3.0)
+            if px:
+                return float(px)
+        except Exception as exc:
+            logger.info("hub price for %s unavailable: %s", ticker, exc)
+    try:
+        from data.stock_data import yf_stock_price
+        px = yf_stock_price(SYM.to_yfinance(SYM.normalize(ticker)))
+        if px:
+            return float(px)
+    except Exception:
+        pass
+    try:
+        from db.client import get_price_bars
+        df = get_price_bars(require_db(), ticker, _dt.date.today() - _dt.timedelta(days=10), _dt.date.today())
+        if df is not None and not df.empty:
+            return float(df["close"].iloc[-1])
+    except Exception:
+        pass
+    return None
+
+
+#: the live chain for GEX: every strike within ±1.5% of spot, a sample out to ±8%, at most 90 per expiry;
+#: every expiry in the first week, then Fridays to 60 days, at most 10 expiries
+GEX_BAND = (0.015, 0.08, 90)
+GEX_MAX_EXPIRIES = 10
+GEX_MAX_DTE = 60
+
+
+def _gex_expiries(exps: list[tuple[_dt.date, int]]) -> list[tuple[_dt.date, int]]:
+    near = [e for e in exps if 0 <= e[1] <= 7]
+    later = [e for e in exps if 7 < e[1] <= GEX_MAX_DTE and e[0].weekday() == 4]
+    room = max(GEX_MAX_EXPIRIES - len(near), 0)
+    if len(later) > room:
+        monthly = [e for e in later if 15 <= e[0].day <= 21]            # third Fridays first
+        rest = [e for e in later if e not in monthly]
+        later = sorted((monthly + rest)[:room])
+    return (near + later)[:GEX_MAX_EXPIRIES]
+
+
+def _hub_chain(ticker: str, hub, spot: float, notes: list[str]):
+    """(chain, spot, today, sources) from the market-data hub's merged chains (the broker's streamed OI and
+    greeks where connected; yfinance / Polygon otherwise), or None."""
+    from concurrent.futures import ThreadPoolExecutor
+    from api.marketdata import options as O
+    from api.marketdata import symbols as SYM
+    u, root = SYM.underlying_and_root(ticker)
+    e = O.expirations(hub, ticker)
+    exps = [(_dt.date.fromisoformat(str(x["expiry"])[:10]), int(x["dte"])) for x in e["expirations"]]
+    chosen = _gex_expiries(exps)
+    if not chosen:
+        return None
+    today = _dt.date.today()
+    used: set[str] = set()
+
+    def one(ed):
+        n: list[str] = []
+        rows, src = O.merged_chain(hub, u, ed[0], spot, 60, n, linger=False, root=root, band=GEX_BAND)
+        return ed, rows, src, n
+
+    out = []
+    with ThreadPoolExecutor(max_workers=min(len(chosen), 6), thread_name_prefix="gex-chain") as pool:
+        for (exp, dte), rows, src, n in pool.map(one, chosen):
+            used.update(src)
+            if not rows:
+                notes.append(f"{exp}: no chain ({'; '.join(n)[:100]})")
+                continue
+            for r in rows:
+                for side in ("call", "put"):
+                    q = r.get(side) or {}
+                    oi = q.get("oi")
+                    if oi is None or float(oi) <= 0 or (q.get("gamma") is None and q.get("iv") is None):
+                        continue
+                    out.append({"strike": float(r["strike"]), "contract_type": side, "expiry": pd.Timestamp(exp),
+                                "gamma": q.get("gamma"), "open_interest": float(oi), "iv": q.get("iv"), "dte": dte})
+    if not out:
+        notes.append("the live chain carried no open interest with greeks / IV")
+        return None
+    notes.append(f"live chain: {len(chosen)} expiries to {chosen[-1][1]} days, strikes within ±1.5% of spot "
+                 f"and a sample to ±8% ({len(out)} contracts)")
+    chain = pd.DataFrame(out)
+    chain["gamma"] = pd.to_numeric(chain["gamma"], errors="coerce")
+    return chain, float(spot), today, sorted(used)
+
+
+def _polygon_chain(ticker: str, spot: Optional[float] = None):
     """The Market page's GEX source: Polygon's option snapshot, 0-60 DTE, spot ±15%."""
     from data.polygon_client import PolygonClient
-    from data.stock_data import yf_stock_price
     c = PolygonClient(api_key=_api_key())
-    spot = yf_stock_price(ticker)
+    spot = spot or gex_spot(ticker)
     if not spot:
         raise MissingData(f"Could not fetch spot price for {ticker}.")
     today = _dt.date.today()
@@ -328,30 +418,53 @@ def _polygon_chain(ticker: str):
 GEX_DB_MAX_AGE_DAYS = 5
 
 
-def gex(ticker: str, source: str = "auto") -> dict:
-    """``source``: ``auto`` (a recent stored chain, else Polygon's live snapshot as the
-    Market page uses, else a stale stored chain with a warning), ``db`` or ``polygon``."""
+def gex(ticker: str, source: str = "auto", hub=None) -> dict:
+    """``source``: ``auto`` — a recent stored chain; else, for an index (NDX, SPX, RUT …; NDXP / SPXW name
+    the root), the market-data hub's live chain, and for anything else Polygon's snapshot with the hub's
+    chain as the fallback; else a stale stored chain with a warning. ``db``, ``polygon`` or ``hub`` force one."""
     from analytics.gex_engine import _compute_gamma_column, _normalize_chain, compute_dealer_gex, _GEX_NOTIONAL_SCALE
+    from api.marketdata import symbols as SYM
     ticker = ticker.upper().strip()
+    try:
+        und, root = SYM.underlying_and_root(ticker)
+    except ValueError as exc:
+        raise MissingData(str(exc))
+    index = SYM.is_index(und)
     notes: list[str] = []
     got, used = None, None
+    stale = None
     if source in ("auto", "db"):
-        got, used = _db_chain(ticker), "db"
-        if got is not None and source == "auto":
-            age = (_dt.date.today() - got[2]).days
-            if age > GEX_DB_MAX_AGE_DAYS and _api_key(required=False):
-                live = _polygon_chain(ticker)
-                if live is not None:
-                    got, used = live, "polygon"
-                else:
-                    notes.append(f"stored chain is {age} days old and Polygon returned none")
-            elif age > GEX_DB_MAX_AGE_DAYS:
-                notes.append(f"stored chain is {age} days old (no Polygon key for a live one)")
-    if got is None and source in ("auto", "polygon"):
-        got, used = _polygon_chain(ticker), "polygon"
+        got, used = _db_chain(und), "db"
+        if got is not None and source == "auto" and (_dt.date.today() - got[2]).days > GEX_DB_MAX_AGE_DAYS:
+            stale, got = got, None
+    spot = None
+    have_hub = hub is not None and getattr(hub, "providers", None)
+    if got is None and source in ("auto", "polygon", "hub"):
+        spot = gex_spot(und, hub)
+        if not spot:
+            raise MissingData(f"No spot price for {und}: the market-data hub, yfinance and the stored bars "
+                              f"have none.")
+    if got is None and source == "polygon" or (got is None and source == "auto" and not index):
+        try:
+            live = _polygon_chain(und, spot) if _api_key(required=False) else None
+        except Exception as exc:  # noqa: BLE001 — the hub's chain is next
+            if source == "polygon":
+                raise
+            notes.append(f"polygon: {type(exc).__name__}: {str(exc)[:120]}")
+            live = None
+        if live is not None:
+            got, used = live, "polygon"
+    if got is None and source in ("auto", "hub") and have_hub:
+        live = _hub_chain(ticker if root else und, hub, spot, notes)
+        if live is not None:
+            chain_, spot_, asof_, srcs = live
+            got, used = (chain_, spot_, asof_), "hub:" + "+".join(srcs)
+    if got is None and stale is not None:
+        got, used = stale, "db"
+        notes.append(f"stored chain is {(_dt.date.today() - stale[2]).days} days old (no live chain)")
     if got is None:
         raise MissingData(f"No option chain for {ticker} (source={source}): nothing usable stored in "
-                          f"mkt.OptionSnapshot and/or Polygon returned no contracts.")
+                          f"mkt.OptionSnapshot and no live chain from Polygon or the market-data hub.")
     chain, spot, asof = got
     source = used
     snap = compute_dealer_gex(chain, spot)
@@ -399,7 +512,7 @@ def gex(ticker: str, source: str = "auto") -> dict:
         regime, max_pain = "unknown", None
 
     return to_jsonable({
-        "ticker": ticker, "spot": spot, "flip": flip, "table": table,
+        "ticker": ticker, "underlying": und, "root": root, "spot": spot, "flip": flip, "table": table,
         "asof": asof, "source": source, "net_gex": snap.net_gex, "call_gex": snap.call_gex,
         "put_gex": snap.put_gex, "call_wall": snap.call_wall, "put_wall": snap.put_wall,
         "net_gex_0dte": snap.net_gex_0dte, "dist_to_flip_pct": snap.dist_to_flip_pct,

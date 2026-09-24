@@ -39,6 +39,7 @@ RECONNECT_START_S = 30.0
 RECONNECT_MAX_S = 900.0
 CHAIN_TTL_S = 4 * 3600.0          # a nested chain changes with new listings (daily): one REST call per underlying per 4 h
 LOCK_RETRY_S = 60.0
+SUB_CHUNK = 250
 
 
 class StreamerLock:
@@ -391,10 +392,14 @@ class TastytradeProvider(Provider):
         from tastytrade.dxfeed import Greeks, Quote, Summary, Trade
         stream = [self._stream_sym(s) for s in syms]
         opts = [self._stream_sym(s) for s in syms if SYM.is_option(s)]
-        for cls in (Quote, Trade, Summary):
-            await (st.subscribe(cls, stream) if add else st.unsubscribe(cls, stream))
-        if opts:
-            await (st.subscribe(Greeks, opts) if add else st.unsubscribe(Greeks, opts))
+        # in chunks: a subscription message over the socket's frame limit closes the connection
+        for i in range(0, len(stream), SUB_CHUNK):
+            part = stream[i:i + SUB_CHUNK]
+            for cls in (Quote, Trade, Summary):
+                await (st.subscribe(cls, part) if add else st.unsubscribe(cls, part))
+        for i in range(0, len(opts), SUB_CHUNK):
+            part = opts[i:i + SUB_CHUNK]
+            await (st.subscribe(Greeks, part) if add else st.unsubscribe(Greeks, part))
         logger.debug("tastytrade %s %d symbols", "subscribed" if add else "unsubscribed", len(syms))
 
     def _stream_sym(self, sym: str) -> str:
@@ -452,16 +457,18 @@ class TastytradeProvider(Provider):
         self._chains[underlying] = (time.monotonic(), list(chains))
         return list(chains)
 
-    def expirations(self, underlying: str) -> list[date]:
+    def expirations(self, underlying: str, root: Optional[str] = None) -> list[date]:
         out = set()
         for ch in self._nested(underlying):
+            if root is not None and ch.root_symbol != root:
+                continue
             for e in ch.expirations:
                 out.add(e.expiration_date)
         return sorted(d for d in out if d >= date.today())
 
-    def chain_contracts(self, underlying: str, expiry: date) -> list[tuple[float, str, str]]:
+    def chain_contracts(self, underlying: str, expiry: date, root: Optional[str] = None) -> list[tuple[float, str, str]]:
         """[(strike, call OCC, put OCC)] for one expiry. Where two roots expire the same day (SPX's
-        AM monthly and PM weekly) the PM-settled one is used."""
+        AM monthly and PM weekly) the requested ``root`` is used, else the PM-settled one."""
         cands = []
         for ch in self._nested(underlying):
             for e in ch.expirations:
@@ -469,7 +476,9 @@ class TastytradeProvider(Provider):
                     cands.append((str(getattr(e, "settlement_type", "") or "").upper(), ch.root_symbol, e))
         if not cands:
             return []
-        cands.sort(key=lambda c: (c[0] != "PM", c[1] != underlying))
+        cands.sort(key=lambda c: (root is not None and c[1] != root, c[0] != "PM", c[1] != underlying))
+        if root is not None and cands[0][1] != root:
+            return []
         _, _, exp = cands[0]
         out = []
         for s in exp.strikes:

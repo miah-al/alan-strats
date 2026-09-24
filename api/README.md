@@ -83,7 +83,8 @@ installed for their screener hooks; without it the registry falls back to the ge
 | GET | `/market/yield-curve/surface?days=730&step=1w` | the curve through time, date × tenor (`step` 1d / 1w / 1m) |
 | GET | `/market/vix-term` · `/market/iv-term/{ticker}` | VIX term structure · a ticker's ATM IV by expiry |
 | GET | `/market/iv/{ticker}` | `engine.iv_metrics` dict |
-| GET | `/market/gex/{ticker}?source=auto\|db\|polygon` | dealer GEX + per-strike Table |
+| GET | `/market/gex/{ticker}?source=auto\|db\|polygon\|hub` | dealer GEX + per-strike Table (indices from the hub's live chain) |
+| GET | `/market/gex/{ticker}/history?days=365` | daily proxy GEX from the stored option snapshots (SPY) |
 | GET | `/data/coverage` | what the DB holds, per table |
 | GET | `/runner/sessions` | every paper runner: the service's own children and any found running elsewhere |
 | POST | `/runner/{strategy}/start` · `/runner/{strategy}/stop` | start (`replay` a stored day or `live` today) / stop the service's own |

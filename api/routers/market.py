@@ -94,9 +94,20 @@ def market_iv(ticker: str):
     return cached(("iv", ticker.upper()), DAILY_TTL, lambda: M.iv(ticker), cache_errors=_NO_DATA)
 
 
+@router.get("/market/gex/{ticker}/history")
+def market_gex_history(ticker: str, days: int = Query(default=365, ge=1, le=3650)):
+    from api.services import gex_history as GH
+    try:
+        return GH.points(ticker, days)
+    except GH.NoHistory as exc:
+        raise HTTPException(422, str(exc))
+
+
 @router.get("/market/gex/{ticker}")
-def market_gex(ticker: str, source: Literal["auto", "db", "polygon"] = "auto"):
-    return cached(("gex", ticker.upper(), source), GEX_TTL, lambda: M.gex(ticker, source), cache_errors=_NO_DATA)
+def market_gex(ticker: str, request: Request, source: Literal["auto", "db", "polygon", "hub"] = "auto"):
+    hub = getattr(request.app.state, "market", None)
+    return cached(("gex", ticker.upper(), source), GEX_TTL, lambda: M.gex(ticker, source, hub=hub),
+                  cache_errors=_NO_DATA)
 
 
 # ── Term structures (api/services/structure.py) ───────────────────────────────

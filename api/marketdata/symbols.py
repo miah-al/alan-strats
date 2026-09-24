@@ -110,6 +110,15 @@ def normalize(sym: str) -> str:
     return s
 
 
+def underlying_and_root(sym: str) -> tuple[str, Optional[str]]:
+    """An option chain request's (underlying, preferred root): ``NDXP`` -> (``NDX``, ``NDXP``), ``SPXW`` ->
+    (``SPX``, ``SPXW``); anything else is its own underlying with no root preference."""
+    s = normalize(sym)
+    if s in ROOT_UNDERLYING:
+        return ROOT_UNDERLYING[s], s
+    return s, None
+
+
 def is_option(sym: str) -> bool:
     return parse_option(sym) is not None
 
