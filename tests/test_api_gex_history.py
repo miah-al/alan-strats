@@ -60,12 +60,14 @@ def test_history_endpoint(monkeypatch):
                       "flip": 690.0, "call_wall": 720.0, "put_wall": 680.0, "dist_to_flip_pct": 0.014,
                       "regime": "positive", "implied_move_1d": 0.006, "atm_iv_near": 0.12, "contracts": 150}, index=idx)
     monkeypatch.setattr(GH, "history", lambda t: h if t.upper() == "SPY" else (_ for _ in ()).throw(GH.NoHistory("none")))
+    import api.services.gex_recorder as REC
+    monkeypatch.setattr(REC, "history_rows", lambda t, k, since: pd.DataFrame())
     had = db_guard_installed()
     try:
         with TestClient(create_app()) as c:
-            j = c.get("/api/market/gex/SPY/history?days=3").json()
-            assert j["ticker"] == "SPY" and j["units"].startswith("$ per 1% move") and "volume" in j["method"]
-            assert [p["date"] for p in j["points"]] == ["2026-07-07", "2026-07-08", "2026-07-09", "2026-07-10"]
+            j = c.get("/api/market/gex/SPY/history?days=3000").json()
+            assert j["ticker"] == "SPY" and j["units"].startswith("$ per 1% move") and "volume" in j["method"]["snapshot_proxy"]
+            assert [p["date"] for p in j["points"]][-2:] == ["2026-07-09", "2026-07-10"] and j["sources"][0] == "snapshot_proxy"
             assert set(j["points"][0]) >= {"date", "net_gex", "flip", "call_wall", "put_wall", "spot", "regime"}
             assert c.get("/api/market/gex/QQQ/history").status_code == 422
     finally:
@@ -90,3 +92,26 @@ def test_real_history_on_a_month_of_stored_snapshots():
     assert len(h) >= 15 and h["spot"].between(300, 3000).all()
     assert set(h["regime"]) <= {"positive", "negative", "near_flip", "unknown"}
     assert (h["implied_move_1d"].dropna().between(0.001, 0.05)).all()
+
+
+def test_recorder_schedule_and_one_tick(monkeypatch):
+    import api.services.gex_recorder as REC
+    NY = "America/New_York"
+    day = pd.Timestamp("2026-09-23 10:47", tz=NY)                           # a Wednesday
+    assert REC.due_slots(day, streaming=True) == [("intraday", _dt.datetime(2026, 9, 23, 10, 30))]
+    assert REC.due_slots(day, streaming=False) == []                         # auto: intraday only while streaming
+    assert REC.due_slots(day, streaming=False, mode="on") == [("intraday", _dt.datetime(2026, 9, 23, 10, 30))]
+    late = pd.Timestamp("2026-09-23 16:20", tz=NY)
+    assert REC.due_slots(late, streaming=True) == [("eod", _dt.datetime(2026, 9, 23, 16, 0))]
+    assert REC.due_slots(pd.Timestamp("2026-09-26 12:00", tz=NY), streaming=True) == []          # Saturday
+    assert REC.due_slots(pd.Timestamp("2026-11-26 16:30", tz=NY), streaming=True) == []          # Thanksgiving
+    saved = []
+    monkeypatch.setattr(REC, "tickers", lambda: ["IBIT", "ETHA"])
+    monkeypatch.setattr(REC, "recorded", lambda t, k, s: t == "ETHA")        # ETHA's slot is already there
+    monkeypatch.setattr(REC, "save", lambda t, k, s, g: saved.append((t, k, s, g["net_gex"])) or True)
+    import api.services.market as M
+    calls = []
+    monkeypatch.setattr(M, "gex", lambda t, source, hub=None: calls.append((t, source)) or {"net_gex": 1.0, "regime": "positive"})
+    rec = REC.GexRecorder(hub=None)
+    assert rec.tick(late) == 1 and calls == [("IBIT", "hub")]
+    assert saved == [("IBIT", "eod", _dt.datetime(2026, 9, 23, 16, 0), 1.0)]

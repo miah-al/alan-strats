@@ -150,12 +150,13 @@ def build(ticker: str = "SPY", since: Optional[_dt.date] = None) -> pd.DataFrame
         except Exception as exc:  # noqa: BLE001
             logger.debug("gex %s %s failed: %s", ticker, day, exc)
             continue
-        flip = snap.flip_level if snap.flip_level and math.isfinite(snap.flip_level) else None
+        from api.services.market import flip_and_regime
+        flip, regime, _note = flip_and_regime(snap)
         im, iv = implied_move_1d(g, spot)
         rows.append({"date": day.date(), "spot": round(spot, 4), "net_gex": snap.net_gex, "call_gex": snap.call_gex,
                      "put_gex": snap.put_gex, "flip": flip, "call_wall": snap.call_wall, "put_wall": snap.put_wall,
-                     "dist_to_flip_pct": snap.dist_to_flip_pct if flip else None,
-                     "regime": classify_regime(snap) if flip else "unknown",
+                     "dist_to_flip_pct": snap.dist_to_flip_pct if flip is not None else None,
+                     "regime": regime,
                      "implied_move_1d": im, "atm_iv_near": iv, "contracts": int(len(chain))})
     out = pd.DataFrame(rows).set_index("date") if rows else pd.DataFrame()
     if out.empty:
@@ -177,17 +178,55 @@ def history(ticker: str) -> pd.DataFrame:
     return h
 
 
-def points(ticker: str, days: int = 365) -> dict:
+LIVE_METHOD = ("recorded by the service from the live chain (/api/market/gex?source=hub): broker-streamed or "
+               "yfinance open interest, first-week expiries and Fridays to 60 days")
+
+
+def points(ticker: str, days: int = 365, interval: str = "1d") -> dict:
+    """Recorded live GEX (app.GexHistory: ``1d`` = the end-of-day rows, ``30m`` = the intraday ones) and, for a
+    ticker with stored option snapshots, the daily snapshot proxy before the recording began."""
     from api.serialize import to_jsonable
-    h = history(ticker)
-    last = h.index.max()
-    h = h[h.index >= last - _dt.timedelta(days=int(days))]
-    pts = [{"date": d, "net_gex": r.net_gex, "flip": r.flip, "call_wall": r.call_wall, "put_wall": r.put_wall,
-            "spot": r.spot, "regime": r.regime, "dist_to_flip_pct": r.dist_to_flip_pct,
-            "call_gex": r.call_gex, "put_gex": r.put_gex, "implied_move_1d": r.implied_move_1d,
-            "contracts": r.contracts} for d, r in h.iterrows()]
-    return to_jsonable({"ticker": ticker.upper(), "units": UNITS, "method": METHOD, "points": pts,
-                        "first": h.index.min() if len(h) else None, "last": last, "days": len(pts),
-                        "caveats": ["no stored open interest: OI is a 20-day volume proxy",
-                                    "expiries under 7 days (incl. 0DTE) are not in the stored snapshots",
-                                    "the stored history ends where the option-snapshot sync stopped"]})
+    from api.services import gex_recorder as REC
+    t = ticker.upper()
+    since = _dt.date.today() - _dt.timedelta(days=int(days))
+    live = REC.history_rows(t, "eod" if interval == "1d" else "intraday", since)
+    pts, sources = [], []
+    first_live = None
+    if not live.empty:
+        first_live = pd.Timestamp(live["SlotTs"].min()).date()
+        for r in live.itertuples(index=False):
+            pts.append({"date": pd.Timestamp(r.SlotTs).date() if interval == "1d" else pd.Timestamp(r.SlotTs),
+                        "net_gex": r.NetGex, "flip": r.Flip, "call_wall": r.CallWall, "put_wall": r.PutWall,
+                        "spot": r.Spot, "regime": r.Regime, "dist_to_flip_pct": r.DistToFlipPct,
+                        "call_gex": r.CallGex, "put_gex": r.PutGex, "max_pain": r.MaxPain,
+                        "contracts": r.Contracts, "source": "live"})
+        sources.append("live")
+    caveats = []
+    if interval == "1d":
+        try:
+            h = history(t)
+        except NoHistory:
+            h = None
+        if h is not None:
+            h = h[h.index >= since]
+            if first_live is not None:
+                h = h[h.index < first_live]
+            proxy = [{"date": d, "net_gex": r.net_gex, "flip": r.flip, "call_wall": r.call_wall,
+                      "put_wall": r.put_wall, "spot": r.spot, "regime": r.regime,
+                      "dist_to_flip_pct": r.dist_to_flip_pct, "call_gex": r.call_gex, "put_gex": r.put_gex,
+                      "implied_move_1d": r.implied_move_1d, "contracts": r.contracts, "source": "snapshot_proxy"}
+                     for d, r in h.iterrows()]
+            if proxy:
+                sources.append("snapshot_proxy")
+                caveats += ["snapshot_proxy points: no stored open interest (a 20-day volume proxy), monthly "
+                            "expiries only, 7-88 days out"]
+            pts = proxy + pts
+    if not pts:
+        raise NoHistory(f"no GEX history for {t} yet: nothing stored and nothing recorded (the service records "
+                        f"it daily; see /api/market/gex/{t} for today's)")
+    if "live" in sources:
+        caveats.append("live points are comparable with each other; the snapshot proxy is on a different basis")
+    dates = [p["date"] for p in pts]
+    return to_jsonable({"ticker": t, "interval": interval, "units": UNITS, "sources": sources,
+                        "method": {"live": LIVE_METHOD, "snapshot_proxy": METHOD}, "points": pts,
+                        "first": min(dates), "last": max(dates), "days": len(pts), "caveats": caveats})

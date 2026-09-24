@@ -17,6 +17,8 @@ os.environ.setdefault("ALAN_TRADER_PROVIDERS", "none")
 os.environ.setdefault("ALAN_TRADER_PROTECTED_ACCOUNTS", "1")
 # Backtest jobs run under test do not leave app.BacktestRun rows behind.
 os.environ.setdefault("ALAN_TRADER_STORE_BACKTESTS", "0")
+# ... and no live GEX is recorded into app.GexHistory.
+os.environ.setdefault("ALAN_TRADER_GEX_RECORD", "0")
 
 
 @pytest.fixture(autouse=True)

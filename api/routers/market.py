@@ -95,10 +95,11 @@ def market_iv(ticker: str):
 
 
 @router.get("/market/gex/{ticker}/history")
-def market_gex_history(ticker: str, days: int = Query(default=365, ge=1, le=3650)):
+def market_gex_history(ticker: str, days: int = Query(default=365, ge=1, le=3650),
+                       interval: Literal["1d", "30m"] = "1d"):
     from api.services import gex_history as GH
     try:
-        return GH.points(ticker, days)
+        return GH.points(ticker, days, interval)
     except GH.NoHistory as exc:
         raise HTTPException(422, str(exc))
 

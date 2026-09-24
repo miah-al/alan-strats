@@ -88,6 +88,8 @@ def create_app():
     runners = RunnerManager(publish=hub.publish)
     from api.services.volstats import VolStats
     vol_stats = VolStats(market_hub)
+    from api.services.gex_recorder import GexRecorder
+    gex_recorder = GexRecorder(market_hub)
 
     from api.redact import RedactingFilter, install_redaction, redact
     forwarder.addFilter(RedactingFilter())
@@ -104,6 +106,7 @@ def create_app():
         order_book.start()
         alert_engine.start()
         runners.start_monitor()
+        gex_recorder.start()
         beat = asyncio.create_task(hub.heartbeat_forever())
         logger.info("alan_trader service %s (%s) up; strategies from %s",
                     build["version"], build["branch"], info.get("strategies_dir"))
@@ -115,6 +118,7 @@ def create_app():
             alert_engine.stop()
             runners.shutdown()
             vol_stats.shutdown()
+            gex_recorder.stop()
             await market_hub.stop()
             if request_gate.installed() is market_hub.gate:
                 request_gate.install(None)
@@ -132,6 +136,7 @@ def create_app():
     app.state.alerts = alert_engine
     app.state.runner = runners
     app.state.volstats = vol_stats
+    app.state.gex_recorder = gex_recorder
     app.state.build = build
     app.state.bootstrap = info
     app.state.json_response = SafeJSONResponse

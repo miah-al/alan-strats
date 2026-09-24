@@ -289,6 +289,19 @@ def _db_chain(ticker: str):
     return (chain, spot, snap_day) if not chain.empty else None
 
 
+def flip_and_regime(snap) -> tuple[Optional[float], str, Optional[str]]:
+    """(flip, regime, note). The engine answers the spot itself when net GEX never crosses zero within ±20%,
+    which would read as "near flip": that is no flip at all, and the regime is the sign of net GEX."""
+    from analytics.gex_engine import classify_regime
+    f = snap.flip_level
+    if f is None or not math.isfinite(f):
+        return None, "unknown", None
+    if abs(f - snap.spot) <= 1e-9 * max(abs(snap.spot), 1.0):
+        return None, ("positive" if snap.net_gex > 0 else "negative"), \
+            "net GEX does not cross zero within ±20% of spot: no flip level; regime from its sign"
+    return float(f), classify_regime(snap), None
+
+
 def gex_spot(ticker: str, hub=None) -> Optional[float]:
     """The underlying's price for GEX: the market-data hub (an index at its last level — the broker's index
     quote, or the session's last one after hours), else yfinance, else the last stored close."""
@@ -487,7 +500,9 @@ def gex(ticker: str, source: str = "auto", hub=None) -> dict:
                                         "net_gex": "Net GEX", "call_oi": "Call OI", "put_oi": "Put OI"},
                           formats={"strike": "price", "call_gex": "money", "put_gex": "money",
                                    "net_gex": "money", "call_oi": "int", "put_oi": "int"})
-    flip = snap.flip_level if snap.flip_level and math.isfinite(snap.flip_level) else None
+    flip, regime_, flip_note = flip_and_regime(snap)
+    if flip_note:
+        notes.append(flip_note)
 
     # per-expiry split (dealer-signed, same notional)
     exp_col = cols.get("expiry") or ("expiry" if "expiry" in chain.columns else None)
@@ -506,7 +521,7 @@ def gex(ticker: str, source: str = "auto", hub=None) -> dict:
 
     try:
         from analytics.gex_engine import classify_regime, compute_max_pain
-        regime = classify_regime(snap) if flip is not None else "unknown"
+        regime = regime_
         max_pain = float(compute_max_pain(chain, spot))
     except Exception:
         regime, max_pain = "unknown", None

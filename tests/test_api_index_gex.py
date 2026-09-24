@@ -133,3 +133,12 @@ def test_band_sampling_keeps_near_strikes_and_samples_the_wings():
     got = _band(ks, 20000.0, (0.015, 0.08, 90))
     near = [k for k in ks if abs(k - 20000) <= 300]
     assert set(near) <= got and len(got) <= 90 and min(got) >= 18400 and max(got) <= 21600
+
+
+def test_no_zero_crossing_is_no_flip_not_near_flip():
+    from types import SimpleNamespace
+    from api.services.market import flip_and_regime
+    assert flip_and_regime(SimpleNamespace(flip_level=100.0, spot=100.0, net_gex=-5.0))[:2] == (None, "negative")
+    assert flip_and_regime(SimpleNamespace(flip_level=100.0, spot=100.0, net_gex=5.0))[:2] == (None, "positive")
+    f, r, note = flip_and_regime(SimpleNamespace(flip_level=90.0, spot=100.0, net_gex=5.0, dist_to_flip_pct=0.1))
+    assert f == 90.0 and r == "positive" and note is None

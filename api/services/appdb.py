@@ -9,6 +9,7 @@ everything else — DDL is allowed in this schema only:
   app.Alert        price / change / IV alerts and when they fired
   app.IvHistory    each symbol's daily 30-day ATM IV (vol-stats' IV rank / percentile history)
   app.BacktestRun  a summary of every backtest job that succeeded (strategy-stats' expectation)
+  app.GexHistory   live dealer GEX recorded each trading day (and every 30 min while streaming)
 """
 from __future__ import annotations
 
@@ -93,8 +94,32 @@ _TABLES = {
             MaxDrawdownPct FLOAT          NULL,
             RunAt          DATETIME2      NOT NULL CONSTRAINT DF_BacktestRun_RunAt DEFAULT SYSUTCDATETIME()
         )""",
+    "GexHistory": """
+        CREATE TABLE app.GexHistory (
+            Id             INT IDENTITY(1,1) NOT NULL CONSTRAINT PK_GexHistory PRIMARY KEY,
+            Ticker         NVARCHAR(20)   NOT NULL,
+            Kind           NVARCHAR(10)   NOT NULL,
+            SlotTs         DATETIME2      NOT NULL,
+            TradeDate      DATE           NOT NULL,
+            Spot           FLOAT          NULL,
+            NetGex         FLOAT          NULL,
+            CallGex        FLOAT          NULL,
+            PutGex         FLOAT          NULL,
+            Flip           FLOAT          NULL,
+            CallWall       FLOAT          NULL,
+            PutWall        FLOAT          NULL,
+            DistToFlipPct  FLOAT          NULL,
+            Regime         NVARCHAR(12)   NULL,
+            MaxPain        FLOAT          NULL,
+            NetGex0Dte     FLOAT          NULL,
+            Contracts      INT            NULL,
+            Source         NVARCHAR(60)   NULL,
+            RecordedAt     DATETIME2      NOT NULL CONSTRAINT DF_GexHistory_At DEFAULT SYSUTCDATETIME()
+        )""",
 }
 _INDEXES = {
+    ("GexHistory", "UX_GexHistory_Slot"):
+        "CREATE UNIQUE INDEX UX_GexHistory_Slot ON app.GexHistory (Ticker, Kind, SlotTs)",
     ("PaperOrder", "UX_PaperOrder_Client"):
         "CREATE UNIQUE INDEX UX_PaperOrder_Client ON app.PaperOrder (AccountId, ClientOrderId) "
         "WHERE ClientOrderId IS NOT NULL",
