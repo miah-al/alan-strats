@@ -2,6 +2,7 @@
 
     python docs/research/gex_edge.py crypto [--out crypto.json]   # IBIT / ETHA: intraday behaviour, weekend gaps
     python docs/research/gex_edge.py spy    [--out spy.json]      # SPY daily, on the stored-snapshot proxy GEX
+    python docs/research/gex_edge.py ndx    [--out ndx.json]      # NDX minute bars on the SPY proxy regime
 
 Read only: a guard refuses every write statement for the whole run; backtests run in memory. Every network
 request (yfinance BTC / ETH hourly bars) passes the service's request gate.
@@ -329,9 +330,9 @@ def gated() -> None:
     request_gate.install_hooks()
 
 
-def minutes(sym: str) -> pd.DataFrame:
+def minutes(sym: str, since: _dt.date = _dt.date(2023, 1, 1)) -> pd.DataFrame:
     from db.client import get_engine, get_minute_bars
-    df = get_minute_bars(get_engine(), sym, _dt.date(2024, 1, 1), _dt.date.today())
+    df = get_minute_bars(get_engine(), sym, since, _dt.date.today())
     if df is None or df.empty:
         return pd.DataFrame()
     df = df.copy()
@@ -504,9 +505,269 @@ def crypto_study() -> dict:
     return out
 
 
+# ── the NDX study (minute bars, SPY proxy regime) ────────────────────────────
+
+def prior_regime(g: pd.DataFrame, days) -> pd.DataFrame:
+    """For each trading day, the SPY proxy GEX of the last snapshot day strictly before it (known at the open)."""
+    h = g.copy()
+    h.index = pd.to_datetime(pd.Index(h.index))
+    full = h.reindex(pd.date_range(h.index.min(), h.index.max() + pd.Timedelta(days=5))).ffill()
+    shifted = full.shift(1)
+    out = shifted.reindex(pd.to_datetime(pd.Index(days)))
+    last_snap = h.index.max()
+    out.loc[out.index > last_snap + pd.Timedelta(days=3)] = np.nan          # past the history: unknown
+    out.index = pd.Index(days)
+    return out[["regime", "net_gex", "flip", "spot"]]
+
+
+def by_group(df: pd.DataFrame, col: str, fn) -> dict:
+    return {str(k): fn(x) for k, x in df.groupby(col) if len(x) >= 5}
+
+
+def trigger_events(m: pd.DataFrame, pts: float = 15.0, lookback: int = 30) -> pd.DataFrame:
+    """ndx_0dte_tasty's entry trigger: |NDX move over the last 30 minutes| >= 15 points at a minute in 11:00-14:00.
+    First trigger per day. Forward moves in the trigger's direction (points) and a +10 / -10 race over 60 minutes."""
+    rows = []
+    for day, b in m.groupby("day"):
+        if len(b) < 300:
+            continue
+        px = b.set_index("m")["close"]
+        for mm in range(660, 841):
+            if mm not in px.index or (mm - lookback) not in px.index:
+                continue
+            move = px[mm] - px[mm - lookback]
+            if abs(move) < pts:
+                continue
+            sgn = 1.0 if move > 0 else -1.0
+            fwd = {}
+            for h in (15, 30, 60):
+                later = px[(px.index > mm) & (px.index <= mm + h)]
+                fwd[h] = (later.iloc[-1] - px[mm]) * sgn if len(later) else np.nan
+            close_fwd = (px.iloc[-1] - px[mm]) * sgn
+            path = (px[(px.index > mm) & (px.index <= mm + 60)] - px[mm]) * sgn
+            up = path[path >= 10].index.min() if (path >= 10).any() else None
+            dn = path[path <= -10].index.min() if (path <= -10).any() else None
+            race = "win" if (up is not None and (dn is None or up < dn)) else ("loss" if dn is not None else "none")
+            rows.append({"day": day, "minute": mm, "move": move, "fwd15": fwd[15], "fwd30": fwd[30], "fwd60": fwd[60],
+                         "fwd_close": close_fwd, "race": race})
+            break
+    return pd.DataFrame(rows)
+
+
+def trig_summary(e: pd.DataFrame) -> dict:
+    if e.empty:
+        return {"n": 0}
+    f = e["fwd60"].dropna()
+    k = int((f > 0).sum())
+    decided = e[e["race"] != "none"]
+    kw = int((decided["race"] == "win").sum())
+    return {"n": int(len(e)), "continued_60m_share": k / len(f),
+            "binom_p_vs_half": float(stats.binomtest(k, len(f), 0.5).pvalue),
+            "mean_fwd_pts": {h: float(e[h].mean()) for h in ("fwd15", "fwd30", "fwd60", "fwd_close")},
+            "t_fwd60": float(stats.ttest_1samp(f, 0).statistic), "p_fwd60": float(stats.ttest_1samp(f, 0).pvalue),
+            "race_plus10_first": (kw / len(decided)) if len(decided) else None, "race_decided": int(len(decided))}
+
+
+def sigma_events(m: pd.DataFrame, k_sigma: float) -> pd.DataFrame:
+    """As continuation(): the first 30-minute move >= k_sigma x trailing sigma in 11:00-14:00 each day, with its day."""
+    closes = m.set_index("ts")["close"]
+    r30 = closes.resample("30min").last().dropna()
+    r30 = (r30 / r30.shift(1) - 1).dropna()
+    sig = r30.groupby(r30.index.date).std().rolling(20).mean().shift(1)
+    rows = []
+    for day, b in m.groupby("day"):
+        sg = sig.get(day)
+        if sg is None or not np.isfinite(sg) or len(b) < 300:
+            continue
+        for mm in range(660, 841, 5):
+            p0, p30, p90 = at(b, mm - 30), at(b, mm), at(b, mm + 60)
+            if not (p0 and p30 and p90):
+                continue
+            mv = p30 / p0 - 1
+            if abs(mv) >= k_sigma * sg:
+                rows.append({"day": day, "fwd_pct": (p90 / p30 - 1) * np.sign(mv) * 100})
+                break
+    return pd.DataFrame(rows)
+
+
+def cont_summary(e: pd.DataFrame) -> dict:
+    if e.empty or len(e) < 5:
+        return {"n": int(len(e))}
+    k = int((e["fwd_pct"] > 0).sum())
+    return {"n": int(len(e)), "continued_share": k / len(e), "binom_p": float(stats.binomtest(k, len(e), 0.5).pvalue),
+            "mean_fwd_pct": float(e["fwd_pct"].mean()), "t": float(stats.ttest_1samp(e["fwd_pct"], 0).statistic)}
+
+
+def ndxp_volume_by_strike() -> pd.DataFrame:
+    """Same-day NDXP prints: (day, strike, call volume, put volume) from 09:30 to 14:00."""
+    from sqlalchemy import text
+    from api.services.db import engine
+    sql = text("""
+        SELECT CAST(o.BarTs AS date) AS d, o.Strike, o.ContractType, SUM(CAST(o.Volume AS FLOAT))
+        FROM mkt.OptionMinuteBar o JOIN mkt.Ticker t ON t.TickerId = o.TickerId
+        WHERE t.Symbol = 'NDX' AND o.ExpirationDate = CAST(o.BarTs AS date) AND DATEPART(hour, o.BarTs) < 14
+        GROUP BY CAST(o.BarTs AS date), o.Strike, o.ContractType""")
+    with engine().connect() as c:
+        df = pd.DataFrame(c.execute(sql).fetchall(), columns=["day", "strike", "type", "volume"])
+    df["strike"] = df["strike"].astype(float)
+    df["type"] = np.where(df["type"].astype(str).str.upper().str.startswith("C"), "call", "put")
+    return df
+
+
+def zero_dte_pinning(m: pd.DataFrame, reg: pd.DataFrame) -> dict:
+    """On each 0DTE session: K* = the NDXP strike with the most volume 09:30-14:00, and the volume "max pain"
+    (the strike minimising holders' payout, volume as open interest). Pinning => the 16:00 close is nearer K* than
+    the mirror strike K' = 2*P14 - K* (same distance on the other side) more than half the time. Days with K* within
+    20 points of the 14:00 price are left out (nothing to move toward)."""
+    vol = ndxp_volume_by_strike()
+    px = {day: (at(b, 840), float(b["close"].iloc[-1])) for day, b in m.groupby("day") if len(b) >= 300}
+    out = {"max_volume": [], "max_pain": []}
+    for day, v in vol.groupby("day"):
+        if day not in px or px[day][0] is None:
+            continue
+        p14, c = px[day]
+        tot = v.groupby("strike")["volume"].sum()
+        k_vol = float(tot.idxmax())
+        calls = v[v["type"] == "call"].set_index("strike")["volume"]
+        puts = v[v["type"] == "put"].set_index("strike")["volume"]
+        ks = np.array(sorted(tot.index))
+        pain = [float((calls * np.maximum(K - calls.index.to_numpy(), 0)).sum()
+                      + (puts * np.maximum(puts.index.to_numpy() - K, 0)).sum()) for K in ks]
+        k_pain = float(ks[int(np.argmin(pain))])
+        r = reg.loc[day, "regime"] if day in reg.index else None
+        for key, k in (("max_volume", k_vol), ("max_pain", k_pain)):
+            if abs(k - p14) < 20:
+                continue
+            mirror = 2 * p14 - k
+            out[key].append({"day": day, "closer": abs(c - k) < abs(c - mirror), "toward_pts": abs(p14 - k) - abs(c - k),
+                             "regime": r if isinstance(r, str) else "unknown"})
+    res = {}
+    for key, rows in out.items():
+        df = pd.DataFrame(rows)
+        if df.empty:
+            res[key] = {"n": 0}
+            continue
+        k = int(df["closer"].sum())
+        res[key] = {"n": int(len(df)), "share_closer_than_mirror": k / len(df),
+                    "binom_p": float(stats.binomtest(k, len(df), 0.5).pvalue),
+                    "mean_pts_toward": float(df["toward_pts"].mean()),
+                    "by_regime": {str(g): {"n": int(len(x)), "share": float(x["closer"].mean())}
+                                  for g, x in df.groupby("regime")}}
+    return res
+
+
+def ndx_study() -> dict:
+    from api.services import gex_history as GH
+    from engine.strategy_backtest import run_backtest
+    res: dict = {}
+    m = minutes("NDX")
+    d = per_day(m)
+    res["sessions"] = {"days": int(len(d)), "first": str(d.index.min()), "last": str(d.index.max())}
+    vxn = daily("VXN")["close"]
+    vxn = vxn.reindex(sorted(set(vxn.index) | set(d.index))).ffill().shift(1)            # the prior close's VXN
+    d["vxn_prev"] = vxn.reindex(d.index)
+    g = GH.build("SPY")
+    reg = prior_regime(g, list(d.index))
+    d = d.join(reg)
+    d["log_vxn"] = np.log(d["vxn_prev"])
+    ov = d.dropna(subset=["regime", "log_vxn"]).copy()
+    ov["neg"] = (ov["regime"] == "negative") * 1.0
+    ov["near"] = (ov["regime"] == "near_flip") * 1.0
+    res["overlap"] = {"days": int(len(ov)), "first": str(ov.index.min()), "last": str(ov.index.max()),
+                      "regimes": ov["regime"].value_counts().to_dict()}
+    # regime at 10:00: SPY at 10:00 estimated from NDX's move since the prior close, scaled by 1/beta
+    ndx_d, spy_d = daily("NDX")["close"], daily("SPY")["close"]
+    beta = float(np.polyfit(spy_d.pct_change().reindex(ndx_d.index).dropna(),
+                            ndx_d.pct_change().reindex(spy_d.pct_change().dropna().index).dropna(), 1)[0]) \
+        if len(ndx_d) > 100 else 1.2
+    prev_ndx = ndx_d.shift(1).reindex(ov.index)
+    p10 = pd.Series({day: at(b, 600) for day, b in m.groupby("day")}).reindex(ov.index)
+    spy10 = ov["spot"] * (1 + (p10 / prev_ndx - 1) / beta)
+    near = (ov["flip"].notna()) & ((spy10 - ov["flip"]).abs() / spy10 < 0.0025)
+    ov["regime10"] = np.where(ov["flip"].isna(), np.where(ov["net_gex"] > 0, "positive", "negative"),
+                              np.where(near, "near_flip", np.where(spy10 > ov["flip"], "positive", "negative")))
+    res["beta_ndx_on_spy"] = beta
+    # T1: range and realised vol, VXN alone vs VXN + regime
+    t1 = {}
+    for yname in ("range_pct", "rv_ann_pct"):
+        y = np.log(ov[yname])
+        base = ols(y, ov[["log_vxn"]], ["log_vxn"])
+        full = ols(y, ov[["log_vxn", "neg", "near"]], ["log_vxn", "neg", "near"])
+        t1[yname] = {"vxn_only": base, "with_regime": full, "delta_r2": full["r2"] - base["r2"],
+                     "raw": by_group(ov, "regime", lambda x: float(x[yname].mean())),
+                     "vxn_prev_mean": by_group(ov, "regime", lambda x: float(x["vxn_prev"].mean()))}
+    ov["vxn_q"] = pd.qcut(ov["vxn_prev"], 3, labels=["low", "mid", "high"])
+    t1["rv_by_vxn_tercile"] = {str(q): by_group(x, "regime", lambda z: {"n": int(len(z)), "rv": float(z["rv_ann_pct"].mean())})
+                               for q, x in ov.groupby("vxn_q", observed=True)}
+    res["t1"] = t1
+    # T2 / T3: first 30 vs rest; hour vs next hour, overall and by regime
+    res["open30_vs_rest"] = {"all": corr_test(d["r_open30"], d["r_rest"]),
+                             "by_regime": by_group(ov, "regime", lambda x: corr_test(x["r_open30"], x["r_rest"]))}
+    blocks = []
+    for a, b, c in (("p1100", "p1200", "p1300"), ("p1200", "p1300", "p1400"), ("p1300", "p1400", "p1500")):
+        blocks.append(pd.DataFrame({"x": (d[b] / d[a] - 1) * 100, "y": (d[c] / d[b] - 1) * 100,
+                                    "regime": d["regime"]}, index=d.index))
+    bl = pd.concat(blocks).dropna(subset=["x", "y"])
+    res["hour_vs_next_hour"] = {"all": corr_test(bl["x"], bl["y"]),
+                                "by_regime": by_group(bl.dropna(subset=["regime"]), "regime",
+                                                      lambda x: corr_test(x["x"], x["y"]))}
+    # T4: sigma continuation, overall and by regime
+    t4 = {}
+    for ks in (1.0, 2.0):
+        e = sigma_events(m, ks)
+        e["regime"] = e["day"].map(d["regime"])
+        pos, neg = e[e["regime"] == "positive"], e[e["regime"] == "negative"]
+        t4[f"{ks:g}sigma"] = {"all": cont_summary(e), "by_regime": by_group(e.dropna(subset=["regime"]), "regime", cont_summary),
+                             "pos_vs_neg": two_prop(int((pos["fwd_pct"] > 0).sum()), len(pos), int((neg["fwd_pct"] > 0).sum()), len(neg))
+                             if len(pos) > 4 and len(neg) > 4 else None}
+    res["t4_sigma_continuation"] = t4
+    # T5: the strategy's trigger
+    te = trigger_events(m)
+    te["regime"] = te["day"].map(d["regime"])
+    te["regime10"] = te["day"].map(ov["regime10"])
+    te["vxn_prev"] = te["day"].map(d["vxn_prev"])
+    gate = te[te["vxn_prev"] >= 20]
+    res["t5_trigger"] = {"all": trig_summary(te), "vxn_gate_20": trig_summary(gate),
+                         "by_regime": by_group(te.dropna(subset=["regime"]), "regime", trig_summary),
+                         "by_regime_vxn_gate": by_group(gate.dropna(subset=["regime"]), "regime", trig_summary),
+                         "by_regime_at_10": by_group(te.dropna(subset=["regime10"]), "regime10", trig_summary)}
+    ok = te.dropna(subset=["regime", "fwd60"])
+    if len(ok) > 20:
+        ok = ok.assign(neg=(ok["regime"] == "negative") * 1.0, near=(ok["regime"] == "near_flip") * 1.0,
+                       log_vxn=np.log(ok["vxn_prev"]))
+        res["t5_trigger"]["fwd60_ols"] = ols(ok["fwd60"], ok[["log_vxn", "neg", "near"]], ["log_vxn", "neg", "near"])
+    # T6: 0DTE pinning
+    res["t6_pinning_0dte"] = zero_dte_pinning(m, d[["regime"]])
+    # T7: the strategy's backtest trades by regime (prior close, and at 10:00), per day and controlling for VXN
+    perf = run_backtest("ndx_0dte_tasty", "NDX", str(ov.index.min()), str(ov.index.max()), 30000, report_window=True)
+    tr = perf["trades"].copy()
+    tr["day"] = pd.to_datetime(tr["entry_date"]).dt.date
+    tr["pnl"] = pd.to_numeric(tr["pnl"], errors="coerce")
+    daily_pnl = tr.groupby("day")["pnl"].agg(["sum", "count"]).join(ov[["regime", "regime10", "vxn_prev", "log_vxn"]], how="inner")
+    tot = daily_pnl["sum"].sum()
+    res["t7_trades"] = {
+        "trades": int(len(tr)), "days_traded": int(len(daily_pnl)),
+        "by_regime": {str(r): {"days": int(len(x)), "share_of_days": len(x) / len(daily_pnl), "pnl": float(x["sum"].sum()),
+                               "share_of_pnl": float(x["sum"].sum() / tot) if tot else None,
+                               "pnl_per_day": float(x["sum"].mean()), "trades_per_day": float(x["count"].mean()),
+                               "win_days": float((x["sum"] > 0).mean()), "vxn_prev": float(x["vxn_prev"].mean())}
+                      for r, x in daily_pnl.groupby("regime")},
+        "by_regime_at_10": {str(r): {"days": int(len(x)), "pnl_per_day": float(x["sum"].mean()),
+                                     "win_days": float((x["sum"] > 0).mean())} for r, x in daily_pnl.groupby("regime10")},
+        "win_rate_per_trade": by_group(tr.assign(regime=tr["day"].map(d["regime"])).dropna(subset=["regime"]), "regime",
+                                       lambda x: float((x["pnl"] > 0).mean())),
+        "pos_vs_neg_per_day": welch(daily_pnl[daily_pnl["regime"] == "positive"]["sum"],
+                                    daily_pnl[daily_pnl["regime"] == "negative"]["sum"]),
+        "ols_daily_pnl": ols(daily_pnl["sum"] / 1000.0, daily_pnl.assign(neg=(daily_pnl["regime"] == "negative") * 1.0,
+                                                                          near=(daily_pnl["regime"] == "near_flip") * 1.0)[["log_vxn", "neg", "near"]],
+                             ["log_vxn", "neg", "near"]),
+    }
+    return res
+
+
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("part", choices=["spy", "crypto"])
+    ap.add_argument("part", choices=["spy", "crypto", "ndx"])
     ap.add_argument("--out")
     ap.add_argument("--trades", nargs="*", default=[], help="slug:ticker:capital, split by regime (spy part)")
     a = ap.parse_args(argv)
@@ -516,7 +777,7 @@ def main(argv=None) -> int:
     from api.bootstrap import bootstrap
     bootstrap()
     strict_read_only()
-    res = spy_study() if a.part == "spy" else crypto_study()
+    res = {"spy": spy_study, "crypto": crypto_study, "ndx": ndx_study}[a.part]()
     text = json.dumps(res, indent=1, default=str)
     if a.out:
         Path(a.out).write_text(text, encoding="utf-8")
