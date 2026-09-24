@@ -37,7 +37,7 @@ logger = logging.getLogger("alan_trader.api.marketdata.tastytrade")
 
 RECONNECT_START_S = 30.0
 RECONNECT_MAX_S = 900.0
-CHAIN_TTL_S = 1800.0
+CHAIN_TTL_S = 4 * 3600.0          # a nested chain changes with new listings (daily): one REST call per underlying per 4 h
 LOCK_RETRY_S = 60.0
 
 

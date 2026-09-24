@@ -90,6 +90,7 @@ installed for their screener hooks; without it the registry falls back to the ge
 | WS | `/events` | `hello`, `job`, `log` (≥ INFO), `heartbeat` (15 s) |
 | WS | `/stream` | live quotes: `subscribe` / `unsubscribe` symbols → `quote` (≤ 4/s per symbol), `status` |
 | GET | `/market/quotes?symbols=SPY,QQQ` | `{quotes: [quote, ...]}` from the hub (cached / one upstream subscription) |
+| GET | `/market/vol-stats?symbols=SPY,QQQ` | IV30 / rank / percentile, HV, skew, term slope, expected move, beta, earnings (≤ 40, cached) |
 | GET | `/market/providers` | per provider: state, requests in the last minute, budget left, last error |
 | GET | `/options/{u}/expirations` | `{underlying, spot, expirations: [{expiry, dte}], source}` |
 | GET | `/options/{u}/chain?expiry=&strikes=30` | Table, one row per strike: call_/put_ bid ask mid last iv greeks oi volume symbol |

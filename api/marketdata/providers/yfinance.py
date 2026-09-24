@@ -26,6 +26,7 @@ from api.marketdata.providers.polygon import pick_strikes
 
 logger = logging.getLogger("alan_trader.api.marketdata.yfinance")
 RISK_FREE = 0.045
+TICKER_TTL_S = 900.0
 
 
 class YFinanceProvider(Provider):
@@ -38,6 +39,9 @@ class YFinanceProvider(Provider):
 
     def __init__(self, limits: ProviderLimits):
         super().__init__(limits)
+        # one yfinance Ticker per underlying for a while: it keeps the expirations list it fetched, so
+        # each option_chain() call is one request rather than two
+        self._tickers: dict[str, tuple[float, object]] = {}
         try:
             import yfinance  # noqa: F401
         except Exception:
@@ -102,10 +106,19 @@ class YFinanceProvider(Provider):
         q = self._daily([underlying]).get(underlying)
         return float(q["fields"]["last"]) if q and q["fields"].get("last") is not None else None
 
-    def _option_frames(self, underlying: str, expiry: date):
+    def _ticker(self, underlying: str):
+        import time as _time
         import yfinance as yf
+        hit = self._tickers.get(underlying)
+        if hit is not None and _time.monotonic() - hit[0] < TICKER_TTL_S:
+            return hit[1]
+        t = yf.Ticker(SYM.to_yfinance(underlying))
+        self._tickers[underlying] = (_time.monotonic(), t)
+        return t
+
+    def _option_frames(self, underlying: str, expiry: date):
         try:
-            ch = yf.Ticker(SYM.to_yfinance(underlying)).option_chain(expiry.isoformat())
+            ch = self._ticker(underlying).option_chain(expiry.isoformat())
             return ch.calls, ch.puts
         except Exception as exc:
             logger.debug("yfinance option chain %s %s failed: %s", underlying, expiry, exc)
@@ -113,8 +126,7 @@ class YFinanceProvider(Provider):
 
     # ── chains ────────────────────────────────────────────────────────────────
     def expirations(self, underlying: str, spot: Optional[float] = None) -> list[date]:
-        import yfinance as yf
-        exps = yf.Ticker(SYM.to_yfinance(underlying)).options or ()
+        exps = self._ticker(underlying).options or ()
         return sorted(d for d in (_dt.date.fromisoformat(e) for e in exps) if d >= _dt.date.today())
 
     def chain(self, underlying: str, expiry: date, spot: Optional[float], strikes: int) -> Optional[dict]:

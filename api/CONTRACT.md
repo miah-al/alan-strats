@@ -354,3 +354,18 @@ clarifications of what the service does where the spec leaves room.
   runner does not price gets a `mark` from the hub (`mark_source` "market data (<provider>)").
 - Polygon serves option *quotes* only after a snapshot has shown bid/ask (this plan has none); it always serves chains,
   greeks, IV and OI.
+- **`GET /api/market/vol-stats?symbols=SPY,QQQ,…`** (at most 40) → a Table (plus `asof`, `units`, `pending`,
+  `cache_ttl_s`), one row per symbol: `symbol, status (ok|partial|pending|stale|error), spot, iv30, iv_rank, iv_pct,
+  iv_history_days, hv20, hv60, iv_hv, skew_25d, iv90, term_slope, em_30d_abs, em_30d_pct, next_earnings, beta_spy,
+  atm_spread_pct, oi_total, asof, source, notes`. Vols are **vol points** (percent); `iv_rank` / `iv_pct` 0–100. iv30 / iv90:
+  ATM IV at constant maturity (total variance interpolated between the expiries bracketing 30 days and the one nearest
+  90); `skew_25d` = 30-day 25Δ put IV − 25Δ call IV; `term_slope` = iv90 − iv30; `em_30d_*` = the 30-day ATM straddle
+  (mid; √T-interpolated between expiries), dollars and % of spot; `atm_spread_pct` = the ATM call's and put's bid-ask as %
+  of mid, averaged; `oi_total` = open interest of the sampled contracts (those expiries, the strikes around spot — not the
+  whole chain); `hv20` / `hv60` from stored daily bars (yfinance when none); `iv_hv` = iv30 − hv20; `beta_spy` = 1-year
+  daily beta. `iv_rank` / `iv_pct` use one year of daily iv30: the service's own record (`app.IvHistory`, written each
+  time a symbol is computed on a trading day) over the ATM ~30-day IV derived from `mkt.OptionSnapshot`; null with the
+  reason in `notes` under 60 days. `next_earnings` from yfinance's calendar (cached a day; null for ETFs / indices).
+  Chains are the merged chains of `/api/options/{u}/chain`. Each symbol is cached 10 min while the market is open (60 min
+  when closed) and computed on a 3-worker pool; a request waits up to 20 s — symbols still computing come back `pending`
+  (or `stale`, the previous values) and are ready on the next request.

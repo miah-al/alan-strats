@@ -7,6 +7,7 @@ everything else — DDL is allowed in this schema only:
   app.PaperOrder   paper orders: the order as sent, its status, fills and the trade group it made
   app.Watchlist    named symbol lists
   app.Alert        price / change / IV alerts and when they fired
+  app.IvHistory    each symbol's daily 30-day ATM IV (vol-stats' IV rank / percentile history)
 """
 from __future__ import annotations
 
@@ -62,6 +63,14 @@ _TABLES = {
             TriggeredAt DATETIME2      NULL,
             LastValue   FLOAT          NULL,
             TriggerCount INT           NOT NULL CONSTRAINT DF_Alert_Count DEFAULT 0
+        )""",
+    "IvHistory": """
+        CREATE TABLE app.IvHistory (
+            Symbol      NVARCHAR(40)   NOT NULL,
+            TradeDate   DATE           NOT NULL,
+            Iv30        FLOAT          NOT NULL,
+            UpdatedAt   DATETIME2      NOT NULL CONSTRAINT DF_IvHistory_Updated DEFAULT SYSUTCDATETIME(),
+            CONSTRAINT PK_IvHistory PRIMARY KEY (Symbol, TradeDate)
         )""",
 }
 _INDEXES = {

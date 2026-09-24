@@ -86,6 +86,8 @@ def create_app():
     alert_engine = AlertEngine(market_hub, publish=hub.publish)
     from api.services.runner import RunnerManager
     runners = RunnerManager(publish=hub.publish)
+    from api.services.volstats import VolStats
+    vol_stats = VolStats(market_hub)
 
     from api.redact import RedactingFilter, install_redaction, redact
     forwarder.addFilter(RedactingFilter())
@@ -112,6 +114,7 @@ def create_app():
             order_book.stop()
             alert_engine.stop()
             runners.shutdown()
+            vol_stats.shutdown()
             await market_hub.stop()
             if request_gate.installed() is market_hub.gate:
                 request_gate.install(None)
@@ -128,6 +131,7 @@ def create_app():
     app.state.orders = order_book
     app.state.alerts = alert_engine
     app.state.runner = runners
+    app.state.volstats = vol_stats
     app.state.build = build
     app.state.bootstrap = info
     app.state.json_response = SafeJSONResponse

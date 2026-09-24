@@ -56,6 +56,14 @@ def market_providers(request: Request):
     return request.app.state.market.providers_status()
 
 
+@router.get("/market/vol-stats")
+def market_vol_stats(request: Request, symbols: str = Query(..., description="comma-separated, at most 40")):
+    try:
+        return request.app.state.volstats.get([x for x in symbols.split(",") if x.strip()])
+    except ValueError as exc:
+        raise HTTPException(422, str(exc))
+
+
 @router.get("/market/movers")
 def market_movers(top: int = Query(default=12, ge=1, le=50)):
     return cached(("movers", top), DAILY_TTL, lambda: M.movers(top), cache_errors=_NO_DATA)

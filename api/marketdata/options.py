@@ -2,7 +2,7 @@
 api/marketdata/options.py — expirations and the option chain, with greeks and IV.
 
 A chain is merged across providers, field group by field group. The strikes and symbols come from the
-first provider that answers: tastytrade (its REST chain, one request per underlying, cached 30 min),
+first provider that answers: tastytrade (its REST chain, one request per underlying, cached 4 h),
 else yfinance, else Polygon. Then per contract: bid / ask from tastytrade's streamer (live, or the
 session's last quotes after hours), else yfinance's chain; IV and greeks from the streamer, else
 Polygon's snapshot, else yfinance (Black-Scholes on its IV); open interest and volume likewise. A
