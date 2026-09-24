@@ -69,7 +69,7 @@ def coverage() -> dict:
                 rows.append({"dataset": label, "table": tbl, "first": r[0], "last": r[1], "rows": int(r[2] or 0)})
             except Exception:
                 rows.append({"dataset": label, "table": tbl, "first": None, "last": None, "rows": None})
-        tables.append({"name": "global", "label": "Global datasets",
-                       "table": table_from_df(pd.DataFrame(rows, columns=["dataset", "table", "first", "last", "rows"]),
-                                              headers=_HEADERS)})
+        gdf = pd.DataFrame(rows, columns=["dataset", "table", "first", "last", "rows"])
+        gdf["rows"] = gdf["rows"].astype("Int64")          # a missing table is null, not NaN-as-float
+        tables.append({"name": "global", "label": "Global datasets", "table": table_from_df(gdf, headers=_HEADERS)})
     return {"tables": tables}
