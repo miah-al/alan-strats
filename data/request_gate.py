@@ -59,6 +59,8 @@ HOSTS = {
     "api.tastyworks.com": "tastytrade",
     "api.tastytrade.com": "tastytrade",
     "api.cert.tastyworks.com": "tastytrade",
+    "cboe.com": "cboe",
+    "alphavantage.co": "alphavantage",
 }
 
 

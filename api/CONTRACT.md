@@ -300,3 +300,9 @@ clarifications of what the service does where the spec leaves room.
   transition into the condition (not on every quote while it holds); `crosses_*` need a previous value (the first quote
   only sets it). Rows add `last_value` and `trigger_count`; `triggered` is the last firing. `DELETE` answers
   `{"deleted": id}`, 404 when unknown. `/api/health` adds `active_alerts`.
+- **Data sync**: `GET /api/data/sync/types` rows add `source` (the vendor). `tickers` may be omitted for a global dataset
+  (treasury, vix, macro, cpi, fomc, event_calendar); `from` / `to` are optional (each sync's own default window). The job's
+  `kind` is `sync`; its result is `{"data_type", "label", "from", "to", "results": [{"ticker", "status": "ok|up_to_date|
+  no_data|error", "rows", "detail", "message"}], "rows", "ok", "failed"}`; the job fails only when every ticker failed.
+  Types beyond the Data Manager's: `minute_bars`, `option_minute_bars`, `event_calendar`; `eps_estimates` needs
+  `ALPHA_VANTAGE_API_KEY`. The request gate also covers CBOE and Alpha Vantage (`/api/market/providers`).

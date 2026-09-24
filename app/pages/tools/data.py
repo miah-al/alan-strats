@@ -51,82 +51,27 @@ def _metric_card(label: str, value: str) -> html.Div:
 
 def _run_sync(data_type: str, ticker: str, from_date_str: str,
               force: list, av_key: str = "") -> tuple[str, str]:
-    """Execute one sync and return (status_html, caption_str)."""
+    """Execute one sync and return (status_html, caption_str). The dispatch itself is headless
+    (db/sync_jobs.py, shared with the service's /api/data/sync jobs)."""
+    from datetime import date as _date
+    from db.sync_jobs import SYNC_TYPES, describe, run_sync
     try:
-        from db.sync import (
-            sync_price_bars, sync_news, sync_dividends, sync_earnings,
-            sync_option_snapshots, sync_treasury_bars, sync_vix_bars,
-            sync_macro_bars, sync_cpi, sync_fomc_calendar, sync_eps_estimates,
-        )
-        from db.client import get_engine
-        from datetime import date as _date
-
-        api_key = get_polygon_api_key()
-        try:
-            from_date = _date.fromisoformat(from_date_str) if from_date_str else _date(2020, 1, 1)
-        except Exception:
-            from_date = _date(2020, 1, 1)
-
-        do_force = bool(force)
-
-        if do_force and data_type in ("price", "options") and ticker:
-            from db.client import get_ticker_id
-            from sqlalchemy import text as _t
-            engine = get_engine()
-            tid = get_ticker_id(engine, ticker)
-            if tid:
-                table_map = {
-                    "price":   ("mkt.PriceBar",       "PriceBar"),
-                    "options": ("mkt.OptionSnapshot",  "OptionSnapshot"),
-                }
-                tbl, dtype = table_map[data_type]
-                with engine.begin() as c:
-                    c.execute(_t(f"DELETE FROM {tbl} WHERE TickerId=:tid"), {"tid": tid})
-                    c.execute(_t("DELETE FROM mkt.SyncLog WHERE DataType=:dt AND TickerId=:tid"),
-                              {"dt": dtype, "tid": tid})
-
-        ticker_types = {"price", "news", "options", "divs", "earnings", "eps_estimates"}
-        fn_map = {
-            "price":        (sync_price_bars,    (ticker, api_key), {"from_date": from_date}),
-            "news":         (sync_news,           (ticker, api_key), {"from_date": from_date}),
-            "options":      (sync_option_snapshots, (ticker, api_key), {"from_date": from_date}),
-            "divs":         (sync_dividends,      (ticker, api_key), {"from_date": from_date}),
-            "earnings":     (sync_earnings,        (ticker, api_key), {"from_date": from_date}),
-            "treasury":     (sync_treasury_bars,   (), {"from_date": from_date}),
-            "vix":          (sync_vix_bars,        (), {"from_date": from_date}),
-            "macro":        (sync_macro_bars,      (), {"from_date": from_date}),
-            "cpi":          (sync_cpi,             (), {"from_date": from_date}),
-            "fomc":         (sync_fomc_calendar,   (), {}),
-        }
-
-        if data_type == "eps_estimates":
-            if not av_key:
-                return "AV key required", ""
-            r = sync_eps_estimates(ticker, av_key)
-            rows = r.get("updated", 0) + r.get("inserted", 0)
-            return f"Done — {rows} rows", ""
-
-        if data_type not in fn_map:
-            return "Unknown type", ""
-
-        if data_type in ticker_types and not ticker:
-            return "Enter a ticker first", ""
-
-        fn, args, kwargs = fn_map[data_type]
-        r = fn(*args, **kwargs)
-        s = r.get("status", "ok")
-        rows = r.get("rows", 0)
-        if s == "up_to_date":
-            return "Already up to date", ""
-        elif s in ("no_data", "no_calendar"):
-            detail = r.get("detail", r.get("message", ""))
-            return f"No data: {detail}", ""
-        else:
-            return f"Done — {rows:,} rows", ""
-
+        from_date = _date.fromisoformat(from_date_str) if from_date_str else _date(2020, 1, 1)
+    except Exception:
+        from_date = _date(2020, 1, 1)
+    if data_type not in SYNC_TYPES:
+        return "Unknown type", ""
+    if data_type == "eps_estimates" and not av_key:
+        return "AV key required", ""
+    if SYNC_TYPES[data_type][1] and not ticker:
+        return "Enter a ticker first", ""
+    try:
+        r = run_sync(data_type, ticker, None if data_type == "fomc" else from_date,
+                     api_key=get_polygon_api_key(), av_key=av_key, force=bool(force))
     except Exception as e:
         logger.exception("Sync error")
         return f"Error: {e}", ""
+    return describe(r), ""
 
 
 def _coverage_label(mn, mx, cnt) -> str:

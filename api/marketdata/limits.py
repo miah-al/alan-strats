@@ -24,6 +24,7 @@ import os
 import threading
 import time
 from collections import deque
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from typing import Callable, Optional
 
@@ -36,6 +37,19 @@ BACKOFF_START_S = 15.0
 BACKOFF_MAX_S = 900.0
 #: how long acquire() may wait for a token before refusing (a request thread must not hang)
 DEFAULT_MAX_WAIT_S = 30.0
+_TLS = threading.local()
+
+
+@contextmanager
+def patience(seconds: float):
+    """Let this thread wait up to ``seconds`` for a request slot (a background sync job may queue
+    behind the per-minute limits; a request thread keeps the short default)."""
+    old = getattr(_TLS, "max_wait", None)
+    _TLS.max_wait = float(seconds)
+    try:
+        yield
+    finally:
+        _TLS.max_wait = old
 
 
 class TokenBucket:
@@ -175,7 +189,9 @@ class ProviderLimits:
             if rem is not None and rem <= 0:
                 raise ProviderUnavailable(self.name, f"daily request budget spent ({self.policy.per_day})")
 
-    def acquire(self, kind: str = "", max_wait: Optional[float] = DEFAULT_MAX_WAIT_S) -> None:
+    def acquire(self, kind: str = "", max_wait: Optional[float] = None) -> None:
+        if max_wait is None:
+            max_wait = getattr(_TLS, "max_wait", None) or DEFAULT_MAX_WAIT_S
         self.check()
         try:
             b = self.kind_buckets.get(kind)
@@ -251,6 +267,8 @@ def default_policies() -> list[ProviderPolicy]:
                                 kinds={"stocks": (5, 5), "options": (60, 10)}),
         ProviderPolicy.from_env("yfinance", per_min=60, per_day=5000, burst=20),
         ProviderPolicy.from_env("fred", per_min=20, per_day=500, burst=8),
+        ProviderPolicy.from_env("cboe", per_min=10, per_day=200, burst=4),
+        ProviderPolicy.from_env("alphavantage", per_min=5, per_day=25, burst=2),
     ]
 
 

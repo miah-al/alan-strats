@@ -83,6 +83,8 @@ installed for their screener hooks; without it the registry falls back to the ge
 | GET | `/market/iv/{ticker}` | `engine.iv_metrics` dict |
 | GET | `/market/gex/{ticker}?source=auto\|db\|polygon` | dealer GEX + per-strike Table |
 | GET | `/data/coverage` | what the DB holds, per table |
+| GET | `/data/sync/types` | `[{data_type, label, needs_ticker, source}]` |
+| POST | `/data/sync` | `202 {job_id}` — body `{data_type, tickers, from, to}`; a `sync` job, progress on `/events` |
 | WS | `/events` | `hello`, `job`, `log` (≥ INFO), `heartbeat` (15 s) |
 | WS | `/stream` | live quotes: `subscribe` / `unsubscribe` symbols → `quote` (≤ 4/s per symbol), `status` |
 | GET | `/market/quotes?symbols=SPY,QQQ` | `{quotes: [quote, ...]}` from the hub (cached / one upstream subscription) |
@@ -142,6 +144,14 @@ Positions no runner prices are marked at the hub's mids (`priced_by: market data
 |---|---|---|
 | `ALAN_TRADER_PAPER_ACCOUNT_ID` | the runner's `Paper Account` (1) | the account `/paper/*` shows and `/orders` trades |
 | `ALAN_TRADER_PROTECTED_ACCOUNTS` | (none; the test suite sets `1`) | accounts the DB guard refuses any ledger / `app` write for |
+
+## Data sync
+
+`db/sync_jobs.py` is the one dispatcher for every `db/sync.py` sync (the Dash Data Manager uses it
+too). A `/api/data/sync` request is one job: each ticker in turn, progress and cancellation through
+the job, every vendor call through the request gate — the job thread may wait up to 5 minutes for a
+request slot where a request thread gets 30 s — and every write through the DB guard's allow-list.
+The Data Manager's destructive "force full re-sync" is not offered by the service.
 
 ## Watchlists and alerts
 
