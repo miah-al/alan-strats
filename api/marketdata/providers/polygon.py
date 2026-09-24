@@ -39,8 +39,9 @@ class PolygonProvider(Provider):
         super().__init__(limits)
         self.api_key = api_key
         self.stock_snapshot: Optional[bool] = None       # None = not probed yet
-        #: whether option snapshots carry a two-sided quote on this plan (None = not seen yet); without
-        #: one Polygon still answers chains (greeks, IV, OI) but leaves option *quotes* to the next provider
+        #: whether option snapshots carry a two-sided quote on this plan (None = not seen yet). Polygon
+        #: serves option *quotes* only once a snapshot has shown one (this account's plan has none):
+        #: otherwise it still answers chains, greeks, IV and OI and leaves quotes to the next provider
         self.option_quotes: Optional[bool] = None
         if not api_key:
             limits.disable("no Polygon API key (POLYGON_API_KEY in .env)")
@@ -53,7 +54,7 @@ class PolygonProvider(Provider):
         if not self.available():
             return False
         if SYM.is_option(symbol):
-            return self.option_quotes is not False
+            return self.option_quotes is True
         if SYM.is_index(symbol):
             return False
         return self.stock_snapshot is not False

@@ -480,13 +480,16 @@ def test_polygon_leaves_option_quotes_to_the_next_provider_when_its_plan_has_non
     from api.marketdata.providers.polygon import PolygonProvider
     p = PolygonProvider(_limits("polygon"), api_key="k")
     occ = SYM.make_option("SPY", _dt.date.today() + _dt.timedelta(days=30), "C", 700).occ
-    assert p.supports(occ)                                          # not seen yet: it may
+    assert not p.supports(occ)                                      # not seen yet: quotes go elsewhere
     snap = [{"details": {"ticker": "O:" + occ, "strike_price": 700, "contract_type": "call"},
              "day": {"close": 5.0}, "greeks": {"delta": 0.5}, "implied_volatility": 0.2}]
     monkeypatch.setattr(p, "_snapshot", lambda *a, **k: snap)
     got = p.poll([occ])
     assert got[occ]["fields"]["iv"] == 0.2 and got[occ]["fields"]["bid"] is None
     assert p.option_quotes is False and not p.supports(occ) and "no bid/ask" in p.limits.detail
+    p2 = PolygonProvider(_limits("polygon"), api_key="k")
+    p2._note_quotes([{"last_quote": {"bid": 1.0, "ask": 1.1}}])    # a plan with quotes
+    assert p2.option_quotes is True and p2.supports(occ)
 
 
 # ── the IV surface ────────────────────────────────────────────────────────────
