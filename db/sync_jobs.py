@@ -133,14 +133,23 @@ def run_sync(data_type: str, ticker: Optional[str] = None, from_date: Optional[d
         else:                                               # event_calendar
             r = S.sync_event_calendar(progress_cb=cb, **kw)
     except Exception as exc:  # noqa: BLE001 — a failed sync is a result, not a crash
-        logger.warning("sync %s %s failed: %s", data_type, ticker or "", exc)
-        return {"status": "error", "rows": 0, "detail": f"{type(exc).__name__}: {exc}", "raw": None}
+        detail = _mask_urls(f"{type(exc).__name__}: {exc}")
+        logger.warning("sync %s %s failed: %s", data_type, ticker or "", detail)
+        return {"status": "error", "rows": 0, "detail": detail, "raw": None}
     r = dict(r or {})
     st = str(r.get("status", "ok"))
     status = ("up_to_date" if st == "up_to_date" else "no_data" if st in ("no_data", "no_calendar")
               else "error" if st == "error" else "ok")
     return {"status": status, "rows": int(r.get("rows", 0) or 0),
             "detail": str(r.get("detail") or r.get("message") or r.get("error") or ""), "raw": r}
+
+
+def _mask_urls(text: str) -> str:
+    """A failed request's message carries its URL, and Polygon's carries the API key: mask credential
+    parameters before the text goes anywhere."""
+    import re
+    return re.sub(r"(?i)\b(api[_-]?key|apikey|access[_-]?token|token|secret)=([^&\s'\"<>]+)",
+                  lambda m: f"{m.group(1)}=***", text)
 
 
 def describe(result: dict) -> str:

@@ -22,7 +22,20 @@ from dataclasses import dataclass, field
 from typing import Any, Callable, Optional
 
 from api.events import now_iso
+from api.redact import redact
 from api.serialize import to_jsonable
+
+
+def _redact_tree(obj):
+    """Secrets out of a job result: every string in it passes api.redact (a failed request's message carries
+    its URL, and some vendors put the key in the URL)."""
+    if isinstance(obj, str):
+        return redact(obj)
+    if isinstance(obj, dict):
+        return {k: _redact_tree(v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_redact_tree(v) for v in obj]
+    return obj
 
 logger = logging.getLogger("alan_trader.api.jobs")
 
@@ -97,6 +110,8 @@ class JobContext:
             if self.job.progress is None or abs(f - self.job.progress) >= 1e-4:
                 self.job.progress = round(f, 4)
                 changed = True
+        if message is not None:
+            message = redact(str(message))
         if message is not None and message != self.job.message:
             self.job.message = message
             changed = True
@@ -195,7 +210,7 @@ class JobManager:
             result = fn(ctx)
             if job._cancel.is_set():
                 return                    # already reported as cancelled; drop the result
-            job.result = to_jsonable(result)
+            job.result = _redact_tree(to_jsonable(result))
             job.progress = 1.0
             job.status = SUCCEEDED
             job.message = "done"
@@ -211,7 +226,7 @@ class JobManager:
             if job._cancel.is_set():
                 return
             job.status = FAILED
-            job.error = str(exc) if isinstance(exc, JobError) else f"{type(exc).__name__}: {exc}"
+            job.error = redact(str(exc) if isinstance(exc, JobError) else f"{type(exc).__name__}: {exc}")
             job.message = "failed"
             job.finished = now_iso()
             if isinstance(exc, JobError):

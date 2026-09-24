@@ -25,3 +25,30 @@ def test_filter_masks_message_and_traceback():
     RedactingFilter().filter(record)
     assert "KEY12345678" not in record.getMessage()
     assert "KEY12345678" not in record.exc_text
+
+
+def test_job_errors_messages_and_results_are_redacted(monkeypatch):
+    import time
+    from api.jobs import JobError, JobManager
+    monkeypatch.setenv("POLYGON_API_KEY", "SECRETKEY1234567890")
+    jm = JobManager(max_workers=1)
+    url = "https://api.polygon.io/v2/aggs/x?limit=5&apiKey=SECRETKEY1234567890"
+
+    def fails(ctx):
+        ctx.progress(0.5, f"fetching {url}")
+        raise JobError(f"403 for url: {url}")
+
+    def returns(ctx):
+        return {"results": [{"detail": f"HTTPError for url: {url}"}]}
+
+    a, b = jm.submit("sync", "a", fails), jm.submit("sync", "b", returns)
+    for _ in range(100):
+        if jm.get(a.id).status in ("failed",) and jm.get(b.id).status == "succeeded":
+            break
+        time.sleep(0.05)
+    for j in (jm.get(a.id), jm.get(b.id)):
+        text = str(j.to_dict(include_result=True))
+        assert "SECRETKEY1234567890" not in text and ("apiKey=***" in text or "***" in text)
+    jm.shutdown()
+    from db.sync_jobs import _mask_urls
+    assert _mask_urls(url).endswith("apiKey=***")
