@@ -8,7 +8,8 @@ Paper Trading page while the Dash app exists (``app/pages/paper_trading/data.py`
 module under its old name). Moved verbatim from that page module.
 
 The paper runners publish their state under ``STATE_DIR`` (``<checkout>/paper_state``, the
-directory ``paper.runner`` writes); every reader below looks there.
+directory ``paper.runner`` writes) and, for runners started from another checkout, in
+``EXTRA_STATE_DIRS`` (read only); every reader below looks in all of them.
 """
 from __future__ import annotations
 
@@ -22,6 +23,33 @@ from pathlib import Path
 _ACCOUNT_ID = 1
 #: Where the paper runners publish sessions and heartbeats (paper.runner.STATE_DIR).
 STATE_DIR = Path(__file__).resolve().parent.parent / "paper_state"
+#: Other checkouts' state directories to read as well (never written): a runner started from another
+#: checkout publishes its sessions there, and its positions must still be priced and owned by it here.
+EXTRA_STATE_DIRS: list = []
+
+
+def state_dirs() -> list:
+    """STATE_DIR first, then EXTRA_STATE_DIRS (duplicates dropped)."""
+    out, seen = [], set()
+    for d in [STATE_DIR, *EXTRA_STATE_DIRS]:
+        try:
+            key = Path(d).resolve()
+        except OSError:
+            continue
+        if key not in seen:
+            seen.add(key)
+            out.append(Path(d))
+    return out
+
+
+def _glob_state(pattern: str) -> list:
+    out = []
+    for d in state_dirs():
+        try:
+            out.extend(sorted(d.glob(pattern)))
+        except OSError:
+            continue
+    return out
 
 
 def _pretty_strategy(name: str) -> str:
@@ -476,8 +504,7 @@ def paper_runner_marks() -> dict:
     out: dict = {}
     try:
         today = datetime.date.today().isoformat()
-        state_dir = STATE_DIR
-        for f in state_dir.glob(f"*_{today}.json"):
+        for f in _glob_state(f"*_{today}.json"):
             try:
                 d = json.loads(f.read_text(encoding="utf-8"))
             except (ValueError, OSError):
@@ -528,7 +555,7 @@ def session_spot(underlying: str) -> "float | None":
     from pathlib import Path
     und = str(underlying or "").upper()
     unnamed = []
-    for hb in (STATE_DIR).glob("heartbeat_*.json"):
+    for hb in _glob_state("heartbeat_*.json"):
         try:
             d = json.loads(hb.read_text(encoding="utf-8"))
         except (ValueError, OSError):
@@ -568,10 +595,9 @@ def live_leg_prices(grp) -> "tuple[dict, float | None]":
                 if str(grp.loc[grp["Symbol"] == s, "SecurityType"].iloc[0]).lower() == "option"]
         if not syms:
             return {}, None
-        state_dir = STATE_DIR
         legs: dict = {}
         spot = None
-        for hb in state_dir.glob("heartbeat_*.json"):
+        for hb in _glob_state("heartbeat_*.json"):
             try:
                 d = json.loads(hb.read_text(encoding="utf-8"))
             except (ValueError, OSError):
@@ -631,7 +657,7 @@ def managed_by_runner(tgid) -> "str | None":
     tail = str(tgid).rsplit("-", 1)[-1]
     try:
         today = datetime.date.today().isoformat()
-        for f in (STATE_DIR).glob(f"*_{today}.json"):
+        for f in _glob_state(f"*_{today}.json"):
             try:
                 d = json.loads(f.read_text(encoding="utf-8"))
             except (ValueError, OSError):
@@ -809,7 +835,7 @@ def _hist_price_series(row, start, end, api_key, idx) -> "pd.Series":
     return s.reindex(idx).ffill().bfill().fillna(entry)
 
 
-def mtm_equity_series(txns_df: "pd.DataFrame", start_date, end_date=None) -> "pd.DataFrame":
+def mtm_equity_series(txns_df: "pd.DataFrame", start_date, end_date=None, account_id=None) -> "pd.DataFrame":
     """Daily mark-to-market equity reconstructed on the fly:
 
         equity(t) = net deposits(t) + cumulative trade cashflow(t)
@@ -872,7 +898,7 @@ def mtm_equity_series(txns_df: "pd.DataFrame", start_date, end_date=None) -> "pd
                 SELECT BusinessDate, Amount FROM portfolio.Balance
                 WHERE AccountId = :aid AND BalanceType = 'Cash'
                 ORDER BY BusinessDate ASC
-            """), conn, params={"aid": _ACCOUNT_ID})
+            """), conn, params={"aid": _ACCOUNT_ID if account_id is None else account_id})
         if not dep.empty:
             dep["BusinessDate"] = pd.to_datetime(dep["BusinessDate"])
             dep["Amount"]       = pd.to_numeric(dep["Amount"], errors="coerce")
