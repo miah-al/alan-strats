@@ -171,3 +171,73 @@ each level (null when the chain has no IV / DTE).
 `{"ticker", "spot", "asof", "source", "points": [{"expiry", "dte", "atm_iv", "atm_strike", "call_iv", "put_iv"}],
   "iv_30", "iv_60", "iv_90", "hv20", "slope_30_90", "shape", "units": "fraction", "warnings"}` — constant-maturity IVs
 interpolate total variance between expiries.
+
+# Contract v2 — the trading app
+
+The desktop client becomes the only UI (the Dash app will be removed). v2 adds live market data, the option chain,
+paper order entry, watchlists, alerts, data sync and runner control. The service becomes the **single writer** to
+AlanStrats: writes go through an allow-list (see Safety). Live broker orders are **not** part of v2: any order with
+`"account": "live"` is refused with 403 `live trading is not armed`.
+
+## Market-data hub
+One hub owns every upstream call. Providers, in order of preference per data type:
+**tastytrade** (DXLink streamer — quotes, index values, option greeks/IV), **Polygon** (REST snapshots / aggregates),
+**yfinance** (batched polling fallback). Rules (the user must never be rate-limited or blocked):
+- one upstream subscription per symbol however many clients watch it; unsubscribe upstream when the last client leaves;
+- per-provider token buckets and daily budgets; exponential backoff on 429/5xx; a provider over budget or failing is
+  marked `degraded` and the hub falls back to the next one;
+- short caches per data type (quotes ≥ 1 s, snapshots/chains ≥ 15 s, daily data ≥ 5 min); polling ≥ 15 s per batch;
+- at most one tastytrade streamer connection for the whole service, reusing the platform's broker request budget.
+
+### `WS /api/stream`
+Client → server: `{"op": "subscribe", "symbols": ["SPY", "QQQ"]}`, `{"op": "unsubscribe", "symbols": [...]}`.
+Server → client (throttled to ≤ 4 messages / s per symbol):
+- `{"type": "quote", "symbol", "bid", "ask", "last", "mid", "prev_close", "change", "change_pct", "volume", "time", "source"}`
+- `{"type": "status", "provider", "state": "connected|degraded|down", "detail"}`
+
+### `GET /api/market/quotes?symbols=SPY,QQQ` → `{"quotes": [quote, ...]}` (cached snapshot, same shape)
+### `GET /api/market/providers` → `[{"name", "state", "requests_last_min", "budget_remaining", "last_error", "detail"}]`
+
+## Options
+### `GET /api/options/{underlying}/expirations` → `{"underlying", "spot", "expirations": [{"expiry", "dte"}]}`
+### `GET /api/options/{underlying}/chain?expiry=YYYY-MM-DD&strikes=30`
+`{"underlying", "spot", "expiry", "dte", "asof", "source", "table": Table}` — one row per strike, `strikes` either side
+of spot. Columns: `strike`, and for `call_` / `put_`: `bid, ask, mid, last, iv, delta, gamma, theta, vega, oi, volume,
+symbol` (OCC).
+
+## Orders (paper)
+Order: `{"account": "paper", "underlying": "SPY", "legs": [{"type": "call|put|stock", "strike": 770, "expiry":
+"2026-10-30", "side": "buy|sell", "quantity": 1}], "order_type": "limit|market", "limit_price": 4.20, "tif": "day",
+"strategy": "manual|<slug>", "label": "…", "client_order_id": "<uuid>"}` (`limit_price` is the net per-unit price:
+positive = debit, negative = credit).
+### `POST /api/orders/preview` → `{"ok", "legs": [{"symbol", "side", "quantity", "bid", "ask", "mid"}], "net_mid",
+"debit_credit": "debit|credit", "max_profit", "max_loss", "breakevens": [...], "buying_power_effect", "warnings": [...]}`
+### `POST /api/orders` → `{"order_id", "status": "filled|working|rejected|cancelled", "fills": [{"symbol", "side",
+"quantity", "price", "time"}], "trade_group_id", "message"}` — a paper order fills against current quotes (limit orders
+only when marketable at mid, otherwise `working` and re-checked by the hub); fills are written to the paper ledger the
+Paper views and the runner use. `client_order_id` makes the call idempotent.
+### `GET /api/orders?status=working|filled|all` → Table · `DELETE /api/orders/{id}` → cancel a working order
+### `POST /api/paper/positions/{trade_group_id}/close` body `{"order_type", "limit_price"}` → order result
+
+## Watchlists · alerts
+- `GET /api/watchlists` → `[{"name", "symbols": [...]}]` · `PUT /api/watchlists/{name}` body `{"symbols": [...]}` ·
+  `DELETE /api/watchlists/{name}`
+- `GET /api/alerts` → `[{"id", "symbol", "field": "last|change_pct|iv", "op": ">|<|crosses_above|crosses_below",
+  "value", "note", "once", "active", "created", "triggered"}]` · `POST /api/alerts` (same fields) · `DELETE /api/alerts/{id}`
+- a triggered alert is pushed on `WS /api/events`: `{"type": "alert", "alert": {...}, "value", "time"}`
+
+## Data sync
+`GET /api/data/sync/types` → `[{"data_type", "label", "needs_ticker"}]` · `POST /api/data/sync` body `{"data_type",
+"tickers": [...], "from", "to"}` → `202 {"job_id"}` (a job, progress on `/api/events`; respects the hub's budgets).
+
+## Paper runner
+`GET /api/runner/sessions` → `[{"strategy", "mode", "date", "state", "pid", "started", "managed_by": "service|external"}]`
+· `POST /api/runner/{strategy}/start` body `{"mode": "live|replay", "date", "ledger": true}` ·
+`POST /api/runner/{strategy}/stop`. The service **refuses to start** a runner for a strategy that already has one
+running anywhere on the machine (`managed_by: external` — e.g. the user's own terminal); it never stops one it didn't start.
+
+## Safety
+- DB write allow-list: the paper ledger tables, the market-data tables `db/sync.py` fills, and a new `app` schema
+  (watchlists, alerts, orders). Anything else is refused as before.
+- Automated tests never write to the real paper account: they use a dedicated test account id and clean up, or a
+  rolled-back transaction.
