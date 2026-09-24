@@ -641,3 +641,19 @@ def test_chain_quotes_and_greeks_are_merged_across_providers(monkeypatch):
         assert poly.calls == 1 and yf.calls == 1                                 # cached, and asked once each
         await hub.stop()
     _run(go())
+
+
+def test_a_patient_job_waits_out_a_backoff_a_request_does_not():
+    from api.marketdata.limits import patience
+    clk = Clock()
+    lim = ProviderLimits(ProviderPolicy("polygon", per_min=600, per_day=100, burst=50), clock=clk, sleep=clk.sleep)
+    lim.fail("429 Too Many Requests")                                  # 15 s backoff
+    with pytest.raises(ProviderUnavailable):
+        lim.acquire()                                                  # a request thread: fails at once
+    with patience(60.0):
+        lim.acquire()                                                  # a job: sleeps through it
+    assert clk.t >= 1015.0 and lim.calls_today == 1
+    lim.fail("429"); lim.fail("429"); lim.fail("429")                 # 60 s, then 120 s: beyond the patience
+    with patience(60.0):
+        with pytest.raises(ProviderUnavailable):
+            lim.acquire()

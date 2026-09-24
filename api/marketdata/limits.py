@@ -190,9 +190,21 @@ class ProviderLimits:
                 raise ProviderUnavailable(self.name, f"daily request budget spent ({self.policy.per_day})")
 
     def acquire(self, kind: str = "", max_wait: Optional[float] = None) -> None:
+        patient = getattr(_TLS, "max_wait", None)
         if max_wait is None:
-            max_wait = getattr(_TLS, "max_wait", None) or DEFAULT_MAX_WAIT_S
-        self.check()
+            max_wait = patient or DEFAULT_MAX_WAIT_S
+        waited = 0.0
+        while True:
+            try:
+                self.check()
+                break
+            except ProviderUnavailable as exc:
+                # a background job that was given patience waits out a backoff instead of failing (a request
+                # thread keeps failing fast); a spent daily budget has no retry_after and still raises
+                if not patient or exc.retry_after is None or waited + exc.retry_after > patient:
+                    raise
+                self._sleep(exc.retry_after + 0.5)
+                waited += exc.retry_after + 0.5
         try:
             b = self.kind_buckets.get(kind)
             if b is not None:
@@ -264,7 +276,7 @@ def default_policies() -> list[ProviderPolicy]:
     return [
         ProviderPolicy.from_env("tastytrade", per_min=20, per_day=3000, burst=5),
         ProviderPolicy.from_env("polygon", per_min=60, per_day=5000, burst=10,
-                                kinds={"stocks": (5, 5), "options": (60, 10)}),
+                                kinds={"stocks": (4, 2), "options": (60, 10)}),
         ProviderPolicy.from_env("yfinance", per_min=60, per_day=5000, burst=20),
         ProviderPolicy.from_env("fred", per_min=20, per_day=500, burst=8),
         ProviderPolicy.from_env("cboe", per_min=10, per_day=200, burst=4),
