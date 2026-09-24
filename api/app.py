@@ -201,9 +201,10 @@ def create_app():
         logger.exception("unhandled error on %s %s", request.method, request.url.path)
         return _err(500, redact(f"{type(exc).__name__}: {exc}"))
 
-    from api.routers import data, health, jobs as jobs_router, lists, market, options, orders, paper, runner, strategies
+    from api.routers import (data, guides, health, jobs as jobs_router, lists, market, options, orders, paper, runner,
+                             strategies)
     for r in (health.router, strategies.router, jobs_router.router, paper.router, orders.router, market.router,
-              options.router, lists.router, data.router, runner.router):
+              options.router, lists.router, data.router, runner.router, guides.router):
         app.include_router(r, prefix="/api")
     from api.routers import events as events_router, stream as stream_router
     app.include_router(events_router.router, prefix="/api")

@@ -388,3 +388,15 @@ clarifications of what the service does where the spec leaves room.
   exchange holidays and early closes (db/seed/events/exchange.csv); `earnings` per requested symbol from yfinance's
   calendar (cached a day; a two-date range means unconfirmed). Warnings (a year without a macro calendar, earnings still
   loading) come in the `X-Warnings` response header as a JSON array.
+- **Guides library.** `GET /api/guides` → `[{"slug", "title", "category", "summary"}]` (strategy rows add `strategy`,
+  `strategy_label`), ordered Guides, Playbooks, Strategies, Course, then by title. Sources: `docs/guides/*.md` (category
+  "Guides", slug = file stem), `docs/guides/playbooks/*.md` ("Playbooks", slug `playbook:<stem>`), `docs/guide/*.md` ("Course",
+  `course:<stem>`, when the checkout has it — this one does not), each strategy's guide ("Strategies", `strategy:<slug>`) and
+  its `playbook.md` (`strategy:<slug>:playbook`). A front-matter block (`---` … `---` with `title:`, `category:`, `summary:`)
+  overrides; else the title is the first heading and the summary the subtitle under it (a heading followed by a rule), else
+  the first paragraph (≤ 240 chars). `GET /api/guides/{slug}` → `{"slug", "title", "category", "summary", "markdown",
+  "links_rewritten", "unresolved_links", "source"}`: relative links to another article become
+  `<base>/api/guides/<slug>` and relative images / files next to the article `<base>/api/guides/<slug>/files/<path>`
+  (absolute, with the request's host); links to nothing are left as written and listed in `unresolved_links` (the long
+  guides still cite files from the pre-plugin repo). `GET /api/guides/{slug}/files/{path}` serves those files (images,
+  pdf, csv, txt, json, md), confined to the article's folder. 404 for an unknown slug or file.

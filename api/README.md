@@ -62,6 +62,7 @@ installed for their screener hooks; without it the registry falls back to the ge
 | GET | `/strategies?include_hidden=false` | `StrategyInfo[]` |
 | GET | `/strategies/{slug}` | `StrategyDetail` (screener params + columns, backtest params, loaders, extra tabs) |
 | GET | `/strategies/{slug}/guide` | guide + playbook markdown |
+| GET | `/guides` · `/guides/{slug}` · `/guides/{slug}/files/{path}` | the guides library: platform articles, playbooks, strategy guides |
 | POST | `/strategies/{slug}/scan` | `202 {job_id}` — body `{universe, tickers, params}` |
 | POST | `/strategies/{slug}/backtest` | `202 {job_id}` — body `{ticker, from, to, capital, params}` |
 | GET | `/strategies/{slug}/signal?ticker=` | today's verdict (`current_signal`) + session gate |
