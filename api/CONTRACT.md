@@ -326,3 +326,12 @@ clarifications of what the service does where the spec leaves room.
   none runs. Changes are pushed on `/api/events` as `{"type": "runner", "session": {...}}`.
 - `GET /api/paper/runner` (v1) now also reads other checkouts' `paper_state` (read only) and adds `state_dirs` and, per
   session, `detail.state_dir`.
+- **Chain quotes (merged)**: `/api/options/{u}/chain` merges providers per field group. Strikes and symbols come from the
+  first provider that answers (tastytrade, else yfinance, else Polygon); per contract, bid / ask from tastytrade's stream
+  (live, or the session's last quotes after hours), else yfinance; IV and greeks from the stream, else Polygon, else
+  yfinance; OI and volume likewise. Polygon never supplies bid/ask (none in this plan). Every row carries bid / ask / mid
+  whenever any provider has a two-sided quote. Rows add `call_quote_source`, `put_quote_source`, `call_greeks_source`,
+  `put_greeks_source`. The response adds `sources` (providers used), `quote_source` / `greeks_source` (the most common),
+  `quotes_asof` (newest streamed quote time), `stale` (market closed, or streamed quotes > 2 min old), `quoted` /
+  `contracts` (two-sided quotes / contracts shown); `source` is the provider that gave the strikes. Warnings say when the
+  quotes are stale, yfinance-delayed, or missing for some contracts.

@@ -569,3 +569,72 @@ def test_iv_surface_endpoint_from_a_snapshot_provider(client):
     finally:
         hub.providers.remove(fp)
         hub.by_name.pop(fp.name, None)
+
+
+# ── the merged chain: quotes and greeks from different providers ─────────────
+
+class _ChainFake(Provider):
+    streaming = False
+    capabilities = frozenset({"quotes", "chain"})
+
+    def __init__(self, name, ranks, rows_fn, option_quotes=None):
+        self.name = name
+        super().__init__(_limits(name))
+        self.chain_ranks = ranks
+        self.rows_fn = rows_fn
+        self.option_quotes = option_quotes
+        self.calls = 0
+
+    def supports(self, s):
+        return not SYM.is_option(s)
+
+    def poll(self, syms):
+        return {s: {"fields": {"last": 100.0}, "time": None} for s in syms}
+
+    def chain(self, u, expiry, spot, n):
+        self.calls += 1
+        from api.marketdata.providers.polygon import pick_strikes
+        return {"rows": pick_strikes(self.rows_fn(expiry), spot, n), "source": self.name}
+
+
+def test_chain_quotes_and_greeks_are_merged_across_providers(monkeypatch):
+    from api.marketdata import options as O
+    exp = _dt.date.today() + _dt.timedelta(days=20)
+
+    def poly_rows(e):          # greeks, IV, OI; no bid/ask (the plan here)
+        return {float(k): {"call": {"bid": None, "ask": None, "last": 1.0, "iv": 0.2, "delta": 0.5, "gamma": 0.01,
+                                    "theta": -0.1, "vega": 0.2, "oi": 500, "volume": 10,
+                                    "symbol": SYM.make_option("XYZ", e, "C", k).occ},
+                           "put": {"bid": None, "ask": None, "iv": 0.25, "delta": -0.5, "oi": 700,
+                                   "symbol": SYM.make_option("XYZ", e, "P", k).occ}} for k in range(90, 111)}
+
+    def yf_rows(e):            # bid/ask, its own IV and BS greeks; strikes 95..105 only
+        return {float(k): {"call": {"bid": 1.1, "ask": 1.3, "last": 1.2, "iv": 0.3, "delta": 0.45, "oi": 5},
+                           "put": {"bid": 0.0, "ask": 0.0, "iv": 0.3}} for k in range(95, 106)}
+
+    async def go():
+        poly = _ChainFake("polygon", {"skeleton": 2, "quotes": 2, "greeks": 1, "sizes": 1}, poly_rows, option_quotes=False)
+        yf = _ChainFake("yfinance", {"skeleton": 1, "quotes": 1, "greeks": 2, "sizes": 2}, yf_rows)
+        hub = MarketDataHub(Gate([]), [poly, yf])
+        hub.start()
+        hub.emit("XYZ", "yfinance", None, last=100.0)
+        monkeypatch.setattr(O, "_market_open", lambda now=None: True)
+        ch = await asyncio.to_thread(O.chain, hub, "XYZ", exp.isoformat(), 3)
+        rows = {r["strike"]: r for r in ch["table"]["rows"]}
+        assert sorted(rows) == [98.0, 99.0, 100.0, 101.0, 102.0, 103.0]
+        r = rows[100.0]
+        assert (r["call_bid"], r["call_ask"], r["call_mid"]) == (1.1, 1.3, pytest.approx(1.2))
+        assert r["call_quote_source"] == "yfinance" and r["call_greeks_source"] == "polygon"
+        assert r["call_iv"] == 0.2 and r["call_delta"] == 0.5 and r["call_oi"] == 500     # Polygon's, not yfinance's
+        assert r["put_bid"] is None and r["put_mid"] is None and r["put_quote_source"] is None   # 0/0: no quote
+        assert r["call_symbol"] == SYM.make_option("XYZ", exp, "C", 100).occ
+        assert ch["quote_source"] == "yfinance" and ch["greeks_source"] == "polygon"
+        assert ch["source"] == "yfinance" and set(ch["sources"]) == {"yfinance", "polygon"}
+        assert ch["quoted"] == 6 and ch["contracts"] == 12 and not ch["stale"]
+        assert any("6 of 12" in w for w in ch["warnings"]) and any("delayed" in w for w in ch["warnings"])
+        monkeypatch.setattr(O, "_market_open", lambda now=None: False)
+        ch2 = await asyncio.to_thread(O.chain, hub, "XYZ", exp.isoformat(), 3)
+        assert ch2["stale"] and any("market closed" in w for w in ch2["warnings"])
+        assert poly.calls == 1 and yf.calls == 1                                 # cached, and asked once each
+        await hub.stop()
+    _run(go())

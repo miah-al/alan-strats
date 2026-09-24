@@ -151,6 +151,8 @@ class TastytradeProvider(Provider):
     name = "tastytrade"
     streaming = True
     capabilities = frozenset({"quotes", "options", "greeks", "chain"})
+    #: where this provider ranks per chain field group (api/marketdata/options.py; lower first)
+    chain_ranks = {"skeleton": 0, "quotes": 0, "greeks": 0, "sizes": 0}
 
     def __init__(self, limits: ProviderLimits, budget: Optional[ServiceBrokerBudget] = None,
                  credentials: Optional[tuple[str, str]] = None, is_test: bool = False,

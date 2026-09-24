@@ -33,6 +33,8 @@ class YFinanceProvider(Provider):
     streaming = False
     poll_interval = 15.0
     capabilities = frozenset({"quotes", "options", "chain"})
+    #: where this provider ranks per chain field group (api/marketdata/options.py; lower first)
+    chain_ranks = {"skeleton": 1, "quotes": 1, "greeks": 2, "sizes": 2}
 
     def __init__(self, limits: ProviderLimits):
         super().__init__(limits)

@@ -32,6 +32,8 @@ class PolygonProvider(Provider):
     streaming = False
     poll_interval = 15.0
     capabilities = frozenset({"quotes", "options", "greeks", "chain"})
+    #: where this provider ranks per chain field group (api/marketdata/options.py; lower first)
+    chain_ranks = {"skeleton": 2, "quotes": 2, "greeks": 1, "sizes": 1}
 
     def __init__(self, limits: ProviderLimits, api_key: str = ""):
         super().__init__(limits)
