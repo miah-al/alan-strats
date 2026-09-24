@@ -51,7 +51,7 @@ class ScanRequest(BaseModel):
 
 @router.post("/strategies/{slug}/scan", status_code=202)
 def start_scan(slug: str, body: ScanRequest, request: Request):
-    from app import get_polygon_api_key
+    from engine.env import get_polygon_api_key
     from engine.strategy_scan import UNIVERSE_TICKERS, scan_tickers
 
     _known(slug)

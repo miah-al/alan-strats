@@ -1,7 +1,7 @@
 """
 api/bootstrap.py — make the platform importable for the service process, safely.
 
-The platform imports itself two ways: ``app.*``, ``db.*``, ``engine.*`` … relative to
+The platform imports itself two ways: ``db.*``, ``engine.*``, ``paper.*`` … relative to
 this checkout, and ``alan_trader.*`` relative to its parent directory. Strategies come
 from the ``alan_trader_strategies`` plugin package, which normally sits next to the
 checkout and is imported by name.
@@ -11,8 +11,8 @@ beside the live original). Putting the directory that holds both on ``sys.path``
 let ``import alan_trader`` resolve to the wrong copy, so the plugin is never imported
 through its parent directory: it is loaded by file path and registered in
 ``sys.modules`` before the registry runs discovery. After that, ``alan_trader`` and
-``app`` are asserted to resolve inside this checkout — the process refuses to start
-otherwise.
+``engine`` are asserted to resolve inside this checkout — the process refuses to start
+otherwise. The service never imports the Dash app (``app/``).
 
 Everything here is idempotent; ``bootstrap()`` may be called any number of times.
 ``install_db_read_only_guard()`` makes every SQLAlchemy engine in the process refuse
@@ -129,9 +129,13 @@ def _reload_registries() -> None:
 
 def _assert_paths(plugin_dir: Optional[Path]) -> None:
     import alan_trader  # noqa: F401
-    import app  # noqa: F401
+    import engine  # noqa: F401
     problems = []
-    for name, mod in (("alan_trader", sys.modules["alan_trader"]), ("app", sys.modules["app"])):
+    # the service imports nothing from the Dash app (app/); if something else in the process
+    # already did, it must still be this checkout's
+    names = ["alan_trader", "engine"] + [n for n in ("app",) if n in sys.modules]
+    for name in names:
+        mod = sys.modules[name]
         if not _inside(getattr(mod, "__file__", None), WORKING_COPY):
             problems.append(f"{name} resolves to {getattr(mod, '__file__', None)!r}, not inside {WORKING_COPY}")
     plug = sys.modules.get(PLUGIN_PACKAGE)
@@ -201,7 +205,8 @@ def bootstrap() -> dict:
     if sys.pycache_prefix is None:
         # Never write __pycache__ into the plugin checkout (it is imported read-only).
         sys.pycache_prefix = str(WORKING_COPY / ".pycache")
-    import app  # noqa: F401  — app/__init__ loads <working copy>/.env into os.environ
+    from engine.env import load_env
+    load_env()                      # <working copy>/.env into os.environ (existing variables win)
     plugin_dir = _load_plugin_by_path()
     _reload_registries()
     _assert_paths(plugin_dir)

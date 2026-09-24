@@ -13,7 +13,7 @@ router = APIRouter(tags=["health"])
 @router.get("/health")
 def health(request: Request):
     from alan_trader.strategy_api import registry as R
-    from app import get_polygon_api_key
+    from engine.env import get_polygon_api_key
     from api.bootstrap import db_guard_installed
     from api.services.db import ping, server_and_database
 

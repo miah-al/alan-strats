@@ -1,7 +1,8 @@
 """
 api/services/paper.py — the paper account, read-only.
 
-Built on the Paper Trading page's data layer (``app/pages/paper_trading/data.py``):
+Built on the paper account's headless data layer (``paper/views.py``, formerly the Paper
+Trading page's ``data.py``):
 the ledger load, net entry, liquidation value, capital at risk, structure label,
 runner ownership and the runner-published marks. The account arithmetic mirrors the
 page's ``refresh_all`` card by card, so the figures tie to the same cash.
@@ -27,10 +28,9 @@ logger = logging.getLogger("alan_trader.api.paper")
 
 
 def PD():
-    """The page's data module (importing it also registers the page's Dash callbacks,
-    which is harmless outside a running Dash app)."""
-    from app.pages.paper_trading import data
-    return data
+    """The paper account's data module (``paper.views``)."""
+    from paper import views
+    return views
 
 
 def _labels() -> dict[str, str]:
@@ -441,8 +441,8 @@ def equity(from_date: Optional[str], to_date: Optional[str]) -> dict:
 # ── Runner ────────────────────────────────────────────────────────────────────
 
 def state_dir() -> Path:
-    """Where the paper runners publish state — the same directory the page reads."""
-    return Path(PD().__file__).resolve().parents[3] / "paper_state"
+    """Where the paper runners publish state (``paper.views.STATE_DIR``)."""
+    return Path(PD().STATE_DIR)
 
 
 def runner(limit: int = 30) -> dict:

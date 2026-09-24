@@ -91,7 +91,7 @@ def strategy_info(slug: str) -> dict:
             return dict(_INFO_CACHE[slug])
     from alan_trader.strategy_api.base import BaseStrategy
     from alan_trader.strategy_api.ui import StrategyUI
-    from app.guides import find_guide
+    from engine.guides import find_guide
 
     meta = require(slug)
     reg = R()
@@ -167,7 +167,7 @@ def list_strategies(include_hidden: bool = False) -> list[dict]:
 
 
 def _loader_names(ui) -> tuple[list[str], list[dict]]:
-    from app.pages.backtest_loaders import parse_loader_spec
+    from engine.backtest_loaders import parse_loader_spec
     names, specs = [], []
     for spec in ui.loaders() or []:
         try:
@@ -231,7 +231,7 @@ def strategy_detail(slug: str) -> dict:
 
 
 def guide(slug: str) -> dict:
-    from app.guides import find_guide
+    from engine.guides import find_guide
     meta = require(slug)
     path = find_guide(slug)
     md = path.read_text(encoding="utf-8") if path is not None else f"*No guide article found for `{slug}`.*"
@@ -254,7 +254,7 @@ def guide(slug: str) -> dict:
 
 def scan_job(ctx: JobContext, slug: str, tickers: list[str], params: dict, api_key: str,
              universe: str) -> dict:
-    from app.ui.strategy_widgets import GENERIC_COLS
+    from alan_trader.strategy_api.columns import GENERIC_COLS
     from engine.strategy_scan import run_strategy_scan, vix_summary
 
     try:

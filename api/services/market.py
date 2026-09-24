@@ -4,8 +4,8 @@ Market page goes to it.
 
   tickers / bars      mkt.PriceBar, mkt.MinuteBar (Polygon aggregates when the DB has none)
   quote               yfinance (the Market page's source), DB last closes as fallback
-  movers              Polygon grouped daily (the Market page's ``_fetch_grouped_movers``)
-  yield curve         mkt.MacroBar (FRED, the Market page's source, as fallback)
+  movers              Polygon grouped daily (``data.movers``)
+  yield curve         mkt.MacroBar (FRED via ``data.treasury_curve`` as fallback)
   IV                  engine.iv_metrics (Polygon option snapshots) on DB / yfinance bars
   GEX                 analytics.gex_engine on the latest stored mkt.OptionSnapshot chain
                       (Polygon's live snapshot, as the Market page uses, when none is stored)
@@ -39,7 +39,7 @@ class NeedsApiKey(RuntimeError):
 
 
 def _api_key(required: bool = True) -> str:
-    from app import get_polygon_api_key
+    from engine.env import get_polygon_api_key
     key = get_polygon_api_key()
     if required and not key:
         raise NeedsApiKey("No Polygon API key configured (POLYGON_API_KEY in .env).")
@@ -170,8 +170,8 @@ def quote(ticker: str) -> dict:
 # ── Movers ────────────────────────────────────────────────────────────────────
 
 def movers(top_n: int = 12) -> dict:
-    from app.pages.market.data import _fetch_grouped_movers
-    mv = _fetch_grouped_movers(_api_key(), top_n=top_n)
+    from data.movers import fetch_grouped_movers
+    mv = fetch_grouped_movers(_api_key(), top_n=top_n)
     if not mv:
         raise MissingData("Polygon grouped daily returned no sessions in the last 8 days.")
     rows = ([{**r, "side": "gainer"} for r in mv["gainers"]] +
@@ -206,8 +206,8 @@ def yield_curve() -> dict:
             return to_jsonable({"asof": m.index[-1], "tenors": [t for t, _, _ in ten],
                                 "yields": [float(row[c]) * 100.0 for _, _, c in ten],
                                 "years": [y for _, y, _ in ten], "units": "pct", "source": "db"})
-    from app.pages.market.data import _load_yield_curve
-    df = _load_yield_curve()
+    from data.treasury_curve import load_treasury_curve
+    df = load_treasury_curve()
     if df is None or df.empty:
         raise MissingData("No yield curve: mkt.MacroBar is empty and FRED returned nothing.")
     cols = [c for _, _, c in _TENORS if c in df.columns]

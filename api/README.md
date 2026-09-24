@@ -36,9 +36,19 @@ the latter only reported by `/api/health`, never used).
 `api/bootstrap.py` puts this checkout and its parent on `sys.path`, removes any
 `sys.path` entry that would expose a *different* `alan_trader` checkout, and loads the
 `alan_trader_strategies` plugin **by file path** (it never puts the plugin's parent
-directory on `sys.path`). It then asserts that `alan_trader` and `app` resolve inside
+directory on `sys.path`). It then asserts that `alan_trader` and `engine` resolve inside
 this checkout and refuses to start otherwise. Bytecode goes to `.pycache/` (the plugin
 checkout is imported read-only).
+
+### No Dash
+
+The service imports nothing from the Dash app (`app/`) or Dash itself; `tests/test_api_no_dash.py`
+proves it by blocking both in a fresh interpreter. What the service used to borrow from the pages
+now lives in headless modules the pages import in turn: `engine/env.py` (.env, the Polygon key),
+`engine/guides.py` (+ the platform articles, now in `docs/guides/`), `engine/backtest_loaders.py`,
+`paper/views.py` (the Paper page's data layer), `data/movers.py`, `data/treasury_curve.py`,
+`strategy_api/columns.py`. Strategy plugins whose own `ui.py` imports Dash still need `dash`
+installed for their screener hooks; without it the registry falls back to the generic UI.
 
 ## Endpoints (all under `/api`)
 
