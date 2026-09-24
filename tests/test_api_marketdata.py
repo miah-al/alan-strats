@@ -487,3 +487,85 @@ def test_polygon_leaves_option_quotes_to_the_next_provider_when_its_plan_has_non
     got = p.poll([occ])
     assert got[occ]["fields"]["iv"] == 0.2 and got[occ]["fields"]["bid"] is None
     assert p.option_quotes is False and not p.supports(occ) and "no bid/ask" in p.limits.detail
+
+
+# ── the IV surface ────────────────────────────────────────────────────────────
+
+def _synthetic_chain(today, spot=100.0):
+    """Puts 10% vol + 0.1 per strike below spot, calls 20% flat: the OTM choice is visible in the numbers."""
+    out = []
+    for d in (7, 30, 400):                                   # 400 days: beyond max_dte
+        e = today + _dt.timedelta(days=d)
+        for k in range(90, 111, 5):                          # listed 90..110 only
+            out.append({"expiry": e, "strike": float(k), "type": "put", "iv": 0.10 + (100 - k) * 0.01})
+            out.append({"expiry": e, "strike": float(k), "type": "call", "iv": 0.20})
+    e = today + _dt.timedelta(days=14)                       # an expiry with too few contracts
+    out.append({"expiry": e, "strike": 95.0, "type": "put", "iv": 0.3})
+    out.append({"expiry": e, "strike": 105.0, "type": "call", "iv": None})
+    return out
+
+
+def test_iv_surface_grid_otm_choice_and_no_extrapolation():
+    from api.marketdata.surface import build_surface, moneyness_grid, pick_expiries
+    today = _dt.date(2026, 9, 24)
+    grid = moneyness_grid(0.80, 1.20, 0.05)
+    assert grid == [0.8, 0.85, 0.9, 0.95, 1.0, 1.05, 1.1, 1.15, 1.2]
+    s = build_surface(_synthetic_chain(today), 100.0, grid, 180, today=today, include_today=True)
+    assert [x["dte"] for x in s["expiries"]] == [7, 30]      # 400-day expiry out; 14-day one too thin
+    assert len(s["iv"]) == 2 and all(len(r) == len(grid) for r in s["iv"])
+    row = s["iv"][0]
+    assert row[0] is None and row[1] is None and row[-1] is None and row[-2] is None     # 80-85%, 115-120%: unlisted
+    assert row[2] == pytest.approx(20.0)                     # K=90: put, 10% + 10 x 1%
+    assert row[3] == pytest.approx(15.0)                     # K=95: put
+    assert row[4] == pytest.approx((10.0 + 20.0) / 2)        # K=100: both sides averaged
+    assert row[5] == pytest.approx(20.0) and row[6] == pytest.approx(20.0)    # calls above spot
+    assert s["atm_iv"] == [pytest.approx(15.0), pytest.approx(15.0)]
+    fine = build_surface(_synthetic_chain(today), 100.0, moneyness_grid(0.9, 1.1, 0.025), 180, today=today)
+    zero = [dict(c, expiry=today) for c in _synthetic_chain(today) if c["expiry"] == today + _dt.timedelta(days=7)]
+    assert [x["dte"] for x in build_surface(zero, 100.0, grid, 180, today=today, include_today=False)["expiries"]] == []
+    assert [x["dte"] for x in build_surface(zero, 100.0, grid, 180, today=today, include_today=True)["expiries"]] == [0]
+    assert fine["iv"][0][1] == pytest.approx(17.5)           # K=92.5 interpolated between the 90 and 95 puts
+    many = [today + _dt.timedelta(days=d) for d in range(1, 60)]
+    picked = pick_expiries(many)
+    assert len(picked) == 24 and picked[:12] == many[:12] and picked[-1] == many[-1] and picked == sorted(picked)
+    with pytest.raises(ValueError):
+        moneyness_grid(1.1, 1.2, 0.01)
+
+
+def test_iv_surface_endpoint_from_a_snapshot_provider(client):
+    hub = client.app.state.market
+
+    class FakePolygon(Provider):
+        name = "polygon"
+        streaming = False
+        capabilities = frozenset({"quotes", "chain"})
+
+        def __init__(self):
+            super().__init__(_limits("polygon"))
+            self.calls = 0
+
+        def supports(self, s):
+            return not SYM.is_option(s)
+
+        def poll(self, syms):
+            return {s: {"fields": {"last": 100.0}, "time": None} for s in syms}
+
+        def surface_contracts(self, u, spot, max_dte, lo, hi):
+            self.calls += 1
+            return _synthetic_chain(_dt.date.today(), spot)
+
+    fp = FakePolygon()
+    hub.add_provider(fp, first=True)
+    try:
+        hub.emit("ZZSURF", "polygon", None, last=100.0)
+        r = client.get("/api/options/ZZSURF/surface?max_dte=180&lo=0.8&hi=1.2&step=0.05")
+        assert r.status_code == 200, r.text
+        j = r.json()
+        assert j["source"] == "polygon" and j["spot"] == 100.0 and len(j["moneyness"]) == 9
+        assert [e["dte"] for e in j["expiries"]] == [7, 30] and j["iv"][0][4] == pytest.approx(15.0)
+        again = client.get("/api/options/ZZSURF/surface?max_dte=180&lo=0.8&hi=1.2&step=0.01").json()
+        assert len(again["moneyness"]) == 41 and fp.calls == 1                  # one snapshot, cached
+        assert client.get("/api/options/ZZSURF/surface?lo=1.1").status_code == 422
+    finally:
+        hub.providers.remove(fp)
+        hub.by_name.pop(fp.name, None)

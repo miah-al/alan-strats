@@ -93,6 +93,7 @@ installed for their screener hooks; without it the registry falls back to the ge
 | GET | `/market/providers` | per provider: state, requests in the last minute, budget left, last error |
 | GET | `/options/{u}/expirations` | `{underlying, spot, expirations: [{expiry, dte}], source}` |
 | GET | `/options/{u}/chain?expiry=&strikes=30` | Table, one row per strike: call_/put_ bid ask mid last iv greeks oi volume symbol |
+| GET | `/options/{u}/surface?max_dte=180&lo=0.80&hi=1.20&step=0.01` | IV surface (expiry × K/S, %) from one chain snapshot, cached 2 min |
 | POST | `/orders/preview` | legs quoted, net mid, debit / credit, max profit / loss, breakevens, buying power, warnings |
 | POST | `/orders` | a paper order: fills at the hub's mids (limit: when marketable, else `working`); idempotent on `client_order_id` |
 | GET | `/orders?status=working\|filled\|cancelled\|rejected\|all` · DELETE `/orders/{id}` | orders Table · cancel a working order |

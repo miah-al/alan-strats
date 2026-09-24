@@ -134,6 +134,32 @@ class PolygonProvider(Provider):
                            "theta": g.get("theta"), "vega": g.get("vega"), "oi": r.get("open_interest")},
                 "time": (t / 1e9) if t else None}
 
+    # ── the IV surface: one snapshot of the OTM contracts in a band ───────────
+    def surface_contracts(self, underlying: str, spot: float, max_dte: int, lo: float, hi: float) -> list[dict]:
+        """[{"expiry", "strike", "type", "iv"}] for puts in [lo*S, S] and calls in [S, hi*S] expiring within
+        ``max_dte`` days: two paginated snapshot queries (OTM only halves the pages)."""
+        c = self._client()
+        today = _dt.date.today()
+        out: list[dict] = []
+        for ctype, k_lo, k_hi in (("put", spot * lo, spot), ("call", spot, spot * hi)):
+            params = {"contract_type": ctype, "strike_price.gte": round(k_lo, 2), "strike_price.lte": round(k_hi, 2),
+                      "expiration_date.gte": today.isoformat(),
+                      "expiration_date.lte": (today + _dt.timedelta(days=int(max_dte))).isoformat(), "limit": 250}
+            url = f"/v3/snapshot/options/{SYM.to_polygon(underlying)}"
+            for _ in range(60):                               # 15,000 contracts a side is far beyond any band
+                data = c._get(url, params, max_wait=30)
+                for r in data.get("results") or []:
+                    d = r.get("details") or {}
+                    if d.get("strike_price") is None or not d.get("expiration_date"):
+                        continue
+                    out.append({"expiry": _dt.date.fromisoformat(d["expiration_date"]), "strike": float(d["strike_price"]),
+                                "type": str(d.get("contract_type") or ctype), "iv": r.get("implied_volatility")})
+                nxt = (data.get("next_url") or "").replace(c.BASE, "")
+                if not nxt:
+                    break
+                url, params = nxt, {}
+        return out
+
     # ── chains ────────────────────────────────────────────────────────────────
     def expirations(self, underlying: str, spot: Optional[float] = None) -> list[date]:
         """Every listed expiry, from the contracts reference narrowed to a strike band around spot

@@ -212,6 +212,17 @@ Server → client (throttled to ≤ 4 messages / s per symbol):
 of spot. Columns: `strike`, and for `call_` / `put_`: `bid, ask, mid, last, iv, delta, gamma, theta, vega, oi, volume,
 symbol` (OCC).
 
+### `GET /api/options/{underlying}/surface?max_dte=180&lo=0.80&hi=1.20&step=0.01`
+`{"underlying", "spot", "asof", "source": "polygon|tastytrade", "units": "pct", "expiries": [{"expiry", "dte"}],
+"moneyness": [0.80, 0.81, …, 1.20], "iv": [[… one per moneyness, IV in %, null where no contract …], … one row per
+expiry], "atm_iv": [… per expiry, %], "warnings": [...]}` — an implied-vol surface from one chain snapshot: per expiry the
+out-of-the-money contracts (puts below spot, calls above, both averaged at a strike equal to spot), mid IV, interpolated
+linearly in strike onto the K/S grid and never extrapolated past the lowest / highest listed strike (null). Expiries
+ascending, `dte <= max_dte`, at most 24 (the nearest 12, then evenly spaced), each needing 3+ usable contracts; today's
+expiry is left out after the 16:00 close. Polygon's snapshot first (one paginated query of the OTM contracts in the
+band); tastytrade (the chain plus streamed greeks for a coarse subset, with a warning) when Polygon cannot answer.
+Cached 2 min per underlying and band. `lo` / `hi` within 0.2–3 around 1, `step` 0.001–0.25; else 422; no surface 422.
+
 ## Orders (paper)
 Order: `{"account": "paper", "underlying": "SPY", "legs": [{"type": "call|put|stock", "strike": 770, "expiry":
 "2026-10-30", "side": "buy|sell", "quantity": 1}], "order_type": "limit|market", "limit_price": 4.20, "tif": "day",
