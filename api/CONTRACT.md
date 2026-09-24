@@ -306,3 +306,12 @@ clarifications of what the service does where the spec leaves room.
   no_data|error", "rows", "detail", "message"}], "rows", "ok", "failed"}`; the job fails only when every ticker failed.
   Types beyond the Data Manager's: `minute_bars`, `option_minute_bars`, `event_calendar`; `eps_estimates` needs
   `ALPHA_VANTAGE_API_KEY`. The request gate also covers CBOE and Alpha Vantage (`/api/market/providers`).
+- **Runner**: session rows add `ledger`, `returncode`, `finished` and `log` (the service's own), `cmdline` (a process
+  found elsewhere) or `heartbeat_at` / `state_dir` (a runner seen only by its heartbeat, `pid` null). `state` is
+  `running | finished | failed | halted | stopped` (`halted`: the runner's own halt, exit 3). `start` defaults `mode` to
+  `replay`; a replay needs a past `date` and defaults `ledger` to false; live runs today and defaults `ledger` to true.
+  `start` answers the new session row (200); 404 unknown strategy, 422 bad request / no live session, 409 already running
+  (the service's or elsewhere). `stop` answers the stopped row; 409 when the running one is not the service's, 404 when
+  none runs. Changes are pushed on `/api/events` as `{"type": "runner", "session": {...}}`.
+- `GET /api/paper/runner` (v1) now also reads other checkouts' `paper_state` (read only) and adds `state_dirs` and, per
+  session, `detail.state_dir`.

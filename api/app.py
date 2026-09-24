@@ -84,6 +84,8 @@ def create_app():
     order_book = OrderBook(market_hub, paper_account_id, publish=hub.publish)
     from api.services.alerts import AlertEngine
     alert_engine = AlertEngine(market_hub, publish=hub.publish)
+    from api.services.runner import RunnerManager
+    runners = RunnerManager(publish=hub.publish)
 
     from api.redact import RedactingFilter, install_redaction, redact
     forwarder.addFilter(RedactingFilter())
@@ -99,6 +101,7 @@ def create_app():
         market_hub.start(asyncio.get_running_loop())
         order_book.start()
         alert_engine.start()
+        runners.start_monitor()
         beat = asyncio.create_task(hub.heartbeat_forever())
         logger.info("alan_trader service %s (%s) up; strategies from %s",
                     build["version"], build["branch"], info.get("strategies_dir"))
@@ -108,6 +111,7 @@ def create_app():
             beat.cancel()
             order_book.stop()
             alert_engine.stop()
+            runners.shutdown()
             await market_hub.stop()
             if request_gate.installed() is market_hub.gate:
                 request_gate.install(None)
@@ -123,6 +127,7 @@ def create_app():
     app.state.market = market_hub
     app.state.orders = order_book
     app.state.alerts = alert_engine
+    app.state.runner = runners
     app.state.build = build
     app.state.bootstrap = info
     app.state.json_response = SafeJSONResponse
@@ -192,9 +197,9 @@ def create_app():
         logger.exception("unhandled error on %s %s", request.method, request.url.path)
         return _err(500, redact(f"{type(exc).__name__}: {exc}"))
 
-    from api.routers import data, health, jobs as jobs_router, lists, market, options, orders, paper, strategies
+    from api.routers import data, health, jobs as jobs_router, lists, market, options, orders, paper, runner, strategies
     for r in (health.router, strategies.router, jobs_router.router, paper.router, orders.router, market.router,
-              options.router, lists.router, data.router):
+              options.router, lists.router, data.router, runner.router):
         app.include_router(r, prefix="/api")
     from api.routers import events as events_router, stream as stream_router
     app.include_router(events_router.router, prefix="/api")

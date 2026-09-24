@@ -83,6 +83,8 @@ installed for their screener hooks; without it the registry falls back to the ge
 | GET | `/market/iv/{ticker}` | `engine.iv_metrics` dict |
 | GET | `/market/gex/{ticker}?source=auto\|db\|polygon` | dealer GEX + per-strike Table |
 | GET | `/data/coverage` | what the DB holds, per table |
+| GET | `/runner/sessions` | every paper runner: the service's own children and any found running elsewhere |
+| POST | `/runner/{strategy}/start` · `/runner/{strategy}/stop` | start (`replay` a stored day or `live` today) / stop the service's own |
 | GET | `/data/sync/types` | `[{data_type, label, needs_ticker, source}]` |
 | POST | `/data/sync` | `202 {job_id}` — body `{data_type, tickers, from, to}`; a `sync` job, progress on `/events` |
 | WS | `/events` | `hello`, `job`, `log` (≥ INFO), `heartbeat` (15 s) |
@@ -153,6 +155,17 @@ the job, every vendor call through the request gate — the job thread may wait 
 request slot where a request thread gets 30 s — and every write through the DB guard's allow-list.
 The Data Manager's destructive "force full re-sync" is not offered by the service.
 
+## Paper runner control (api/services/runner.py)
+
+A session the service starts is its own child process — `python -m api.runner_launch`, i.e.
+`scripts/paper_runner.py` behind the service's bootstrap (the plugin loaded by path) — with its
+console output and CSV paper log under `paper_state/runner_logs/` (never the plugin's folder). The
+service finds runners started anywhere else read-only: any `paper_runner` command line in the process
+table, or a heartbeat under two minutes old in any state directory it reads. It refuses to start a
+second runner for a strategy that has one running anywhere (409), never stops one it did not start
+(409), and never starts one on its own. `replay` defaults to `ledger: false`, `live` to `ledger: true`.
+Service-started runners outlive a service restart (they then count as external).
+
 ## Watchlists and alerts
 
 Both live in the service's `app` schema (created by the first write; reading never creates it).
@@ -174,6 +187,7 @@ api/events.py      WebSocket hub, log forwarder, heartbeat
 api/services/      strategies, paper, market, coverage, db (logic behind the routers)
 api/marketdata/    the market-data hub: limits, symbols, caches, providers, options chain
 api/config.py      state directories (this checkout's, other checkouts' read-only), paper account
+api/runner_launch.py  how the service starts a paper runner (bootstrap, then scripts/paper_runner.py)
 api/routers/       one module per contract section
 ```
 
