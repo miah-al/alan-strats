@@ -57,6 +57,13 @@ def market_yield_curve_history(days: int = Query(default=400, ge=30, le=3650)):
     return S.curve_history(days)
 
 
+@router.get("/market/yield-curve/surface")
+def market_yield_curve_surface(days: int = Query(default=730, ge=30, le=3650),
+                               step: Literal["1d", "1w", "1m"] = "1w"):
+    from api.services import structure as S
+    return S.curve_surface(days, step)
+
+
 @router.get("/market/vix-term")
 def market_vix_term():
     from api.services import structure as S

@@ -73,6 +73,9 @@ installed for their screener hooks; without it the registry falls back to the ge
 | GET | `/market/quote/{ticker}` | yfinance quote (DB fallback) |
 | GET | `/market/movers?top=12` | Table (Polygon grouped daily) |
 | GET | `/market/yield-curve` | latest curve (DB, FRED fallback) |
+| GET | `/market/yield-curve/history?days=` | curve now and 1W…1Y ago, 2s10s / 3m10y spreads |
+| GET | `/market/yield-curve/surface?days=730&step=1w` | the curve through time, date × tenor (`step` 1d / 1w / 1m) |
+| GET | `/market/vix-term` · `/market/iv-term/{ticker}` | VIX term structure · a ticker's ATM IV by expiry |
 | GET | `/market/iv/{ticker}` | `engine.iv_metrics` dict |
 | GET | `/market/gex/{ticker}?source=auto\|db\|polygon` | dealer GEX + per-strike Table |
 | GET | `/data/coverage` | what the DB holds, per table |

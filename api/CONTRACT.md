@@ -163,6 +163,13 @@ each level (null when the chain has no IV / DTE).
   "curves": [{"label": "Today|1W ago|1M ago|3M ago|6M ago|1Y ago", "date", "yields": [...]}],
   "spreads": [Series "2s10s", Series "3m10y"], "spread_2s10s", "spread_3m10y", "inverted_2s10s", "inverted_3m10y"}`
 
+### `GET /api/market/yield-curve/surface?days=730&step=1w`
+`{"asof", "source": "db|fred", "units": "pct", "step", "tenors": ["3M", "6M", "1Y", "2Y", "5Y", "10Y", "30Y"],
+  "years": [0.25, ...], "dates": ["2024-09-27", ...], "yields": [[...], ...]}` — the curve through time for a 3D surface
+(date × tenor × yield): one `yields` row per date, one value per tenor, `null` when missing. `step` is `1d | 1w | 1m`:
+each bucket keeps its last observed day; a tenor's gap is forward-filled from at most 5 days earlier. At most 800 rows
+(the most recent). `days` 30–3650.
+
 ### `GET /api/market/vix-term`
 `{"asof", "points": [{"name": "VIX9D|VIX|VIX3M|VIX6M|VIX1Y", "symbol", "days", "value", "week_ago", "month_ago", "asof"}],
   "ratio_vix_vix3m", "shape": "contango|backwardation|flat", "ratio_history": Series, "source", "warnings"}`

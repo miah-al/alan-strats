@@ -3,6 +3,7 @@ api/services/structure.py — term structures, headless (no Dash imports).
 
   curve_history   Treasury curve now and 1W / 1M / 3M / 6M / 1Y ago, and the 2s10s / 3m10y spreads
                   (mkt.MacroBar; FRED when the table is empty)
+  curve_surface   the curve through time, date x tenor, sampled per day / week / month
   vix_term        the CBOE constant-maturity VIX indices (9D, 30D, 3M, 6M, 1Y) now, a week and a month ago,
                   with the VIX / VIX3M ratio history (yfinance; VIX alone from mkt.VixBar as a fallback)
   iv_term         a ticker's ATM implied volatility by expiry, 30/60/90-day constant-maturity IV
@@ -98,6 +99,53 @@ def curve_history(days: int = 400) -> dict:
                         "spread_2s10s": s2s10s, "spread_3m10y": s3m10y,
                         "inverted_2s10s": s2s10s is not None and s2s10s < 0,
                         "inverted_3m10y": s3m10y is not None and s3m10y < 0})
+
+
+# ── Treasury curve surface (date x tenor) ─────────────────────────────────────
+
+#: step -> pandas period frequency of the buckets (each bucket keeps its last observed day)
+SURFACE_STEPS = {"1d": "D", "1w": "W-FRI", "1m": "M"}
+SURFACE_MAX_ROWS = 800
+SURFACE_FFILL_DAYS = 5
+
+
+def surface_rows(df: pd.DataFrame, step: str = "1w", max_rows: int = SURFACE_MAX_ROWS,
+                 ffill_days: int = SURFACE_FFILL_DAYS) -> pd.DataFrame:
+    """One row per ``step`` bucket: the last day in the bucket that has an observation, with each
+    tenor's gaps forward-filled from at most ``ffill_days`` calendar days earlier (a longer gap stays
+    missing). Keeps the most recent ``max_rows`` rows. ``df`` is date-indexed, one column per tenor."""
+    if step not in SURFACE_STEPS:
+        raise ValueError(f"step must be one of {sorted(SURFACE_STEPS)}")
+    d = df.sort_index()
+    d = d[~d.index.duplicated(keep="last")].dropna(how="all")
+    if d.empty:
+        return d
+    d.index = pd.to_datetime(d.index).normalize()
+    cal = pd.date_range(d.index.min(), d.index.max(), freq="D")
+    filled = d.reindex(cal).ffill(limit=int(ffill_days)).reindex(d.index)
+    buckets = d.index.to_period(SURFACE_STEPS[step])
+    last_days = pd.Series(d.index, index=d.index).groupby(buckets).max()
+    out = filled.loc[pd.DatetimeIndex(last_days.values)]
+    return out.iloc[-int(max_rows):] if len(out) > max_rows else out
+
+
+def curve_surface(days: int = 730, step: str = "1w") -> dict:
+    """The Treasury curve through time: dates x tenors of yields in percent (null when missing)."""
+    if step not in SURFACE_STEPS:
+        raise ValueError(f"step must be one of {sorted(SURFACE_STEPS)}")
+    df, source = _curve_frame(days)
+    if df.empty:
+        raise MissingData("No Treasury yields in the window.")
+    tenors = [(t, y, c) for t, y, c in TENORS if c in df.columns and df[c].notna().any()]
+    rows = surface_rows(df[[c for _, _, c in tenors]], step)
+    if rows.empty:
+        raise MissingData("No Treasury yields in the window.")
+    return to_jsonable({
+        "asof": df.index[-1], "source": source, "units": "pct", "step": step,
+        "tenors": [t for t, _, _ in tenors], "years": [y for _, y, _ in tenors],
+        "dates": [d.date().isoformat() for d in rows.index],
+        "yields": [[None if pd.isna(v) else round(float(v), 4) for v in r] for r in rows.itertuples(index=False)],
+    })
 
 
 # ── VIX term structure ────────────────────────────────────────────────────────
