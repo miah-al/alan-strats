@@ -115,6 +115,16 @@ def start_backtest(slug: str, body: BacktestRequest, request: Request):
         params = S.validate_backtest_params(slug, body.params)
     except ValueError as exc:
         raise HTTPException(422, str(exc))
+    # The commonest missing-data case answers now rather than as a failed job; a
+    # strategy loader that finds nothing still fails the job with the loader's message.
+    from api.services.db import require_db
+    from db.client import get_price_coverage
+    cov = get_price_coverage(require_db(), ticker)
+    if cov is None:
+        raise HTTPException(422, f"No price bars stored for {ticker} (mkt.PriceBar). Sync it first.")
+    if td < cov[0] or fd > cov[1]:
+        raise HTTPException(422, f"No price bars for {ticker} between {fd} and {td}; "
+                                 f"stored {cov[0]} → {cov[1]}.")
     job = request.app.state.jobs.submit(
         "backtest", f"Backtest {slug} {ticker} {fd}→{td}",
         lambda ctx: S.backtest_job(ctx, slug, ticker, fd.isoformat(), td.isoformat(), capital, params),

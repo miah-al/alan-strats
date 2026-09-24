@@ -426,6 +426,17 @@ def test_real_backtest_job(client):
 
 
 @needs_db
+def test_backtest_without_stored_bars_is_422_at_once(client):
+    if "iron_condor_rules" not in R.STRATEGY_METADATA:
+        pytest.skip("reference strategy not installed")
+    r = client.post("/api/strategies/iron_condor_rules/backtest", json={"ticker": "ZZZZQ"})
+    assert r.status_code == 422 and "ZZZZQ" in r.json()["detail"]
+    r = client.post("/api/strategies/iron_condor_rules/backtest",
+                    json={"ticker": "SPY", "from": "1990-01-01", "to": "1990-06-01"})
+    assert r.status_code == 422 and "stored" in r.json()["detail"]
+
+
+@needs_db
 def test_paper_endpoints_shapes(client):
     s = client.get("/api/paper/summary").json()
     assert set(s) >= {"starting_capital", "cash", "market_value", "equity", "realized_pnl", "unrealized_pnl",
