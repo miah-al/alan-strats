@@ -419,3 +419,16 @@ clarifications of what the service does where the spec leaves room.
   snapshot's own put-call-parity spot (the stored daily closes are dividend-adjusted). `implied_move_1d` = the nearest
   expiry's ATM straddle / √(trading days), as a fraction of spot. Built once a day and cached; `days` counts back from
   the last stored day.
+- **GEX history, final shape** (supersedes the note above): `GET /api/market/gex/{ticker}/history?days=365&interval=1d|30m`
+  → `{"ticker", "interval", "units", "sources", "method": {"live", "snapshot_proxy"}, "first", "last", "days", "caveats",
+  "points": [{"date", "net_gex", "flip", "call_wall", "put_wall", "spot", "regime", "dist_to_flip_pct", "call_gex",
+  "put_gex", "max_pain", "contracts", "source": "live|snapshot_proxy"}]}`. `live` points are what the service recorded in
+  `app.GexHistory` from its live chain (`/api/market/gex?source=hub` figures): one per trading day after 16:10 ET for
+  IBIT, ETHA, SPY, QQQ, NDX, SPX (`interval=1d`), and every 30 minutes 10:00–15:30 while the broker's streamer is connected
+  (`interval=30m`, `date` is then the slot's timestamp). `snapshot_proxy` points (SPY only, before the recording began)
+  come from the stored snapshots. 422 when a ticker has neither. Environment: `ALAN_TRADER_GEX_RECORD` (1 / 0),
+  `ALAN_TRADER_GEX_TICKERS`, `ALAN_TRADER_GEX_INTRADAY` (auto | on | off).
+- `/api/market/gex/{ticker}`: when net GEX never crosses zero within ±20% of spot, `flip` is null and `regime` is the sign of
+  net GEX (it used to come back as the spot itself and read as `near_flip`); a warning says so.
+- Job `error`, `message` and every string in a job `result` are redacted (credential URL parameters and the secret values
+  in the environment masked).
