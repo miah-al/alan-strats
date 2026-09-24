@@ -70,11 +70,15 @@ def create_app():
                       publish=hub.publish)
     forwarder = LogForwarder(hub)
 
+    from api.redact import RedactingFilter, install_redaction, redact
+    forwarder.addFilter(RedactingFilter())
+
     @asynccontextmanager
     async def lifespan(app):
         hub.bind(asyncio.get_running_loop())
         root = logging.getLogger()
         root.addHandler(forwarder)
+        install_redaction()
         beat = asyncio.create_task(hub.heartbeat_forever())
         logger.info("alan_trader service %s (%s) up; strategies from %s",
                     build["version"], build["branch"], info.get("strategies_dir"))
@@ -127,10 +131,23 @@ def create_app():
         logger.error("blocked a database write: %s", exc)
         return _err(500, str(exc))
 
+    import requests
+
+    @app.exception_handler(requests.exceptions.RequestException)
+    async def _upstream(request: Request, exc: requests.exceptions.RequestException):
+        # A data provider refused or failed (e.g. Polygon 403 for data outside the plan): not our bug, so a 502
+        # with the provider's status and no traceback. The URL would carry the API key, hence redact().
+        resp = getattr(exc, "response", None)
+        status = f"{resp.status_code} {resp.reason}" if resp is not None else type(exc).__name__
+        host = getattr(getattr(exc, "request", None), "url", "") or ""
+        host = host.split("/")[2] if host.count("/") >= 2 else "the data provider"
+        logger.warning("upstream %s on %s %s: %s", host, request.method, request.url.path, redact(status))
+        return _err(502, f"{host} answered {status} for this request")
+
     @app.exception_handler(Exception)
     async def _unhandled(request: Request, exc: Exception):
         logger.exception("unhandled error on %s %s", request.method, request.url.path)
-        return _err(500, f"{type(exc).__name__}: {exc}")
+        return _err(500, redact(f"{type(exc).__name__}: {exc}"))
 
     from api.routers import data, health, jobs as jobs_router, market, paper, strategies
     for r in (health.router, strategies.router, jobs_router.router, paper.router, market.router, data.router):
