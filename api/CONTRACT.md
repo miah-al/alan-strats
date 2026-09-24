@@ -432,3 +432,9 @@ clarifications of what the service does where the spec leaves room.
   net GEX (it used to come back as the spot itself and read as `near_flip`); a warning says so.
 - Job `error`, `message` and every string in a job `result` are redacted (credential URL parameters and the secret values
   in the environment masked).
+- **Daily bars stay current.** `/api/market/bars/{ticker}?interval=1d`: when the stored bars end before the last completed
+  session (or none are stored), the missing days are pulled first (the platform's daily sync: yfinance, through the request
+  gate) and stored; the response then adds `topped_up: {"status": "topped_up|current|skipped|failed", "rows", "detail"}`.
+  A ticker is tried at most once an hour. A nightly job (after 16:30 ET on trading days, visible in `/api/jobs` as a `sync`
+  job) tops up the crypto ETPs (`ALAN_TRADER_DAILY_SYNC`, default IBIT, ETHA, FBTC, GBTC, ETHE, BITO) and every stock / ETF /
+  index in the watchlists. `ALAN_TRADER_BARS_TOPUP=0` / `ALAN_TRADER_NIGHTLY_SYNC=0` turn them off.

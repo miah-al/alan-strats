@@ -172,6 +172,12 @@ second runner for a strategy that has one running anywhere (409), never stops on
 (409), and never starts one on its own. `replay` defaults to `ledger: false`, `live` to `ledger: true`.
 Service-started runners outlive a service restart (they then count as external).
 
+### Keeping daily bars current
+
+`/market/bars/{ticker}` tops up stale or missing daily bars before answering (yfinance through the gate, at most once
+an hour per ticker), and a nightly job after 16:30 ET does the same for the crypto ETPs and every watchlist symbol
+(`api/services/bars_topup.py`).
+
 ## Watchlists and alerts
 
 Both live in the service's `app` schema (created by the first write; reading never creates it).

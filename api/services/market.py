@@ -119,6 +119,10 @@ def bars(ticker: str, from_date: Optional[str], to_date: Optional[str], interval
     if fd > td:
         raise ValueError("from must not be after to")
     eng = require_db()
+    topped = None
+    if interval == "1d" and ticker not in _VIX_ALIASES:
+        from api.services.bars_topup import top_up
+        topped = top_up(ticker, td)                       # stale or missing stored bars: pull the missing days first
     if interval == "1d":
         df = get_price_bars(eng, ticker, fd, td)
         if (df is None or df.empty) and ticker in _VIX_ALIASES:
@@ -126,7 +130,10 @@ def bars(ticker: str, from_date: Optional[str], to_date: Optional[str], interval
             if not v.empty:
                 df = v.reset_index()
         if df is not None and not df.empty:
-            return _ohlcv(ticker, interval, "db", df, "date")
+            out = _ohlcv(ticker, interval, "db", df, "date")
+            if topped is not None:
+                out["topped_up"] = {k: v for k, v in topped.items() if k in ("status", "rows", "detail")}
+            return out
         pdf = _polygon_aggs(ticker if ticker not in _VIX_ALIASES else "I:VIX", fd, td, "day")
         if pdf.empty:
             raise MissingData(f"No daily bars for {ticker} between {fd} and {td}: none stored in "

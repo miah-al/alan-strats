@@ -42,6 +42,9 @@ interest (§1). The hypothesis — GEX's value is as a realised-vol / premium-se
   IBIT options only listed in Nov 2024, so little is lost.
 - **Crypto spot.** BTC / ETH hourly closes came from yfinance (730 days) for the weekend-gap test.
 - **Request gate.** Every request went through the service's request gate.
+- **Daily bars stay current.** Daily bars for IBIT, ETHA, the other crypto ETPs (FBTC, GBTC, ETHE, BITO) and
+  every watchlist symbol are now topped up nightly, and on demand when `/api/market/bars` finds them stale. GBTC,
+  ETHE and FBTC had none stored before (now about 275 sessions each), so a re-run can use them.
 
 **How the SPY proxy GEX is built** (`api/services/gex_history.py`, `GET /api/market/gex/SPY/history`):
 
