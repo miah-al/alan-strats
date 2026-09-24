@@ -2,11 +2,12 @@
 
 HTTP + WebSocket API over the platform, for the WPF desktop client
 (`alan_trader_ui`). The contract the client codes against is
-[`CONTRACT.md`](CONTRACT.md) (v1). Interactive docs: `http://127.0.0.1:8765/api/docs`.
+[`CONTRACT.md`](CONTRACT.md) (v2; `/api/health` reports `contract: "2"`). Interactive docs: `http://127.0.0.1:8765/api/docs`.
 
-The service is **read-only**: it never writes to the AlanStrats database (every
-SQLAlchemy statement passes a guard that refuses INSERT/UPDATE/DELETE/DDL/EXEC), never
-talks to the broker, and never starts the paper runner.
+The service never places, modifies or cancels a broker order. Its only broker traffic is
+market data (the tastytrade DXLink streamer and option chains) within the platform's request
+budget. It never writes to the AlanStrats database: every SQLAlchemy statement passes a guard
+that refuses INSERT/UPDATE/DELETE/DDL/EXEC.
 
 ## Run (Windows)
 
@@ -28,8 +29,9 @@ uv pip install --python .venv-win -r requirements-api.txt
 | `ALAN_TRADER_STRATEGIES_DIR` | `../../alan_trader_strategies`, then `../alan_trader_strategies` | the strategy plugin checkout |
 | `ALAN_TRADER_STRATEGY_PACKAGES` | | `none` runs strategy-free |
 
-`.env` in the checkout is loaded at start (`POLYGON_API_KEY`, `TT_SECRET`/`TT_REFRESH` —
-the latter only reported by `/api/health`, never used).
+`.env` in the checkout is loaded at start (`POLYGON_API_KEY`; `TT_SECRET`/`TT_REFRESH`, the
+tastytrade OAuth pair the market-data hub streams with — the same pair the paper runner uses; the
+refresh-token grant gives this process its own access token, so it does not disturb the runner's).
 
 ### Startup safety
 
@@ -80,9 +82,41 @@ installed for their screener hooks; without it the registry falls back to the ge
 | GET | `/market/gex/{ticker}?source=auto\|db\|polygon` | dealer GEX + per-strike Table |
 | GET | `/data/coverage` | what the DB holds, per table |
 | WS | `/events` | `hello`, `job`, `log` (≥ INFO), `heartbeat` (15 s) |
+| WS | `/stream` | live quotes: `subscribe` / `unsubscribe` symbols → `quote` (≤ 4/s per symbol), `status` |
+| GET | `/market/quotes?symbols=SPY,QQQ` | `{quotes: [quote, ...]}` from the hub (cached / one upstream subscription) |
+| GET | `/market/providers` | per provider: state, requests in the last minute, budget left, last error |
+| GET | `/options/{u}/expirations` | `{underlying, spot, expirations: [{expiry, dte}], source}` |
+| GET | `/options/{u}/chain?expiry=&strikes=30` | Table, one row per strike: call_/put_ bid ask mid last iv greeks oi volume symbol |
 
 Errors are `{"detail": "..."}`: 404 unknown strategy / job / trade group, 422 invalid
 request or missing data (with the real reason), 503 database unreachable.
+
+## Market data (api/marketdata)
+
+One hub owns every upstream call. Providers in preference order: **tastytrade** (one DXLink streamer
+for the whole service: quotes, index levels, option greeks / IV; option chains from its REST API),
+**Polygon** (options chain snapshots with greeks; its stock snapshot is not in this plan and is
+switched off after one 403), **yfinance** (batched polling). A symbol watched by any number of
+clients is one upstream subscription, dropped when the last watcher leaves; a provider that is
+backing off, over budget or disconnected is `degraded` / `down` and its symbols move to the next one.
+
+* **The request gate** (`data/request_gate.py`, limits in `api/marketdata/limits.py`): the service
+  wraps `requests` and yfinance so *every* call to Polygon, FRED or Yahoo in the process — the v1
+  endpoints, sync jobs, strategy code — passes per-provider token buckets and daily budgets, with
+  exponential backoff (15 s → 15 min) after a 429 / 5xx. A refused call is a 503 with `Retry-After`.
+* **tastytrade budget**: every REST call (OAuth refresh, the streamer's quote token, a chain) counts
+  against the platform's `paper.providers.RequestBudget` — the paper runner's own class and day file
+  (`paper_state/broker_calls_<day>.json`), shared with runners the service starts — plus the counts
+  runners started from other checkouts publish in *their* `paper_state` (read, never written).
+  Streaming costs no REST budget. `paper_state/tastytrade_streamer.lock` keeps it to one streamer per
+  checkout across processes. The service never places, modifies or cancels a broker order.
+* **Caches**: quotes ≥ 1 s, chains 15 s, expirations and daily data 5 min, GEX / IV term 60 s.
+
+| Variable | Default | |
+|---|---|---|
+| `ALAN_TRADER_PROVIDERS` | `tastytrade,polygon,yfinance` | quote providers in preference order; `none` (the test suite's default) |
+| `ALAN_TRADER_LIMIT_<P>_PER_MIN` / `_PER_DAY` | see `limits.py` | per-provider limits (P = TASTYTRADE, POLYGON, YFINANCE, FRED) |
+| `ALAN_TRADER_EXTERNAL_STATE_DIRS` | the main checkout's `paper_state` | other checkouts' runner state, read only |
 
 ## Layout
 
@@ -93,6 +127,8 @@ api/serialize.py   DataFrame → Table, Series, NaN → null, ag-grid col def �
 api/jobs.py        thread-pool jobs: queued/running/succeeded/failed/cancelled, progress
 api/events.py      WebSocket hub, log forwarder, heartbeat
 api/services/      strategies, paper, market, coverage, db (logic behind the routers)
+api/marketdata/    the market-data hub: limits, symbols, caches, providers, options chain
+api/config.py      state directories (this checkout's, other checkouts' read-only), paper account
 api/routers/       one module per contract section
 ```
 
@@ -107,4 +143,6 @@ into headless modules both use: `engine/strategy_scan.py` (the screener scan) an
 ```
 
 No DB writes, no broker, no Polygon: the scan test runs a toy strategy on synthetic
-data; tests that read the shared database skip when it is unreachable.
+data; tests that read the shared database skip when it is unreachable. The market-data
+hub runs with fake providers (`tests/test_api_marketdata.py`); `tests/conftest.py` sets
+`ALAN_TRADER_PROVIDERS=none` so no test opens a live stream.

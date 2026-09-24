@@ -3,7 +3,10 @@ api/services/market.py — market data: the database first, the network where th
 Market page goes to it.
 
   tickers / bars      mkt.PriceBar, mkt.MinuteBar (Polygon aggregates when the DB has none)
-  quote               yfinance (the Market page's source), DB last closes as fallback
+  quote               the market-data hub (tastytrade streamer / polling fallbacks), else yfinance,
+                      DB last closes as the last resort
+
+Every network call here passes the service's request gate (api/marketdata/limits.py).
   movers              Polygon grouped daily (``data.movers``)
   yield curve         mkt.MacroBar (FRED via ``data.treasury_curve`` as fallback)
   IV                  engine.iv_metrics (Polygon option snapshots) on DB / yfinance bars
@@ -143,8 +146,26 @@ def bars(ticker: str, from_date: Optional[str], to_date: Optional[str], interval
 
 # ── Quote ─────────────────────────────────────────────────────────────────────
 
-def quote(ticker: str) -> dict:
+def quote(ticker: str, hub=None) -> dict:
+    """The v1 quote shape. From the market-data hub when it can price the symbol (the tastytrade
+    streamer, else the polling fallbacks), with the hub's quote fields added; otherwise yfinance
+    (through the request gate, cached 5 s) and the last stored daily bars."""
     ticker = ticker.upper().strip()
+    if hub is not None and hub.providers:
+        m = hub.quote(ticker, wait=3.0)
+        px = m.get("last") if m.get("last") is not None else m.get("mid")
+        if px is not None:
+            extra = {k: v for k, v in m.items() if k not in ("type", "symbol", "change", "change_pct", "prev_close",
+                                                              "volume", "source", "open", "high", "low")}
+            return to_jsonable({"ticker": ticker, "source": m.get("source"), "close": px, "open": m.get("open"),
+                                "high": m.get("high"), "low": m.get("low"), "volume": m.get("volume"), "vwap": None,
+                                "prev_close": m.get("prev_close"), "change": m.get("change"),
+                                "change_pct": m.get("change_pct"), "asof": m.get("time"), "live": True, **extra})
+    from api.marketdata.cache import cached
+    return cached(("quote-v1", ticker), 5.0, lambda: _quote_fallback(ticker), cache_errors=(MissingData,), error_ttl=15.0)
+
+
+def _quote_fallback(ticker: str) -> dict:
     q = None
     try:
         from data.stock_data import yf_quote

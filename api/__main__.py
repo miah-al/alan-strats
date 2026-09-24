@@ -17,7 +17,7 @@ def main() -> int:
     logging.basicConfig(level=getattr(logging, level, logging.INFO),
                         format="%(asctime)s %(levelname)-7s %(name)s: %(message)s")
     # The platform's libraries log a lot at DEBUG/INFO through these; keep them quiet.
-    for noisy in ("urllib3", "yfinance", "peewee", "matplotlib", "httpx", "httpcore"):
+    for noisy in ("urllib3", "yfinance", "peewee", "matplotlib", "httpx", "httpcore", "httpx2", "httpcore2", "tastytrade"):
         logging.getLogger(noisy).setLevel(logging.WARNING)
 
     from api.bootstrap import BootstrapError

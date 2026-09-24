@@ -8,6 +8,8 @@ from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
 from api.serialize import to_jsonable
 
+from api.app import CONTRACT_VERSION  # noqa: E402
+
 router = APIRouter(tags=["events"])
 
 
@@ -17,7 +19,7 @@ async def events(ws: WebSocket):
     await ws.accept()
     q = hub.subscribe()
     try:
-        await ws.send_text(_dumps({"type": "hello", "version": hub.version, "contract": "1"}))
+        await ws.send_text(_dumps({"type": "hello", "version": hub.version, "contract": CONTRACT_VERSION}))
         receiver = asyncio.create_task(_drain(ws))
         try:
             while True:

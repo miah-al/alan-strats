@@ -5,7 +5,13 @@ a paper session, a streamer and any ad-hoc script cannot each spend the whole da
 never touch the real one: they would read the live runner's count and fail against their own small caps,
 and every request they made would come out of the live session's budget.
 """
+import os
+
 import pytest
+
+# The service's market-data hub starts no live provider under test (no DXLink stream, no polling):
+# hub tests inject fakes. A developer who really wants live providers sets the variable explicitly.
+os.environ.setdefault("ALAN_TRADER_PROVIDERS", "none")
 
 
 @pytest.fixture(autouse=True)

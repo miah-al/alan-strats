@@ -248,3 +248,30 @@ running anywhere on the machine (`managed_by: external` — e.g. the user's own 
   (watchlists, alerts, orders). Anything else is refused as before.
 - Automated tests never write to the real paper account: they use a dedicated test account id and clean up, or a
   rolled-back transaction.
+
+## v2 as implemented — additions and notes
+
+Everything above holds; these are **additions** (fields/messages the client may use or ignore) and
+clarifications of what the service does where the spec leaves room.
+
+- `GET /api/health`: `contract` is `"2"`; adds `market_data: [{"name", "state", "detail"}]`.
+- **Symbols** everywhere in v2: equities `SPY`; indices `SPX`, `NDX`, `VIX`, … (`^VIX`, `$VIX`, `I:VIX` accepted);
+  options as compact OCC `SPY261030C00770000` (padded OCC and Polygon's `O:` form accepted). Responses use these
+  canonical spellings.
+- **Quote message** (stream, `/market/quotes`) adds, when known: `open`, `high`, `low`, `bid_size`, `ask_size`,
+  `age_s` (seconds since the hub last heard about it) and, for options, `iv` (fraction), `delta`, `gamma`, `theta`,
+  `vega`, `oi`, `theo`. A symbol no provider can price comes back with null prices and an `error` string.
+  yfinance quotes have no bid/ask (last and previous close only).
+- **`WS /api/stream`** also sends `{"type": "subscribed", "symbols", "rejected"}` and `{"type": "unsubscribed",
+  "symbols"}` acknowledgements, `{"type": "error", "detail"}` for an unreadable message, and answers
+  `{"op": "ping"}` with `{"type": "pong"}`. On connect every provider's `status` is sent once; afterwards only on a
+  change. A newly subscribed symbol's cached quote (if any) is sent at once.
+- **`GET /api/market/providers`** rows add `requests_today`, `daily_budget`, `per_min`, `backoff_s`, `last_ok_at`,
+  `last_error_at`, `symbols` (routed to it now), `streaming`, and for tastytrade `stream: {connected, connects,
+  events, subscriptions, broker_calls_today, broker_budget_remaining}`. `fred` appears too (gated, not a quote source).
+  `budget_remaining` for tastytrade counts the runners' broker calls (the platform's shared daily cap).
+- **`GET /api/options/{u}/expirations`** adds `source` and `warnings`. **`/chain`** adds `strikes`, `source`
+  (`tastytrade|polygon|yfinance`), `units` (`iv` fraction, `theta` per day, `vega` per vol point) and `warnings`; `strikes`
+  means N strikes at-or-below spot and N above. A chain nobody can produce is a 422 with each provider's reason.
+  Polygon's plan here carries no bid/ask for options (last, IV, greeks, OI, volume only).
+- A request refused by the request gate (a provider over budget / backing off) is a **503** with `Retry-After`.

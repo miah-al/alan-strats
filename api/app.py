@@ -2,8 +2,9 @@
 api/app.py — the FastAPI application factory.
 
 ``create_app()`` bootstraps the platform (sys.path, .env, the strategy plugin by
-path, the read-only DB guard), mounts every router under ``/api``, and owns the
-two process-wide services: the WebSocket event hub and the job manager.
+path, the DB write guard), mounts every router under ``/api``, and owns the
+process-wide services: the WebSocket event hub, the job manager and the market-data
+hub (whose request gate every upstream call of the process passes).
 """
 from __future__ import annotations
 
@@ -19,7 +20,7 @@ from api.bootstrap import WORKING_COPY, BootstrapError, ReadOnlyViolation, boots
 
 logger = logging.getLogger("alan_trader.api")
 
-CONTRACT_VERSION = "1"
+CONTRACT_VERSION = "2"
 
 
 def _git(*args: str) -> str:
@@ -70,6 +71,10 @@ def create_app():
                       publish=hub.publish)
     forwarder = LogForwarder(hub)
 
+    from api.marketdata.service import build_hub
+    from data import request_gate
+    market_hub = build_hub()
+
     from api.redact import RedactingFilter, install_redaction, redact
     forwarder.addFilter(RedactingFilter())
 
@@ -79,6 +84,9 @@ def create_app():
         root = logging.getLogger()
         root.addHandler(forwarder)
         install_redaction()
+        request_gate.install(market_hub.gate)          # every requests / yfinance call now passes the gate
+        request_gate.install_hooks()
+        market_hub.start(asyncio.get_running_loop())
         beat = asyncio.create_task(hub.heartbeat_forever())
         logger.info("alan_trader service %s (%s) up; strategies from %s",
                     build["version"], build["branch"], info.get("strategies_dir"))
@@ -86,6 +94,9 @@ def create_app():
             yield
         finally:
             beat.cancel()
+            await market_hub.stop()
+            if request_gate.installed() is market_hub.gate:
+                request_gate.install(None)
             root.removeHandler(forwarder)
             jobs.shutdown()
             hub.unbind()
@@ -95,6 +106,7 @@ def create_app():
                   docs_url="/api/docs", openapi_url="/api/openapi.json", redoc_url=None)
     app.state.hub = hub
     app.state.jobs = jobs
+    app.state.market = market_hub
     app.state.build = build
     app.state.bootstrap = info
     app.state.json_response = SafeJSONResponse
@@ -126,6 +138,21 @@ def create_app():
     async def _no_key(request: Request, exc: NeedsApiKey):
         return _err(422, str(exc))
 
+    from api.marketdata.options import NoChain
+    from data.request_gate import ProviderUnavailable
+
+    @app.exception_handler(ProviderUnavailable)
+    async def _provider_unavailable(request: Request, exc: ProviderUnavailable):
+        # the gate refused an upstream call (over budget / backing off): nothing was sent upstream
+        resp = _err(503, redact(str(exc)))
+        if exc.retry_after:
+            resp.headers["Retry-After"] = str(int(exc.retry_after) + 1)
+        return resp
+
+    @app.exception_handler(NoChain)
+    async def _no_chain(request: Request, exc: NoChain):
+        return _err(422, redact(str(exc.args[0]) if exc.args else "no option chain"))
+
     @app.exception_handler(ReadOnlyViolation)
     async def _ro(request: Request, exc: ReadOnlyViolation):
         logger.error("blocked a database write: %s", exc)
@@ -149,11 +176,13 @@ def create_app():
         logger.exception("unhandled error on %s %s", request.method, request.url.path)
         return _err(500, redact(f"{type(exc).__name__}: {exc}"))
 
-    from api.routers import data, health, jobs as jobs_router, market, paper, strategies
-    for r in (health.router, strategies.router, jobs_router.router, paper.router, market.router, data.router):
+    from api.routers import data, health, jobs as jobs_router, market, options, paper, strategies
+    for r in (health.router, strategies.router, jobs_router.router, paper.router, market.router, options.router,
+              data.router):
         app.include_router(r, prefix="/api")
-    from api.routers import events as events_router
+    from api.routers import events as events_router, stream as stream_router
     app.include_router(events_router.router, prefix="/api")
+    app.include_router(stream_router.router, prefix="/api")
     return app
 
 
