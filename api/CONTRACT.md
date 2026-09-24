@@ -150,3 +150,24 @@ Server → client JSON messages:
 - `{"type": "job", "job": Job}` (without `result`) on every job state/progress change
 - `{"type": "log", "time", "level", "logger", "message"}` for log records ≥ INFO
 - `{"type": "heartbeat", "time"}` every 15 s
+
+## Additions (v1.1)
+
+### `GET /api/market/gex/{ticker}` — extra fields
+`regime` (`positive | negative | near_flip | unknown`), `max_pain`, `by_expiry` (Table: expiry, dte, call_gex, put_gex,
+net_gex, oi) and `profile` `{"s": [...], "gex": [...]}` — dealer net GEX if spot moved across ±10%, gamma recomputed at
+each level (null when the chain has no IV / DTE).
+
+### `GET /api/market/yield-curve/history?days=400`
+`{"asof", "source": "db|fred", "units": "pct", "tenors": [...], "years": [...],
+  "curves": [{"label": "Today|1W ago|1M ago|3M ago|6M ago|1Y ago", "date", "yields": [...]}],
+  "spreads": [Series "2s10s", Series "3m10y"], "spread_2s10s", "spread_3m10y", "inverted_2s10s", "inverted_3m10y"}`
+
+### `GET /api/market/vix-term`
+`{"asof", "points": [{"name": "VIX9D|VIX|VIX3M|VIX6M|VIX1Y", "symbol", "days", "value", "week_ago", "month_ago", "asof"}],
+  "ratio_vix_vix3m", "shape": "contango|backwardation|flat", "ratio_history": Series, "source", "warnings"}`
+
+### `GET /api/market/iv-term/{ticker}?source=auto|db|polygon&max_dte=180`
+`{"ticker", "spot", "asof", "source", "points": [{"expiry", "dte", "atm_iv", "atm_strike", "call_iv", "put_iv"}],
+  "iv_30", "iv_60", "iv_90", "hv20", "slope_30_90", "shape", "units": "fraction", "warnings"}` — constant-maturity IVs
+interpolate total variance between expiries.

@@ -47,3 +47,24 @@ def market_iv(ticker: str):
 @router.get("/market/gex/{ticker}")
 def market_gex(ticker: str, source: Literal["auto", "db", "polygon"] = "auto"):
     return M.gex(ticker, source)
+
+
+# ── Term structures (api/services/structure.py) ───────────────────────────────
+
+@router.get("/market/yield-curve/history")
+def market_yield_curve_history(days: int = Query(default=400, ge=30, le=3650)):
+    from api.services import structure as S
+    return S.curve_history(days)
+
+
+@router.get("/market/vix-term")
+def market_vix_term():
+    from api.services import structure as S
+    return S.vix_term()
+
+
+@router.get("/market/iv-term/{ticker}")
+def market_iv_term(ticker: str, source: Literal["auto", "db", "polygon"] = "auto",
+                   max_dte: int = Query(default=180, ge=7, le=730)):
+    from api.services import structure as S
+    return S.iv_term(ticker, source, max_dte)

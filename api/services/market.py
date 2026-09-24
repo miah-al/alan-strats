@@ -354,11 +354,63 @@ def gex(ticker: str, source: str = "auto") -> dict:
                           formats={"strike": "price", "call_gex": "money", "put_gex": "money",
                                    "net_gex": "money", "call_oi": "int", "put_oi": "int"})
     flip = snap.flip_level if snap.flip_level and math.isfinite(snap.flip_level) else None
+
+    # per-expiry split (dealer-signed, same notional)
+    exp_col = cols.get("expiry") or ("expiry" if "expiry" in chain.columns else None)
+    by_expiry = None
+    if exp_col is not None:
+        ex = pd.DataFrame({"expiry": pd.to_datetime(chain[exp_col], errors="coerce").dt.date,
+                           "call_gex": np.where(is_call, per, 0.0), "put_gex": np.where(~is_call, -per, 0.0),
+                           "oi": oi})
+        ex = ex.dropna(subset=["expiry"]).groupby("expiry", as_index=False).sum().sort_values("expiry")
+        ex["net_gex"] = ex["call_gex"] + ex["put_gex"]
+        ex["dte"] = [(d - (asof if isinstance(asof, _dt.date) else _dt.date.today())).days for d in ex["expiry"]]
+        by_expiry = table_from_df(ex[["expiry", "dte", "call_gex", "put_gex", "net_gex", "oi"]],
+                                  headers={"expiry": "Expiry", "dte": "DTE", "call_gex": "Call GEX", "put_gex": "Put GEX",
+                                           "net_gex": "Net GEX", "oi": "Open interest"},
+                                  formats={"call_gex": "money", "put_gex": "money", "net_gex": "money", "oi": "int", "dte": "int"})
+
+    try:
+        from analytics.gex_engine import classify_regime, compute_max_pain
+        regime = classify_regime(snap) if flip is not None else "unknown"
+        max_pain = float(compute_max_pain(chain, spot))
+    except Exception:
+        regime, max_pain = "unknown", None
+
     return to_jsonable({
         "ticker": ticker, "spot": spot, "flip": flip, "table": table,
         "asof": asof, "source": source, "net_gex": snap.net_gex, "call_gex": snap.call_gex,
         "put_gex": snap.put_gex, "call_wall": snap.call_wall, "put_wall": snap.put_wall,
         "net_gex_0dte": snap.net_gex_0dte, "dist_to_flip_pct": snap.dist_to_flip_pct,
         "units": "$ per 1% move (dealer-signed)", "contracts": int(len(chain)),
+        "regime": regime, "max_pain": max_pain, "by_expiry": by_expiry,
+        "profile": _gex_profile(chain, cols, spot, gamma_fallback=gamma, oi=oi, is_call=is_call),
         "warnings": list(snap.warnings) + notes,
     })
+
+
+def _gex_profile(chain: pd.DataFrame, cols: dict, spot: float, *, gamma_fallback, oi, is_call,
+                 r: float = 0.045, span: float = 0.10, n: int = 61) -> Optional[dict]:
+    """Dealer net GEX if spot moved to S (spot ±10%), with each contract's gamma recomputed at S (Black–Scholes on its
+    own IV and time to expiry). Where it crosses zero is where dealer hedging flips from damping to amplifying moves."""
+    iv_col, dte_col = cols.get("iv"), cols.get("dte")
+    if iv_col is None or dte_col is None:
+        return None
+    k = pd.to_numeric(chain[cols["strike"]], errors="coerce").to_numpy(dtype=float)
+    iv = pd.to_numeric(chain[iv_col], errors="coerce").to_numpy(dtype=float)
+    t = np.maximum(pd.to_numeric(chain[dte_col], errors="coerce").to_numpy(dtype=float), 0.5) / 365.0
+    ok = np.isfinite(k) & np.isfinite(iv) & (iv > 0) & (k > 0) & (oi > 0)
+    if ok.sum() < 10:
+        return None
+    k, iv, t, w = k[ok], iv[ok], t[ok], np.where(is_call[ok], 1.0, -1.0) * oi[ok]
+    s = np.linspace(spot * (1 - span), spot * (1 + span), n)
+    sqrt_t = np.sqrt(t)
+    out = []
+    for S in s:
+        d1 = (np.log(S / k) + (r + 0.5 * iv * iv) * t) / (iv * sqrt_t)
+        gamma = np.exp(-0.5 * d1 * d1) / (math.sqrt(2 * math.pi) * S * iv * sqrt_t)
+        out.append(float(np.sum(w * gamma) * 100 * S * S * _GEX_NOTIONAL_SCALE_PROFILE))
+    return {"s": [round(float(x), 4) for x in s], "gex": out}
+
+
+_GEX_NOTIONAL_SCALE_PROFILE = 0.01   # $ per 1% move, as analytics.gex_engine
