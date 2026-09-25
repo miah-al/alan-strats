@@ -14,7 +14,7 @@ import os
 import re
 
 _PARAM = re.compile(r"(?i)\b(api[_-]?key|apikey|access[_-]?token|refresh[_-]?token|token|secret|password|client[_-]?secret)=([^&\s'\"<>]+)")
-_SECRET_ENV = ("POLYGON_API_KEY", "TT_SECRET", "TT_REFRESH", "FRED_API_KEY")
+_SECRET_ENV = ("POLYGON_API_KEY", "TT_SECRET", "TT_REFRESH", "FRED_API_KEY", "ANTHROPIC_API_KEY")
 
 
 def _secret_values() -> list[str]:

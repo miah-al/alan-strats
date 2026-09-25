@@ -18,6 +18,7 @@ everything else — DDL is allowed in this schema only:
   app.EventDeskLog the event desk's allocators' daily decisions (oil_fade / btc_dip: trade or not, and why)
   app.EventSignalLog the post-close signal log (USO 2σ moves, VIX 2σ, BTC −3%) with the trader's tag and outcomes
   app.CryptoFlushSignal the crypto liquidation-flush triggers (R0) and their log-only paper micro-future legs
+  app.MorningBrief the AI morning brief's decision row per strategy and day (api/services/morning_brief.py)
 """
 from __future__ import annotations
 
@@ -246,6 +247,25 @@ _TABLES = {
             R24h           FLOAT          NULL,
             CreatedAt      DATETIME2      NOT NULL CONSTRAINT DF_CryptoFlushSignal_Created DEFAULT SYSUTCDATETIME()
         )""",
+    "MorningBrief": """
+        CREATE TABLE app.MorningBrief (
+            BriefId        INT IDENTITY(1,1) NOT NULL CONSTRAINT PK_MorningBrief PRIMARY KEY,
+            Strategy       NVARCHAR(80)   NOT NULL CONSTRAINT DF_MorningBrief_Strategy DEFAULT 'ndx_0dte_condor',
+            BriefDate      DATE           NOT NULL,
+            CreatedAt      DATETIME2      NOT NULL CONSTRAINT DF_MorningBrief_Created DEFAULT SYSUTCDATETIME(),
+            Decision       NVARCHAR(12)   NOT NULL,
+            Confidence     FLOAT          NOT NULL,
+            SizeMultiplier FLOAT          NOT NULL,
+            Headline       NVARCHAR(400)  NULL,
+            ReasonsJson    NVARCHAR(MAX)  NULL,
+            EventsJson     NVARCHAR(MAX)  NULL,
+            FlagsJson      NVARCHAR(MAX)  NULL,
+            ChangeMind     NVARCHAR(600)  NULL,
+            Source         NVARCHAR(60)   NOT NULL,
+            PromptVersion  NVARCHAR(30)   NULL,
+            InputsJson     NVARCHAR(MAX)  NULL,
+            NotesJson      NVARCHAR(MAX)  NULL
+        )""",
 }
 _INDEXES = {
     ("GexAllocLog", "UX_GexAllocLog_Day"):
@@ -267,6 +287,8 @@ _INDEXES = {
         "CREATE UNIQUE INDEX UX_EventSignalLog_Day ON app.EventSignalLog (TradeDate, Symbol)",
     ("CryptoFlushSignal", "IX_CryptoFlushSignal_Ts"):
         "CREATE INDEX IX_CryptoFlushSignal_Ts ON app.CryptoFlushSignal (Coin, Ts)",
+    ("MorningBrief", "UX_MorningBrief_Day"):
+        "CREATE UNIQUE INDEX UX_MorningBrief_Day ON app.MorningBrief (Strategy, BriefDate)",
 }
 
 _LOCK = threading.Lock()

@@ -727,3 +727,76 @@ clarifications of what the service does where the spec leaves room.
   - Tables (api/services/appdb.py, created on first use): `app.EventLog`, `app.EventDeskSetting`, `app.EventDeskLog`
     (unique playbook + day), `app.EventSignalLog` (unique date + symbol), `app.CryptoFlushSignal`. Memory stores under
     `ALAN_TRADER_ARMS=memory`.
+
+### Morning brief (paper condor): `/api/brief/*`
+
+An AI "risk manager" for the paper NDX 0DTE condor, evaluated rather than trusted (api/services/morning_brief.py).
+At 09:50 ET on trading days (late up to 10:30) the service gathers what is knowable before the 10:00 entry — today's
+and the next session's calendar (the service's macro / OPEX / exchange calendars, the mega-cap earnings list), official
+releases overnight (Fed, BEA, SEC press RSS; BLS blocks non-browser clients and its releases are calendar items),
+overnight headline clusters (GDELT 2.0 DOC API, titles and source counts only, one polite request), the presidential
+posts since the prior close (the open Truth Social archive's CNN mirror, fetched when it changed, keyword-tagged
+for market terms), the hub's NDX / QQQ / VIX / VXN / VIX3M levels (gap, session range, term structure), yesterday's
+NDX bar, and the operational checks (quote recorder, broker stream, condor armed, session type) — and writes ONE
+decision row per day to `app.MorningBrief`. **The brief never places, sizes or blocks an order**: the paper condor
+(ledger A) trades every eligible day as before; the row sizes a SHADOW ledger line only.
+
+- Deciders: with `ANTHROPIC_API_KEY` in the service environment, the Claude Messages API (plain HTTPS; model
+  `ALAN_TRADER_BRIEF_MODEL`, default `claude-opus-5-5`; the research report's system prompt; a JSON schema on the
+  output). Any failure — network, HTTP status, refusal, malformed JSON, schema — falls back to the rules and says so
+  in `source` / `notes`. Without a key, the rules: GO unless a hard line is crossed (gap ≥ 3%, VIX > 35 with
+  VIX > VIX3M, an early-close session, the quote recorder / broker stream down, expected credit under 12 →
+  STAND_ASIDE); two or more soft concerns (gap ≥ 1.35%, session range ≥ 1%, VXN > 25 or VIX > VIX3M, yesterday's
+  range > 2.38%, a market-relevant presidential post, a multi-source shock headline) → REDUCE (half size).
+  The research (calendar and volatility gates cost ~$15k/lot/year on this condor) is in the prompt, so a scheduled
+  event is never a reason to stand aside.
+- Guardrails outside the model: a STAND_ASIDE without a `high`-weight reason of kind `news`, `post`, `operational`
+  (or `market` for the 3% gap / VIX-35 lines) is downgraded to REDUCE; confidence under 0.6 is treated as GO;
+  `size_multiplier` follows the decision (GO 1.0, REDUCE 0.5, STAND_ASIDE 0.0). Both are noted in `notes`.
+- The API key is never logged, stored or returned (api/redact.py masks it everywhere the service emits text).
+- Environment: `ALAN_TRADER_BRIEF` = `db` (default) | `memory` | `off`; `ALAN_TRADER_BRIEF_SCHEDULER` = `1` | `0`
+  (on demand only); `ALAN_TRADER_BRIEF_NETWORK` = `1` | `0` (no feed / archive fetches); `ALAN_TRADER_BRIEF_CONTACT`
+  (a contact for the feeds' User-Agent, as the SEC asks). Every write is an `app.*` write through the write guard.
+- Events: `{"type": "brief", "brief": {…the today shape without inputs…}}` on the event stream when a row is written.
+
+**Brief** (the shape of `today`, `run` and each `history` row):
+```json
+{"date": "2026-09-28", "created_at": "2026-09-28T09:50:12-04:00",
+ "decision": "GO" | "REDUCE" | "STAND_ASIDE" | null,
+ "confidence": 0.8, "size_multiplier": 1.0,
+ "headline": "one plain sentence",
+ "reasons": [{"kind": "calendar" | "news" | "post" | "market" | "operational", "weight": "low" | "medium" | "high", "text": "…"}],
+ "events_seen": ["08:30 [BLS] CPI Aug 2026 [market_wide] (in calendar)", "…"],
+ "flags_fired": ["F1", "F6"],
+ "what_would_change_my_mind": "…",
+ "source": "llm:claude-opus-5-5" | "rules",
+ "prompt_version": "2026-09-25.1", "notes": ["llm fallback: …", "guardrail: …"],
+ "inputs": { "calendar": {…}, "official": {…}, "headlines": {…}, "posts": {…}, "market": {…}, "operations": {…}, "flags": […] }}
+```
+Not yet run today: `decision`, `confidence`, `size_multiplier`, `created_at`, `source`, `what_would_change_my_mind`
+and `inputs` are `null`, `headline` is `"No brief yet today."`, the lists are empty. `flags_fired` are the research
+report's morning flags F1..F7 (each with its out-of-sample mean in `inputs.flags`). `inputs` is the sheet as given to
+the decider (a digest, no secrets); the desktop may ignore it.
+
+- **`GET /api/brief/today`** → the Brief for today (ET), or the not-yet-run shape.
+- **`POST /api/brief/run[?force=true]`** → runs it now and returns the Brief. A day's brief is written once: a second
+  call returns the row that stands; `force=true` replaces it and notes what it replaced (for a re-run before the
+  10:00 entry, never after). 503 when the brief is off in this service.
+- **`GET /api/brief/history?days=60`** → `[Brief, …]`, newest first, the rows dated within the last `days` (1–3660).
+- **`GET /api/brief/scorecard`** → the shadow A/B (api/services/brief_scorecard.py), computed from the paper ledger's
+  closed `ndx_0dte_condor` trades on days that have a brief (the brief predates nothing it did not see):
+```json
+{"trades": 12, "a_pnl": 8100.0, "b_pnl": 6650.0, "c_pnl": 5200.0, "d_pnl": 7300.0,
+ "skipped": 2, "skipped_mean": 950.0 | null, "kept_mean": 720.0 | null, "random_percentile": 31.2 | null,
+ "note": "…",
+ "trades_without_brief": 5, "b_minus_a": -1450.0, "c_minus_a": -2900.0, "d_minus_a": -800.0, "worst_days_skipped": 0,
+ "strategy": "ndx_0dte_condor", "ledgers": {"a": "…", "b": "…", "c": "…", "d": "…"}}
+```
+  A = the condor as traded; B = A × the brief's `size_multiplier`; C = A skipping scheduled macro days (F1: the
+  calendar gate the model was told not to use); D = A skipping days whose sheet had VIX > VIX3M. `skipped` counts
+  days reduced or skipped (`size_multiplier` < 1), `skipped_mean` / `kept_mean` their mean P&L. `random_percentile`
+  (once `trades` ≥ 10 and something was skipped): 5,000 random assignments of the same skip weights to the same days,
+  the share that did no better than the brief — 50 is chance, high means the brief picked worse days than chance,
+  under 20 is the pre-registered "switch to advisory only" line.
+- **`GET /api/brief/status`** → `{"enabled", "scheduler", "run_at": "09:50", "decider": "llm:<model>" | "rules",
+  "prompt_version", "last_error"}`.
