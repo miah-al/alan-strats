@@ -41,6 +41,19 @@ os.environ.setdefault("ALAN_TRADER_ARM_SCHEDULER", "0")
 
 
 @pytest.fixture(autouse=True)
+def _the_real_paper_account_is_protected():
+    """The DB guard (api/bootstrap.py) refuses every ledger / app write for ALAN_TRADER_PROTECTED_ACCOUNTS -- but
+    the service installs it on its own start-up, so a ledger test that ran before any API test wrote unguarded.
+    Installed before every test instead; a test that removes it on its way out is covered again by the next."""
+    try:
+        from api.bootstrap import install_db_read_only_guard
+        install_db_read_only_guard()
+    except Exception:
+        pass
+    yield
+
+
+@pytest.fixture(autouse=True)
 def _isolated_broker_budget(tmp_path, monkeypatch):
     try:
         import paper.providers as providers
