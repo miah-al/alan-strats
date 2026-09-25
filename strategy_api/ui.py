@@ -22,7 +22,7 @@ Metadata keys the platform reads (all optional):
     score          (int, str)   credibility score + letter grade
     loaders        list         auxiliary-data loaders for backtests; each item
                                 is a loader name or ``(name, options)``; the
-                                platform's ``app.pages.backtest_loaders`` lists
+                                platform's ``engine.backtest_loaders`` lists
                                 the names it understands
     guide_path     str/Path     the strategy's own guide article (markdown)
     guide_chart    str          module exposing ``render_charts()`` for the guide
@@ -85,7 +85,7 @@ class StrategyUI:
     screener_params: list[dict] = []
     #: Default scoring params merged under the user's filter overrides.
     default_params: dict = {}
-    #: Grid column definitions (see ``app.ui.strategy_widgets.col``); None → generic.
+    #: Grid column definitions (see ``strategy_api.columns.col``); None → generic.
     columns: Optional[list[dict]] = None
     #: Which modal a row click opens: "signal" (default) or None (rows inert).
     modal: Optional[str] = "signal"

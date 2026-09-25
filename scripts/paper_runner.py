@@ -117,6 +117,17 @@ def main(argv=None) -> int:
                 # were measured to trade at the mid, crossing in costing ~1.2 pts deep in the money (2026-09-23)
                 print(f"  NDX {spot:,.2f}; bull call vertical {kl:.0f}/{kh:.0f}: " + (f"mid {v.last:.2f} (derived bid {v.bid:.2f} / ask {v.ask:.2f}: "
                       f"the legs' widths added, {v.ask - v.bid:.2f} pts, not a market), leg ages {v.legs[0][2]} / {v.legs[1][2]} min" if v else "no two-sided quote"))
+            if spot is not None and hasattr(strategy, "check_structures"):
+                try:
+                    from paper.providers import vertical_quote
+                    for kind, k_lo, k_hi, label in strategy.check_structures(spot):
+                        ls2, ss2 = prov.leg_symbols(kind, k_lo, k_hi)
+                        q2 = prov.fetch([s for s in (ls2, ss2) if s])
+                        v2 = vertical_quote(q2[ls2], q2[ss2], now_et()) if ls2 in q2 and ss2 in q2 else None
+                        print(f"  {label}: {kind} {k_lo:.0f}/{k_hi:.0f} " + (f"bid {v2.bid:.2f} ask {v2.ask:.2f} mid {v2.last:.2f} "
+                              f"(long-vertical terms), leg ages {v2.legs[0][2]} / {v2.legs[1][2]} min" if v2 else "no two-sided quote"))
+                except Exception as exc:
+                    print(f"  the strategy's structures: {exc}")
             ps = PaperSession(args.strategy, prov, engine, write_ledger=False, params=params)
             problems = ps._preflight(day)
             blocked, why = ps._gate(day)

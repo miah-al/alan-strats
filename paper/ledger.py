@@ -199,6 +199,14 @@ def record_day_balance(engine, account_id: int, day: date, day_pnl: float) -> No
                      {"a": account_id, "d": day, "c": base_eq + day_pnl, "e": base_eq + day_pnl, "p": day_pnl, "y": ytd + day_pnl})
 
 
+def account_day_pnl(engine, account_id: int, day: date) -> float:
+    """Realised P&L of every paper position of the account closed on ``day`` (all runners, all strategies)."""
+    with engine.connect() as conn:
+        v = conn.execute(text("SELECT SUM(RealizedPnL) FROM portfolio.Position WHERE AccountId = :a AND Source = 'paper' "
+                              "AND CloseDate = :d"), {"a": account_id, "d": day}).fetchone()[0]
+    return float(v) if v is not None else 0.0
+
+
 def load_paper_positions(engine, slug: str, from_date: Optional[date] = None) -> pd.DataFrame:
     """Positions written by the runner for ``slug``: one row per unit with entry/exit, P&L, status, notes."""
     q = ("SELECT PositionId, OpenDate, CloseDate, Status, Quantity, AvgEntryPrice, AvgExitPrice, RealizedPnL, Commission, Tags, Notes "

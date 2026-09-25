@@ -1,0 +1,1448 @@
+{
+ "trades": 142,
+ "with_put_prints": 4,
+ "put_fill_rate": 0.028169014084507043,
+ "all": {
+  "n": 4,
+  "gap_mean_pts": 3.1246250000000018,
+  "gap_median_pts": 0.38750000000000284,
+  "gap_per_leg_mean": 1.5623125000000009,
+  "gap_p90_pts": 12.10024,
+  "call_pnl_mean": 576.3525000000367,
+  "put_pnl_mean": 263.8900000000366
+ },
+ "in_sample": {
+  "n": 4,
+  "gap_mean_pts": 3.1246250000000018,
+  "gap_median_pts": 0.38750000000000284,
+  "gap_per_leg_mean": 1.5623125000000009,
+  "gap_p90_pts": 12.10024,
+  "call_pnl_mean": 576.3525000000367,
+  "put_pnl_mean": 263.8900000000366
+ },
+ "out_of_sample": {
+  "n": 0
+ },
+ "rows": [
+  {
+   "day": "2024-10-01",
+   "minute": 838,
+   "wall": 19800.0,
+   "call_credit": 12.5683,
+   "call_pnl": 1256.8300000000002,
+   "put_debit": null,
+   "put_pnl": null,
+   "gap_pts": null
+  },
+  {
+   "day": "2024-10-07",
+   "minute": 695,
+   "wall": 20000.0,
+   "call_credit": 7.72,
+   "call_pnl": 772.0,
+   "put_debit": null,
+   "put_pnl": null,
+   "gap_pts": null
+  },
+  {
+   "day": "2024-10-08",
+   "minute": 898,
+   "wall": 20100.0,
+   "call_credit": 3.91,
+   "call_pnl": 391.0,
+   "put_debit": null,
+   "put_pnl": null,
+   "gap_pts": null
+  },
+  {
+   "day": "2024-10-09",
+   "minute": 661,
+   "wall": 20200.0,
+   "call_credit": 14.794300000000002,
+   "call_pnl": -2905.2300000000764,
+   "put_debit": null,
+   "put_pnl": null,
+   "gap_pts": null
+  },
+  {
+   "day": "2024-10-10",
+   "minute": 675,
+   "wall": 20250.0,
+   "call_credit": 13.18,
+   "call_pnl": 1318.0,
+   "put_debit": null,
+   "put_pnl": null,
+   "gap_pts": null
+  },
+  {
+   "day": "2024-10-11",
+   "minute": 669,
+   "wall": 20300.0,
+   "call_credit": 11.009999999999998,
+   "call_pnl": 1100.9999999999998,
+   "put_debit": null,
+   "put_pnl": null,
+   "gap_pts": null
+  },
+  {
+   "day": "2024-10-16",
+   "minute": 863,
+   "wall": 20200.0,
+   "call_credit": 9.2584,
+   "call_pnl": 925.84,
+   "put_debit": null,
+   "put_pnl": null,
+   "gap_pts": null
+  },
+  {
+   "day": "2024-10-17",
+   "minute": 720,
+   "wall": 20350.0,
+   "call_credit": 12.600000000000001,
+   "call_pnl": 1260.0000000000002,
+   "put_debit": null,
+   "put_pnl": null,
+   "gap_pts": null
+  },
+  {
+   "day": "2024-10-22",
+   "minute": 701,
+   "wall": 20350.0,
+   "call_credit": 10.1887,
+   "call_pnl": 240.6799999998231,
+   "put_debit": null,
+   "put_pnl": null,
+   "gap_pts": null
+  },
+  {
+   "day": "2024-10-24",
+   "minute": 786,
+   "wall": 20250.0,
+   "call_credit": 8.92,
+   "call_pnl": 892.0,
+   "put_debit": null,
+   "put_pnl": null,
+   "gap_pts": null
+  },
+  {
+   "day": "2024-10-29",
+   "minute": 721,
+   "wall": 20500.0,
+   "call_credit": 10.898299999999999,
+   "call_pnl": -1887.8399999998528,
+   "put_debit": 43.31,
+   "put_pnl": -2308.6699999998527,
+   "gap_pts": 4.208300000000001
+  },
+  {
+   "day": "2024-11-05",
+   "minute": 735,
+   "wall": 20250.0,
+   "call_credit": 13.866700000000002,
+   "call_pnl": 1386.67,
+   "put_debit": 32.7,
+   "put_pnl": 1729.9999999999998,
+   "gap_pts": -3.4332999999999956
+  },
+  {
+   "day": "2024-11-06",
+   "minute": 809,
+   "wall": 20750.0,
+   "call_credit": 9.245000000000001,
+   "call_pnl": 745.7899999998627,
+   "put_debit": null,
+   "put_pnl": null,
+   "gap_pts": null
+  },
+  {
+   "day": "2024-11-07",
+   "minute": 873,
+   "wall": 21100.0,
+   "call_credit": 13.500000000000002,
+   "call_pnl": 1350.0000000000002,
+   "put_debit": null,
+   "put_pnl": null,
+   "gap_pts": null
+  },
+  {
+   "day": "2024-11-08",
+   "minute": 814,
+   "wall": 21150.0,
+   "call_credit": 5.989700000000001,
+   "call_pnl": 598.9700000000001,
+   "put_debit": null,
+   "put_pnl": null,
+   "gap_pts": null
+  },
+  {
+   "day": "2024-11-12",
+   "minute": 837,
+   "wall": 21100.0,
+   "call_credit": 5.2333,
+   "call_pnl": 523.3299999999999,
+   "put_debit": null,
+   "put_pnl": null,
+   "gap_pts": null
+  },
+  {
+   "day": "2024-11-13",
+   "minute": 730,
+   "wall": 21100.0,
+   "call_credit": 7.590000000000001,
+   "call_pnl": 759.0000000000001,
+   "put_debit": null,
+   "put_pnl": null,
+   "gap_pts": null
+  },
+  {
+   "day": "2024-11-19",
+   "minute": 820,
+   "wall": 20675.0,
+   "call_credit": 6.5878000000000005,
+   "call_pnl": 658.7800000000001,
+   "put_debit": null,
+   "put_pnl": null,
+   "gap_pts": null
+  },
+  {
+   "day": "2024-11-20",
+   "minute": 708,
+   "wall": 20600.0,
+   "call_credit": 18.3313,
+   "call_pnl": -2460.0499999998474,
+   "put_debit": null,
+   "put_pnl": null,
+   "gap_pts": null
+  },
+  {
+   "day": "2024-11-21",
+   "minute": 689,
+   "wall": 20700.0,
+   "call_credit": 17.876,
+   "call_pnl": 85.22999999984471,
+   "put_debit": null,
+   "put_pnl": null,
+   "gap_pts": null
+  },
+  {
+   "day": "2024-11-22",
+   "minute": 776,
+   "wall": 20800.0,
+   "call_credit": 6.785,
+   "call_pnl": 678.5,
+   "put_debit": null,
+   "put_pnl": null,
+   "gap_pts": null
+  },
+  {
+   "day": "2024-11-27",
+   "minute": 818,
+   "wall": 20750.0,
+   "call_credit": 5.82,
+   "call_pnl": 582.0,
+   "put_debit": null,
+   "put_pnl": null,
+   "gap_pts": null
+  },
+  {
+   "day": "2024-12-02",
+   "minute": 670,
+   "wall": 21150.0,
+   "call_credit": 11.3,
+   "call_pnl": 1130.0,
+   "put_debit": null,
+   "put_pnl": null,
+   "gap_pts": null
+  },
+  {
+   "day": "2024-12-03",
+   "minute": 775,
+   "wall": 21200.0,
+   "call_credit": 4.58,
+   "call_pnl": 105.24999999998545,
+   "put_debit": null,
+   "put_pnl": null,
+   "gap_pts": null
+  },
+  {
+   "day": "2024-12-04",
+   "minute": 771,
+   "wall": 21450.0,
+   "call_credit": 6.289999999999999,
+   "call_pnl": -835.9000000001253,
+   "put_debit": null,
+   "put_pnl": null,
+   "gap_pts": null
+  },
+  {
+   "day": "2024-12-06",
+   "minute": 690,
+   "wall": 21600.0,
+   "call_credit": 7.933299999999999,
+   "call_pnl": 793.3299999999999,
+   "put_debit": null,
+   "put_pnl": null,
+   "gap_pts": null
+  },
+  {
+   "day": "2024-12-11",
+   "minute": 667,
+   "wall": 21700.0,
+   "call_credit": 13.440000000000001,
+   "call_pnl": -2366.489999999845,
+   "put_debit": null,
+   "put_pnl": null,
+   "gap_pts": null
+  },
+  {
+   "day": "2024-12-12",
+   "minute": 727,
+   "wall": 21700.0,
+   "call_credit": 6.74,
+   "call_pnl": 674.0,
+   "put_debit": null,
+   "put_pnl": null,
+   "gap_pts": null
+  },
+  {
+   "day": "2024-12-13",
+   "minute": 865,
+   "wall": 21800.0,
+   "call_credit": 2.87,
+   "call_pnl": 287.0,
+   "put_debit": null,
+   "put_pnl": null,
+   "gap_pts": null
+  },
+  {
+   "day": "2024-12-16",
+   "minute": 720,
+   "wall": 22050.0,
+   "call_credit": 8.9717,
+   "call_pnl": -1242.1599999999726,
+   "put_debit": null,
+   "put_pnl": null,
+   "gap_pts": null
+  },
+  {
+   "day": "2024-12-17",
+   "minute": 672,
+   "wall": 22050.0,
+   "call_credit": 9.05,
+   "call_pnl": 905.0000000000001,
+   "put_debit": null,
+   "put_pnl": null,
+   "gap_pts": null
+  },
+  {
+   "day": "2024-12-23",
+   "minute": 702,
+   "wall": 21400.0,
+   "call_credit": 21.200000000000003,
+   "call_pnl": -2879.9999999999995,
+   "put_debit": null,
+   "put_pnl": null,
+   "gap_pts": null
+  },
+  {
+   "day": "2024-12-26",
+   "minute": 738,
+   "wall": 21850.0,
+   "call_credit": 11.616700000000002,
+   "call_pnl": 1161.67,
+   "put_debit": null,
+   "put_pnl": null,
+   "gap_pts": null
+  },
+  {
+   "day": "2024-12-27",
+   "minute": 686,
+   "wall": 21400.0,
+   "call_credit": 18.89,
+   "call_pnl": -3111.0,
+   "put_debit": null,
+   "put_pnl": null,
+   "gap_pts": null
+  },
+  {
+   "day": "2024-12-30",
+   "minute": 702,
+   "wall": 21250.0,
+   "call_credit": 15.080000000000002,
+   "call_pnl": 1508.0000000000002,
+   "put_debit": null,
+   "put_pnl": null,
+   "gap_pts": null
+  },
+  {
+   "day": "2025-01-03",
+   "minute": 710,
+   "wall": 21300.0,
+   "call_credit": 15.247000000000002,
+   "call_pnl": 1524.7000000000003,
+   "put_debit": null,
+   "put_pnl": null,
+   "gap_pts": null
+  },
+  {
+   "day": "2025-01-08",
+   "minute": 849,
+   "wall": 21200.0,
+   "call_credit": 19.580000000000002,
+   "call_pnl": 1958.0000000000002,
+   "put_debit": null,
+   "put_pnl": null,
+   "gap_pts": null
+  },
+  {
+   "day": "2025-01-10",
+   "minute": 788,
+   "wall": 20900.0,
+   "call_credit": 22.482499999999995,
+   "call_pnl": 2248.2499999999995,
+   "put_debit": 43.0,
+   "put_pnl": 700.0,
+   "gap_pts": 15.482499999999995
+  },
+  {
+   "day": "2025-01-13",
+   "minute": 744,
+   "wall": 20700.0,
+   "call_credit": 13.415,
+   "call_pnl": -3658.5,
+   "put_debit": null,
+   "put_pnl": null,
+   "gap_pts": null
+  },
+  {
+   "day": "2025-01-14",
+   "minute": 829,
+   "wall": 20850.0,
+   "call_credit": 10.879999999999999,
+   "call_pnl": 1088.0,
+   "put_debit": null,
+   "put_pnl": null,
+   "gap_pts": null
+  },
+  {
+   "day": "2025-01-15",
+   "minute": 854,
+   "wall": 21250.0,
+   "call_credit": 7.050000000000001,
+   "call_pnl": 705.0000000000001,
+   "put_debit": null,
+   "put_pnl": null,
+   "gap_pts": null
+  },
+  {
+   "day": "2025-01-21",
+   "minute": 747,
+   "wall": 21550.0,
+   "call_credit": 9.9091,
+   "call_pnl": 990.9100000000001,
+   "put_debit": null,
+   "put_pnl": null,
+   "gap_pts": null
+  },
+  {
+   "day": "2025-01-22",
+   "minute": 668,
+   "wall": 21900.0,
+   "call_credit": 12.600000000000001,
+   "call_pnl": 1260.0000000000002,
+   "put_debit": null,
+   "put_pnl": null,
+   "gap_pts": null
+  },
+  {
+   "day": "2025-01-23",
+   "minute": 805,
+   "wall": 21850.0,
+   "call_credit": 4.6667,
+   "call_pnl": -1873.7399999999745,
+   "put_debit": null,
+   "put_pnl": null,
+   "gap_pts": null
+  },
+  {
+   "day": "2025-01-28",
+   "minute": 666,
+   "wall": 21350.0,
+   "call_credit": 17.715,
+   "call_pnl": -3228.4999999999995,
+   "put_debit": null,
+   "put_pnl": null,
+   "gap_pts": null
+  },
+  {
+   "day": "2025-01-29",
+   "minute": 882,
+   "wall": 21450.0,
+   "call_credit": 9.099999999999998,
+   "call_pnl": 909.9999999999998,
+   "put_debit": null,
+   "put_pnl": null,
+   "gap_pts": null
+  },
+  {
+   "day": "2025-01-30",
+   "minute": 823,
+   "wall": 21500.0,
+   "call_credit": 9.780000000000001,
+   "call_pnl": 978.0000000000001,
+   "put_debit": null,
+   "put_pnl": null,
+   "gap_pts": null
+  },
+  {
+   "day": "2025-02-03",
+   "minute": 827,
+   "wall": 21350.0,
+   "call_credit": 14.28,
+   "call_pnl": 1428.0,
+   "put_debit": null,
+   "put_pnl": null,
+   "gap_pts": null
+  },
+  {
+   "day": "2025-02-05",
+   "minute": 696,
+   "wall": 21550.0,
+   "call_credit": 10.930000000000001,
+   "call_pnl": -3907.0,
+   "put_debit": null,
+   "put_pnl": null,
+   "gap_pts": null
+  },
+  {
+   "day": "2025-02-06",
+   "minute": 730,
+   "wall": 21700.0,
+   "call_credit": 10.36,
+   "call_pnl": -3603.470000000074,
+   "put_debit": null,
+   "put_pnl": null,
+   "gap_pts": null
+  },
+  {
+   "day": "2025-02-10",
+   "minute": 806,
+   "wall": 21800.0,
+   "call_credit": 5.138,
+   "call_pnl": 513.8,
+   "put_debit": null,
+   "put_pnl": null,
+   "gap_pts": null
+  },
+  {
+   "day": "2025-02-11",
+   "minute": 818,
+   "wall": 21750.0,
+   "call_credit": 6.3217,
+   "call_pnl": 632.17,
+   "put_debit": null,
+   "put_pnl": null,
+   "gap_pts": null
+  },
+  {
+   "day": "2025-02-12",
+   "minute": 704,
+   "wall": 21650.0,
+   "call_credit": 15.806000000000001,
+   "call_pnl": -2436.0700000001584,
+   "put_debit": null,
+   "put_pnl": null,
+   "gap_pts": null
+  },
+  {
+   "day": "2025-02-13",
+   "minute": 848,
+   "wall": 21950.0,
+   "call_credit": 8.9275,
+   "call_pnl": -4107.25,
+   "put_debit": null,
+   "put_pnl": null,
+   "gap_pts": null
+  },
+  {
+   "day": "2025-02-14",
+   "minute": 778,
+   "wall": 22100.0,
+   "call_credit": 9.065,
+   "call_pnl": 906.5,
+   "put_debit": null,
+   "put_pnl": null,
+   "gap_pts": null
+  },
+  {
+   "day": "2025-02-18",
+   "minute": 892,
+   "wall": 22125.0,
+   "call_credit": 3.0277,
+   "call_pnl": -1094.8599999998446,
+   "put_debit": null,
+   "put_pnl": null,
+   "gap_pts": null
+  },
+  {
+   "day": "2025-02-19",
+   "minute": 672,
+   "wall": 22150.0,
+   "call_credit": 13.629999999999999,
+   "call_pnl": 1363.0,
+   "put_debit": null,
+   "put_pnl": null,
+   "gap_pts": null
+  },
+  {
+   "day": "2025-02-20",
+   "minute": 889,
+   "wall": 22050.0,
+   "call_credit": 5.544999999999999,
+   "call_pnl": 554.4999999999999,
+   "put_debit": null,
+   "put_pnl": null,
+   "gap_pts": null
+  },
+  {
+   "day": "2025-02-24",
+   "minute": 762,
+   "wall": 21600.0,
+   "call_credit": 11.68,
+   "call_pnl": 1168.0,
+   "put_debit": null,
+   "put_pnl": null,
+   "gap_pts": null
+  },
+  {
+   "day": "2025-02-25",
+   "minute": 782,
+   "wall": 21200.0,
+   "call_credit": 11.299999999999999,
+   "call_pnl": 1130.0,
+   "put_debit": null,
+   "put_pnl": null,
+   "gap_pts": null
+  },
+  {
+   "day": "2025-02-27",
+   "minute": 677,
+   "wall": 21100.0,
+   "call_credit": 18.94,
+   "call_pnl": 1894.0000000000002,
+   "put_debit": null,
+   "put_pnl": null,
+   "gap_pts": null
+  },
+  {
+   "day": "2025-03-04",
+   "minute": 820,
+   "wall": 20400.0,
+   "call_credit": 24.526700000000005,
+   "call_pnl": 2452.6700000000005,
+   "put_debit": null,
+   "put_pnl": null,
+   "gap_pts": null
+  },
+  {
+   "day": "2025-03-05",
+   "minute": 847,
+   "wall": 20600.0,
+   "call_credit": 26.277099999999997,
+   "call_pnl": 2627.7099999999996,
+   "put_debit": null,
+   "put_pnl": null,
+   "gap_pts": null
+  },
+  {
+   "day": "2025-03-07",
+   "minute": 775,
+   "wall": 20050.0,
+   "call_credit": 18.389999999999993,
+   "call_pnl": -3161.0000000000005,
+   "put_debit": null,
+   "put_pnl": null,
+   "gap_pts": null
+  },
+  {
+   "day": "2025-03-11",
+   "minute": 862,
+   "wall": 19500.0,
+   "call_credit": 13.740000000000002,
+   "call_pnl": 1374.0000000000002,
+   "put_debit": null,
+   "put_pnl": null,
+   "gap_pts": null
+  },
+  {
+   "day": "2025-03-12",
+   "minute": 771,
+   "wall": 19700.0,
+   "call_credit": 22.6,
+   "call_pnl": 2260.0,
+   "put_debit": null,
+   "put_pnl": null,
+   "gap_pts": null
+  },
+  {
+   "day": "2025-03-14",
+   "minute": 759,
+   "wall": 19675.0,
+   "call_credit": 14.1917,
+   "call_pnl": 1419.17,
+   "put_debit": null,
+   "put_pnl": null,
+   "gap_pts": null
+  },
+  {
+   "day": "2025-03-17",
+   "minute": 795,
+   "wall": 19725.0,
+   "call_credit": 12.2,
+   "call_pnl": -3779.9999999999995,
+   "put_debit": null,
+   "put_pnl": null,
+   "gap_pts": null
+  },
+  {
+   "day": "2025-03-19",
+   "minute": 854,
+   "wall": 19700.0,
+   "call_credit": 21.53,
+   "call_pnl": 980.2899999999937,
+   "put_debit": null,
+   "put_pnl": null,
+   "gap_pts": null
+  },
+  {
+   "day": "2025-03-24",
+   "minute": 884,
+   "wall": 20175.0,
+   "call_credit": 5.5833,
+   "call_pnl": 558.33,
+   "put_debit": 40.657700000000006,
+   "put_pnl": 934.2299999999994,
+   "gap_pts": -3.7589999999999932
+  },
+  {
+   "day": "2025-03-27",
+   "minute": 855,
+   "wall": 19900.0,
+   "call_credit": 10.137999999999998,
+   "call_pnl": 1013.7999999999998,
+   "put_debit": null,
+   "put_pnl": null,
+   "gap_pts": null
+  },
+  {
+   "day": "2025-03-31",
+   "minute": 714,
+   "wall": 19100.0,
+   "call_credit": 15.971400000000003,
+   "call_pnl": -3402.8599999999997,
+   "put_debit": null,
+   "put_pnl": null,
+   "gap_pts": null
+  },
+  {
+   "day": "2025-04-11",
+   "minute": 833,
+   "wall": 18700.0,
+   "call_credit": 16.3467,
+   "call_pnl": 1634.6699999999998,
+   "put_debit": null,
+   "put_pnl": null,
+   "gap_pts": null
+  },
+  {
+   "day": "2025-04-14",
+   "minute": 881,
+   "wall": 18900.0,
+   "call_credit": 10.229999999999999,
+   "call_pnl": 1022.9999999999999,
+   "put_debit": null,
+   "put_pnl": null,
+   "gap_pts": null
+  },
+  {
+   "day": "2025-04-22",
+   "minute": 721,
+   "wall": 18300.0,
+   "call_credit": 28.83,
+   "call_pnl": 2883.0,
+   "put_debit": null,
+   "put_pnl": null,
+   "gap_pts": null
+  },
+  {
+   "day": "2025-04-24",
+   "minute": 871,
+   "wall": 19200.0,
+   "call_credit": 11.480500000000001,
+   "call_pnl": 1148.0500000000002,
+   "put_debit": null,
+   "put_pnl": null,
+   "gap_pts": null
+  },
+  {
+   "day": "2025-04-25",
+   "minute": 788,
+   "wall": 19400.0,
+   "call_credit": 14.0,
+   "call_pnl": 1109.2400000001362,
+   "put_debit": null,
+   "put_pnl": null,
+   "gap_pts": null
+  },
+  {
+   "day": "2025-04-29",
+   "minute": 727,
+   "wall": 19500.0,
+   "call_credit": 21.185000000000002,
+   "call_pnl": 226.01999999993154,
+   "put_debit": null,
+   "put_pnl": null,
+   "gap_pts": null
+  },
+  {
+   "day": "2025-04-30",
+   "minute": 797,
+   "wall": 19300.0,
+   "call_credit": 15.91,
+   "call_pnl": -3409.0000000000005,
+   "put_debit": null,
+   "put_pnl": null,
+   "gap_pts": null
+  },
+  {
+   "day": "2025-05-01",
+   "minute": 667,
+   "wall": 20000.0,
+   "call_credit": 15.549999999999997,
+   "call_pnl": 1554.9999999999998,
+   "put_debit": null,
+   "put_pnl": null,
+   "gap_pts": null
+  },
+  {
+   "day": "2025-05-02",
+   "minute": 676,
+   "wall": 20100.0,
+   "call_credit": 19.0,
+   "call_pnl": 1900.0,
+   "put_debit": null,
+   "put_pnl": null,
+   "gap_pts": null
+  },
+  {
+   "day": "2025-05-06",
+   "minute": 734,
+   "wall": 19900.0,
+   "call_credit": 7.950000000000003,
+   "call_pnl": 795.0000000000002,
+   "put_debit": null,
+   "put_pnl": null,
+   "gap_pts": null
+  },
+  {
+   "day": "2025-05-08",
+   "minute": 703,
+   "wall": 20200.0,
+   "call_credit": 26.21,
+   "call_pnl": 2621.0,
+   "put_debit": null,
+   "put_pnl": null,
+   "gap_pts": null
+  },
+  {
+   "day": "2025-05-12",
+   "minute": 767,
+   "wall": 20800.0,
+   "call_credit": 14.415,
+   "call_pnl": -2948.1300000000338,
+   "put_debit": null,
+   "put_pnl": null,
+   "gap_pts": null
+  },
+  {
+   "day": "2025-05-22",
+   "minute": 837,
+   "wall": 21250.0,
+   "call_credit": 9.92,
+   "call_pnl": 992.0,
+   "put_debit": null,
+   "put_pnl": null,
+   "gap_pts": null
+  },
+  {
+   "day": "2025-05-23",
+   "minute": 798,
+   "wall": 21000.0,
+   "call_credit": 16.839999999999996,
+   "call_pnl": 1683.9999999999995,
+   "put_debit": null,
+   "put_pnl": null,
+   "gap_pts": null
+  },
+  {
+   "day": "2025-05-27",
+   "minute": 760,
+   "wall": 21400.0,
+   "call_credit": 12.9167,
+   "call_pnl": 1291.67,
+   "put_debit": null,
+   "put_pnl": null,
+   "gap_pts": null
+  },
+  {
+   "day": "2025-06-02",
+   "minute": 711,
+   "wall": 21400.0,
+   "call_credit": 17.4077,
+   "call_pnl": -3259.23,
+   "put_debit": null,
+   "put_pnl": null,
+   "gap_pts": null
+  },
+  {
+   "day": "2025-06-03",
+   "minute": 663,
+   "wall": 21650.0,
+   "call_credit": 11.81,
+   "call_pnl": 1181.0,
+   "put_debit": null,
+   "put_pnl": null,
+   "gap_pts": null
+  },
+  {
+   "day": "2025-06-04",
+   "minute": 662,
+   "wall": 21750.0,
+   "call_credit": 13.84,
+   "call_pnl": 1384.0,
+   "put_debit": null,
+   "put_pnl": null,
+   "gap_pts": null
+  },
+  {
+   "day": "2025-06-13",
+   "minute": 683,
+   "wall": 21800.0,
+   "call_credit": 17.7633,
+   "call_pnl": 1776.3300000000002,
+   "put_debit": null,
+   "put_pnl": null,
+   "gap_pts": null
+  },
+  {
+   "day": "2025-06-27",
+   "minute": 692,
+   "wall": 22600.0,
+   "call_credit": 10.3633,
+   "call_pnl": 1036.3300000000002,
+   "put_debit": null,
+   "put_pnl": null,
+   "gap_pts": null
+  },
+  {
+   "day": "2025-06-30",
+   "minute": 898,
+   "wall": 22650.0,
+   "call_credit": 7.960000000000001,
+   "call_pnl": 595.0600000000996,
+   "put_debit": null,
+   "put_pnl": null,
+   "gap_pts": null
+  },
+  {
+   "day": "2025-07-11",
+   "minute": 786,
+   "wall": 22850.0,
+   "call_credit": 9.67,
+   "call_pnl": 967.0,
+   "put_debit": null,
+   "put_pnl": null,
+   "gap_pts": null
+  },
+  {
+   "day": "2025-08-08",
+   "minute": 670,
+   "wall": 23600.0,
+   "call_credit": 8.85,
+   "call_pnl": 885.0,
+   "put_debit": null,
+   "put_pnl": null,
+   "gap_pts": null
+  },
+  {
+   "day": "2025-08-22",
+   "minute": 783,
+   "wall": 23500.0,
+   "call_credit": 11.2863,
+   "call_pnl": 1128.63,
+   "put_debit": null,
+   "put_pnl": null,
+   "gap_pts": null
+  },
+  {
+   "day": "2025-09-12",
+   "minute": 838,
+   "wall": 24125.0,
+   "call_credit": 2.146,
+   "call_pnl": 214.6,
+   "put_debit": null,
+   "put_pnl": null,
+   "gap_pts": null
+  },
+  {
+   "day": "2025-09-19",
+   "minute": 825,
+   "wall": 24600.0,
+   "call_credit": 3.1883000000000004,
+   "call_pnl": 318.83000000000004,
+   "put_debit": null,
+   "put_pnl": null,
+   "gap_pts": null
+  },
+  {
+   "day": "2025-09-26",
+   "minute": 791,
+   "wall": 24500.0,
+   "call_credit": 9.71,
+   "call_pnl": 971.0000000000001,
+   "put_debit": null,
+   "put_pnl": null,
+   "gap_pts": null
+  },
+  {
+   "day": "2025-10-24",
+   "minute": 682,
+   "wall": 25400.0,
+   "call_credit": 12.6,
+   "call_pnl": 1260.0,
+   "put_debit": null,
+   "put_pnl": null,
+   "gap_pts": null
+  },
+  {
+   "day": "2025-11-07",
+   "minute": 872,
+   "wall": 24900.0,
+   "call_credit": 12.656,
+   "call_pnl": -3734.4,
+   "put_debit": null,
+   "put_pnl": null,
+   "gap_pts": null
+  },
+  {
+   "day": "2025-11-14",
+   "minute": 731,
+   "wall": 25200.0,
+   "call_credit": 18.199999999999996,
+   "call_pnl": 1819.9999999999995,
+   "put_debit": null,
+   "put_pnl": null,
+   "gap_pts": null
+  },
+  {
+   "day": "2025-11-21",
+   "minute": 850,
+   "wall": 24500.0,
+   "call_credit": 16.169999999999998,
+   "call_pnl": 1616.9999999999998,
+   "put_debit": null,
+   "put_pnl": null,
+   "gap_pts": null
+  },
+  {
+   "day": "2025-12-26",
+   "minute": 839,
+   "wall": 25700.0,
+   "call_credit": 1.4699999999999998,
+   "call_pnl": 146.99999999999997,
+   "put_debit": null,
+   "put_pnl": null,
+   "gap_pts": null
+  },
+  {
+   "day": "2025-12-31",
+   "minute": 844,
+   "wall": 25450.0,
+   "call_credit": 4.379999999999999,
+   "call_pnl": 437.9999999999999,
+   "put_debit": null,
+   "put_pnl": null,
+   "gap_pts": null
+  },
+  {
+   "day": "2026-01-09",
+   "minute": 663,
+   "wall": 25700.0,
+   "call_credit": 16.8,
+   "call_pnl": -2241.3400000000547,
+   "put_debit": null,
+   "put_pnl": null,
+   "gap_pts": null
+  },
+  {
+   "day": "2026-01-23",
+   "minute": 699,
+   "wall": 25700.0,
+   "call_credit": 12.26,
+   "call_pnl": 1226.0,
+   "put_debit": null,
+   "put_pnl": null,
+   "gap_pts": null
+  },
+  {
+   "day": "2026-02-13",
+   "minute": 735,
+   "wall": 24900.0,
+   "call_credit": 15.86,
+   "call_pnl": 1586.0,
+   "put_debit": null,
+   "put_pnl": null,
+   "gap_pts": null
+  },
+  {
+   "day": "2026-02-20",
+   "minute": 826,
+   "wall": 25050.0,
+   "call_credit": 13.420000000000002,
+   "call_pnl": 1342.0000000000002,
+   "put_debit": null,
+   "put_pnl": null,
+   "gap_pts": null
+  },
+  {
+   "day": "2026-04-02",
+   "minute": 665,
+   "wall": 24000.0,
+   "call_credit": 8.93,
+   "call_pnl": -614.2000000000116,
+   "put_debit": null,
+   "put_pnl": null,
+   "gap_pts": null
+  },
+  {
+   "day": "2026-07-14",
+   "minute": 764,
+   "wall": 29650.0,
+   "call_credit": 11.299599999999998,
+   "call_pnl": 1129.9599999999998,
+   "put_debit": null,
+   "put_pnl": null,
+   "gap_pts": null
+  },
+  {
+   "day": "2026-07-15",
+   "minute": 830,
+   "wall": 29500.0,
+   "call_credit": 6.440000000000001,
+   "call_pnl": 644.0000000000001,
+   "put_debit": null,
+   "put_pnl": null,
+   "gap_pts": null
+  },
+  {
+   "day": "2026-07-17",
+   "minute": 690,
+   "wall": 28600.0,
+   "call_credit": 28.299999999999997,
+   "call_pnl": 2829.9999999999995,
+   "put_debit": null,
+   "put_pnl": null,
+   "gap_pts": null
+  },
+  {
+   "day": "2026-07-20",
+   "minute": 770,
+   "wall": 28900.0,
+   "call_credit": 17.490000000000002,
+   "call_pnl": 1749.0000000000002,
+   "put_debit": null,
+   "put_pnl": null,
+   "gap_pts": null
+  },
+  {
+   "day": "2026-07-23",
+   "minute": 733,
+   "wall": 28500.0,
+   "call_credit": 20.76,
+   "call_pnl": 2076.0,
+   "put_debit": null,
+   "put_pnl": null,
+   "gap_pts": null
+  },
+  {
+   "day": "2026-07-24",
+   "minute": 676,
+   "wall": 28400.0,
+   "call_credit": 21.43,
+   "call_pnl": 2143.0,
+   "put_debit": null,
+   "put_pnl": null,
+   "gap_pts": null
+  },
+  {
+   "day": "2026-07-27",
+   "minute": 896,
+   "wall": 28050.0,
+   "call_credit": 10.9833,
+   "call_pnl": 1098.33,
+   "put_debit": null,
+   "put_pnl": null,
+   "gap_pts": null
+  },
+  {
+   "day": "2026-07-28",
+   "minute": 677,
+   "wall": 27750.0,
+   "call_credit": 15.350000000000001,
+   "call_pnl": 1535.0000000000002,
+   "put_debit": null,
+   "put_pnl": null,
+   "gap_pts": null
+  },
+  {
+   "day": "2026-07-29",
+   "minute": 878,
+   "wall": 27700.0,
+   "call_credit": 29.014599999999994,
+   "call_pnl": 2901.4599999999996,
+   "put_debit": null,
+   "put_pnl": null,
+   "gap_pts": null
+  },
+  {
+   "day": "2026-07-30",
+   "minute": 855,
+   "wall": 28100.0,
+   "call_credit": 5.7219999999999995,
+   "call_pnl": 572.1999999999999,
+   "put_debit": null,
+   "put_pnl": null,
+   "gap_pts": null
+  },
+  {
+   "day": "2026-07-31",
+   "minute": 782,
+   "wall": 28300.0,
+   "call_credit": 14.170000000000002,
+   "call_pnl": 1417.0000000000002,
+   "put_debit": null,
+   "put_pnl": null,
+   "gap_pts": null
+  },
+  {
+   "day": "2026-08-03",
+   "minute": 681,
+   "wall": 28700.0,
+   "call_credit": 15.7667,
+   "call_pnl": -3423.33,
+   "put_debit": null,
+   "put_pnl": null,
+   "gap_pts": null
+  },
+  {
+   "day": "2026-08-04",
+   "minute": 682,
+   "wall": 29550.0,
+   "call_credit": 19.470000000000002,
+   "call_pnl": -3052.9999999999995,
+   "put_debit": null,
+   "put_pnl": null,
+   "gap_pts": null
+  },
+  {
+   "day": "2026-08-07",
+   "minute": 684,
+   "wall": 29700.0,
+   "call_credit": 17.619999999999997,
+   "call_pnl": 1761.9999999999998,
+   "put_debit": null,
+   "put_pnl": null,
+   "gap_pts": null
+  },
+  {
+   "day": "2026-08-10",
+   "minute": 714,
+   "wall": 29750.0,
+   "call_credit": 11.774,
+   "call_pnl": 1177.3999999999999,
+   "put_debit": null,
+   "put_pnl": null,
+   "gap_pts": null
+  },
+  {
+   "day": "2026-08-13",
+   "minute": 746,
+   "wall": 30100.0,
+   "call_credit": 12.100000000000001,
+   "call_pnl": 1210.0000000000002,
+   "put_debit": null,
+   "put_pnl": null,
+   "gap_pts": null
+  },
+  {
+   "day": "2026-08-17",
+   "minute": 665,
+   "wall": 30200.0,
+   "call_credit": 9.407499999999999,
+   "call_pnl": 940.7499999999999,
+   "put_debit": null,
+   "put_pnl": null,
+   "gap_pts": null
+  },
+  {
+   "day": "2026-08-19",
+   "minute": 739,
+   "wall": 29600.0,
+   "call_credit": 13.540000000000001,
+   "call_pnl": 1354.0,
+   "put_debit": null,
+   "put_pnl": null,
+   "gap_pts": null
+  },
+  {
+   "day": "2026-08-21",
+   "minute": 701,
+   "wall": 29400.0,
+   "call_credit": 15.853299999999999,
+   "call_pnl": 1585.33,
+   "put_debit": null,
+   "put_pnl": null,
+   "gap_pts": null
+  },
+  {
+   "day": "2026-08-24",
+   "minute": 698,
+   "wall": 29100.0,
+   "call_credit": 11.5227,
+   "call_pnl": 1152.27,
+   "put_debit": null,
+   "put_pnl": null,
+   "gap_pts": null
+  },
+  {
+   "day": "2026-08-25",
+   "minute": 874,
+   "wall": 29200.0,
+   "call_credit": 3.4899999999999998,
+   "call_pnl": 349.0,
+   "put_debit": null,
+   "put_pnl": null,
+   "gap_pts": null
+  },
+  {
+   "day": "2026-08-26",
+   "minute": 819,
+   "wall": 29250.0,
+   "call_credit": 5.515000000000001,
+   "call_pnl": 551.5,
+   "put_debit": null,
+   "put_pnl": null,
+   "gap_pts": null
+  },
+  {
+   "day": "2026-08-27",
+   "minute": 714,
+   "wall": 29550.0,
+   "call_credit": 13.006699999999999,
+   "call_pnl": -3699.3300000000004,
+   "put_debit": null,
+   "put_pnl": null,
+   "gap_pts": null
+  },
+  {
+   "day": "2026-09-01",
+   "minute": 701,
+   "wall": 29250.0,
+   "call_credit": 11.419999999999998,
+   "call_pnl": 1141.9999999999998,
+   "put_debit": null,
+   "put_pnl": null,
+   "gap_pts": null
+  },
+  {
+   "day": "2026-09-02",
+   "minute": 676,
+   "wall": 29150.0,
+   "call_credit": 14.4114,
+   "call_pnl": 1441.14,
+   "put_debit": null,
+   "put_pnl": null,
+   "gap_pts": null
+  },
+  {
+   "day": "2026-09-03",
+   "minute": 661,
+   "wall": 29350.0,
+   "call_credit": 15.611999999999998,
+   "call_pnl": -3438.8000000000006,
+   "put_debit": null,
+   "put_pnl": null,
+   "gap_pts": null
+  },
+  {
+   "day": "2026-09-08",
+   "minute": 674,
+   "wall": 29600.0,
+   "call_credit": 10.351999999999999,
+   "call_pnl": 1035.1999999999998,
+   "put_debit": null,
+   "put_pnl": null,
+   "gap_pts": null
+  },
+  {
+   "day": "2026-09-14",
+   "minute": 688,
+   "wall": 29100.0,
+   "call_credit": 11.99,
+   "call_pnl": 836.8600000000006,
+   "put_debit": null,
+   "put_pnl": null,
+   "gap_pts": null
+  },
+  {
+   "day": "2026-09-16",
+   "minute": 884,
+   "wall": 29200.0,
+   "call_credit": 20.85,
+   "call_pnl": 2085.0,
+   "put_debit": null,
+   "put_pnl": null,
+   "gap_pts": null
+  },
+  {
+   "day": "2026-09-17",
+   "minute": 701,
+   "wall": 29450.0,
+   "call_credit": 13.339999999999998,
+   "call_pnl": 1333.9999999999998,
+   "put_debit": null,
+   "put_pnl": null,
+   "gap_pts": null
+  },
+  {
+   "day": "2026-09-18",
+   "minute": 823,
+   "wall": 29500.0,
+   "call_credit": 3.87,
+   "call_pnl": -4613.0,
+   "put_debit": null,
+   "put_pnl": null,
+   "gap_pts": null
+  },
+  {
+   "day": "2026-09-23",
+   "minute": 838,
+   "wall": 30500.0,
+   "call_credit": 8.8767,
+   "call_pnl": 887.67,
+   "put_debit": null,
+   "put_pnl": null,
+   "gap_pts": null
+  }
+ ]
+}
