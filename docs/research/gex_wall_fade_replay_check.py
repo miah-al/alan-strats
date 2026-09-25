@@ -57,7 +57,9 @@ def main(argv=None) -> int:
     tmp = Path(tempfile.mkdtemp(prefix="walls_replay_"))
     rows = []
     for day in sorted(traded + quiet):
-        prov = ReplayProvider(eng, "NDX", day, half_spread=0.5, root="NDXP")
+        # the study's own (optimistic) assumptions, pinned: this checks the replay against gex_wall_fade.py's fills,
+        # not the execution; conservative_rerun.py re-prices the strategy under the calibrated spread and carry 0
+        prov = ReplayProvider(eng, "NDX", day, half_spread=0.5, carry_min=30, root="NDXP")
         ps = PaperSession("ndx_gamma_walls", prov, eng, write_ledger=False, log_dir=tmp, state_dir=tmp)
         res = ps.run_replay(day)
         rp = res.trades[0] if res.trades else None

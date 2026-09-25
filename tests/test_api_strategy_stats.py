@@ -106,3 +106,38 @@ def test_backtest_summary_is_stored_only_when_enabled(monkeypatch):
     monkeypatch.setattr(appdb, "ensure", lambda *a: calls.append(a))
     SS.record_backtest("x", "SPY", "2026-01-01", "2026-06-01", 1e5, {}, {"win_rate_pct": 60}, None)
     assert calls == []                                    # disabled under test: nothing touched
+
+
+def test_execution_mode_classifies_the_trap():
+    ok = {"stale_min": 0, "carry_min": 0, "spread_model": "live", "fill_model": "taker"}
+    assert SS.execution_mode(ok) == "conservative"
+    assert SS.execution_mode({**ok, "fill_model": "maker"}) == "conservative"
+    assert SS.execution_mode({**ok, "spread_model": "flat", "half_spread_pts": 1.5}) == "conservative"
+    assert SS.execution_mode({**ok, "carry_min": 30}) == "optimistic"          # the 16k trap
+    assert SS.execution_mode({**ok, "stale_min": 5}) == "optimistic"
+    assert SS.execution_mode({**ok, "spread_model": "flat", "half_spread_pts": 0.5}) == "optimistic"
+    assert SS.execution_mode({**ok, "fill_model": "mid"}) == "optimistic"
+    assert SS.execution_mode({**ok, "use_bar_extremes": True}) == "optimistic"
+    assert SS.execution_mode({SS.MODE_KEY: "optimistic", **ok}) == "optimistic"   # a stored run says what it was
+    assert SS.execution_mode({"lookback": 20}) == "conservative"               # nothing to be optimistic about
+
+
+def test_expectation_prefers_the_conservative_run_then_the_file_then_flags_the_rest(monkeypatch, tmp_path):
+    rows = [  # newest first, as stored_backtests returns them
+        {"slug": "ndx_0dte_tasty", "avg_pnl": 488.0, "win_rate": 0.92, "trades": 300, "mode": "optimistic", "source": "db", "ran": "2026-09-24T00:00:00Z"},
+        {"slug": "ndx_0dte_tasty", "avg_pnl": -40.0, "win_rate": 0.55, "trades": 120, "mode": "conservative", "source": "db", "ran": "2026-09-20T00:00:00Z"},
+        {"slug": "other", "avg_pnl": 10.0, "win_rate": 0.6, "trades": 50, "mode": "optimistic", "source": "db", "ran": "2026-09-21T00:00:00Z"},
+    ]
+    monkeypatch.setattr(SS, "stored_backtests", lambda limit=400: rows)
+    import json
+    f = tmp_path / "baselines.json"
+    f.write_text(json.dumps({"strategies": {"ndx_gamma_walls": {"avg_pnl": -5.0, "win_rate": 0.7, "trades": 140},
+                                            "ndx_0dte_tasty": {"avg_pnl": -99.0, "trades": 1}}}), encoding="utf-8")
+    monkeypatch.setattr(SS, "BASELINES_FILE", str(f))
+    bt = SS.latest_backtests()
+    assert bt["ndx_0dte_tasty"]["avg_pnl"] == -40.0 and bt["ndx_0dte_tasty"]["mode"] == "conservative"   # the older conservative row wins
+    assert bt["ndx_gamma_walls"]["avg_pnl"] == -5.0 and bt["ndx_gamma_walls"]["source"] == "file" and bt["ndx_gamma_walls"]["mode"] == "conservative"
+    assert bt["other"]["mode"] == "optimistic" and bt["other"]["avg_pnl"] == 10.0                          # flagged, not hidden
+    monkeypatch.setattr(SS, "BASELINES_FILE", str(tmp_path / "missing.json"))
+    assert "ndx_gamma_walls" not in SS.latest_backtests()
+    assert "bt_mode" in SS.FIELDS
