@@ -94,6 +94,8 @@ def create_app():
     vol_stats = VolStats(market_hub)
     from api.services.gex_recorder import GexRecorder
     gex_recorder = GexRecorder(market_hub)
+    from api.services.quote_recorder import QuoteRecorder
+    quote_recorder = QuoteRecorder(market_hub)
     from api.services.bars_topup import NightlyBars
     nightly_bars = NightlyBars(jobs)
     from api.services.intraday import MinuteAggregator
@@ -116,6 +118,7 @@ def create_app():
         runners.start_monitor()
         arm_scheduler.start()
         gex_recorder.start()
+        quote_recorder.start()
         nightly_bars.start()
         minutes.start()
         beat = asyncio.create_task(hub.heartbeat_forever())
@@ -131,6 +134,7 @@ def create_app():
             runners.shutdown()
             vol_stats.shutdown()
             gex_recorder.stop()
+            quote_recorder.stop()
             nightly_bars.stop()
             minutes.stop()
             await market_hub.stop()
@@ -153,6 +157,7 @@ def create_app():
     app.state.gex_allocator = gex_allocator
     app.state.volstats = vol_stats
     app.state.gex_recorder = gex_recorder
+    app.state.quote_recorder = quote_recorder
     app.state.nightly_bars = nightly_bars
     app.state.minutes = minutes
     app.state.build = build
