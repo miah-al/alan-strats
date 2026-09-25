@@ -33,7 +33,7 @@ class Blocker(importlib.abc.MetaPathFinder):
         return None
 
 sys.meta_path.insert(0, Blocker())
-sys.path[:0] = [REPO, os.path.dirname(REPO)]
+sys.path[:0] = [REPO]      # only the checkout: its parent holds the live alan_trader (conftest binds ours by path)
 
 ui_failures = []
 class Grab(logging.Handler):
