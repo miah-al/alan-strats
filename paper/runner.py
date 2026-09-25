@@ -429,13 +429,13 @@ class PaperSession:
         blocked, why = self._gate(day)
         session = (self._restore(day, why) if resume else None) or self.strategy.live_session(day, blocked_reason=why)
         if self.write_ledger:
-            L.record_session(self.db, day, self.underlying, self.slug, blocked, why, note=f"replay half_spread={prov.h}")
+            L.record_session(self.db, day, self.underlying, self.slug, blocked, why, note=f"replay {prov.describe()}"[:400])
         if not prov.has_option_data() and not blocked:
             logger.warning("%s: no option prints stored; the engine will find no quotes", day)
         res = RunResult(day, self.slug, prov.name, blocked, why)
 
         def quote_fn(S, k_low, k_high, kind, minute):
-            q = prov.quote_vertical(kind, k_low, k_high, minute)
+            q = prov.quote_vertical(kind, k_low, k_high, minute, S)
             self._last_quote[(kind, k_low, k_high)] = q
             return q
 

@@ -374,11 +374,15 @@ clarifications of what the service does where the spec leaves room.
   a strategy), over the trades **closed** in the window (open-ended when omitted): `strategy, strategy_label, trades, wins,
   win_rate` (fraction), `pnl, avg_win, avg_loss` (dollars), `profit_factor` (null without losses), `max_drawdown` (the
   deepest fall of cumulative closed P&L from its running peak, dollars ≤ 0), `avg_days_held, open_positions` (open now,
-  whatever the window) and `backtest_expectation` — the latest backtest the service ran for the strategy
+  whatever the window) and `backtest_expectation` — the **conservative** backtest of the strategy
   (`{"ticker", "from", "to", "capital", "trades", "win_rate", "avg_pnl", "avg_win", "avg_loss", "profit_factor",
-  "total_return_pct", "sharpe", "max_drawdown_pct", "ran"}`) or null. Every successful backtest job now stores that summary in
-  `app.BacktestRun`. `total` is the same numbers over all strategies. The `table` flattens the expectation into `bt_win_rate,
-  bt_avg_pnl, bt_trades, bt_ran`. 422 for a bad date or from > to.
+  "total_return_pct", "sharpe", "max_drawdown_pct", "ran", "mode", "source"}`) or null. `mode` is `conservative` (legs
+  priced in the same minute, the calibrated live spread, taker or maker fills — `strategy_stats.execution_mode`) or
+  `optimistic`; `source` is `db` (the newest conservative `app.BacktestRun` row; every successful backtest job stores its
+  summary there with its mode) or `file` (the checked-in `data/backtest_baselines.json`, the 2026-09-25 conservative re-run).
+  Only when neither exists is the newest stored run of any kind returned, with `mode: "optimistic"`, so the page can say the
+  comparison is against an upper bound. `total` is the same numbers over all strategies. The `table` flattens the expectation
+  into `bt_win_rate, bt_avg_pnl, bt_trades, bt_ran, bt_mode`. 422 for a bad date or from > to.
 - **`GET /api/market/events?days=14&symbols=AAPL,MSFT`** → `[{"date", "time", "kind", "symbol", "title", "source"}]`
   for [today, today + days] (days 0–366; at most 40 symbols), sorted by date then time. `time` is US/Eastern `HH:MM` or
   null (earnings: yfinance does not say before / after the bell). `kind`: `fomc | cpi | nfp | pce | gdp` from the

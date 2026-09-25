@@ -94,7 +94,9 @@ def test_live_loop_with_a_fake_provider_matches_the_replay(tmp_path):
         pytest.skip(str(exc))
     from paper.providers import ReplayProvider
     from paper.runner import PaperSession
-    replay = ReplayProvider(eng, "NDX", DAY, half_spread=0.5)
+    # Loop mechanics, not execution realism: the OPTIMISTIC replay settings (legs carried 30 min, a flat half point) are
+    # pinned so the day has fills to compare; tests/test_paper_replay_conservative.py covers the conservative defaults.
+    replay = ReplayProvider(eng, "NDX", DAY, half_spread=0.5, carry_min=30)
     if not replay.has_option_data():
         pytest.skip("no prints for the test day")
 
@@ -116,7 +118,7 @@ def test_live_loop_with_a_fake_provider_matches_the_replay(tmp_path):
     assert {"spread", "long_bid", "long_ask", "long_age", "short_bid", "short_ask", "short_age"} <= set(log.columns)
     assert (log.loc[log.event.isin(["open", "add", "close"]), "spread"].astype(float) > 0).all()
     # the replay of the same day: same rules, same prints, same half spread
-    ps2 = PaperSession(SLUG, ReplayProvider(eng, "NDX", DAY, half_spread=0.5), eng, write_ledger=False, log_dir=tmp_path / "replay", state_dir=tmp_path / "state2")
+    ps2 = PaperSession(SLUG, ReplayProvider(eng, "NDX", DAY, half_spread=0.5, carry_min=30), eng, write_ledger=False, log_dir=tmp_path / "replay", state_dir=tmp_path / "state2")
     rep = ps2.run_replay(DAY)
     key = lambda x: (x["entry_time"], x["k_low"], x["k_high"], x["exit_reason"])
     live_keys = [key(x) for x in res.trades]; rep_keys = [key(x) for x in rep.trades]

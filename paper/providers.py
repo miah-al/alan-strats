@@ -7,8 +7,20 @@ vertical on today's expiry. Two implementations:
   TastytradeProvider  real time, from the tastytrade REST market-data endpoint (OAuth session
                       from TT_SECRET / TT_REFRESH in .env), option chain from the same API
   ReplayProvider      a stored session from the platform database (mkt.MinuteBar for the
-                      underlying, mkt.OptionMinuteBar prints for the legs, bid/ask = print -/+ a
-                      half spread), for tests and dry runs; runs as fast as the loop lets it
+                      underlying, mkt.OptionMinuteBar prints for the legs, bid/ask = print -/+ the
+                      spread model's half spread), for tests and dry runs; runs as fast as the loop
+                      lets it. CONSERVATIVE by default (paper/spread_model.py): both legs must have
+                      printed in the same minute and the spread is the calibrated live one.
+
+The 16k trap (2026-09-24). The replay of that day showed +$16,384 on 24 trades where the live paper
+runner made -$1,117 on 2. The replay had priced each vertical from each leg's LAST print, carried for up
+to 30 minutes: a leg that printed this minute paired with one that printed 20 minutes ago at a different
+NDX level produces a spread move that never happened -- 11 of the day's 45 replay price moves were larger
+than NDX's own move over the same minutes, which a vertical cannot do. Requiring both legs to have printed
+in the same minute (carry 0) turned the day into -$2,392 on 2 trades, matching live. Over 38 days the
+same replay went from +$171k (carry 30) to +$12k (carry 0) to -$54k (carry 0, crossing a 3-point half
+spread). So a replay now carries nothing and quotes the calibrated spread; the old behaviour is still
+available and is labelled OPTIMISTIC wherever it prints.
 """
 from __future__ import annotations
 
@@ -122,35 +134,73 @@ def vertical_quote(long_leg: LegQuote, short_leg: LegQuote, now: datetime, carry
 
 # ── replay ────────────────────────────────────────────────────────────────────
 
+#: replay defaults (2026-09-25): legs must share the minute, the spread is the calibrated live one
+REPLAY_CARRY_MIN = 0
+#: the old replay defaults, kept for an upper bound: legs carried half an hour, a flat half point
+OPTIMISTIC_CARRY_MIN = 30
+OPTIMISTIC_HALF_SPREAD = 0.5
+
+
 class ReplayProvider:
-    """Serves a stored session minute by minute. ``half_spread`` brackets each print into a
-    bid/ask, the same assumption the market-priced backtest uses, so a replay run of the
-    runner must reproduce the backtest's fills for that day."""
+    """Serves a stored session minute by minute. Each vertical is priced from its legs' prints of the
+    SAME minute (``carry_min`` = 0; parity from the other right in the same minute is fine) and bracketed
+    by the spread model (``half_spread``: None = the calibrated live model, a number = a flat bracket, a
+    callable (value, width) -> points). A market-priced backtest under the same settings reproduces a
+    replay's fills for the day. ``mode`` says which side of the trap a provider sits on."""
 
     name = "replay"
 
-    def __init__(self, engine, underlying: str, day: date, half_spread: float = 0.5, carry_min: int = 30, root: str = "NDXP"):
+    def __init__(self, engine, underlying: str, day: date, half_spread=None, carry_min: int = REPLAY_CARRY_MIN, root: str = "NDXP"):
         from db.client import get_minute_bars, get_option_minute_bars
+        bars = get_minute_bars(engine, underlying.upper(), day, day)
+        if bars.empty:
+            raise RuntimeError(f"no {underlying.upper()} minute bars stored for {day}")
+        prints = get_option_minute_bars(engine, underlying.upper(), day, day, expiry=day)
+        self._init(underlying, day, bars, prints, half_spread, carry_min, root)
+
+    @classmethod
+    def from_frames(cls, underlying: str, day: date, bars: pd.DataFrame, prints: pd.DataFrame, half_spread=None,
+                    carry_min: int = REPLAY_CARRY_MIN, root: str = "NDXP") -> "ReplayProvider":
+        """A provider over frames already in hand (tests; a study that loaded a range in one query).
+        ``bars``: ts, open, high, low, close; ``prints``: right, strike, ts, close."""
+        self = cls.__new__(cls)
+        self._init(underlying, day, bars, prints, half_spread, carry_min, root)
+        return self
+
+    def _init(self, underlying: str, day: date, bars: pd.DataFrame, prints, half_spread, carry_min: int, root: str) -> None:
+        from paper.spread_model import make_spread
         self.day = day
         self.underlying = underlying.upper()
         self.root = root
-        self.h = float(half_spread)
+        self.spread = make_spread(half_spread)
         self.carry = int(carry_min)
-        bars = get_minute_bars(engine, self.underlying, day, day)
-        if bars.empty:
-            raise RuntimeError(f"no {self.underlying} minute bars stored for {day}")
         self.bars = bars.sort_values("ts").reset_index(drop=True)
-        prints = get_option_minute_bars(engine, self.underlying, day, day, expiry=day)
         self._prints: dict[tuple[str, float], tuple[list[int], list[float]]] = {}
-        if len(prints):
+        if prints is not None and len(prints):
             prints = prints.copy()
             ts = pd.to_datetime(prints["ts"])
             prints["m"] = (ts.dt.hour * 60 + ts.dt.minute + 1).astype(int)
-            for (r, k), g in prints.groupby([prints["right"].str.upper().str[0], prints["strike"].astype(float)]):
+            for (r, k), g in prints.groupby([prints["right"].astype(str).str.upper().str[0], prints["strike"].astype(float)]):
                 g = g.sort_values("m").drop_duplicates("m", keep="last")
                 self._prints[(r, float(k))] = (g["m"].tolist(), g["close"].astype(float).tolist())
         self._i = -1
         self.expiry = day
+
+    @property
+    def h(self) -> Optional[float]:
+        """The flat half-spread when the bracket is flat; None under the live model (it depends on the quote)."""
+        return getattr(self.spread, "h", None)
+
+    @property
+    def mode(self) -> str:
+        """'conservative' (no carry, a conservative spread) or 'optimistic' (an upper bound)."""
+        from paper.spread_model import is_conservative
+        return "conservative" if self.carry == 0 and is_conservative(self.spread) else "optimistic"
+
+    def describe(self) -> str:
+        from paper.spread_model import label_of
+        tag = "CONSERVATIVE" if self.mode == "conservative" else "OPTIMISTIC (an upper bound, not an expectation)"
+        return f"{tag}: legs carried {self.carry} min, {label_of(self.spread)}"
 
     def has_option_data(self) -> bool:
         return bool(self._prints)
@@ -180,8 +230,11 @@ class ReplayProvider:
             return None
         return px[i], age
 
-    def quote_vertical(self, kind: str, k_low: float, k_high: float, minute: int) -> Optional[Quote]:
-        """Same valuation as the backtest's MarketPricer: the fresher of the two sides, parity for the other."""
+    def quote_vertical(self, kind: str, k_low: float, k_high: float, minute: int, S: Optional[float] = None) -> Optional[Quote]:
+        """Same valuation as the backtest's MarketPricer: the fresher of the two sides, parity for the other;
+        under carry 0 that is the side whose two legs both printed THIS minute. bid/ask = value -/+ the
+        spread model's half spread for that structure (``S``, the underlying now, lets the model price
+        each leg by its moneyness; without it the model falls back to the spread's value)."""
         width = float(k_high - k_low)
         same = "C" if kind == "call" else "P"; other = "P" if same == "C" else "C"
         cands = []
@@ -195,7 +248,8 @@ class ReplayProvider:
             return None
         v, age = min(cands, key=lambda t: t[1])
         v = min(width, max(0.0, v))
-        return Quote(bid=v - self.h, ask=v + self.h, last=v, age=int(age))
+        h = float(self.spread(v, width, S, float(k_low), float(k_high), kind))
+        return Quote(bid=v - h, ask=v + h, last=v, age=int(age))
 
     def leg_symbols(self, kind: str, k_low: float, k_high: float) -> tuple[str, str]:
         """OCC-style symbols for the ledger (long leg, short leg)."""

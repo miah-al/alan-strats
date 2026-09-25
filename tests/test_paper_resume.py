@@ -26,7 +26,9 @@ def _setup():
     except Exception as exc:
         pytest.skip(str(exc))
     from paper.providers import ReplayProvider
-    replay = ReplayProvider(eng, "NDX", DAY, half_spread=0.5)
+    # Loop mechanics, not execution realism: the OPTIMISTIC replay settings (legs carried 30 min, a flat half point) are
+    # pinned so the day has fills to compare; tests/test_paper_replay_conservative.py covers the conservative defaults.
+    replay = ReplayProvider(eng, "NDX", DAY, half_spread=0.5, carry_min=30)
     if not replay.has_option_data():
         pytest.skip("no prints for the test day")
     return eng, replay
