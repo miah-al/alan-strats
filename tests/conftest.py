@@ -31,6 +31,7 @@ os.environ.setdefault("ALAN_TRADER_PROTECTED_ACCOUNTS", "1")
 os.environ.setdefault("ALAN_TRADER_STORE_BACKTESTS", "0")
 # ... and no live GEX is recorded into app.GexHistory.
 os.environ.setdefault("ALAN_TRADER_GEX_RECORD", "0")
+os.environ.setdefault("ALAN_TRADER_QUOTE_RECORD", "0")
 # ... no nightly daily-bars sync, and no bar top-ups (a GET must not reach yfinance or write bars under test).
 os.environ.setdefault("ALAN_TRADER_NIGHTLY_SYNC", "0")
 os.environ.setdefault("ALAN_TRADER_BARS_TOPUP", "0")
