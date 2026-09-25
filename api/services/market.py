@@ -451,7 +451,8 @@ def _polygon_chain(ticker: str, spot: Optional[float] = None):
             continue
         rows.append({"strike": float(det["strike_price"]), "contract_type": str(det.get("contract_type", "")).lower(),
                      "expiry": det.get("expiration_date"), "gamma": (r.get("greeks") or {}).get("gamma"),
-                     "open_interest": r.get("open_interest") or 0, "iv": r.get("implied_volatility")})
+                     "open_interest": r.get("open_interest") or 0, "iv": r.get("implied_volatility"),
+                     "volume": (r.get("day") or {}).get("volume") or 0})
     if not rows:
         return None
     chain = pd.DataFrame(rows)
