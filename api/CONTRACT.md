@@ -507,3 +507,32 @@ clarifications of what the service does where the spec leaves room.
     `launched_by` (`request|arm`); a running `start_paper_runner.ps1` counts as its strategy's runner.
   - Environment: `ALAN_TRADER_ARMS` (`db` | `memory` — the test suite | `off`), `ALAN_TRADER_ARM_SCHEDULER` (`1` | `0`:
     arms kept, nothing started), `ALAN_TRADER_TASK_CHECKOUT` (default the main checkout).
+- **The GEX paper allocator** (`gex_positioning`, run by the service; the strategy's classes are imported read only).
+  Arm it like a runner: `POST /api/runner/gex_positioning/arm` `{"schedule": "once|weekdays", "date"?, "variant":
+  "vix|gex|both"}` (one arm per variant). At 15:50 ET on each armed trading day (late up to 16:00, else `missed`) each
+  variant decides once:
+  - `vix` — the backtest's logic exactly: VIX -> HighPositive / MildPositive / Neutral / Negative / DeepNegative ->
+    90 / 80 / 60 / 35 / 15 % SPY, 3-day confirmation, 5-day cooldown (the strategy's defaults). Its state (the last
+    raw regime, the streak, the confirmed and held regimes, days since the held regime changed) persists in
+    `app.GexAllocState`; the first run seeds it by replaying the rules over about two years of stored VIX closes on SPY's
+    trading days (days CBOE has not published yet from yfinance's ^VIX; a day neither has is carried forward, as the
+    backtest does). VIX at 15:50 stands in for the day's close.
+  - `gex` — the strategy's `generate_signal` on SPY's live net GEX in **$B per 1% move** (`/api/market/gex/SPY?source=hub`
+    net_gex / 1e9, the units `_classify_gex` expects: > +3 HighPositive, > +1.5 Mild, > −1.5 Neutral, > −3 Negative,
+    else DeepNegative), no confirmation.
+  - Sizing: each variant on the WHOLE paper account: target shares = floor(weight × account equity / SPY price). The two
+    variants together can exceed 1× equity; the paper order engine has no buying-power check, so nothing is shrunk
+    (the decision records `combined_exposure_x`).
+  - Rebalance only when |target − current| is worth ≥ 1% of equity, with paper market orders through the service's
+    order book, ledger strategy `gex_positioning:vix` / `gex_positioning:gex`: a buy opens a new lot; a reduction
+    closes whole lots, oldest first, only lots held ≥ 1 night (`ALAN_TRADER_GEX_ALLOC_MIN_NIGHTS`, the account's ETF
+    rule), then buys back any remainder. One decision per variant per day (client order ids
+    `gexalloc-<variant>-<date>-buy|close-<group>`).
+  - Each decision: an event `{"type": "gex_alloc", "variant", "date", "status": "rebalanced|held|order_failed|failed",
+    "regime", "regime_label", "weight", "equity", "price", "current", "target", "summary", "orders": [...]}` (plus the
+    arm's `ran` event) and a row in `app.GexAllocLog`.
+  - `GET /api/runner/gex_positioning/log?days=30` → `{"strategy", "days", "decisions": [{"variant", "date", "status",
+    "regime", "weight", "equity", "price", "current", "target", "detail": {vix / raw_regime / streak / … or net_gex_billions
+    …, "plan", "lots", "orders", "combined_exposure_x"}, "decided_at"}], "table"}` (newest first).
+  - `/api/runner/arms` rows for it carry `status`: `{"variant", "ledger_strategy", "shares", "lots", "state",
+    "last_decision"}`.

@@ -87,7 +87,9 @@ def create_app():
     from api.services.runner import RunnerManager
     runners = RunnerManager(publish=hub.publish)
     from api.services.arms import ArmScheduler, make_store
-    arm_scheduler = ArmScheduler(make_store(), runners, publish=hub.publish)
+    from api.services.gex_alloc import GexAllocator
+    gex_allocator = GexAllocator(market_hub, order_book, publish=hub.publish)
+    arm_scheduler = ArmScheduler(make_store(), runners, publish=hub.publish, allocator=gex_allocator)
     from api.services.volstats import VolStats
     vol_stats = VolStats(market_hub)
     from api.services.gex_recorder import GexRecorder
@@ -144,6 +146,7 @@ def create_app():
     app.state.alerts = alert_engine
     app.state.runner = runners
     app.state.arms = arm_scheduler
+    app.state.gex_allocator = gex_allocator
     app.state.volstats = vol_stats
     app.state.gex_recorder = gex_recorder
     app.state.nightly_bars = nightly_bars

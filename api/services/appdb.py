@@ -11,6 +11,8 @@ everything else — DDL is allowed in this schema only:
   app.BacktestRun  a summary of every backtest job that succeeded (strategy-stats' expectation)
   app.GexHistory   live dealer GEX recorded each trading day (and every 30 min while streaming)
   app.RunnerArm    armed scheduled paper runs (a strategy, its variant, once / weekdays) and their last result
+  app.GexAllocState the GEX paper allocator's state per variant (the VIX variant's streak / cooldown)
+  app.GexAllocLog  the GEX paper allocator's daily decisions (regime, weight, target, orders)
 """
 from __future__ import annotations
 
@@ -136,8 +138,32 @@ _TABLES = {
             RunLog         NVARCHAR(400)  NULL,
             UpdatedAt      DATETIME2      NOT NULL CONSTRAINT DF_RunnerArm_Updated DEFAULT SYSUTCDATETIME()
         )""",
+    "GexAllocState": """
+        CREATE TABLE app.GexAllocState (
+            Variant        NVARCHAR(10)   NOT NULL CONSTRAINT PK_GexAllocState PRIMARY KEY,
+            AsOf           DATE           NULL,
+            StateJson      NVARCHAR(MAX)  NOT NULL,
+            UpdatedAt      DATETIME2      NOT NULL CONSTRAINT DF_GexAllocState_Updated DEFAULT SYSUTCDATETIME()
+        )""",
+    "GexAllocLog": """
+        CREATE TABLE app.GexAllocLog (
+            Id             INT IDENTITY(1,1) NOT NULL CONSTRAINT PK_GexAllocLog PRIMARY KEY,
+            Variant        NVARCHAR(10)   NOT NULL,
+            TradeDate      DATE           NOT NULL,
+            Status         NVARCHAR(20)   NOT NULL,
+            Regime         NVARCHAR(20)   NULL,
+            Weight         FLOAT          NULL,
+            Equity         FLOAT          NULL,
+            Price          FLOAT          NULL,
+            CurrentShares  INT            NULL,
+            TargetShares   INT            NULL,
+            DetailJson     NVARCHAR(MAX)  NULL,
+            DecidedAt      DATETIME2      NOT NULL CONSTRAINT DF_GexAllocLog_At DEFAULT SYSUTCDATETIME()
+        )""",
 }
 _INDEXES = {
+    ("GexAllocLog", "UX_GexAllocLog_Day"):
+        "CREATE UNIQUE INDEX UX_GexAllocLog_Day ON app.GexAllocLog (Variant, TradeDate)",
     ("RunnerArm", "UX_RunnerArm_Active"):
         "CREATE UNIQUE INDEX UX_RunnerArm_Active ON app.RunnerArm (Strategy, Variant) WHERE Active = 1",
     ("GexHistory", "UX_GexHistory_Slot"):
