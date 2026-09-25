@@ -125,6 +125,36 @@ a crossing) does not carry over to the strategy's actual exits and targets. **Do
   3. Fills averaging worse than **$1.50 per leg** against the mid. The backtest's edge is gone there.
   4. **Two maximum-loss days within any 5 trades.**
 
+## Booking it as the put spread, and replaying it (added 2026-09-24, evening)
+
+**The put substitution.** The platform's runner and ledger trade debit verticals, so the strategy
+(`ndx_gamma_walls`) books the call credit spread as the payoff-identical bear put spread on the same strikes. The
+question is whether that changes what is tested. Priced on the put prints (`gex_wall_fade_puts.py`):
+
+- The in-the-money puts at wall + 25 / wall + 75 **barely trade**. Both put legs printed within the 3-minute fill
+  window in only **4 of the 142** backtest entries.
+- On those 4, the put debit was on average **+1.56 points per leg** above 50 − the call credit (median +0.19). That
+  is too few to measure.
+- So the strategy does not price the booked put spread from the puts. It prices every entry from the **call spread's
+  quote by parity**: debit = 50 − the call credit, plus 1.5 points of slippage. The out-of-the-money calls are the
+  liquid side, and a live trader would trade the call spread.
+- The put spread's own quote is only a fallback. Both quotes (bid / ask / mid / age) are logged at every entry and at
+  `--check`, so kill criterion 3 can be judged on the call spread.
+- The ledger shows put legs, but the cash and P&L equal the call credit spread's: parity at entry, and identical
+  payoffs at settlement.
+
+**Replay vs backtest** (`gex_wall_fade_replay_check.py`). The platform's paper runner replayed the strategy (no ledger)
+on 20 stored days, 2026-08-17 → 2026-09-23:
+
+- **16 of 16** backtest trades were matched on the same day at the same wall, 15 of them with the same entry minute.
+  - On 09-16 the replay filled an earlier signal (14:06) that the backtest's print rule could not fill; the backtest
+    took the 14:47 one.
+- One trade appeared only in the replay (09-10): the backtest found no print fill there, but the replay's quote filled.
+- Entry price: the replay's debit less the 1.5-point slippage averaged +0.38 points against 50 − the backtest's
+  credit. Single days ranged ±4 points, because the replay uses the freshest print (and parity) while the backtest
+  used the first print in the window.
+- The per-trade P&L difference follows from that entry-price difference.
+
 ## Caveats
 
 - **Fills:** the prints are trades, not quotes. A 3-minute window can miss the far leg, and the fill rate is not
