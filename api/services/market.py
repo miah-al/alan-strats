@@ -355,16 +355,36 @@ def _gex_expiries(exps: list[tuple[_dt.date, int]]) -> list[tuple[_dt.date, int]
     return (near + later)[:GEX_MAX_EXPIRIES]
 
 
-def _hub_chain(ticker: str, hub, spot: float, notes: list[str]):
+SCOPES = ("all", "0dte", "weekly")
+
+
+def scope_expiries(exps: list[tuple[_dt.date, int]], scope: str) -> tuple[list[tuple[_dt.date, int]], Optional[str]]:
+    """The expiries a GEX scope covers, and a note when 0DTE had to fall back: ``all`` = the first week's expiries
+    and Fridays to 60 days; ``0dte`` = today's expiry, else the nearest one; ``weekly`` = every expiry <= 7 DTE."""
+    if scope == "0dte":
+        same = [e for e in exps if e[1] == 0]
+        if same:
+            return same[:1], None
+        near = sorted((e for e in exps if e[1] >= 0), key=lambda e: e[1])[:1]
+        return near, (f"no expiry today: the nearest ({near[0][0]}, {near[0][1]} DTE)" if near else None)
+    if scope == "weekly":
+        return sorted(e for e in exps if 0 <= e[1] <= 7), None
+    return _gex_expiries(exps), None
+
+
+def _hub_chain(ticker: str, hub, spot: float, notes: list[str], scope: str = "all"):
     """(chain, spot, today, sources) from the market-data hub's merged chains (the broker's streamed OI and
-    greeks where connected; yfinance / Polygon otherwise), or None."""
+    greeks where connected; yfinance / Polygon otherwise), or None. ``scope`` picks the expiries (scope_expiries);
+    a narrow scope keeps its option subscriptions for two minutes so a refresh finds them warm."""
     from concurrent.futures import ThreadPoolExecutor
     from api.marketdata import options as O
     from api.marketdata import symbols as SYM
     u, root = SYM.underlying_and_root(ticker)
     e = O.expirations(hub, ticker)
     exps = [(_dt.date.fromisoformat(str(x["expiry"])[:10]), int(x["dte"])) for x in e["expirations"]]
-    chosen = _gex_expiries(exps)
+    chosen, fallback = scope_expiries(exps, scope)
+    if fallback:
+        notes.append(fallback)
     if not chosen:
         return None
     today = _dt.date.today()
@@ -372,7 +392,7 @@ def _hub_chain(ticker: str, hub, spot: float, notes: list[str]):
 
     def one(ed):
         n: list[str] = []
-        rows, src = O.merged_chain(hub, u, ed[0], spot, 60, n, linger=False, root=root, band=GEX_BAND)
+        rows, src = O.merged_chain(hub, u, ed[0], spot, 60, n, linger=scope != "all", root=root, band=GEX_BAND)
         return ed, rows, src, n
 
     out = []
@@ -386,16 +406,22 @@ def _hub_chain(ticker: str, hub, spot: float, notes: list[str]):
                 for side in ("call", "put"):
                     q = r.get(side) or {}
                     oi = q.get("oi")
-                    if oi is None or float(oi) <= 0 or (q.get("gamma") is None and q.get("iv") is None):
+                    vol = q.get("volume")
+                    has_oi = oi is not None and float(oi) > 0
+                    traded = scope != "all" and vol is not None and float(vol) > 0
+                    if not (has_oi or traded) or (q.get("gamma") is None and q.get("iv") is None):
                         continue
                     out.append({"strike": float(r["strike"]), "contract_type": side, "expiry": pd.Timestamp(exp),
-                                "gamma": q.get("gamma"), "open_interest": float(oi), "iv": q.get("iv"), "dte": dte})
+                                "gamma": q.get("gamma"), "open_interest": float(oi) if has_oi else 0.0,
+                                "iv": q.get("iv"), "dte": dte,
+                                "volume": float(vol) if vol is not None else 0.0})
     if not out:
         notes.append("the live chain carried no open interest with greeks / IV")
         return None
     notes.append(f"live chain: {len(chosen)} expiries to {chosen[-1][1]} days, strikes within ±1.5% of spot "
                  f"and a sample to ±8% ({len(out)} contracts)")
     chain = pd.DataFrame(out)
+    chain.attrs["expiries"] = [e[0] for e in chosen]
     chain["gamma"] = pd.to_numeric(chain["gamma"], errors="coerce")
     return chain, float(spot), today, sorted(used)
 
@@ -434,17 +460,37 @@ def _polygon_chain(ticker: str, spot: Optional[float] = None):
     return chain, float(spot), today
 
 
+def _polygon_scope(live, scope: str, notes: list[str]):
+    """Polygon's 0-60 DTE snapshot narrowed to a scope's expiries."""
+    chain, spot, today = live
+    exps = sorted({(pd.Timestamp(e).date(), int(d)) for e, d in zip(chain["expiry"], chain["dte"])})
+    chosen, fallback = scope_expiries(exps, scope)
+    if fallback:
+        notes.append(fallback)
+    keep = {e for e, _ in chosen}
+    sub = chain[[pd.Timestamp(e).date() in keep for e in chain["expiry"]]]
+    return (sub, spot, today) if not sub.empty else None
+
+
 #: A stored chain older than this is not "the market now"; auto mode goes to Polygon instead.
 GEX_DB_MAX_AGE_DAYS = 5
 
 
-def gex(ticker: str, source: str = "auto", hub=None, spot: Optional[float] = None) -> dict:
+def gex(ticker: str, source: str = "auto", hub=None, spot: Optional[float] = None, scope: str = "all",
+        top: int = 8) -> dict:
     """``source``: ``auto`` — a recent stored chain; else, for an index (NDX, SPX, RUT …; NDXP / SPXW name
     the root), the market-data hub's live chain, and for anything else Polygon's snapshot with the hub's
     chain as the fallback; else a stale stored chain with a warning. ``db``, ``polygon`` or ``hub`` force one.
     ``spot``: value a live chain at this underlying price instead of the current one (the GEX recorder's late
-    end-of-day row, at the session's close)."""
+    end-of-day row, at the session's close). ``scope``: ``all`` (the above), ``0dte`` (today's expiry only, else
+    the nearest — NDX's NDXP / same-day NDX, SPX's SPXW) or ``weekly`` (expiries <= 7 DTE): always the live
+    chain (the hub's, else Polygon's snapshot filtered to those expiries). ``top``: how many strikes, by |net GEX|,
+    to list with the dealers' side."""
     spot_at = spot
+    if scope not in SCOPES:
+        raise ValueError(f"scope must be one of {', '.join(SCOPES)}")
+    if scope != "all" and source in ("auto", "db"):
+        source = "hub" if (hub is not None and getattr(hub, "providers", None)) else "polygon"
     from analytics.gex_engine import _compute_gamma_column, _normalize_chain, compute_dealer_gex, _GEX_NOTIONAL_SCALE
     from api.marketdata import symbols as SYM
     ticker = ticker.upper().strip()
@@ -470,6 +516,8 @@ def gex(ticker: str, source: str = "auto", hub=None, spot: Optional[float] = Non
     if got is None and source == "polygon" or (got is None and source == "auto" and not index):
         try:
             live = _polygon_chain(und, spot) if _api_key(required=False) else None
+            if live is not None and scope != "all":
+                live = _polygon_scope(live, scope, notes)
         except Exception as exc:  # noqa: BLE001 — the hub's chain is next
             if source == "polygon":
                 raise
@@ -478,7 +526,7 @@ def gex(ticker: str, source: str = "auto", hub=None, spot: Optional[float] = Non
         if live is not None:
             got, used = live, "polygon"
     if got is None and source in ("auto", "hub") and have_hub:
-        live = _hub_chain(ticker if root else und, hub, spot, notes)
+        live = _hub_chain(ticker if root else und, hub, spot, notes, scope=scope)
         if live is not None:
             chain_, spot_, asof_, srcs = live
             got, used = (chain_, spot_, asof_), "hub:" + "+".join(srcs)
@@ -500,16 +548,32 @@ def gex(ticker: str, source: str = "auto", hub=None, spot: Optional[float] = Non
     oi = pd.to_numeric(chain[cols["oi"]], errors="coerce").fillna(0.0).to_numpy() if cols["oi"] else np.zeros(len(chain))
     is_call = chain[cols["type"]].astype(str).str.lower().str.startswith("c").to_numpy()
     per = gamma * oi * 100 * spot * spot * _GEX_NOTIONAL_SCALE
+    vol = pd.to_numeric(chain["volume"], errors="coerce").fillna(0.0).to_numpy() if "volume" in chain.columns \
+        else np.zeros(len(chain))
     df = pd.DataFrame({"strike": pd.to_numeric(chain[cols["strike"]], errors="coerce"),
                        "call_gex": np.where(is_call, per, 0.0), "put_gex": np.where(~is_call, -per, 0.0),
-                       "call_oi": np.where(is_call, oi, 0.0), "put_oi": np.where(~is_call, oi, 0.0)})
+                       "call_oi": np.where(is_call, oi, 0.0), "put_oi": np.where(~is_call, oi, 0.0),
+                       "call_volume": np.where(is_call, vol, 0.0), "put_volume": np.where(~is_call, vol, 0.0)})
     agg = df.groupby("strike", as_index=False).sum().sort_values("strike")
     agg["net_gex"] = agg["call_gex"] + agg["put_gex"]
-    agg = agg[["strike", "call_gex", "put_gex", "net_gex", "call_oi", "put_oi"]]
+    agg = agg[["strike", "call_gex", "put_gex", "net_gex", "call_oi", "put_oi", "call_volume", "put_volume"]]
     table = table_from_df(agg, headers={"strike": "Strike", "call_gex": "Call GEX", "put_gex": "Put GEX",
-                                        "net_gex": "Net GEX", "call_oi": "Call OI", "put_oi": "Put OI"},
+                                        "net_gex": "Net GEX", "call_oi": "Call OI", "put_oi": "Put OI",
+                                        "call_volume": "Call Volume", "put_volume": "Put Volume"},
                           formats={"strike": "price", "call_gex": "money", "put_gex": "money",
-                                   "net_gex": "money", "call_oi": "int", "put_oi": "int"})
+                                   "net_gex": "money", "call_oi": "int", "put_oi": "int", "call_volume": "int",
+                                   "put_volume": "int"})
+    total_abs = float(agg["net_gex"].abs().sum())
+    tops = agg.reindex(agg["net_gex"].abs().sort_values(ascending=False).index).head(max(int(top), 0))
+    top_rows = [{"strike": float(r.strike), "net_gex": float(r.net_gex),
+                 "dealer_sign": "long" if r.net_gex > 0 else "short",
+                 "share": (abs(float(r.net_gex)) / total_abs) if total_abs else None,
+                 "call_oi": float(r.call_oi), "put_oi": float(r.put_oi),
+                 "volume": float(r.call_volume + r.put_volume), "call_volume": float(r.call_volume),
+                 "put_volume": float(r.put_volume), "call_gex": float(r.call_gex), "put_gex": float(r.put_gex)}
+                for r in tops.itertuples(index=False)]
+    exp_used = sorted({pd.Timestamp(x).date() for x in pd.to_datetime(chain["expiry"], errors="coerce").dropna()}) \
+        if "expiry" in chain.columns else []
     flip, regime_, flip_note = flip_and_regime(snap)
     if flip_note:
         notes.append(flip_note)
@@ -543,6 +607,7 @@ def gex(ticker: str, source: str = "auto", hub=None, spot: Optional[float] = Non
         "net_gex_0dte": snap.net_gex_0dte, "dist_to_flip_pct": snap.dist_to_flip_pct,
         "units": "$ per 1% move (dealer-signed)", "contracts": int(len(chain)),
         "regime": regime, "max_pain": max_pain, "by_expiry": by_expiry,
+        "scope": scope, "expiry": exp_used[0] if exp_used else None, "expiries": exp_used, "top": top_rows,
         "profile": _gex_profile(chain, cols, spot, gamma_fallback=gamma, oi=oi, is_call=is_call),
         "warnings": list(snap.warnings) + notes,
     })

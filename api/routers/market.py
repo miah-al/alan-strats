@@ -94,6 +94,23 @@ def market_iv(ticker: str):
     return cached(("iv", ticker.upper()), DAILY_TTL, lambda: M.iv(ticker), cache_errors=_NO_DATA)
 
 
+@router.get("/market/intraday/{ticker}")
+def market_intraday(ticker: str, request: Request, minutes: int = Query(default=390, ge=1, le=390),
+                    interval: int = Query(default=1, ge=1, le=30)):
+    """The session's 1-minute bars: the vendor's (yfinance for indices, Polygon for stocks), then the minutes built
+    from the hub's live quotes after the vendor's last bar."""
+    from api.services import intraday as I
+    hub = getattr(request.app.state, "market", None)
+    agg = getattr(request.app.state, "minutes", None)
+    if agg is not None:
+        agg.want(ticker.upper())                    # watched (while streaming) even when the answer is cached
+    try:
+        return cached(("intraday", ticker.upper(), minutes, interval), 15.0,
+                      lambda: I.intraday(ticker, minutes, interval, hub=hub, agg=agg), cache_errors=_NO_DATA)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc))
+
+
 @router.get("/market/gex-recorder")
 def market_gex_recorder(request: Request):
     """The GEX recorder's state in this process and what app.GexHistory holds (read only)."""
@@ -118,10 +135,11 @@ def market_gex_history(ticker: str, days: int = Query(default=365, ge=1, le=3650
 
 
 @router.get("/market/gex/{ticker}")
-def market_gex(ticker: str, request: Request, source: Literal["auto", "db", "polygon", "hub"] = "auto"):
+def market_gex(ticker: str, request: Request, source: Literal["auto", "db", "polygon", "hub"] = "auto",
+               scope: Literal["all", "0dte", "weekly"] = "all", top: int = Query(default=8, ge=0, le=50)):
     hub = getattr(request.app.state, "market", None)
-    return cached(("gex", ticker.upper(), source), GEX_TTL, lambda: M.gex(ticker, source, hub=hub),
-                  cache_errors=_NO_DATA)
+    return cached(("gex", ticker.upper(), source, scope, top), GEX_TTL,
+                  lambda: M.gex(ticker, source, hub=hub, scope=scope, top=top), cache_errors=_NO_DATA)
 
 
 # ── Term structures (api/services/structure.py) ───────────────────────────────

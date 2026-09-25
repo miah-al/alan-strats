@@ -73,8 +73,9 @@ class FakeBroker(Provider):
             dist = (o.strike - SPOT) / 200.0
             gamma = math.exp(-dist * dist) / 1e3
             oi = 1000.0 if o.right == "C" and o.strike >= SPOT else (1500.0 if o.right == "P" and o.strike <= SPOT else 200.0)
+            vol = 300.0 if (o.expiry == _dt.date.today() and abs(o.strike - SPOT) <= 100) else 0.0
             self.emit(s, self.name, time.time(), bid=10.0, ask=10.5, iv=0.2, delta=0.5 if o.right == "C" else -0.5,
-                      gamma=gamma, theta=-1.0, vega=2.0, oi=oi)
+                      gamma=gamma, theta=-1.0, vega=2.0, oi=oi, volume=vol)
 
     def unsubscribe(self, syms):
         self.subs.difference_update(syms)
@@ -142,3 +143,24 @@ def test_no_zero_crossing_is_no_flip_not_near_flip():
     assert flip_and_regime(SimpleNamespace(flip_level=100.0, spot=100.0, net_gex=5.0))[:2] == (None, "positive")
     f, r, note = flip_and_regime(SimpleNamespace(flip_level=90.0, spot=100.0, net_gex=5.0, dist_to_flip_pct=0.1))
     assert f == 90.0 and r == "positive" and note is None
+
+
+def test_zero_dte_and_weekly_scopes_with_the_top_strikes(client):
+    today = _dt.date.today().isoformat()
+    g = client.get("/api/market/gex/NDX?scope=0dte&top=5").json()
+    assert g["scope"] == "0dte" and g["expiry"] == today and g["expiries"] == [today]
+    assert [r["expiry"] for r in g["by_expiry"]["rows"]] == [today] and g["source"].startswith("hub:")
+    top = g["top"]
+    assert len(top) == 5 and [abs(t["net_gex"]) for t in top] == sorted((abs(t["net_gex"]) for t in top), reverse=True)
+    assert all(t["dealer_sign"] == ("long" if t["net_gex"] > 0 else "short") for t in top)
+    assert 0 < sum(t["share"] for t in top) <= 1.0 + 1e-9
+    assert set(top[0]) >= {"strike", "net_gex", "dealer_sign", "share", "call_oi", "put_oi", "volume"}
+    near = [t for t in top if abs(t["strike"] - SPOT) <= 100]
+    assert near and all(t["volume"] == 600.0 for t in near)              # today's volume, calls + puts
+    cols = [c["field"] for c in g["table"]["columns"]]
+    assert "call_volume" in cols and "put_volume" in cols
+    w = client.get("/api/market/gex/NDX?scope=weekly").json()
+    assert w["scope"] == "weekly" and all(r["dte"] <= 7 for r in w["by_expiry"]["rows"]) and len(w["expiries"]) >= 5
+    a = client.get("/api/market/gex/NDX").json()
+    assert a["scope"] == "all" and len(a["top"]) == 8
+    assert client.get("/api/market/gex/NDX?scope=monthly").status_code == 422

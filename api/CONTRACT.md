@@ -536,3 +536,34 @@ clarifications of what the service does where the spec leaves room.
     …, "plan", "lots", "orders", "combined_exposure_x"}, "decided_at"}], "table"}` (newest first).
   - `/api/runner/arms` rows for it carry `status`: `{"variant", "ledger_strategy", "shares", "lots", "state",
     "last_decision"}`.
+- **GEX by scope, with the top strikes.** `GET /api/market/gex/{ticker}?source=&scope=all|0dte|weekly&top=8` — the same
+  response as before plus `scope`, `expiry` (the expiry used; for `weekly` / `all` the nearest), `expiries` (all used),
+  `top` and volume columns.
+  - `scope=all` (default): unchanged. `0dte`: today's expiry only (NDX → its same-day NDXP / NDX expiry, SPX → SPXW,
+    SPY / QQQ / IBIT / ETHA their same-day expiry), else the nearest one — `expiry` says which and a warning says
+    "no expiry today: the nearest (…)". `weekly`: every expiry ≤ 7 DTE. A narrower scope always uses the live chain
+    (the hub's; Polygon's snapshot filtered to those expiries when there is no hub), so `flip`, the walls, `net_gex`,
+    `regime`, `max_pain`, `table` and `by_expiry` are that scope's.
+  - `top` (0–50, default 8): `[{"strike", "net_gex", "dealer_sign": "long|short", "share", "call_oi", "put_oi",
+    "volume", "call_volume", "put_volume", "call_gex", "put_gex"}]`, sorted by |net_gex| descending. `dealer_sign`:
+    `long` = dealers long gamma there (net GEX > 0, a damping wall), `short` = short gamma (amplifying). `share` =
+    |net_gex| / the sum of |net_gex| over all strikes in the scope.
+  - `table` adds `call_volume`, `put_volume` (today's volume per strike). In a narrow scope a contract that traded
+    today but has no open interest yet is kept (it adds volume, not GEX: GEX is gamma × open interest).
+  - Live inputs: the broker's streamed IV / gamma / OI and the index's streamed level, recomputed on every refresh.
+    Cached 60 s per (ticker, source, scope, top). Cost per refresh of `NDX?scope=0dte` while the broker streams: no
+    REST request (the chain skeleton is the broker's REST chain, cached 4 h; one expiry's ~180 contracts are streamed
+    subscriptions, kept two minutes so the next refresh finds them warm). Without the stream: about 2–4 vendor requests
+    (yfinance's chain for that expiry and spot, Polygon's snapshot if yfinance lacks IV).
+- **`GET /api/market/intraday/{ticker}?minutes=390&interval=1`** → the `/api/market/bars` shape (`ticker`, `interval`
+  (`1m`, `5m`, …), `source`, `t` (ISO with the ET offset), `o`, `h`, `l`, `c`, `v`) plus `prev_close`, `session` (today
+  once the market has opened on a trading day, else the last trading day), `delayed_minutes` (from the last bar to now,
+  or to 16:00), `vendor`, `vendor_delayed_minutes`, `hub_minutes`, `live`, `notes`.
+  - Bars: the vendor's 1-minute bars for the session (yfinance: ^NDX / ^SPX for the indices, the ticker for stocks and
+    ETFs; Polygon's minute aggregates as a stock's fallback — its plan here refuses the current session, which is then
+    not asked again that day), fetched through the request gate at most once a minute per symbol; then, after the
+    vendor's last bar, minutes built from the hub's live quotes (an index at its level, a stock at its mid; volume
+    from the streamed day volume). `source` is e.g. `yfinance+hub`.
+  - Asking for a symbol watches it for 20 minutes, only while the broker streams (no polling cost). Regular hours
+    only (09:30–16:00 ET). `minutes` 1–390 (the last N minutes of the session), `interval` 1, 2, 5, 10, 15 or 30.
+    Cached 15 s. 422 for another interval or an option symbol.

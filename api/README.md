@@ -84,8 +84,9 @@ installed for their screener hooks; without it the registry falls back to the ge
 | GET | `/market/yield-curve/surface?days=730&step=1w` | the curve through time, date × tenor (`step` 1d / 1w / 1m) |
 | GET | `/market/vix-term` · `/market/iv-term/{ticker}` | VIX term structure · a ticker's ATM IV by expiry |
 | GET | `/market/iv/{ticker}` | `engine.iv_metrics` dict |
-| GET | `/market/gex/{ticker}?source=auto\|db\|polygon\|hub` | dealer GEX + per-strike Table (indices from the hub's live chain) |
+| GET | `/market/gex/{ticker}?source=auto\|db\|polygon\|hub&scope=all\|0dte\|weekly&top=8` | dealer GEX + per-strike Table (indices from the hub's live chain); a scope's expiries only; the top strikes with the dealers' side |
 | GET | `/market/gex/{ticker}/history?days=365&interval=1d\|session\|30m` | recorded live GEX (app.GexHistory), before it the daily proxy from the stored SPY snapshots |
+| GET | `/market/intraday/{ticker}?minutes=390&interval=1` | the session's 1-minute bars (vendor + the hub's live minutes), prev close, delay |
 | GET | `/market/gex-recorder` | the GEX recorder: on / running, last tick, rows written, failed slots, what app.GexHistory holds |
 | GET | `/data/coverage` | what the DB holds, per table |
 | GET | `/runner/sessions` | every paper runner: the service's own children and any found running elsewhere |
