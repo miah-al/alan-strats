@@ -125,6 +125,61 @@ def _leg_symbol(r) -> Optional[str]:
         return None
 
 
+#: paper/providers.py PARITY_TAG: the runner's note on a put vertical it booked as a call credit spread's equivalent
+PARITY_TAG = "priced via call parity"
+
+
+def _parity_group(grp: pd.DataFrame) -> bool:
+    """A two-leg put vertical the runner booked as the equivalent of a call credit spread -- its opening note says
+    'priced via call parity' (ndx_gamma_walls). The runner marks it off the calls at its strikes (the quoted side:
+    its own deep in-the-money puts are quoted so wide that a mark taken from them wanders between polls), and so
+    does the hub fallback here, the same way: paper/providers.py parity_put_quote."""
+    try:
+        if "Notes" not in grp.columns or not grp["Notes"].astype(str).str.contains(PARITY_TAG, regex=False).any():
+            return False
+        legs = _noncash(grp)
+        legs = legs[legs["SecurityType"].astype(str).str.lower() == "option"]
+        return len(legs) == 2 and all(str(t).upper().startswith("P") for t in legs["OptionType"])
+    except Exception:
+        return False
+
+
+def _parity_call_symbols(grp: pd.DataFrame) -> dict:
+    """{put leg symbol: the call at the same strike and expiry} for a parity group (canonical spellings)."""
+    from api.marketdata import symbols as SYM
+    out: dict = {}
+    for _, r in _noncash(grp).iterrows():
+        s = _leg_symbol(r)
+        o = SYM.parse_option(s) if s else None
+        if o is not None and o.right == "P":
+            out[s] = SYM.make_option(o.root, o.expiry, "C", o.strike).occ
+    return out
+
+
+def _parity_value(grp: pd.DataFrame, quotes: dict):
+    """(liquidation value, source, legs) of a parity group off the calls' mids, or None while a call is unquoted.
+    Per leg the put is the call less its intrinsic, call - (S - K); across an equal-size vertical the spot
+    cancels, so each leg contributes sign x qty x mult x (call mid + strike) and the sum is width - the call
+    spread's value: the number the runner marks the position at."""
+    calls = _parity_call_symbols(grp)
+    mv, sources, n = 0.0, set(), 0
+    for _, r in _noncash(grp).iterrows():
+        q = quotes.get(calls.get(_leg_symbol(r) or "", "")) or {}
+        if q.get("mid") is None:
+            return None
+        qty = abs(float(r.get("Quantity") or 0))
+        mult = float(r.get("Multiplier") or 100)
+        sign = 1.0 if str(r.get("Direction", "")).upper().startswith("B") else -1.0
+        mv += sign * qty * mult * (float(q["mid"]) + float(r.get("Strike") or 0))
+        n += 1
+        if q.get("source"):
+            sources.add(str(q["source"]))
+    bound = PD()._vertical_bound(grp)
+    if bound is not None:
+        mv = min(bound[1], max(bound[0], mv))
+    return round(mv, 2), "market data (" + ", ".join(sorted(sources)) + ") by call parity", n
+
+
 def _hub_quotes(open_groups: dict, runner_marks: dict, hub, all_groups: bool = False) -> dict:
     """One snapshot of the open groups' legs (runner-held groups too with ``all_groups``: their greeks),
     their underlyings and SPY."""
@@ -149,6 +204,8 @@ def _hub_quotes(open_groups: dict, runner_marks: dict, hub, all_groups: bool = F
             s = _leg_symbol(r)
             if s:
                 syms.add(s)
+        if _parity_group(grp):
+            syms.update(_parity_call_symbols(grp).values())       # marked off the calls at the same strikes
     if not syms:
         return {}
     try:
@@ -165,6 +222,10 @@ def _hub_value(tgid, grp: pd.DataFrame, runner_marks: dict, quotes: Optional[dic
     pd_ = PD()
     if pd_.runner_mark_for(runner_marks, tgid) is not None:
         return None
+    if _parity_group(grp):
+        pv = _parity_value(grp, quotes)
+        if pv is not None:
+            return pv
     today = _today()
     mv, sources, n = 0.0, set(), 0
     cache: dict = {}
@@ -530,14 +591,15 @@ def legs(trade_group_id: str, hub=None) -> dict:
     closing = _closing_mask(grp)
     settle_cache: dict = {}
     greeks: dict = {}
+    q: dict = {}
+    calls = _parity_call_symbols(grp) if (is_open and _parity_group(grp)) else {}      # a parity-booked put: off the calls
     if is_open:
         from api.services import risk as RK
         und = str(grp["Underlying"].dropna().iloc[0]) if "Underlying" in grp.columns and not grp["Underlying"].dropna().empty else ""
         try:
             nl = RK.net_legs(grp)
-            q = {}
             if hub is not None and getattr(hub, "providers", None):
-                q = {m["symbol"]: m for m in hub.snapshot([_canon(und)] + [l.symbol for l in nl], wait=2.0)}
+                q = {m["symbol"]: m for m in hub.snapshot([_canon(und)] + [l.symbol for l in nl] + sorted(calls.values()), wait=2.0)}
             if spot is None:
                 spot = _quote_price(q.get(_canon(und)), index=_is_index(und))
             by_ledger = RK.leg_greeks(hub, nl, spot, wait=0.0, quotes=q)
@@ -562,6 +624,11 @@ def legs(trade_group_id: str, hub=None) -> dict:
                 if ex is not None:
                     mark, src = float(ex), "expiry settlement"
         g = greeks.get(sym) or {}
+        cq = q.get(calls.get(_leg_symbol(r) or "", "")) or {} if calls else {}
+        if is_open and mark is None and cq.get("mid") is not None and spot is not None:
+            from paper.providers import parity_leg_mid
+            mark = round(parity_leg_mid(float(cq["mid"]), float(spot), float(r.get("Strike") or 0)), 4)
+            src = f"market data ({cq.get('source')}) by call parity"
         if is_open and mark is None and g.get("mark") is not None:
             mark, src = float(g["mark"]), f"market data ({g.get('mark_source')})"
         pnl = ((1.0 if side == "BUY" else -1.0) * (mark - entry) * qty * mult) if mark is not None else None

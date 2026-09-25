@@ -135,6 +135,36 @@ def vertical_quote(long_leg: LegQuote, short_leg: LegQuote, now: datetime, carry
     return Quote(bid=bid, ask=ask, last=last, age=age, legs=legs, prints=prints)
 
 
+#: the note an engine puts on a put vertical it booked as the equivalent of a call credit spread (ndx_gamma_walls:
+#: "priced via call parity"); the runner and the service mark such a position off the calls, see parity_put_quote
+PARITY_TAG = "priced via call parity"
+
+
+def parity_put_quote(call_q: Optional[Quote], width: float) -> Optional[Quote]:
+    """The bear put spread's quote from the bull call spread's at the same strikes: put = width - call (put-call
+    parity on a vertical; no carry on a same-day expiry). The put's bid is the width less the call's ask, its ask
+    the width less the call's bid, so the quote is as wide as the CALL quote -- the tight one. A call-wall fade
+    sells the out-of-the-money calls, quoted a point or two either side, and books the trade as the deep
+    in-the-money put spread, quoted 10-20 points wide: marked on its own legs the same position read -$732 and
+    -$257 five minutes apart on 2026-09-25 while the trade it stands for had not moved. The age is the call's.
+    None without a call quote or a width."""
+    if call_q is None or not width or float(width) <= 0:
+        return None
+    w = float(width)
+    bid, ask, mid = w - float(call_q.ask), w - float(call_q.bid), w - float(call_q.last)
+    bid, ask, mid = max(0.0, bid), min(w, ask), min(w, max(0.0, mid))
+    if ask < bid or not (bid <= mid <= ask):
+        return None
+    return Quote(bid=bid, ask=ask, last=mid, age=int(call_q.age), age_s=call_q.age_s)
+
+
+def parity_leg_mid(call_mid: float, spot: float, strike: float) -> float:
+    """One put's price from the call's at the same strike and expiry: put = call - (spot - strike), never below
+    zero (put-call parity without carry: a same-day expiry). Leg by leg this is the same construction as
+    parity_put_quote: the two legs' parity prices difference to width - the call spread's value."""
+    return max(0.0, float(call_mid) - (float(spot) - float(strike)))
+
+
 def structure_quote(leg_quotes: list, legs: list, now: datetime, carry_min: int = 30,
                     max_width: Optional[float] = None) -> Optional[Quote]:
     """Two-sided quote of a LONG multi-leg structure (a straddle, an iron fly) from its legs' quotes:

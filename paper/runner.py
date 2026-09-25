@@ -28,7 +28,7 @@ import pandas as pd
 
 from strategy_api.live import Quote, is_structure
 from strategy_api import registry as R
-from .providers import ReplayProvider, TastytradeProvider, Bar, now_et
+from .providers import PARITY_TAG, ReplayProvider, TastytradeProvider, Bar, now_et, parity_leg_mid, parity_put_quote
 from . import ledger as L
 
 logger = logging.getLogger("paper.runner")
@@ -165,6 +165,51 @@ class PaperSession:
         if is_structure(kind):
             return prov.quote_structure(kind, k_low, k_high, *args) if hasattr(prov, "quote_structure") else None
         return prov.quote_vertical(kind, k_low, k_high, *args)
+
+    # ── positions booked by call parity (ndx_gamma_walls) ─────────────────────
+    # The walls strategy sells a call credit spread and books it as the equivalent bear put spread (the platform
+    # trades debit verticals); its entry note says "priced via call parity". The calls are the quoted side: marked
+    # on its own deep in-the-money puts the position's P&L jumped between polls while the trade had not moved.
+    # So such a position is marked the way it was entered -- the call spread's quote turned into the put's
+    # (providers.parity_put_quote) -- everywhere this runner prices it: the engine's quote_fn (the heartbeat's
+    # ``marked`` and the state's last_mark come from it), the heartbeat's live_marks and its per-leg live_legs.
+
+    @staticmethod
+    def _parity_strikes(session) -> set:
+        """(k_low, k_high) of the open put verticals the engine booked by call parity (their note says so)."""
+        out = set()
+        for pos in (getattr(session, "positions", None) or []):
+            if str(getattr(pos, "kind", "")) == "put" and PARITY_TAG in str(getattr(pos, "note", "") or ""):
+                out.add((float(pos.k_low), float(pos.k_high)))
+        return out
+
+    def _mark_quote(self, prov, session, pos, quotes: dict, now: datetime, carry: int):
+        """The quote an open position is marked at this poll: its own structure's, or, for a put vertical booked by
+        call parity, the call spread's turned into the put's (its own legs' quote when the calls are unquoted)."""
+        if str(getattr(pos, "kind", "")) == "put" and (float(pos.k_low), float(pos.k_high)) in self._parity_strikes(session):
+            qc = self._quote_for(prov, "call", pos.k_low, pos.k_high, quotes, now, carry)
+            pq = parity_put_quote(qc, float(pos.k_high) - float(pos.k_low))
+            if pq is not None:
+                return pq
+        return self._quote_for(prov, pos.kind, pos.k_low, pos.k_high, quotes, now, carry)
+
+    def _parity_leg_mids(self, prov, session, pos, quotes: dict) -> dict:
+        """Each put leg of a parity-booked vertical priced off the call at its strike (providers.parity_leg_mid, at
+        the spot in this poll's quotes): {symbol: mid}. Empty for any other position, or without a spot."""
+        if str(getattr(pos, "kind", "")) != "put" or (float(pos.k_low), float(pos.k_high)) not in self._parity_strikes(session):
+            return {}
+        iq = quotes.get(self.underlying)
+        spot = float(iq.last) if (iq is not None and getattr(iq, "last", None) is not None) else None
+        if spot is None:
+            return {}
+        puts = list(prov.leg_symbols("put", pos.k_low, pos.k_high))       # (long = k_high, short = k_low)
+        calls = list(prov.leg_symbols("call", pos.k_low, pos.k_high))     # (long = k_low, short = k_high)
+        out: dict = {}
+        for psym, csym, K in ((puts[0], calls[1], float(pos.k_high)), (puts[1], calls[0], float(pos.k_low))):
+            cq = quotes.get(csym) if csym else None
+            if psym and cq is not None and cq.bid is not None and cq.ask is not None and cq.ask >= cq.bid:
+                out[str(psym)] = round(parity_leg_mid((float(cq.bid) + float(cq.ask)) / 2.0, spot, K), 2)
+        return out
 
     def _write_structure_fill(self, f: dict, day: date, expiry: date, S: float, symbols_fn: Callable) -> None:
         """A straddle / iron-fly event: the CSV row with the structure's quote and legs, and the ledger for
@@ -672,7 +717,7 @@ class PaperSession:
                     session.closes.append(float(b.close))        # history only: no decisions on backfilled bars
                     session.last_minute = m
 
-        def quote_fn(S, k_low, k_high, kind, minute):
+        def live_quote(kind, k_low, k_high):
             nonlocal quotes
             syms = self._symbols_for(prov, kind, k_low, k_high)
             if not syms or any(not s for s in syms):
@@ -682,14 +727,23 @@ class PaperSession:
                     quotes.update(prov.fetch(syms))
                 except Exception as exc:
                     logger.warning("quote fetch failed: %s", exc); return None
-            q = self._quote_for(prov, kind, k_low, k_high, quotes, now_fn(), carry)
+            return self._quote_for(prov, kind, k_low, k_high, quotes, now_fn(), carry)
+
+        def quote_fn(S, k_low, k_high, kind, minute):
+            q = live_quote(kind, k_low, k_high)
+            # a put vertical the engine booked by call parity is priced the way it was entered: off the calls
+            if str(kind) == "put" and (float(k_low), float(k_high)) in self._parity_strikes(session):
+                q = parity_put_quote(live_quote("call", k_low, k_high), float(k_high) - float(k_low)) or q
             self._last_quote[(kind, k_low, k_high)] = q
             return q
 
         def watched_symbols() -> list[str]:
             syms = []
+            parity = self._parity_strikes(session)
             for pos in session.positions:
                 syms += self._symbols_for(prov, pos.kind, pos.k_low, pos.k_high)
+                if str(pos.kind) == "put" and (float(pos.k_low), float(pos.k_high)) in parity:
+                    syms += self._symbols_for(prov, "call", pos.k_low, pos.k_high)     # marked off the calls
             if getattr(session, "pending", None) is not None:
                 pe = session.pending; syms += self._symbols_for(prov, pe.kind, pe.k_low, pe.k_high)
             watch = getattr(session, "watch_structures", None)         # an engine that wants more quoted each poll
@@ -740,7 +794,7 @@ class PaperSession:
             live_legs: dict = {}
             for pos in session.positions:
                 try:
-                    qv = self._quote_for(prov, pos.kind, pos.k_low, pos.k_high, quotes, now, carry)
+                    qv = self._mark_quote(prov, session, pos, quotes, now, carry)
                     if qv is not None:
                         live_marks[f"{pos.direction}|{float(pos.k_low)}|{float(pos.k_high)}"] = round(float(qv.last), 2)
                         # Every poll's mark against the target the engine will only check at the next
@@ -754,6 +808,7 @@ class PaperSession:
                         lq = quotes.get(sym) if sym else None
                         if lq is not None and lq.bid is not None and lq.ask is not None and lq.ask >= lq.bid:
                             live_legs[str(sym)] = round((float(lq.bid) + float(lq.ask)) / 2.0, 2)
+                    live_legs.update(self._parity_leg_mids(prov, session, pos, quotes))   # a parity-booked put: off the calls
                 except Exception:
                     pass
             iq = quotes.get(self.underlying)
