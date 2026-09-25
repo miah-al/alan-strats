@@ -8,11 +8,14 @@ written (the rules fallback needs only the market and operations blocks, and eve
               for today and the next session, plus the mega-cap earnings list: db/seed/events/megacap.csv (hand-kept
               from the companies' own notices) and, when asked, yfinance's calendar for the eight names (through the
               request gate, cached a day by api/services/earnings.py)
-  official    the Federal Reserve, BLS, BEA and SEC press-release RSS feeds: US government publications, public domain,
-              no key, no terms beyond the SEC's request for a descriptive User-Agent (ALAN_TRADER_BRIEF_CONTACT)
+  official    the Federal Reserve, BEA and SEC press-release RSS feeds: US government publications, public domain, no
+              key, no terms beyond the SEC's request for a descriptive User-Agent (ALAN_TRADER_BRIEF_CONTACT). BLS is
+              not polled: bls.gov answers a non-browser client with a 403 block page (checked 2026-09-25), and its
+              releases (CPI, NFP) are scheduled items on the calendar anyway
   headlines   GDELT 2.0 DOC API (api.gdeltproject.org): free, no key, open data with attribution ("GDELT Project");
               titles, sources and timestamps only, never article text. Polite use: one request at a time, at least
-              5 s apart, the answer cached ten minutes
+              5 s apart (a 429 is retried once after 6 s), a query under ~120 characters (longer ones are refused as
+              "too long"), the answer cached ten minutes
   posts       the CNN-hosted mirror of the open Truth Social archive (ix.cnn.io/data/truth-social/truth_archive.json,
               ~20 MB, regenerated every ~5 min): a HEAD first, the body fetched only when Last-Modified changed, once
               per brief. A third-party mirror that may stop without notice — its absence is a note, not a failure
@@ -48,15 +51,14 @@ MACRO_KINDS = ("fomc", "cpi", "nfp", "pce", "gdp")
 
 OFFICIAL_FEEDS = (
     ("Fed", "https://www.federalreserve.gov/feeds/press_all.xml"),
-    ("BLS", "https://www.bls.gov/feed/bls_latest.rss"),
     ("BEA", "https://apps.bea.gov/rss/rss.xml"),
     ("SEC", "https://www.sec.gov/news/pressreleases.rss"),
 )
 GDELT_URL = "https://api.gdeltproject.org/api/v2/doc/doc"
-GDELT_QUERY = ('(tariff OR tariffs OR sanctions OR ceasefire OR airstrike OR "military strike" OR invasion OR '
-               '"stock market" OR nasdaq OR "federal reserve" OR "bank failure" OR "trading halt" OR outage OR '
-               '"government shutdown" OR "executive order" OR "state of emergency") sourcelang:english')
+GDELT_QUERY = '(tariff OR sanctions OR ceasefire OR airstrike OR nasdaq OR "trading halt" OR outage OR shutdown) sourcelang:english'
 GDELT_MIN_GAP_S = 5.0
+GDELT_RETRY_S = 20.0      # a 429 says "one every 5 seconds", but in practice a burst needs a longer pause
+GDELT_TRIES = 3
 GDELT_CACHE_S = 600.0
 GDELT_MAX_RECORDS = 75
 TRUTH_URL = "https://ix.cnn.io/data/truth-social/truth_archive.json"
@@ -209,17 +211,26 @@ def _parse_rfc_date(s: str) -> Optional[_dt.datetime]:
     return d if d.tzinfo else d.replace(tzinfo=UTC)
 
 
-def parse_feed(text: str, source: str) -> list[dict]:
-    """RSS 2.0 or Atom items as [{time, source, title, link}] (time tz-aware; items without a date are dropped)."""
+def parse_feed(text, source: str) -> list[dict]:
+    """RSS 2.0 or Atom items as [{time, source, title, link}] (time tz-aware; items without a date are dropped).
+    ``text`` may be bytes (preferred: the parser reads the declaration's encoding itself) or str."""
+    if isinstance(text, bytes):
+        data = text.lstrip(b"\xef\xbb\xbf \r\n\t")                          # the Fed's feed starts with a BOM
+    else:
+        data = (text or "").lstrip("﻿ \r\n\t")
+        if data.startswith("ï»¿"):                                          # the same BOM read as Latin-1
+            data = data[3:].lstrip()
+        data = data.encode("utf-8")
+        data = re.sub(rb'^(<\?xml[^>]*?)\s+encoding="[^"]*"', rb"\1", data)  # it is UTF-8 now whatever it said
     try:
-        root = ET.fromstring(text)
+        root = ET.fromstring(data)
     except ET.ParseError:
         return []
     out = []
     ns = {"a": "http://www.w3.org/2005/Atom"}
     for item in root.iter("item"):
         title = clean_text(item.findtext("title") or "")
-        when = _parse_rfc_date(item.findtext("pubDate") or item.findtext("{http://purl.org/dc/elements/1.1/}date") or "")
+        when = _parse_rfc_date((item.findtext("pubDate") or item.findtext("{http://purl.org/dc/elements/1.1/}date") or "").strip())
         if title and when:
             out.append({"time": when, "source": source, "title": title, "link": (item.findtext("link") or "").strip()})
     for entry in root.iter("{http://www.w3.org/2005/Atom}entry"):
@@ -242,7 +253,7 @@ def official_block(since: _dt.datetime, get: Optional[Callable] = None) -> dict:
             if r.status_code != 200:
                 notes.append(f"{name} feed answered {r.status_code}")
                 continue
-            for it in parse_feed(r.text, name):
+            for it in parse_feed(getattr(r, "content", None) or r.text, name):
                 if it["time"] >= since:
                     items.append(it)
         except Exception as exc:  # noqa: BLE001
@@ -296,22 +307,33 @@ def headlines_block(since: _dt.datetime, now: Optional[_dt.datetime] = None, get
         hit = _GDELT_CACHE.get("last")
         if hit and hit[0] == key and time.monotonic() - hit[1] < GDELT_CACHE_S:
             return hit[2]
-        wait = GDELT_MIN_GAP_S - (time.monotonic() - _GDELT_LAST)
-        if wait > 0:
-            time.sleep(wait)
-        _GDELT_LAST = time.monotonic()
-        try:
-            r = get(GDELT_URL, params={"query": GDELT_QUERY, "mode": "ArtList", "format": "json",
-                                       "timespan": f"{hours}h", "maxrecords": GDELT_MAX_RECORDS, "sort": "DateDesc"},
-                    headers={"User-Agent": contact_user_agent()}, timeout=FEED_TIMEOUT_S * 2)
+        out = {"items": [], "notes": ["GDELT: no answer"], "attribution": "GDELT Project"}
+        for attempt in range(GDELT_TRIES):
+            wait = GDELT_MIN_GAP_S - (time.monotonic() - _GDELT_LAST)
+            if wait > 0:
+                time.sleep(wait)
+            _GDELT_LAST = time.monotonic()
+            try:
+                r = get(GDELT_URL, params={"query": GDELT_QUERY, "mode": "ArtList", "format": "json",
+                                           "timespan": f"{hours}h", "maxrecords": GDELT_MAX_RECORDS, "sort": "DateDesc"},
+                        headers={"User-Agent": contact_user_agent()}, timeout=FEED_TIMEOUT_S * 3)
+            except Exception as exc:  # noqa: BLE001
+                out = {"items": [], "notes": [f"GDELT unavailable: {type(exc).__name__}"], "attribution": "GDELT Project"}
+                break
+            if r.status_code == 429 and attempt < GDELT_TRIES - 1:
+                time.sleep(GDELT_RETRY_S)                       # "one request every 5 seconds": once more, later
+                continue
             if r.status_code != 200:
                 out = {"items": [], "notes": [f"GDELT answered {r.status_code}"], "attribution": "GDELT Project"}
-            else:
+                break
+            try:
                 arts = (r.json() or {}).get("articles") or []
-                out = {"items": cluster_articles(arts, since), "notes": [], "attribution": "GDELT Project",
-                       "articles": len(arts)}
-        except Exception as exc:  # noqa: BLE001
-            out = {"items": [], "notes": [f"GDELT unavailable: {type(exc).__name__}"], "attribution": "GDELT Project"}
+            except Exception:  # noqa: BLE001 — a 200 with a plain-text refusal ("query too long")
+                out = {"items": [], "notes": [f"GDELT refused the query: {str(r.text)[:80]}"], "attribution": "GDELT Project"}
+                break
+            out = {"items": cluster_articles(arts, since), "notes": [], "attribution": "GDELT Project", "articles": len(arts),
+                   **({"retries": attempt} if attempt else {})}
+            break
         _GDELT_CACHE["last"] = (key, time.monotonic(), out)
         return out
 
@@ -399,8 +421,10 @@ def _prior_closes_yf(symbols: list[str]) -> dict[str, float]:
     return out
 
 
-def market_block(hub, day: _dt.date, prior_closes: Optional[Callable[[list[str]], dict]] = None) -> dict:
-    """NDX / QQQ / VIX / VXN / VIX3M as the hub streams them, the gap and the session range so far, yesterday's bar."""
+def market_block(hub, day: _dt.date, prior_closes: Optional[Callable[[list[str]], dict]] = None,
+                 network: bool = True) -> dict:
+    """NDX / QQQ / VIX / VXN / VIX3M as the hub streams them, the gap and the session range so far, yesterday's bar.
+    With ``network`` off the yfinance prior-close fallback is skipped (the hub and the stored bars only)."""
     out: dict = {"source": [], "notes": []}
     quotes: dict[str, dict] = {}
     if hub is not None and getattr(hub, "providers", None):
@@ -433,6 +457,9 @@ def market_block(hub, day: _dt.date, prior_closes: Optional[Callable[[list[str]]
         out[name.lower()] = q.get("last")
         out[name.lower() + "_prev"] = q.get("prev_close")
     need = [n for n in ("VIX", "VXN", "VIX3M") if out.get(n.lower()) is None and out.get(n.lower() + "_prev") is None]
+    if need and not network and prior_closes is None:
+        out["notes"].append("no prior close for " + ", ".join(need) + " (network sources off)")
+        need = []
     if need:
         try:
             fn = prior_closes or _prior_closes_yf
@@ -463,7 +490,7 @@ def market_block(hub, day: _dt.date, prior_closes: Optional[Callable[[list[str]]
             out["yday_range_pct"] = _pct(float(y["high"]), float(yy["close"])) - _pct(float(y["low"]), float(yy["close"]))
             out["yday_range_pct"] = round(out["yday_range_pct"], 3)
             out["yday_return_pct"] = _pct(float(y["close"]), float(yy["close"]))
-            out["yday_date"] = str(df.index[-1])[:10] if not isinstance(df.index[-1], int) else None
+            out["yday_date"] = str(y["date"])[:10] if "date" in df.columns else None
             out["source"].append("stored NDX daily bars")
     except Exception as exc:  # noqa: BLE001
         out["notes"].append(f"yesterday's NDX bar unavailable: {type(exc).__name__}")
@@ -539,7 +566,7 @@ class Sources:
         else:
             off = {"items": [], "notes": ["network sources off"]}
             official, heads, posts = dict(off), dict(off), dict(off)
-        mkt = market_block(self.hub, day)
+        mkt = market_block(self.hub, day, network=self.network)
         ops = operations_block(self.hub, self.arms, self.recorder, day, cal.get("early_close"))
         return {"date": day.isoformat(), "weekday": day.strftime("%A"), "as_of": now.astimezone(NY).isoformat(timespec="minutes"),
                 "since": since.isoformat(timespec="minutes"), "calendar": cal, "official": official,

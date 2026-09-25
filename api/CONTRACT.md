@@ -635,8 +635,9 @@ clarifications of what the service does where the spec leaves room.
 An AI "risk manager" for the paper NDX 0DTE condor, evaluated rather than trusted (api/services/morning_brief.py).
 At 09:50 ET on trading days (late up to 10:30) the service gathers what is knowable before the 10:00 entry — today's
 and the next session's calendar (the service's macro / OPEX / exchange calendars, the mega-cap earnings list), official
-releases overnight (Fed, BLS, BEA, SEC press RSS), overnight headline clusters (GDELT 2.0 DOC API, titles and source
-counts only), the presidential posts since the prior close (the open Truth Social archive's CNN mirror, keyword-tagged
+releases overnight (Fed, BEA, SEC press RSS; BLS blocks non-browser clients and its releases are calendar items),
+overnight headline clusters (GDELT 2.0 DOC API, titles and source counts only, one polite request), the presidential
+posts since the prior close (the open Truth Social archive's CNN mirror, fetched when it changed, keyword-tagged
 for market terms), the hub's NDX / QQQ / VIX / VXN / VIX3M levels (gap, session range, term structure), yesterday's
 NDX bar, and the operational checks (quote recorder, broker stream, condor armed, session type) — and writes ONE
 decision row per day to `app.MorningBrief`. **The brief never places, sizes or blocks an order**: the paper condor

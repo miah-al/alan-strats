@@ -395,6 +395,14 @@ def test_feed_parsing_and_filtering():
     items = [i for i in S.parse_feed(RSS, "Fed") + S.parse_feed(ATOM, "SEC") if i["time"] >= since]
     assert [i["title"] for i in items] == ["Federal Reserve issues FOMC statement", "Press Release & note"]
     assert S.parse_feed("<not xml", "Fed") == []
+    # the Fed's feed: a UTF-8 BOM before the declaration, CDATA dates with trailing whitespace
+    fed = ("﻿<?xml version=\"1.0\" encoding=\"utf-8\" ?>\n<rss version=\"2.0\"><channel><item><title>FOMC statement</title>"
+           "<link><![CDATA[https://f/1]]></link><pubDate><![CDATA[Thu, 24 Sep 2026 22:30:00 GMT]]></pubDate>    </item></channel></rss>")
+    got = S.parse_feed(fed, "Fed")
+    assert len(got) == 1 and got[0]["title"] == "FOMC statement" and got[0]["time"].isoformat() == "2026-09-24T22:30:00+00:00"
+    assert S.parse_feed(fed.encode("utf-8"), "Fed") == got                          # the raw bytes, BOM and all
+    assert S.parse_feed(fed.encode("utf-8").decode("latin-1"), "Fed") == got        # the BOM mis-decoded as Latin-1
+    assert [n for n, _ in S.OFFICIAL_FEEDS] == ["Fed", "BEA", "SEC"]                  # BLS blocks non-browser clients
 
     def get(url, headers=None, timeout=None):
         assert "alan_trader" in headers["User-Agent"]
@@ -430,6 +438,29 @@ def test_gdelt_clustering_and_the_block():
     assert blk["items"][0]["sources"] == 3 and blk["attribution"] == "GDELT Project" and calls[0]["mode"] == "ArtList"
     assert calls[0]["timespan"] == "18h" and calls[0]["maxrecords"] == S.GDELT_MAX_RECORDS
     assert S.headlines_block(since, now, get=get) == blk and len(calls) == 1      # cached
+    S._GDELT_CACHE.clear()
+    assert len(S.GDELT_QUERY) <= 120                                                # longer queries are refused as "too long"
+
+
+def test_gdelt_429_is_retried_once_and_a_text_refusal_is_a_note(monkeypatch):
+    since = D.datetime(2026, 9, 24, 16, 0, tzinfo=S.NY)
+    now = D.datetime(2026, 9, 25, 13, 50, tzinfo=S.UTC)
+    slept = []
+    monkeypatch.setattr(S.time, "sleep", lambda s: slept.append(s))
+    answers = [Resp(429, None, "Please limit requests to one every 5 seconds"),
+               Resp(200, {"articles": [{"title": "Tariffs raised", "seendate": "20260925T060000Z", "domain": "a.com", "url": "u"}]})]
+    S._GDELT_CACHE.clear()
+    S._GDELT_LAST = 0.0
+    blk = S.headlines_block(since, now, get=lambda *a, **k: answers.pop(0))
+    assert blk["items"][0]["title"] == "Tariffs raised" and blk["retries"] == 1 and S.GDELT_RETRY_S in slept
+    S._GDELT_CACHE.clear()
+    S._GDELT_LAST = 0.0
+    refused = S.headlines_block(since, now, get=lambda *a, **k: Resp(200, None, "Your query was too short or too long."))
+    assert refused["items"] == [] and refused["notes"][0].startswith("GDELT refused the query")
+    S._GDELT_CACHE.clear()
+    S._GDELT_LAST = 0.0
+    out = S.headlines_block(since, now, get=lambda *a, **k: Resp(429, None, "slow down"))
+    assert out["items"] == [] and out["notes"] == ["GDELT answered 429"]
     S._GDELT_CACHE.clear()
 
 
