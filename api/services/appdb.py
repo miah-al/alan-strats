@@ -10,6 +10,7 @@ everything else — DDL is allowed in this schema only:
   app.IvHistory    each symbol's daily 30-day ATM IV (vol-stats' IV rank / percentile history)
   app.BacktestRun  a summary of every backtest job that succeeded (strategy-stats' expectation)
   app.GexHistory   live dealer GEX recorded each trading day (and every 30 min while streaming)
+  app.RunnerArm    armed scheduled paper runs (a strategy, its variant, once / weekdays) and their last result
 """
 from __future__ import annotations
 
@@ -116,8 +117,29 @@ _TABLES = {
             Source         NVARCHAR(60)   NULL,
             RecordedAt     DATETIME2      NOT NULL CONSTRAINT DF_GexHistory_At DEFAULT SYSUTCDATETIME()
         )""",
+    "RunnerArm": """
+        CREATE TABLE app.RunnerArm (
+            ArmId          INT IDENTITY(1,1) NOT NULL CONSTRAINT PK_RunnerArm PRIMARY KEY,
+            Strategy       NVARCHAR(80)   NOT NULL,
+            Variant        NVARCHAR(20)   NOT NULL CONSTRAINT DF_RunnerArm_Variant DEFAULT '',
+            Schedule       NVARCHAR(10)   NOT NULL,
+            ArmDate        DATE           NULL,
+            Mode           NVARCHAR(10)   NOT NULL CONSTRAINT DF_RunnerArm_Mode DEFAULT 'paper',
+            Active         BIT            NOT NULL CONSTRAINT DF_RunnerArm_Active DEFAULT 1,
+            ArmedAt        DATETIME2      NOT NULL CONSTRAINT DF_RunnerArm_ArmedAt DEFAULT SYSUTCDATETIME(),
+            DisarmedAt     DATETIME2      NULL,
+            LastRunDate    DATE           NULL,
+            LastRunAt      DATETIME2      NULL,
+            LastResult     NVARCHAR(400)  NULL,
+            RunPid         INT            NULL,
+            RunCreated     FLOAT          NULL,
+            RunLog         NVARCHAR(400)  NULL,
+            UpdatedAt      DATETIME2      NOT NULL CONSTRAINT DF_RunnerArm_Updated DEFAULT SYSUTCDATETIME()
+        )""",
 }
 _INDEXES = {
+    ("RunnerArm", "UX_RunnerArm_Active"):
+        "CREATE UNIQUE INDEX UX_RunnerArm_Active ON app.RunnerArm (Strategy, Variant) WHERE Active = 1",
     ("GexHistory", "UX_GexHistory_Slot"):
         "CREATE UNIQUE INDEX UX_GexHistory_Slot ON app.GexHistory (Ticker, Kind, SlotTs)",
     ("PaperOrder", "UX_PaperOrder_Client"):

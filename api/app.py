@@ -86,6 +86,8 @@ def create_app():
     alert_engine = AlertEngine(market_hub, publish=hub.publish)
     from api.services.runner import RunnerManager
     runners = RunnerManager(publish=hub.publish)
+    from api.services.arms import ArmScheduler, make_store
+    arm_scheduler = ArmScheduler(make_store(), runners, publish=hub.publish)
     from api.services.volstats import VolStats
     vol_stats = VolStats(market_hub)
     from api.services.gex_recorder import GexRecorder
@@ -108,6 +110,7 @@ def create_app():
         order_book.start()
         alert_engine.start()
         runners.start_monitor()
+        arm_scheduler.start()
         gex_recorder.start()
         nightly_bars.start()
         beat = asyncio.create_task(hub.heartbeat_forever())
@@ -119,6 +122,7 @@ def create_app():
             beat.cancel()
             order_book.stop()
             alert_engine.stop()
+            arm_scheduler.stop()
             runners.shutdown()
             vol_stats.shutdown()
             gex_recorder.stop()
@@ -139,6 +143,7 @@ def create_app():
     app.state.orders = order_book
     app.state.alerts = alert_engine
     app.state.runner = runners
+    app.state.arms = arm_scheduler
     app.state.volstats = vol_stats
     app.state.gex_recorder = gex_recorder
     app.state.nightly_bars = nightly_bars

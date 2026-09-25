@@ -1,4 +1,4 @@
-"""/api/runner — paper runner sessions: list all, start and stop the service's own."""
+"""/api/runner — paper runner sessions: list all, start and stop the service's own; arm scheduled paper runs."""
 from __future__ import annotations
 
 from typing import Optional
@@ -35,3 +35,36 @@ def runner_stop(strategy: str, request: Request):
         raise HTTPException(409, str(exc))
     except LookupError as exc:
         raise HTTPException(404, str(exc))
+
+
+@router.post("/runner/stop-all")
+def runner_stop_all(request: Request):
+    """The kill switch: stop every session the service started (never one it did not)."""
+    return {"stopped": request.app.state.runner.stop_all()}
+
+
+@router.get("/runner/arms")
+def runner_arms(request: Request):
+    return request.app.state.arms.arms()
+
+
+@router.post("/runner/{strategy}/arm")
+def runner_arm(strategy: str, request: Request, body: Optional[dict] = Body(default=None)):
+    from api.services.arms import ArmError
+    b = body or {}
+    try:
+        return request.app.state.arms.arm(strategy, b.get("schedule") or "weekdays", b.get("date"), b.get("variant"))
+    except ArmError as exc:
+        raise HTTPException(422, str(exc))
+
+
+@router.delete("/runner/{strategy}/arm")
+def runner_disarm(strategy: str, request: Request, variant: Optional[str] = None):
+    from api.services.arms import ArmError
+    try:
+        rows = request.app.state.arms.disarm(strategy, variant)
+    except ArmError as exc:
+        raise HTTPException(422, str(exc))
+    if not rows:
+        raise HTTPException(404, f"{strategy}{':' + variant if variant else ''} is not armed")
+    return rows

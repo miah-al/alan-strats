@@ -9,9 +9,15 @@ a scheduler — are found read-only: in the process table (any ``paper_runner`` 
 fresh heartbeat in any state directory the service reads (a runner the process table cannot show).
 
 The service refuses to start a runner for a strategy that already has one running anywhere, and it
-never stops a runner it did not start. It never starts one on its own: only ``start`` does, when a
-client asks. ``mode: replay`` runs a stored day (fast; no ledger unless asked), ``mode: live`` runs
-today against the broker's quotes (the runner's own request budget and guards apply).
+never stops a runner it did not start. It starts one on its own only for an arm (api/services/arms.py):
+the scheduled task's script, launched outside the service's process tree and ``adopt``-ed here (so it
+outlives a service restart, and a restarted service still knows it as its own). Otherwise only ``start``
+does, when a client asks. ``mode: replay`` runs a stored day (fast; no ledger unless asked), ``mode: live``
+runs today against the broker's quotes (the runner's own request budget and guards apply).
+
+The platform's scheduled-task script (``scripts/start_paper_runner.ps1 -Strategy <slug>``: data refresh,
+the runner restarted until 16:01 ET, then reconcile and archive) counts as a runner for its strategy
+from the moment it starts, before its runner process exists.
 """
 from __future__ import annotations
 
@@ -19,6 +25,7 @@ import datetime as _dt
 import json
 import logging
 import os
+import re
 import signal
 import subprocess
 import sys
@@ -36,6 +43,18 @@ logger = logging.getLogger("alan_trader.api.runner")
 HEARTBEAT_FRESH_S = 120.0
 STOP_GRACE_S = 10.0
 _RUNNER_MARKERS = ("paper_runner", "runner_launch")
+_TASK_SCRIPT = "start_paper_runner"
+_TASK_DEFAULT_STRATEGY = "ndx_0dte_tasty"          # the script's own default
+_TASK_STRATEGY_RX = re.compile(r"-strategy[\s\"']+([A-Za-z0-9_:.\-]+)", re.IGNORECASE)
+_TASK_FILE_RX = re.compile(r"-file[\s\"']+[^\"']*start_paper_runner\.ps1", re.IGNORECASE)
+_SCRIPT_HOSTS = {"powershell", "pwsh", "cmd"}
+#: a shell, an editor or a search tool whose command line merely mentions a runner is not one
+_NOT_RUNNERS = {"bash", "sh", "zsh", "dash", "fish", "grep", "rg", "findstr", "git", "code", "node", "notepad"}
+
+
+def _exe(cmd: list[str]) -> str:
+    name = str(cmd[0]).replace("\\", "/").rsplit("/", 1)[-1].lower() if cmd else ""
+    return name[:-4] if name.endswith(".exe") else name
 
 
 class RunnerError(ValueError):
@@ -44,6 +63,64 @@ class RunnerError(ValueError):
 
 class RunnerConflict(RuntimeError):
     """A runner is already running for the strategy, or the one asked to stop is not the service's (409)."""
+
+
+class AdoptedProc:
+    """A process the service started outside its own process tree (so it outlives the service and the
+    desktop's kill-on-close job): known by pid and creation time, polled through the process table. Its
+    exit code is the one the launch wrapper writes to ``exit_file`` (-1 when it ended without one)."""
+
+    def __init__(self, pid: int, created: float, exit_file: Optional[str] = None):
+        self.pid = int(pid)
+        self.created = float(created)
+        self.exit_file = exit_file
+        self.returncode: Optional[int] = None
+
+    def process(self):
+        try:
+            import psutil
+            p = psutil.Process(self.pid)
+            if abs(p.create_time() - self.created) > 2.0:
+                return None                                    # the pid was reused: not ours
+            if p.status() == psutil.STATUS_ZOMBIE:
+                return None
+            return p
+        except Exception:
+            return None
+
+    def poll(self) -> Optional[int]:
+        if self.returncode is not None:
+            return self.returncode
+        if self.process() is not None:
+            return None
+        code = -1
+        if self.exit_file:
+            for _ in range(10):                                 # the wrapper writes it as it exits
+                try:
+                    code = int(Path(self.exit_file).read_text(encoding="utf-8", errors="replace").strip() or -1)
+                    break
+                except (OSError, ValueError):
+                    time.sleep(0.1)
+        self.returncode = code
+        return code
+
+    def wait(self, timeout: Optional[float] = None) -> Optional[int]:
+        end = time.monotonic() + (timeout if timeout is not None else 1e9)
+        while self.poll() is None:
+            if time.monotonic() >= end:
+                raise subprocess.TimeoutExpired("adopted process", timeout)
+            time.sleep(0.2)
+        return self.returncode
+
+    def send_signal(self, sig) -> None:
+        raise OSError("not in the service's console: it is stopped by terminating its process tree")
+
+    def terminate(self) -> None:
+        p = self.process()
+        if p is not None:
+            p.terminate()
+
+    kill = terminate
 
 
 @dataclass
@@ -61,6 +138,8 @@ class Child:
     finished: Optional[str] = None
     stop_requested: bool = False
     extra: dict = field(default_factory=dict)
+    kind: str = "runner"                     # runner | task_script
+    launched_by: str = "request"             # request | arm
 
 
 def _now() -> str:
@@ -77,10 +156,18 @@ def _arg(cmd: list[str], flag: str) -> Optional[str]:
 
 
 def parse_runner_cmdline(cmd: list[str]) -> Optional[dict]:
-    """(strategy, mode, date) of a paper runner command line, or None if it is not one."""
+    """(strategy, mode, date) of a paper runner command line, or None if it is not one. The scheduled
+    task's script (``start_paper_runner.ps1 [-Strategy slug]``) is a live runner of its strategy
+    (``kind: task_script``)."""
     text = " ".join(cmd or [])
-    if not any(m in text for m in _RUNNER_MARKERS):
+    if not any(m in text for m in _RUNNER_MARKERS) or _exe(cmd) in _NOT_RUNNERS:
         return None
+    if _TASK_SCRIPT in text.lower() and ".ps1" in text.lower():
+        if _exe(cmd) not in _SCRIPT_HOSTS or not _TASK_FILE_RX.search(text):
+            return None
+        m = _TASK_STRATEGY_RX.search(text)
+        return {"strategy": m.group(1) if m else _TASK_DEFAULT_STRATEGY, "mode": "live",
+                "date": _dt.date.today().isoformat(), "ledger": True, "kind": "task_script"}
     strategy = _arg(cmd, "--strategy")
     if not strategy:
         return None
@@ -153,6 +240,8 @@ class RunnerManager:
         self._lock = threading.RLock()
         self._stop = threading.Event()
         self._thread: Optional[threading.Thread] = None
+        #: called with a Child when one of the service's sessions ends (the arm scheduler records it)
+        self.listeners: list[Callable[[Child], None]] = []
 
     # ── lifecycle ─────────────────────────────────────────────────────────────
     def start_monitor(self) -> None:
@@ -168,13 +257,31 @@ class RunnerManager:
     def _child_row(self, c: Child) -> dict:
         return {"strategy": c.strategy, "mode": c.mode, "date": c.date, "state": c.state, "pid": c.proc.pid,
                 "started": c.started, "managed_by": "service", "ledger": c.ledger, "returncode": c.returncode,
-                "finished": c.finished, "log": c.log}
+                "finished": c.finished, "log": c.log, "kind": c.kind, "launched_by": c.launched_by}
+
+    def _my_pids(self) -> set[int]:
+        """The service's own sessions and everything they started (a task script's runner is its grandchild)."""
+        with self._lock:
+            mine = list(self._children.values())
+        pids = {c.proc.pid for c in mine}
+        try:
+            import psutil
+            for c in mine:
+                if c.state != "running":
+                    continue
+                try:
+                    pids |= {p.pid for p in psutil.Process(c.proc.pid).children(recursive=True)}
+                except psutil.Error:
+                    pass
+        except Exception:
+            pass
+        return pids
 
     def sessions(self) -> list[dict]:
         self._poll()
         with self._lock:
             mine = list(self._children.values())
-        my_pids = {c.proc.pid for c in mine}
+        my_pids = self._my_pids()
         rows = [self._child_row(c) for c in sorted(mine, key=lambda c: c.started, reverse=True)]
         procs = scan_processes()
         seen = set()
@@ -195,8 +302,7 @@ class RunnerManager:
         return to_jsonable(rows)
 
     def running_elsewhere(self, strategy: str) -> Optional[dict]:
-        with self._lock:
-            my_pids = {c.proc.pid for c in self._children.values()}
+        my_pids = self._my_pids()
         for p in scan_processes():
             if p["strategy"] == strategy and p["pid"] not in my_pids and p["ppid"] not in my_pids:
                 return p
@@ -207,6 +313,24 @@ class RunnerManager:
             if not mine_running:
                 return {"strategy": strategy, "pid": None, "heartbeat_at": hb.get("at"), "state_dir": hb.get("state_dir")}
         return None
+
+    def mine_running(self, strategy: str) -> Optional[Child]:
+        return self._mine_running(strategy)
+
+    def adopt(self, strategy: str, pid: int, created: float, *, log: str, cmdline, exit_file: Optional[str] = None,
+              started: Optional[str] = None, kind: str = "task_script", launched_by: str = "arm",
+              extra: Optional[dict] = None, emit: bool = True) -> Child:
+        """Track a process the service started outside its own tree (an arm's task script) as its own."""
+        child = Child(strategy=strategy, mode="live", date=_dt.date.today().isoformat(), ledger=True,
+                      proc=AdoptedProc(pid, created, exit_file), started=started or _now(), log=str(log),
+                      cmdline=list(cmdline) if isinstance(cmdline, (list, tuple)) else [str(cmdline)],
+                      kind=kind, launched_by=launched_by, extra=dict(extra or {}))
+        with self._lock:
+            self._children[child.proc.pid] = child
+        logger.info("paper session %s (%s) is the service's: pid %s", strategy, kind, pid)
+        if emit:
+            self._emit(child)
+        return child
 
     def _mine_running(self, strategy: str) -> Optional[Child]:
         self._poll()
@@ -297,14 +421,30 @@ class RunnerManager:
                                      f"the service never stops a runner it did not start")
             raise LookupError(f"no runner is running for {strategy}")
         c.stop_requested = True
-        self._signal(c)
-        deadline = time.monotonic() + STOP_GRACE_S
-        while time.monotonic() < deadline and c.proc.poll() is None:
-            time.sleep(0.2)
-        if c.proc.poll() is None:
-            self._kill_tree(c.proc)
+        if isinstance(c.proc, AdoptedProc):
+            self._kill_tree(c.proc)                    # not in the service's console: no graceful signal
+        else:
+            self._signal(c)
+            deadline = time.monotonic() + STOP_GRACE_S
+            while time.monotonic() < deadline and c.proc.poll() is None:
+                time.sleep(0.2)
+            if c.proc.poll() is None:
+                self._kill_tree(c.proc)
         self._poll()
         return self._child_row(c)
+
+    def stop_all(self) -> list[dict]:
+        """Stop every session the service started (never anything else)."""
+        self._poll()
+        with self._lock:
+            running = sorted({c.strategy for c in self._children.values() if c.state == "running"})
+        out = []
+        for s in running:
+            try:
+                out.append(self.stop(s))
+            except (LookupError, RunnerConflict):
+                continue
+        return out
 
     @staticmethod
     def _kill_tree(proc: subprocess.Popen) -> None:
@@ -312,8 +452,11 @@ class RunnerManager:
         interpreter as a child of its own, which terminating the launcher alone would orphan)."""
         try:
             import psutil
-            parent = psutil.Process(proc.pid)
-            family = parent.children(recursive=True) + [parent]
+            parent = proc.process() if isinstance(proc, AdoptedProc) else psutil.Process(proc.pid)
+            if parent is None:
+                return
+            family = [parent] + parent.children(recursive=True)     # the parent first: a script's retry loop
+            # must not start its runner again
             for p in family:
                 try:
                     p.terminate()
@@ -357,6 +500,11 @@ class RunnerManager:
             c.state = ("stopped" if c.stop_requested else "finished" if rc == 0 else "halted" if rc == 3 else "failed")
             logger.info("paper runner %s %s %s ended: %s (exit %s)", c.strategy, c.mode, c.date, c.state, rc)
             self._emit(c)
+            for fn in list(self.listeners):
+                try:
+                    fn(c)
+                except Exception:
+                    logger.exception("runner listener failed")
 
     def _monitor(self) -> None:
         while not self._stop.wait(2.0):

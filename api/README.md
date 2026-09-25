@@ -90,6 +90,9 @@ installed for their screener hooks; without it the registry falls back to the ge
 | GET | `/data/coverage` | what the DB holds, per table |
 | GET | `/runner/sessions` | every paper runner: the service's own children and any found running elsewhere |
 | POST | `/runner/{strategy}/start` · `/runner/{strategy}/stop` | start (`replay` a stored day or `live` today) / stop the service's own |
+| GET | `/runner/arms` | armed scheduled paper runs: schedule, next run, last result |
+| POST · DELETE | `/runner/{strategy}/arm` | arm (`{schedule: once\|weekdays, date?, variant?}`) / disarm a scheduled paper run |
+| POST | `/runner/stop-all` | kill switch: stop every session the service started |
 | GET | `/data/sync/types` | `[{data_type, label, needs_ticker, source}]` |
 | POST | `/data/sync` | `202 {job_id}` — body `{data_type, tickers, from, to}`; a `sync` job, progress on `/events` |
 | WS | `/events` | `hello`, `job`, `log` (≥ INFO), `heartbeat` (15 s) |

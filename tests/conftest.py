@@ -22,6 +22,9 @@ os.environ.setdefault("ALAN_TRADER_GEX_RECORD", "0")
 # ... no nightly daily-bars sync, and no bar top-ups (a GET must not reach yfinance or write bars under test).
 os.environ.setdefault("ALAN_TRADER_NIGHTLY_SYNC", "0")
 os.environ.setdefault("ALAN_TRADER_BARS_TOPUP", "0")
+# ... arms live in memory only and nothing is ever started on a schedule (a test must never launch a paper run).
+os.environ.setdefault("ALAN_TRADER_ARMS", "memory")
+os.environ.setdefault("ALAN_TRADER_ARM_SCHEDULER", "0")
 
 
 @pytest.fixture(autouse=True)

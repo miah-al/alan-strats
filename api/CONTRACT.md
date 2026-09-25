@@ -473,3 +473,37 @@ clarifications of what the service does where the spec leaves room.
   - `test.negative_minus_positive_per_day`: `{"diff", "t", "p" (Welch), "n_negative", "n_positive", "enough"}` (t and p
     once each side has two traded days), next to `test.in_sample` (+$2,211 / day, p = 0.012, at the prior close).
   - 422 for an unknown `regime_source` / `at`, a bad date, or `from` after `to`. Read only.
+- **Arming scheduled paper runs** (the service is the one place that starts them; `mode` is always `paper`).
+  - `GET /api/runner/arms` → `[{"id", "strategy", "variant", "schedule": "once|weekdays", "date", "mode": "paper",
+    "active", "armed_at", "next_run", "last_run", "last_run_date", "last_result", "running", "pid", "log", "kind":
+    "script|allocator", "window": {"at", "until", "timezone"}, "status"}]` (times ISO with the ET offset; `status` is the
+    allocator variant's state, null for the NDX runner).
+  - `POST /api/runner/{strategy}/arm` body `{"schedule": "once|weekdays", "date"?: "YYYY-MM-DD" (once; default the next
+    session), "variant"?: "vix|gex|both" (gex_positioning; default both)}` → the arm rows (re-arming replaces the
+    active arm). 422: a strategy with no scheduled run (armable: `ndx_0dte_tasty`, `gex_positioning`), a bad schedule,
+    a date that is not a trading day or whose window has passed, a variant the strategy does not have.
+  - `DELETE /api/runner/{strategy}/arm?variant=` → the disarmed rows (404 when nothing was armed). Disarming does not
+    stop a running session.
+  - Arms persist (`app.RunnerArm`). On trading days (weekends and exchange holidays skipped) the scheduler starts each
+    armed run at its time: `ndx_0dte_tasty` at 10:30 ET runs exactly what the Windows scheduled task ran —
+    `powershell -NoProfile -ExecutionPolicy Bypass -File "<live checkout>\scripts\start_paper_runner.ps1" -Strategy
+    ndx_0dte_tasty` from the live checkout (data refresh, the runner restarted if it dies before 16:01 ET, then the day's
+    minutes, the data check, reconcile and archive; outputs where they always were). It is launched through WMI, outside
+    the service's process tree and the desktop's job (closing the app or restarting the service does not end the day's
+    session), with the user's logon environment; its console output goes to `paper_state/runner_logs/arm/` in the
+    service's checkout. A session the service started this way is its own across restarts (pid + creation time in the
+    arm row).
+  - `last_result`: `started (pid N)` · `started late at HH:MM ET (scheduled 10:30; …)` (the service came up inside the
+    window, 10:30–16:00 ET) · `missed: …` (it came up after the window, or a `once` day passed unseen) · `skipped:
+    already running (external, pid N | heartbeat …)` / `(started by the service, pid N)` · `failed to start: …` ·
+    then `finished at HH:MM ET (exit 0)` · `ended at … (exit N)` · `stopped at HH:MM ET (kill switch)`. Each day is
+    claimed in the table first, so two service processes never start the same run.
+  - Events on `/api/events`: `{"type": "arm", "event": "armed|disarmed|started|skipped|missed|failed|finished|stopped|ran",
+    "strategy", "variant", "schedule", "mode": "paper", "detail", "at", …}` (`started` adds `pid`, `log`, `late`,
+    `command`).
+  - `POST /api/runner/stop-all` → `{"stopped": [session, …]}`: the kill switch — every session the service started
+    (its own children and the arms' task scripts, whole process trees), never one it did not start.
+    `POST /api/runner/{strategy}/stop` stops one. `/api/runner/sessions` rows add `kind` (`runner|task_script`) and
+    `launched_by` (`request|arm`); a running `start_paper_runner.ps1` counts as its strategy's runner.
+  - Environment: `ALAN_TRADER_ARMS` (`db` | `memory` — the test suite | `off`), `ALAN_TRADER_ARM_SCHEDULER` (`1` | `0`:
+    arms kept, nothing started), `ALAN_TRADER_TASK_CHECKOUT` (default the main checkout).
