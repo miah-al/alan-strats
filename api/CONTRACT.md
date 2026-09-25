@@ -617,3 +617,11 @@ clarifications of what the service does where the spec leaves room.
     runner's spot (`priced_by` ends in `synthetic hedge`); the straddle group is marked by the runner with its sign
     (a short structure's liquidation value is negative). `api/services/risk.py` now treats any non-option security as a
     linear leg (a SecurityType without an OptionType used to be priced as a put).
+- **ndx_0dte_condor: a quote-gated short iron condor.** An overlay (its folder in `strategy_overlays.txt`), armed with
+  `POST /api/runner/ndx_0dte_condor/arm {"schedule": "weekdays"}`: the runner starts at 09:45 ET (late up to 10:25), logs
+  the four-leg width from 09:45, decides at 10:00-10:30 behind a 5-pt width gate and exits after the 16:00 settlement.
+  Platform: a third structure kind, `iron_condor:<wing>` (k_low / k_high are the short put / short call; the wings sit
+  <wing> points outside them; in long-structure terms long the shorts and short the wings, so the seller receives the
+  bid), quoted from its four legs, bounded by the wing width (`structure_bound`), booked as ONE position with four
+  Legs and four Transactions (the vertical's paths untouched). A structure quote's `age_s` is now the legs' QUOTE age
+  (`updated`, falling back to the last print): a far wing that has not traded for an hour is fresh while its market is.

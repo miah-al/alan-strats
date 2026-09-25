@@ -20,7 +20,7 @@ from typing import Optional
 
 import pandas as pd
 
-from strategy_api.live import Quote, structure_legs
+from strategy_api.live import Quote, structure_bound, structure_legs
 
 logger = logging.getLogger("paper.providers")
 ET = "US/Eastern"
@@ -142,16 +142,17 @@ def structure_quote(leg_quotes: list, legs: list, now: datetime, carry_min: int 
     cap = float(max_width) if max_width else max(float(MAX_SPREAD_PTS), 0.2 * abs(mid))
     if ask - bid > cap:
         return None
-    ks = sorted({K for _, K, _ in legs})
-    if len(ks) > 1:                                        # an iron fly is worth between 0 and its half width
-        w = (ks[-1] - ks[0]) / 2.0
+    w = structure_bound(legs)
+    if w is not None:                                      # an iron fly / condor is worth between 0 and its wing width
         bounded = min(max(mid, 0.0), w)
         if bounded != mid:
             shift = bounded - mid
             bid, ask, mid = bid + shift, ask + shift, bounded
+    # freshness is the QUOTE's: a far wing may not trade for an hour while its market updates every second, so
+    # ``updated`` comes first here (the vertical's convention, the last print first, is unchanged)
     ages_s = []
     for leg in leg_quotes:
-        ref = leg.last_time or leg.updated
+        ref = leg.updated or leg.last_time
         ages_s.append((now - ref).total_seconds() if ref is not None else (carry_min + 1) * 60.0)
     age_s = max(0.0, max(ages_s))
     age = int(age_s // 60)
@@ -266,11 +267,8 @@ class ReplayProvider:
             vals.append((sign * leg[0], leg[1]))
         v = sum(x for x, _ in vals)
         age = max(a for _, a in vals)
-        ks = sorted({K for _, K, _ in legs})
-        if len(ks) > 1:
-            v = min(max(v, 0.0), (ks[-1] - ks[0]) / 2.0)
-        else:
-            v = max(v, 0.0)
+        w = structure_bound(legs)
+        v = min(max(v, 0.0), w) if w is not None else max(v, 0.0)
         h = self.h * len(legs)
         return Quote(bid=max(0.0, v - h), ask=v + h, last=v, age=int(age), age_s=float(age) * 60.0)
 

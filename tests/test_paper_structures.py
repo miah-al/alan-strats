@@ -27,11 +27,23 @@ def _leg(sym, bid, ask, last=None, age_s=0.0):
 # ── the contract ─────────────────────────────────────────────────────────────
 
 def test_structure_legs_and_kinds():
-    assert STRUCTURE_KINDS == ("straddle", "iron_fly") and is_structure("straddle") and not is_structure("call")
+    from strategy_api.live import structure_bound, structure_intrinsic
+    assert STRUCTURE_KINDS == ("straddle", "iron_fly", "iron_condor") and is_structure("straddle") and not is_structure("call")
+    assert is_structure("iron_condor:100") and not is_structure("iron_condor:abc") is False   # a bad wing is still the kind; legs refuse it
     assert structure_legs("straddle", K, K) == [("C", K, 1), ("P", K, 1)]
     assert structure_legs("iron_fly", K - 50, K + 50) == [("C", K, 1), ("P", K, 1), ("C", K + 50, -1), ("P", K - 50, -1)]
-    with pytest.raises(ValueError):
-        structure_legs("strangle", K, K + 50)
+    # an iron condor names its wing width: long the two shorts (a put below, a call above), short the wings outside them
+    kp, kc = 29950.0, 30675.0
+    assert structure_legs("iron_condor:100", kp, kc) == [("P", kp, 1), ("C", kc, 1), ("P", kp - 100, -1), ("C", kc + 100, -1)]
+    for bad in (("strangle", K, K + 50), ("iron_condor", kp, kc), ("iron_condor:0", kp, kc), ("iron_condor:100", kc, kp)):
+        with pytest.raises(ValueError):
+            structure_legs(*bad)
+    # the most a long structure can be worth: the wing width for a fly / condor, unbounded for a straddle
+    assert structure_bound(structure_legs("iron_condor:100", kp, kc)) == 100.0
+    assert structure_bound(structure_legs("iron_fly", K - 50, K + 50)) == 50.0
+    assert structure_bound(structure_legs("straddle", K, K)) is None
+    condor = structure_legs("iron_condor:100", kp, kc)
+    assert structure_intrinsic(30300.0, condor) == 0.0 and structure_intrinsic(kc + 40, condor) == 40.0 and structure_intrinsic(0.0, condor) == 100.0
     assert Quote(1.0, 2.0, 1.5).age_s is None and Quote(1.0, 2.0, 1.5, age_s=12.0).age_s == 12.0
     assert SYNTHETIC_FUTURE_TYPE == "SynFuture" and len(SYNTHETIC_FUTURE_TYPE) <= 10     # portfolio.Security.SecurityType VARCHAR(10)
 
@@ -69,6 +81,31 @@ def test_the_replay_provider_quotes_a_straddle_from_both_legs_prints_and_names_i
     assert prov.structure_symbols("straddle", K, K) == ["NDXP260924C30325000", "NDXP260924P30325000"]
     assert prov.structure_symbols("iron_fly", K - 100, K + 100)[2:] == ["NDXP260924C30425000", "NDXP260924P30225000"]
     assert prov.quote_vertical("call", K, K + 100, 630).last == 80.0                     # the vertical's path, unchanged
+
+
+def test_an_iron_condor_is_quoted_from_its_four_legs_and_bounded_by_its_wing():
+    kp, kc = 29950.0, 30675.0
+    legs = structure_legs("iron_condor:100", kp, kc)
+    lq = [_leg("P", 40.0, 41.5), _leg("C", 39.0, 40.5), _leg("Pw", 30.0, 31.0), _leg("Cw", 31.0, 32.5)]
+    q = structure_quote(lq, legs, NOW)
+    # long-structure terms: the shorts' bids less the wings' asks; the width is the sum of the four legs' widths
+    assert q is not None and q.bid == pytest.approx(79.0 - 63.5) and q.ask == pytest.approx(82.0 - 61.0)
+    assert q.ask - q.bid == pytest.approx(1.5 + 1.5 + 1.0 + 1.5) and q.last == pytest.approx(18.25) and len(q.legs) == 4
+    # freshness is the quote's update, not the last trade: a wing that has not traded for an hour is fresh while its market is
+    stale_trade = LegQuote("Cw", 31.0, 32.5, 30.0, NOW - timedelta(hours=1), NOW - timedelta(seconds=5))
+    q2 = structure_quote(lq[:3] + [stale_trade], legs, NOW)
+    assert q2 is not None and q2.age_s == 5.0 and q2.age == 0
+    # a market that prices the condor over its wing width is shifted onto the bound, width kept
+    q3 = structure_quote([_leg("P", 140.0, 141.0), _leg("C", 139.0, 140.0), _leg("Pw", 30.0, 31.0), _leg("Cw", 31.0, 32.0)], legs, NOW)
+    assert q3 is not None and q3.last == 100.0 and q3.ask - q3.bid == pytest.approx(4.0)
+    # the replay: four same-day prints, half a spread per leg, bounded the same way
+    prov = ReplayProvider.__new__(ReplayProvider)
+    prov.day, prov.root, prov.h, prov.carry, prov.underlying = DAY, "NDXP", 0.5, 30, "NDX"
+    prov._prints = {("P", kp): ([600], [40.0]), ("C", kc): ([600], [39.0]), ("P", kp - 100): ([599], [30.0]), ("C", kc + 100): ([600], [31.0])}
+    rq = prov.quote_structure("iron_condor:100", kp, kc, 600)
+    assert rq is not None and rq.last == 18.0 and rq.bid == 16.0 and rq.ask == 20.0 and rq.age == 1 and rq.age_s == 60.0
+    assert prov.structure_symbols("iron_condor:100", kp, kc) == ["NDXP260924P29950000", "NDXP260924C30675000", "NDXP260924P29850000", "NDXP260924C30775000"]
+    assert prov.quote_structure("iron_condor:100", kp, kc + 25, 600) is None          # a leg without a print
 
 
 # ── the runner's new fill paths ───────────────────────────────────────────────

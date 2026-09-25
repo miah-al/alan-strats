@@ -52,9 +52,14 @@ def record_structure_fill(engine, account_id: int, slug: str, underlying: str, e
                         "iv": fill.get("iv"), "ndx": fill.get("ndx"), **(extra or {})}, default=str)[:500]
     opening = kind == "open"
     comm = len(legs) * lots * L.COMMISSION_PER_LEG if opening else 0.0
-    body = (float(fill["kl"]) + float(fill["kh"])) / 2.0
-    tag = (f"{underlying} {struct} {body:.0f}" + (f" wings {float(fill['kl']):.0f}/{float(fill['kh']):.0f}" if struct == "iron_fly" else "")
-           + f" {expiry} {fill['direction']}")
+    if struct.startswith("iron_condor"):                     # k_low / k_high are the short put / short call
+        wings = [K for cp, K, s, *_ in legs if int(s) < 0]
+        tag = (f"{underlying} {struct} {float(fill['kl']):.0f}p/{float(fill['kh']):.0f}c"
+               + (f" wings {min(wings):.0f}/{max(wings):.0f}" if wings else "") + f" {expiry} {fill['direction']}")
+    else:
+        body = (float(fill["kl"]) + float(fill["kh"])) / 2.0
+        tag = (f"{underlying} {struct} {body:.0f}" + (f" wings {float(fill['kl']):.0f}/{float(fill['kh']):.0f}" if struct == "iron_fly" else "")
+               + f" {expiry} {fill['direction']}")
     with engine.begin() as conn:
         sid = L._security_id(conn, underlying)
         if kind == "open":

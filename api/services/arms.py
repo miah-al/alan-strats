@@ -87,6 +87,11 @@ SPECS: dict[str, Spec] = {
     "ndx_gamma_scalp": Spec("runner", _dt.time(9, 45), _dt.time(10, 30), ("",),
                             "the platform's paper runner from the service checkout (detached; the strategy is an overlay; "
                             "the hedge is synthetic; never armed by default)"),
+    # the 0DTE condor logs its four-leg width from 09:45, enters at 10:00 behind a 5-pt width gate (no trade that day
+    # otherwise) and holds to the 16:00 settlement; meant to be armed weekdays (the gate protects it), exits after 16:01
+    "ndx_0dte_condor": Spec("runner", _dt.time(9, 45), _dt.time(10, 25), ("",),
+                            "the platform's paper runner from the service checkout (detached; the strategy is an overlay; "
+                            "quote-gated)"),
 }
 RUNNER_POLL_S = 15
 
