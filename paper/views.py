@@ -532,13 +532,31 @@ def paper_runner_marks() -> dict:
                         source = f"{source} · HALTED"
             except (ValueError, OSError):
                 live = {}
-            for pos in (d.get("state") or {}).get("positions") or []:
+            state = d.get("state") or {}
+            for pos in state.get("positions") or []:
                 key = f"{pos.get('direction')}|{pos.get('k_low')}|{pos.get('k_high')}"
                 mark, units = live.get(key, pos.get("last_mark")), pos.get("units")
                 if mark is None or not units:
                     continue
-                for tgid in tgids.get(key) or []:
-                    out[str(tgid)] = (float(mark), float(units), source)
+                # a multi-leg structure (a straddle, an iron fly) is keyed by its kind too, and a SHORT one's
+                # liquidation value is a liability: the engine says which way with mark_sign (+1 long, -1 short)
+                sign = float(pos.get("mark_sign") or 1)
+                for k in (key, f"{pos.get('kind')}|{key}"):
+                    for tgid in tgids.get(k) or []:
+                        out[str(tgid)] = (float(mark) * sign, float(units), source)
+            # the SYNTHETIC futures hedge book (ndx_gamma_scalp): marked at the runner's spot, units scaled so the
+            # page's option arithmetic (mark x units x 100) gives units x spot x its $20 multiplier, signed long / short
+            h = state.get("hedge") or {}
+            hpid = d.get("hedge_pid")
+            try:
+                hu = float(h.get("units") or 0.0)
+                spot = None
+                if hb.exists() and not (source.endswith("m") and "STALE" in source):
+                    spot = (json.loads(hb.read_text(encoding="utf-8")).get("spot"))
+                if hpid and hu and spot:
+                    out[str(hpid)] = (float(spot), hu * float(h.get("multiplier") or 20.0) / 100.0, f"{source} · synthetic hedge")
+            except (ValueError, OSError, TypeError):
+                pass
     except Exception:
         return {}
     return out

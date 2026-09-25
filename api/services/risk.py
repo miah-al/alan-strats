@@ -63,7 +63,9 @@ def net_legs(grp: pd.DataFrame) -> list[NetLeg]:
         if sym in out:
             out[sym].qty += qty
             continue
-        typ = "stock" if st == "stock" else ("call" if str(r.get("OptionType") or "").upper().startswith("C") else "put")
+        # anything that is not an option (stock, equity, the paper runner's SynFuture hedge) is a linear leg: a
+        # SecurityType with no OptionType used to fall through to "put" and be priced as one
+        typ = "stock" if st != "option" else ("call" if str(r.get("OptionType") or "").upper().startswith("C") else "put")
         try:
             canon = SYM.normalize(sym)
         except ValueError:

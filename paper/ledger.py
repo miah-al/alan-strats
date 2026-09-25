@@ -233,3 +233,8 @@ def delete_paper_day(engine, slug: str, day: date) -> int:
             conn.execute(text("DELETE FROM portfolio.Position WHERE PositionId = :p"), {"p": pid})
         conn.execute(text("DELETE FROM portfolio.ModelSignal WHERE SpreadType = :s AND SignalDate = :d"), {"s": slug[:30], "d": day})
     return len(ids)
+
+
+# multi-leg structures and the SYNTHETIC futures hedge (ndx_gamma_scalp): new code paths in their own module, exposed
+# here so the runner has one ledger namespace
+from .ledger_structures import record_structure_fill, record_synthetic_hedge  # noqa: E402,F401

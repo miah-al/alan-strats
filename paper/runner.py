@@ -6,7 +6,9 @@ writes any new fills to the portfolio ledger and to a CSV paper log in the strat
 saves the engine state so a restart resumes where it left off.
 
 Two clocks: ``run_replay`` walks a stored session as fast as it can (tests, dry runs, the
-reconciliation replay); ``run_live`` follows the wall clock with a real-time provider.
+reconciliation replay); ``run_live`` follows the wall clock with a real-time provider. Live, an
+engine that declares ``on_poll`` also sees every poll's quotes between bar closes (resting orders
+checked every 15 seconds); one without it behaves exactly as before.
 Strategy logic never lives here: the engine and the gate come from the plugin
 (strategy_api.live).
 """
@@ -24,7 +26,7 @@ from typing import Callable, Optional
 
 import pandas as pd
 
-from strategy_api.live import Quote
+from strategy_api.live import Quote, is_structure
 from strategy_api import registry as R
 from .providers import ReplayProvider, TastytradeProvider, Bar, now_et
 from . import ledger as L
@@ -42,7 +44,10 @@ QUOTE_SILENCE_ALERT_MIN = 5         # alert when no quote fetch has succeeded fo
 STATE_DIR = Path(os.path.dirname(os.path.dirname(__file__))) / "paper_state"
 LOG_COLS = ["ts", "minute", "event", "ndx", "k_low", "k_high", "kind", "direction", "bid", "ask", "last", "age",
             "limit", "fill", "lots", "cash", "reason", "tgid", "long_symbol", "short_symbol", "note",
-            "spread", "long_bid", "long_ask", "long_age", "short_bid", "short_ask", "short_age"]   # quoted width and the legs behind it
+            "spread", "long_bid", "long_ask", "long_age", "short_bid", "short_ask", "short_age",   # quoted width and the legs behind it
+            # multi-leg structures and the synthetic hedge (strategy_api.live): the structure, every leg's symbol,
+            # the engine's delta and IV at the event, the hedge book after it and its running P&L
+            "struct", "symbols", "units", "delta", "iv", "hedge_units", "hedge_pnl", "synthetic"]
 
 
 def _minute_of(ts: datetime) -> int:
@@ -87,6 +92,7 @@ class PaperSession:
         self.state_dir = Path(state_dir) if state_dir else STATE_DIR
         self.state_dir.mkdir(parents=True, exist_ok=True)
         self._tgids: dict[tuple, list[str]] = {}
+        self._hedge_pid: Optional[int] = None          # the ledger position of the day's synthetic hedge book, while open
         self._written = 0
         self._last_quote: dict = {}
         self._day_bars: list = []
@@ -145,10 +151,104 @@ class PaperSession:
             return stack.pop(0) if stack else None
         return stack[-1] if stack else None
 
+    # ── multi-leg structures and the synthetic hedge (new code paths; the vertical's are untouched) ──
+    @staticmethod
+    def _symbols_for(prov, kind: str, k_low: float, k_high: float) -> list:
+        """Every leg symbol of a structure or a vertical (the provider's own naming)."""
+        if is_structure(kind) and hasattr(prov, "structure_symbols"):
+            return list(prov.structure_symbols(kind, k_low, k_high))
+        return list(prov.leg_symbols(kind, k_low, k_high))
+
+    @staticmethod
+    def _quote_for(prov, kind: str, k_low: float, k_high: float, *args):
+        """A live quote for a structure or a vertical, with the provider's extra arguments (quotes, now, carry)."""
+        if is_structure(kind):
+            return prov.quote_structure(kind, k_low, k_high, *args) if hasattr(prov, "quote_structure") else None
+        return prov.quote_vertical(kind, k_low, k_high, *args)
+
+    def _write_structure_fill(self, f: dict, day: date, expiry: date, S: float, symbols_fn: Callable) -> None:
+        """A straddle / iron-fly event: the CSV row with the structure's quote and legs, and the ledger for
+        open / close (one Position, one Leg and one Transaction per leg)."""
+        kind = str(f["struct"])
+        try:
+            syms = self._symbols_for(self.provider, kind, f["kl"], f["kh"])
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("structure symbols failed: %s", exc); syms = []
+        legs = f.get("legs") or []
+        syms = [(syms[i] if i < len(syms) and syms[i] else f"{self.underlying}-{K:.0f}{cp}") for i, (cp, K, *_r) in enumerate(legs)] \
+            if legs else [s for s in syms if s]
+        q = self._last_quote.get((kind, f["kl"], f["kh"]))
+        row = dict(ts=str(datetime.combine(day, dtime(0, 0)) + timedelta(minutes=int(f["m"]))), minute=f["m"], event=f["kind"],
+                   ndx=round(float(f.get("ndx") or S), 2), k_low=f["kl"], k_high=f["kh"], kind=kind, direction=f["direction"],
+                   bid=(round(q.bid, 2) if q else ""), ask=(round(q.ask, 2) if q else ""), last=(round(q.last, 2) if q else ""),
+                   age=(q.age if q else ""), limit=(f["px"] if f["kind"] in ("rest", "cancel") else ""),
+                   fill=(f["px"] if f["kind"] in ("open", "close") else ""), lots=f["lots"], cash=f["cash"], reason=f["reason"],
+                   tgid="", long_symbol="", short_symbol="", note=json.dumps(f.get("legs") or [], default=str),
+                   spread=(round(q.ask - q.bid, 2) if q else ""), struct=kind, symbols="|".join(str(s) for s in syms),
+                   units="", delta=f.get("delta", ""), iv=f.get("iv", ""), hedge_units="", hedge_pnl=f.get("hedge_pnl", ""),
+                   synthetic="")
+        pid = None
+        key = (kind, f["direction"], f["kl"], f["kh"])
+        if f["kind"] in ("open", "close"):
+            stack = self._tgids.setdefault(key, [])
+            pid = stack[-1] if (f["kind"] == "close" and stack) else None
+            row["tgid"] = "" if pid is None else str(pid)
+        self._log(day, row)
+        logger.info("%s %s %s %s %s/%s @ %s (%s)", row["ts"][11:16], f["kind"], f["direction"], kind, f["kl"], f["kh"], f["px"], f["reason"])
+        if f["kind"] not in ("open", "close"):
+            return
+        if self.write_ledger:
+            try:
+                new_pid = L.record_structure_fill(self.db, self.account_id, self.slug, self.underlying, expiry, day, f, syms,
+                                                  position_id=pid, extra={"provider": getattr(self.provider, "name", "?"),
+                                                                          "bid": (q.bid if q else None), "ask": (q.ask if q else None)})
+                if f["kind"] == "open" and new_pid is not None:
+                    self._tgids.setdefault(key, []).append(int(new_pid))
+                elif f["kind"] == "close" and self._tgids.get(key):
+                    self._tgids[key].pop()
+            except Exception as exc:
+                logger.error("ledger write failed (structure): %s", exc)
+        elif f["kind"] == "open":
+            self._tgids.setdefault(key, []).append(-1)
+        elif self._tgids.get(key):
+            self._tgids[key].pop()
+
+    def _write_hedge_fill(self, f: dict, day: date, S: float) -> None:
+        """A SYNTHETIC hedge trade: the CSV row (labelled synthetic) and the ledger's synthetic-future position
+        (opened on the first trade of the day, adjusted by every trade, closed by the ``final`` row)."""
+        sym = str(f.get("symbol") or "NQ=NDX")
+        row = dict(ts=str(datetime.combine(day, dtime(0, 0)) + timedelta(minutes=int(f["m"]))), minute=f["m"], event="hedge",
+                   ndx=round(float(f.get("ndx") or S), 2), k_low="", k_high="", kind="hedge", direction=f["direction"],
+                   bid="", ask="", last="", age="", limit="", fill=f["px"], lots=f.get("units", f.get("lots", "")), cash=f["cash"],
+                   reason=f["reason"], tgid=("" if self._hedge_pid is None else str(self._hedge_pid)), long_symbol=sym, short_symbol="",
+                   note="SYNTHETIC hedge: NQ-equivalent priced at the NDX index level, never a real order", spread="", struct="hedge",
+                   symbols=sym, units=f.get("units", ""), delta=f.get("delta", ""), iv=f.get("iv", ""),
+                   hedge_units=f.get("hedge_units", ""), hedge_pnl=f.get("hedge_pnl", ""), synthetic=True)
+        self._log(day, row)
+        logger.info("%s hedge %s %s NQ-eq @ %s (book %s, P&L %s) [SYNTHETIC]", row["ts"][11:16], f["direction"], f.get("units"),
+                    f["px"], f.get("hedge_units"), f.get("hedge_pnl"))
+        if not self.write_ledger:
+            if self._hedge_pid is None:
+                self._hedge_pid = -1
+            if f.get("final"):
+                self._hedge_pid = None
+            return
+        try:
+            pid = L.record_synthetic_hedge(self.db, self.account_id, self.slug, self.underlying, day, f,
+                                           position_id=(self._hedge_pid if (self._hedge_pid or 0) > 0 else None),
+                                           extra={"provider": getattr(self.provider, "name", "?")})
+            self._hedge_pid = None if f.get("final") else pid
+        except Exception as exc:
+            logger.error("ledger write failed (synthetic hedge): %s", exc)
+
     def _write_new_fills(self, session, day: date, expiry: date, S: float, symbols_fn: Callable) -> None:
         fills = session.fills
         while self._written < len(fills):
             f = fills[self._written]; self._written += 1
+            if f.get("struct") == "hedge":                                   # the synthetic hedge (new path)
+                self._write_hedge_fill(f, day, S); continue
+            if is_structure(f.get("struct", "")):                            # a straddle / iron fly (new path)
+                self._write_structure_fill(f, day, expiry, S, symbols_fn); continue
             kind_cp = "call" if f["direction"] == "bull" else "put"
             ls, ss = symbols_fn(kind_cp, f["kl"], f["kh"])
             pid = self._position_id(f) if f["kind"] in ("open", "add", "close") else None
@@ -217,6 +317,23 @@ class PaperSession:
             problems.append("strategy exposes no live instrument")
         return problems
 
+    @staticmethod
+    def _fill_guard(session) -> int:
+        """The runaway guard's ceiling: the runner's, unless the engine declares its own (an engine that logs every
+        order placed and cancelled in ``fills`` would trip the default on a normal day; see strategy_api.live)."""
+        try:
+            return int(getattr(session, "max_fills_per_session", MAX_FILLS_PER_SESSION))
+        except (TypeError, ValueError):
+            return MAX_FILLS_PER_SESSION
+
+    def _guard(self, session) -> bool:
+        if len(session.fills) > self._fill_guard(session):
+            self.halted = f"runaway guard: {len(session.fills)} fills"
+            logger.error(self.halted)
+            self._alert(self.halted)
+            return False
+        return True
+
     def _step(self, session, minute: int, bar: Bar, quote_fn, is_last: bool, day: date, expiry: date, symbols_fn) -> bool:
         """One bar through the engine with the guards. Returns False when the session must halt."""
         if self.halted:
@@ -229,12 +346,33 @@ class PaperSession:
             self._alert(self.halted)
             return False
         self._write_new_fills(session, day, expiry, bar.close, symbols_fn)
-        if len(session.fills) > MAX_FILLS_PER_SESSION:
-            self.halted = f"runaway guard: {len(session.fills)} fills"
-            logger.error(self.halted)
+        return self._guard(session)
+
+    def _poll(self, session, now: datetime, spot: Optional[float], quote_fn, day: date, expiry: date, symbols_fn) -> bool:
+        """The engine's optional per-poll hook (``on_poll``): resting orders checked against the quotes just fetched.
+        Fills it produces are logged, alerted and saved like a bar's. Returns False when the session must halt."""
+        on_poll = getattr(session, "on_poll", None)
+        if on_poll is None or self.halted:
+            return not self.halted
+        n_before = len(session.fills)
+        try:
+            on_poll(now, spot, quote_fn)
+        except Exception as exc:
+            self.halted = f"engine error at {now:%H:%M:%S} (poll): {exc}"
+            logger.exception("engine error in on_poll; halting the session")
             self._alert(self.halted)
             return False
-        return True
+        if len(session.fills) > n_before:
+            S = float(spot) if spot is not None else (float(session.closes[-1]) if session.closes else 0.0)
+            for f in session.fills[n_before:]:
+                if f.get("struct") == "hedge":
+                    logger.info("%s hedge %s %s NQ-eq @ %.2f (%s) [SYNTHETIC]", f"{now:%H:%M:%S}", f["direction"], f.get("units"), f["px"], f["reason"])
+                elif f["kind"] in ("open", "add", "close"):
+                    self._alert(f"{now:%H:%M:%S} {f['kind']} {f['direction']} {f.get('struct') or ''} {f['kl']:.0f}/{f['kh']:.0f} @ {f['px']:.2f} "
+                                f"({f['reason']}); day {session.day_pnl:+,.0f}")
+            self._write_new_fills(session, day, expiry, S, symbols_fn)
+            self._save_state(session, day)
+        return self._guard(session)
 
     def _log_session_features(self, session, day: date, minute: int) -> None:
         """Once per session, at the strategy's first entry minute: the ex-ante features a gate model
@@ -253,7 +391,8 @@ class PaperSession:
             feats.update(am_range_pct=round((hi - lo) / last * 100, 3), am_move_pct=round((last / o - 1) * 100, 3), open=round(o, 2), level=round(last, 2))
             if self.db is not None:
                 from db.client import get_price_bars
-                from datetime import timedelta
+                # (timedelta is the module's: importing it here again made it a local of this function, unbound at
+                # the log write below whenever there is no database engine)
                 px = get_price_bars(self.db, self.underlying, day - timedelta(days=10), day - timedelta(days=1))
                 if len(px) >= 2:
                     c1, c2 = float(px["close"].iloc[-1]), float(px["close"].iloc[-2])
@@ -326,10 +465,25 @@ class PaperSession:
                   "marked": round(session.marked(), 0), "day_pnl": round(session.day_pnl, 0), "halted": self.halted or "", "note": note,
                   "live_marks": live_marks or {}, "live_legs": live_legs or {}, "spot": spot, "underlying": self.underlying,
                   "marks_at": now.isoformat(timespec="seconds") if live_marks else "",
-                  "api_calls_today": getattr(getattr(self.provider, "budget", None), "calls_today", None)}   # how many broker requests so far
+                  "api_calls_today": getattr(getattr(self.provider, "budget", None), "calls_today", None),   # how many broker requests so far
+                  # the synthetic hedge book, when the engine keeps one (its P&L at this poll's spot)
+                  "hedge": self._hedge_heartbeat(session, spot)}
             (self.state_dir / f"heartbeat_{self.slug}.json").write_text(json.dumps(hb), encoding="utf-8")
         except Exception:
             pass
+
+    def _hedge_heartbeat(self, session, spot: Optional[float]) -> Optional[dict]:
+        """The engine's synthetic hedge book for the heartbeat: units, average, P&L at ``spot``, the ledger id."""
+        h = getattr(session, "hedge", None)
+        if h is None:
+            return None
+        try:
+            S = float(spot) if spot is not None else (float(session.closes[-1]) if session.closes else None)
+            return {"symbol": "NQ=NDX", "synthetic": True, "units": round(float(h.units), 4), "avg_px": round(float(h.avg_px), 4),
+                    "multiplier": 20.0, "n_trades": int(h.n_trades), "pnl": (round(float(h.pnl(S)), 2) if S is not None else None),
+                    "spot": S, "pid": self._hedge_pid}
+        except Exception:
+            return None
 
     def _force_settlement(self, session, day: date, quote_fn, expiry: date, symbols_fn, why: str) -> None:
         """The session is over but positions are still open (a missed final bar, a halt): settle
@@ -349,6 +503,7 @@ class PaperSession:
         try:
             self._state_path(day).write_text(json.dumps({"state": session.to_dict(), "written": self._written,
                                                          "tgids": {"|".join(map(str, k)): v for k, v in self._tgids.items()},
+                                                         "hedge_pid": self._hedge_pid,
                                                          "provider": getattr(self.provider, "name", "?"), "finished": finished}, default=str), encoding="utf-8")
         except Exception as exc:
             logger.warning("state save failed: %s", exc)
@@ -366,7 +521,10 @@ class PaperSession:
             fresh = self.strategy.live_session(day, blocked_reason=blocked_reason)
             session = type(fresh).from_dict(self.strategy.params, d["state"])
             self._written = int(d.get("written", 0))
-            self._tgids = {tuple((float(x) if i else x) for i, x in enumerate(k.split("|"))): v for k, v in d.get("tgids", {}).items()}
+            # a vertical's key is (direction, kl, kh); a structure's (kind, direction, kl, kh): the strikes are the floats
+            self._tgids = {tuple((float(x) if i >= len(k.split("|")) - 2 else x) for i, x in enumerate(k.split("|"))): v
+                           for k, v in d.get("tgids", {}).items()}
+            self._hedge_pid = d.get("hedge_pid")
             logger.info("resumed %s from %s: %d fills, %d open", day, p.name, len(session.fills), len(session.positions))
             return session
         except Exception as exc:
@@ -435,7 +593,7 @@ class PaperSession:
         res = RunResult(day, self.slug, prov.name, blocked, why)
 
         def quote_fn(S, k_low, k_high, kind, minute):
-            q = prov.quote_vertical(kind, k_low, k_high, minute, S)
+            q = self._quote_for(prov, kind, k_low, k_high, minute, S)
             self._last_quote[(kind, k_low, k_high)] = q
             return q
 
@@ -516,25 +674,36 @@ class PaperSession:
 
         def quote_fn(S, k_low, k_high, kind, minute):
             nonlocal quotes
-            ls, ss = prov.leg_symbols(kind, k_low, k_high)
-            if not ls or not ss:
+            syms = self._symbols_for(prov, kind, k_low, k_high)
+            if not syms or any(not s for s in syms):
                 return None
-            if ls not in quotes or ss not in quotes:                 # a strike the engine just chose: fetch it now
+            if any(s not in quotes for s in syms):                   # a strike the engine just chose: fetch it now
                 try:
-                    quotes.update(prov.fetch([ls, ss]))
+                    quotes.update(prov.fetch(syms))
                 except Exception as exc:
                     logger.warning("quote fetch failed: %s", exc); return None
-            q = prov.quote_vertical(kind, k_low, k_high, quotes, now_fn(), carry)
+            q = self._quote_for(prov, kind, k_low, k_high, quotes, now_fn(), carry)
             self._last_quote[(kind, k_low, k_high)] = q
             return q
 
         def watched_symbols() -> list[str]:
             syms = []
             for pos in session.positions:
-                syms += list(prov.leg_symbols(pos.kind, pos.k_low, pos.k_high))
+                syms += self._symbols_for(prov, pos.kind, pos.k_low, pos.k_high)
             if getattr(session, "pending", None) is not None:
-                pe = session.pending; syms += list(prov.leg_symbols(pe.kind, pe.k_low, pe.k_high))
-            return [s for s in syms if s]
+                pe = session.pending; syms += self._symbols_for(prov, pe.kind, pe.k_low, pe.k_high)
+            watch = getattr(session, "watch_structures", None)         # an engine that wants more quoted each poll
+            if watch is not None:
+                try:
+                    for kind, k_low, k_high in watch():
+                        syms += self._symbols_for(prov, kind, k_low, k_high)
+                except Exception as exc:
+                    logger.warning("watch_structures failed: %s", exc)
+            out = []
+            for s in syms:
+                if s and s not in out:
+                    out.append(s)
+            return out
 
         n = 0
         last_good_fetch: Optional[datetime] = None
@@ -571,7 +740,7 @@ class PaperSession:
             live_legs: dict = {}
             for pos in session.positions:
                 try:
-                    qv = prov.quote_vertical(pos.kind, pos.k_low, pos.k_high, quotes, now, carry)
+                    qv = self._quote_for(prov, pos.kind, pos.k_low, pos.k_high, quotes, now, carry)
                     if qv is not None:
                         live_marks[f"{pos.direction}|{float(pos.k_low)}|{float(pos.k_high)}"] = round(float(qv.last), 2)
                         # Every poll's mark against the target the engine will only check at the next
@@ -581,7 +750,7 @@ class PaperSession:
                         self._log_mark(day, now, pos, qv)
                     # the legs too, so the position popup can price each one without opening its own
                     # broker connection from inside the web process
-                    for sym in prov.leg_symbols(pos.kind, pos.k_low, pos.k_high):
+                    for sym in self._symbols_for(prov, pos.kind, pos.k_low, pos.k_high):
                         lq = quotes.get(sym) if sym else None
                         if lq is not None and lq.bid is not None and lq.ask is not None and lq.ask >= lq.bid:
                             live_legs[str(sym)] = round((float(lq.bid) + float(lq.ask)) / 2.0, 2)
@@ -591,6 +760,9 @@ class PaperSession:
             spot_now = float(iq.last) if (iq is not None and iq.last is not None) else None
             self._heartbeat(day, now, session, live_marks=live_marks, live_legs=live_legs, spot=spot_now)
             prov.sample_underlying(quotes, now)
+            # an engine with resting orders sees every poll's quotes, not one a minute (strategy_api.live: on_poll)
+            if not self._poll(session, now, spot_now, quote_fn, day, prov.expiry or day, prov.leg_symbols):
+                break
             this_minute = now.replace(second=0, microsecond=0)
             if cur_minute is None:
                 cur_minute = this_minute

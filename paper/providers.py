@@ -32,7 +32,7 @@ from typing import Optional
 
 import pandas as pd
 
-from strategy_api.live import Quote
+from strategy_api.live import Quote, structure_bound, structure_legs
 
 logger = logging.getLogger("paper.providers")
 ET = "US/Eastern"
@@ -129,7 +129,50 @@ def vertical_quote(long_leg: LegQuote, short_leg: LegQuote, now: datetime, carry
     if age > carry_min:
         return None
     legs = tuple((float(leg.bid), float(leg.ask), max(0, a)) for leg, a in zip((long_leg, short_leg), ages))
-    return Quote(bid=bid, ask=ask, last=last, age=age, legs=legs)
+    # the legs' most recent trades, as reported: a resting-order engine compares them with the previous poll's
+    # to know that a leg actually printed since (a price alone cannot say that, a stale one repeats for hours)
+    prints = tuple(((float(leg.last) if leg.last is not None else None), leg.last_time) for leg in (long_leg, short_leg))
+    return Quote(bid=bid, ask=ask, last=last, age=age, legs=legs, prints=prints)
+
+
+def structure_quote(leg_quotes: list, legs: list, now: datetime, carry_min: int = 30,
+                    max_width: Optional[float] = None) -> Optional[Quote]:
+    """Two-sided quote of a LONG multi-leg structure (a straddle, an iron fly) from its legs' quotes:
+    bid = sum of the bought legs' bids minus the sold legs' asks, ask = the bought asks minus the sold bids, last
+    = the midpoint, age = minutes since the oldest leg updated (``age_s`` the same in seconds). ``legs`` is the
+    structure's [(cp, strike, sign), ...] in the same order as ``leg_quotes``. A missing, crossed or one-sided
+    leg is no quote; a quote wider than ``max_width`` (default 20% of the structure's mid, at least 20 points)
+    says nothing and is refused; a bounded structure (an iron fly) has its mid kept inside [0, width]."""
+    if len(leg_quotes) != len(legs) or not legs:
+        return None
+    for leg in leg_quotes:
+        if leg is None or leg.bid is None or leg.ask is None or leg.ask <= 0 or leg.bid < 0 or leg.ask < leg.bid:
+            return None
+    bid = sum((float(q.bid) if s > 0 else -float(q.ask)) for q, (_, _, s) in zip(leg_quotes, legs))
+    ask = sum((float(q.ask) if s > 0 else -float(q.bid)) for q, (_, _, s) in zip(leg_quotes, legs))
+    mid = (bid + ask) / 2.0
+    cap = float(max_width) if max_width else max(float(MAX_SPREAD_PTS), 0.2 * abs(mid))
+    if ask - bid > cap:
+        return None
+    w = structure_bound(legs)
+    if w is not None:                                      # an iron fly / condor is worth between 0 and its wing width
+        bounded = min(max(mid, 0.0), w)
+        if bounded != mid:
+            shift = bounded - mid
+            bid, ask, mid = bid + shift, ask + shift, bounded
+    # freshness is the QUOTE's: a far wing may not trade for an hour while its market updates every second, so
+    # ``updated`` comes first here (the vertical's convention, the last print first, is unchanged)
+    ages_s = []
+    for leg in leg_quotes:
+        ref = leg.updated or leg.last_time
+        ages_s.append((now - ref).total_seconds() if ref is not None else (carry_min + 1) * 60.0)
+    age_s = max(0.0, max(ages_s))
+    age = int(age_s // 60)
+    if age > carry_min:
+        return None
+    legs_out = tuple((float(leg.bid), float(leg.ask), max(0, int(a // 60))) for leg, a in zip(leg_quotes, ages_s))
+    prints = tuple(((float(leg.last) if leg.last is not None else None), leg.last_time) for leg in leg_quotes)
+    return Quote(bid=bid, ask=ask, last=mid, age=age, legs=legs_out, prints=prints, age_s=age_s)
 
 
 # ── replay ────────────────────────────────────────────────────────────────────
@@ -257,6 +300,46 @@ class ReplayProvider:
         long_k, short_k = (k_low, k_high) if kind == "call" else (k_high, k_low)
         occ = lambda k: f"{self.root}{self.day.strftime('%y%m%d')}{cp}{int(round(k * 1000)):08d}"
         return occ(long_k), occ(short_k)
+
+    # ── multi-leg structures (strategy_api.live.STRUCTURE_KINDS) ──────────────
+    def _occ(self, cp: str, K: float) -> str:
+        return f"{self.root}{self.day.strftime('%y%m%d')}{cp}{int(round(K * 1000)):08d}"
+
+    def structure_symbols(self, kind: str, k_low: float, k_high: float) -> list[str]:
+        """OCC-style symbols of the structure's legs, in ``structure_legs`` order."""
+        return [self._occ(cp, K) for cp, K, _ in structure_legs(kind, k_low, k_high)]
+
+    def quote_structure(self, kind: str, k_low: float, k_high: float, minute: int, S: Optional[float] = None) -> Optional[Quote]:
+        """The structure valued on its legs' same-day prints (every leg needed, the oldest sets the age), bracketed
+        by the half spread PER LEG: a conservative replay quote, no prints reported. Under the live spread model
+        each leg's half-spread is read off its moneyness when ``S`` (the underlying now) is known."""
+        legs = structure_legs(kind, k_low, k_high)
+        vals = []
+        for cp, K, sign in legs:
+            leg = self._leg(cp, K, minute)
+            if leg is None:
+                return None
+            vals.append((sign * leg[0], leg[1]))
+        v = sum(x for x, _ in vals)
+        age = max(a for _, a in vals)
+        w = structure_bound(legs)
+        v = min(max(v, 0.0), w) if w is not None else max(v, 0.0)
+        h = self._structure_half_spread(legs, v, w, S)
+        return Quote(bid=max(0.0, v - h), ask=v + h, last=v, age=int(age), age_s=float(age) * 60.0)
+
+    def _structure_half_spread(self, legs: list, value: float, bound: Optional[float], S: Optional[float]) -> float:
+        """The structure's half-spread: the sum of its legs' half-spreads. A flat model brackets each leg by its
+        constant; the live model prices each leg by how far it is in the money (calls S - K, puts K - S) when
+        spot is known, else falls back to its value curve scaled from a two-leg vertical to this leg count."""
+        flat = getattr(self.spread, "h", None)
+        if flat is not None:
+            return float(flat) * len(legs)
+        leg_fn = getattr(self.spread, "leg", None)
+        if S is not None and leg_fn is not None:
+            return float(sum(leg_fn((float(S) - float(K)) if cp == "C" else (float(K) - float(S))) for cp, K, _ in legs))
+        from paper.spread_model import REFERENCE_WIDTH
+        width = float(bound) if bound else REFERENCE_WIDTH
+        return float(self.spread(value, width)) * len(legs) / 2.0
 
 
 # ── tastytrade ────────────────────────────────────────────────────────────────
@@ -486,6 +569,17 @@ class TastytradeProvider:
         cp = "C" if kind == "call" else "P"
         long_k, short_k = (k_low, k_high) if kind == "call" else (k_high, k_low)
         return self._symbol(cp, long_k), self._symbol(cp, short_k)
+
+    def structure_symbols(self, kind: str, k_low: float, k_high: float) -> list[Optional[str]]:
+        """The chain's symbols of the structure's legs, in ``structure_legs`` order (None for a strike not listed)."""
+        return [self._symbol(cp, K) for cp, K, _ in structure_legs(kind, k_low, k_high)]
+
+    def quote_structure(self, kind: str, k_low: float, k_high: float, quotes: dict[str, LegQuote], now: datetime,
+                        carry_min: int = 30) -> Optional[Quote]:
+        syms = self.structure_symbols(kind, k_low, k_high)
+        if any(s is None or s not in quotes for s in syms):
+            return None
+        return structure_quote([quotes[s] for s in syms], structure_legs(kind, k_low, k_high), now, carry_min)
 
     def _relogin(self) -> None:
         """A fresh OAuth session (the access token expires during a long day)."""
