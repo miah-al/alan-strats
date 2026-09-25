@@ -13,6 +13,11 @@ everything else — DDL is allowed in this schema only:
   app.RunnerArm    armed scheduled paper runs (a strategy, its variant, once / weekdays) and their last result
   app.GexAllocState the GEX paper allocator's state per variant (the VIX variant's streak / cooldown)
   app.GexAllocLog  the GEX paper allocator's daily decisions (regime, weight, target, orders)
+  app.EventLog     the event desk's manual event log (war news / posts: kind, region, barrels lost?)
+  app.EventDeskSetting  the event desk's settings (the war-regime switch)
+  app.EventDeskLog the event desk's allocators' daily decisions (oil_fade / btc_dip: trade or not, and why)
+  app.EventSignalLog the post-close signal log (USO 2σ moves, VIX 2σ, BTC −3%) with the trader's tag and outcomes
+  app.CryptoFlushSignal the crypto liquidation-flush triggers (R0) and their log-only paper micro-future legs
 """
 from __future__ import annotations
 
@@ -160,6 +165,87 @@ _TABLES = {
             DetailJson     NVARCHAR(MAX)  NULL,
             DecidedAt      DATETIME2      NOT NULL CONSTRAINT DF_GexAllocLog_At DEFAULT SYSUTCDATETIME()
         )""",
+    "EventLog": """
+        CREATE TABLE app.EventLog (
+            EventId        INT IDENTITY(1,1) NOT NULL CONSTRAINT PK_EventLog PRIMARY KEY,
+            Ts             DATETIME2      NOT NULL,
+            Kind           NVARCHAR(16)   NOT NULL,
+            Region         NVARCHAR(80)   NULL,
+            EventText      NVARCHAR(1000) NOT NULL,
+            BarrelsLost    NVARCHAR(8)    NOT NULL CONSTRAINT DF_EventLog_Barrels DEFAULT 'unknown',
+            Source         NVARCHAR(400)  NULL,
+            CreatedAt      DATETIME2      NOT NULL CONSTRAINT DF_EventLog_Created DEFAULT SYSUTCDATETIME()
+        )""",
+    "EventDeskSetting": """
+        CREATE TABLE app.EventDeskSetting (
+            Name           NVARCHAR(40)   NOT NULL CONSTRAINT PK_EventDeskSetting PRIMARY KEY,
+            ValueJson      NVARCHAR(MAX)  NOT NULL,
+            UpdatedAt      DATETIME2      NOT NULL CONSTRAINT DF_EventDeskSetting_Updated DEFAULT SYSUTCDATETIME()
+        )""",
+    "EventDeskLog": """
+        CREATE TABLE app.EventDeskLog (
+            Id             INT IDENTITY(1,1) NOT NULL CONSTRAINT PK_EventDeskLog PRIMARY KEY,
+            Playbook       NVARCHAR(24)   NOT NULL,
+            TradeDate      DATE           NOT NULL,
+            Status         NVARCHAR(20)   NOT NULL,
+            Verdict        NVARCHAR(12)   NULL,
+            Action         NVARCHAR(12)   NULL,
+            TradeGroupId   NVARCHAR(50)   NULL,
+            Summary        NVARCHAR(400)  NULL,
+            DetailJson     NVARCHAR(MAX)  NULL,
+            DecidedAt      DATETIME2      NOT NULL CONSTRAINT DF_EventDeskLog_At DEFAULT SYSUTCDATETIME()
+        )""",
+    "EventSignalLog": """
+        CREATE TABLE app.EventSignalLog (
+            Id             INT IDENTITY(1,1) NOT NULL CONSTRAINT PK_EventSignalLog PRIMARY KEY,
+            TradeDate      DATE           NOT NULL,
+            Symbol         NVARCHAR(10)   NOT NULL,
+            ClosePx        FLOAT          NULL,
+            ChangePct      FLOAT          NULL,
+            MoveZ          FLOAT          NULL,
+            LevelZ         FLOAT          NULL,
+            Mean20         FLOAT          NULL,
+            Sd20           FLOAT          NULL,
+            VixClose       FLOAT          NULL,
+            VixChangePct   FLOAT          NULL,
+            Ovx            FLOAT          NULL,
+            Tag            NVARCHAR(24)   NULL,
+            Note           NVARCHAR(400)  NULL,
+            TaggedAt       DATETIME2      NULL,
+            HalfBack       BIT            NULL,
+            HalfBackDays   INT            NULL,
+            R3             FLOAT          NULL,
+            R10            FLOAT          NULL,
+            R20            FLOAT          NULL,
+            OutcomeAsOf    DATE           NULL,
+            CreatedAt      DATETIME2      NOT NULL CONSTRAINT DF_EventSignalLog_Created DEFAULT SYSUTCDATETIME()
+        )""",
+    "CryptoFlushSignal": """
+        CREATE TABLE app.CryptoFlushSignal (
+            Id             INT IDENTITY(1,1) NOT NULL CONSTRAINT PK_CryptoFlushSignal PRIMARY KEY,
+            Ts             DATETIME2      NOT NULL,
+            Coin           NVARCHAR(8)    NOT NULL,
+            Price          FLOAT          NULL,
+            Max240         FLOAT          NULL,
+            DropPct        FLOAT          NULL,
+            Oi             FLOAT          NULL,
+            OiMax240       FLOAT          NULL,
+            OiDropPct      FLOAT          NULL,
+            OiAgeMin       FLOAT          NULL,
+            Trade          BIT            NOT NULL CONSTRAINT DF_CryptoFlushSignal_Trade DEFAULT 0,
+            Micro          NVARCHAR(8)    NULL,
+            Size           FLOAT          NULL,
+            EntryTs        DATETIME2      NULL,
+            EntryPrice     FLOAT          NULL,
+            ExitTs         DATETIME2      NULL,
+            ExitPrice      FLOAT          NULL,
+            PnlUsd         FLOAT          NULL,
+            RetPct         FLOAT          NULL,
+            R1h            FLOAT          NULL,
+            R4h            FLOAT          NULL,
+            R24h           FLOAT          NULL,
+            CreatedAt      DATETIME2      NOT NULL CONSTRAINT DF_CryptoFlushSignal_Created DEFAULT SYSUTCDATETIME()
+        )""",
 }
 _INDEXES = {
     ("GexAllocLog", "UX_GexAllocLog_Day"):
@@ -173,6 +259,14 @@ _INDEXES = {
         "WHERE ClientOrderId IS NOT NULL",
     ("PaperOrder", "IX_PaperOrder_Status"):
         "CREATE INDEX IX_PaperOrder_Status ON app.PaperOrder (AccountId, Status)",
+    ("EventLog", "IX_EventLog_Ts"):
+        "CREATE INDEX IX_EventLog_Ts ON app.EventLog (Ts)",
+    ("EventDeskLog", "UX_EventDeskLog_Day"):
+        "CREATE UNIQUE INDEX UX_EventDeskLog_Day ON app.EventDeskLog (Playbook, TradeDate)",
+    ("EventSignalLog", "UX_EventSignalLog_Day"):
+        "CREATE UNIQUE INDEX UX_EventSignalLog_Day ON app.EventSignalLog (TradeDate, Symbol)",
+    ("CryptoFlushSignal", "IX_CryptoFlushSignal_Ts"):
+        "CREATE INDEX IX_CryptoFlushSignal_Ts ON app.CryptoFlushSignal (Coin, Ts)",
 }
 
 _LOCK = threading.Lock()

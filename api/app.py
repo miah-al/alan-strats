@@ -89,7 +89,22 @@ def create_app():
     from api.services.arms import ArmScheduler, make_store
     from api.services.gex_alloc import GexAllocator
     gex_allocator = GexAllocator(market_hub, order_book, publish=hub.publish)
-    arm_scheduler = ArmScheduler(make_store(), runners, publish=hub.publish, allocator=gex_allocator)
+    # the event desk: signals, event log, playbooks, the (never armed by default) allocators, the post-close signal
+    # log and the crypto-flush poller — api/services/event_desk.py, event_alloc.py, crypto_flush.py
+    from api.services.crypto_flush import CryptoFlushPoller
+    from api.services.event_alloc import BtcDipAllocator, OilFadeAllocator
+    from api.services.event_desk import EventDesk, SignalLogJob
+    from api.services.event_desk import make_store as make_event_store
+    crypto_flush = CryptoFlushPoller(publish=hub.publish)
+    event_desk = EventDesk(market_hub, store=make_event_store(), crypto_flush=crypto_flush)
+    oil_fade = OilFadeAllocator(event_desk, order_book, hub=market_hub, publish=hub.publish)
+    btc_dip = BtcDipAllocator(event_desk, order_book, hub=market_hub, publish=hub.publish)
+    signal_log = SignalLogJob(event_desk, publish=hub.publish)
+    arm_scheduler = ArmScheduler(make_store(), runners, publish=hub.publish, allocator=gex_allocator,
+                                 allocators={"oil_fade": oil_fade, "btc_dip": btc_dip, "event_signal_log": signal_log,
+                                             "crypto_flush": crypto_flush})
+    event_desk.armed = arm_scheduler.is_armed
+    crypto_flush.armed = arm_scheduler.is_armed
     from api.services.volstats import VolStats
     vol_stats = VolStats(market_hub)
     from api.services.gex_recorder import GexRecorder
@@ -118,6 +133,7 @@ def create_app():
         gex_recorder.start()
         nightly_bars.start()
         minutes.start()
+        crypto_flush.start()
         beat = asyncio.create_task(hub.heartbeat_forever())
         logger.info("alan_trader service %s (%s) up; strategies from %s",
                     build["version"], build["branch"], info.get("strategies_dir"))
@@ -133,6 +149,7 @@ def create_app():
             gex_recorder.stop()
             nightly_bars.stop()
             minutes.stop()
+            crypto_flush.stop()
             await market_hub.stop()
             if request_gate.installed() is market_hub.gate:
                 request_gate.install(None)
@@ -155,6 +172,9 @@ def create_app():
     app.state.gex_recorder = gex_recorder
     app.state.nightly_bars = nightly_bars
     app.state.minutes = minutes
+    app.state.event_desk = event_desk
+    app.state.event_allocators = {"oil_fade": oil_fade, "btc_dip": btc_dip, "event_signal_log": signal_log}
+    app.state.crypto_flush = crypto_flush
     app.state.build = build
     app.state.bootstrap = info
     app.state.json_response = SafeJSONResponse
@@ -232,6 +252,8 @@ def create_app():
     from api.routers import events as events_router, stream as stream_router
     app.include_router(events_router.router, prefix="/api")
     app.include_router(stream_router.router, prefix="/api")
+    from api.routers import event_desk as event_desk_router
+    app.include_router(event_desk_router.router, prefix="/api")
     return app
 
 
