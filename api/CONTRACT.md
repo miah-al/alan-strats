@@ -592,3 +592,28 @@ clarifications of what the service does where the spec leaves room.
   at every quote poll between bar closes, `watch_structures()` names extra structures to keep quoted each poll, and
   `max_fills_per_session` sets the engine's own runaway ceiling; a vertical quote now carries each leg's last print
   (`Quote.prints`). An engine without the hooks sees the loop exactly as before.
+- **ndx_gamma_scalp: a delta-hedged straddle and a SYNTHETIC futures hedge in the paper ledger.** An overlay (its folder
+  in `strategy_overlays.txt`); the arm spec exists (`POST /api/runner/ndx_gamma_scalp/arm`: the runner would start at
+  09:45 ET, late up to 10:30, the end of its entry window, and exit after the 16:00 settlement) but NOTHING arms it by
+  default: the research behind it found no out-of-sample edge, and the runner is armed by hand only once a week of
+  recorded quotes shows the ATM straddle 2 pts or tighter (its guide.md). Platform support, all in new code paths (the
+  vertical's are untouched):
+  - Structures (`strategy_api/live.py` `STRUCTURE_KINDS`): a quote function's `kind` may be `straddle` (k_low == k_high
+    == the body) or `iron_fly` (k_low / k_high the wings, the body their midpoint) beside `call` / `put`; the providers
+    quote them from every leg in long-structure terms (`structure_quote`; the replay brackets each leg's print with the
+    half spread), `Quote.age_s` carries the age in seconds, and a structure fill row (`struct`, `direction` long | short,
+    `legs` = [[cp, strike, sign, price], ...]) is booked as one Position with a Leg and a Transaction per leg
+    (`paper/ledger_structures.py`).
+  - The synthetic hedge: a fill row with `kind: "hedge"`, `struct: "hedge"`, `synthetic: true`, `symbol: "NQ=NDX"`,
+    fractional `units` (NQ-equivalents, 5 per contract of delta 1.0), `px` (the NDX level paid, half an NQ tick
+    modelled) and `final` (the row that closes the book) is booked as one Position per session (PositionType `equity`,
+    the ledger's only fitting type) on a `portfolio.Security` of SecurityType `SynFuture` (multiplier 20), one
+    Transaction per trade (LegType `Hedge`, Source `Paper`, the closing row Source `Settle` with a `CLOSE` note); its
+    RealizedPnL is the cash its rows moved and counts in the account's day balance. Every CSV row, ledger note and
+    tag says synthetic; the runner's CSV log gains `struct, symbols, units, delta, iv, hedge_units, hedge_pnl, synthetic`
+    and the heartbeat a `hedge` block (units, average, P&L at the poll's spot, the ledger id).
+  - `/api/paper/positions`: the hedge is a group of its own (structure `long|short stock N`, security_type
+    `SynFuture`, legs table `type: SynFuture`, no strike, no expiry); while the runner holds it the row is marked at the
+    runner's spot (`priced_by` ends in `synthetic hedge`); the straddle group is marked by the runner with its sign
+    (a short structure's liquidation value is negative). `api/services/risk.py` now treats any non-option security as a
+    linear leg (a SecurityType without an OptionType used to be priced as a put).

@@ -78,6 +78,15 @@ SPECS: dict[str, Spec] = {
     # starts after lunch: polling from the open would spend half the day's shared broker budget for nothing
     "ndx_0dte_maker": Spec("runner", _dt.time(12, 25), _dt.time(15, 30), ("",),
                            "the platform's paper runner from the service checkout (detached; the strategy is an overlay)"),
+    # the gamma scalper logs the ATM straddle's width from 09:30, enters at 10:00 (behind a 2-pt width gate) and needs the
+    # morning's bars (backfilled from the broker's candle feed on a late start), so it starts at 09:45; its entry window
+    # closes at 10:30 and it hedges the position (a SYNTHETIC NQ-equivalent, never a real order) until the runner exits
+    # after the 16:00 settlement. The spec exists so the arm endpoint knows the strategy; NOTHING arms it by default -
+    # the research found no out-of-sample edge, and the lead arms it by hand once a week of recorded quotes says the
+    # straddle market is 2 pts or tighter (the strategy's guide.md)
+    "ndx_gamma_scalp": Spec("runner", _dt.time(9, 45), _dt.time(10, 30), ("",),
+                            "the platform's paper runner from the service checkout (detached; the strategy is an overlay; "
+                            "the hedge is synthetic; never armed by default)"),
 }
 RUNNER_POLL_S = 15
 

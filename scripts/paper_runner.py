@@ -124,7 +124,15 @@ def main(argv=None) -> int:
             if spot is not None and hasattr(strategy, "check_structures"):
                 try:
                     from paper.providers import vertical_quote
+                    from strategy_api.live import is_structure
                     for kind, k_lo, k_hi, label in strategy.check_structures(spot):
+                        if is_structure(kind):                               # a straddle / iron fly: every leg, one quote (read-only)
+                            syms = prov.structure_symbols(kind, k_lo, k_hi)
+                            q2 = prov.fetch([s for s in syms if s])
+                            v2 = prov.quote_structure(kind, k_lo, k_hi, q2, now_et())
+                            print(f"  {label}: {kind} {k_lo:.0f}/{k_hi:.0f} " + (f"bid {v2.bid:.2f} ask {v2.ask:.2f} mid {v2.last:.2f} "
+                                  f"(long-structure terms), leg ages {'/'.join(str(l[2]) for l in v2.legs)} min" if v2 else "no two-sided quote"))
+                            continue
                         ls2, ss2 = prov.leg_symbols(kind, k_lo, k_hi)
                         q2 = prov.fetch([s for s in (ls2, ss2) if s])
                         v2 = vertical_quote(q2[ls2], q2[ss2], now_et()) if ls2 in q2 and ss2 in q2 else None
