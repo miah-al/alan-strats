@@ -438,3 +438,38 @@ clarifications of what the service does where the spec leaves room.
   A ticker is tried at most once an hour. A nightly job (after 16:30 ET on trading days, visible in `/api/jobs` as a `sync`
   job) tops up the crypto ETPs (`ALAN_TRADER_DAILY_SYNC`, default IBIT, ETHA, FBTC, GBTC, ETHE, BITO) and every stock / ETF /
   index in the watchlists. `ALAN_TRADER_BARS_TOPUP=0` / `ALAN_TRADER_NIGHTLY_SYNC=0` turn them off.
+- **GEX recorder: the regime at the prior close and at the decision time.** `app.GexHistory` now gets, each trading day:
+  `eod` for every recorded ticker (IBIT, ETHA, SPY, QQQ, NDX, SPX) after 16:10 ET; `session` for NDX, SPX and SPY at
+  10:55 ET (due until 11:30, streaming or not; `ALAN_TRADER_GEX_SESSION_TICKERS`); `intraday` every 30 minutes as
+  before. When the service was not running at 16:10, the last completed session's `eod` row is recorded at the next
+  start before the next 09:30 open, valued at that session's stored close (its `source` ends `spot=close`); a day
+  missed entirely is never filled in. A failed slot is retried at most three times, 15 minutes apart. Every recorded
+  point carries `late` (derived from when it was written): an `eod` row after 16:40 ET on its day, a `session` row after
+  11:05 ET, an intraday row after its 30 minutes. `GET /api/market/gex/{ticker}/history?interval=session` serves the
+  decision-time rows (`1d` = eod, `30m` = intraday).
+- **`GET /api/market/gex-recorder`** → `{"enabled", "running", "started", "ticks", "last_tick", "recorded_by_this_process",
+  "last": {ticker: {"kind", "slot", "net_gex", "regime", "late"}}, "failed": [{"ticker", "kind", "slot", "tries",
+  "error"}], "streaming", "intraday_mode", "tickers", "session_tickers", "due_now": [{"kind", "slot"}], "table": {"rows",
+  "by_kind", "by_ticker", "last_recorded", "last_trade_date"}}` (read only).
+- **`GET /api/paper/regime-split?strategy=ndx_0dte_tasty&from=&to=&regime_source=NDX|SPX|SPY&at=prior_close|session`** →
+  a strategy's paper P&L split by the GEX regime the service recorded (the out-of-sample test of the GEX study's finding).
+  `{"strategy", "from", "to", "regime_source", "at", "account_id", "sessions", "recorded_sessions", "traded_days",
+  "trades", "pnl", "open_positions", "days": [...], "summary": [...], "test", "in_sample", "notes", "table",
+  "summary_table"}`.
+  - `days`: every trading day in the window (`from` defaults to the strategy's first trade, `to` to today and never past
+    it): `{"date", "regime": "negative|positive|near_flip|unknown|unrecorded", "net_gex", "spot", "flip",
+    "spot_vs_flip": "above|below|at", "dist_to_flip_pct", "late", "regime_slot", "recorded_source", "regime_source",
+    "trades", "wins", "pnl"}`. The regime is `regime_source`'s row in `app.GexHistory`: `at=prior_close` = the previous
+    session's `eod` row, `at=session` = the day's 10:55 `session` row. A day with no row is `unrecorded` (listed, never
+    guessed). `regime` is the engine's label (spot vs flip); `net_gex` can have the other sign.
+  - Trades and P&L are the ledger's closed trade groups as strategy-stats reads them (`P&L $`), on the day the trade
+    was opened (for 0DTE trades also the day it closed).
+  - `summary`: one row per regime, always in the order negative, positive, near_flip, unknown, unrecorded:
+    `{"regime", "sessions", "days" (traded), "trades", "win_rate" (per trade), "win_days", "pnl", "pnl_per_day" (per
+    traded day), "late_sessions", "in_sample", "bt_days", "bt_pnl_per_day", "bt_win_days", "bt_win_rate"}`. `in_sample`
+    is the backtest's figures for that regime from docs/research/gex_edge_2026-09.md §3 (ndx_0dte_tasty only; null for
+    other strategies): prior-close regimes for `at=prior_close`, the 10:00 regimes for `at=session`. Its regimes are
+    SPY's volume-proxy GEX and it ran at $30k capital — compare the shape, not dollar levels.
+  - `test.negative_minus_positive_per_day`: `{"diff", "t", "p" (Welch), "n_negative", "n_positive", "enough"}` (t and p
+    once each side has two traded days), next to `test.in_sample` (+$2,211 / day, p = 0.012, at the prior close).
+  - 422 for an unknown `regime_source` / `at`, a bad date, or `from` after `to`. Read only.

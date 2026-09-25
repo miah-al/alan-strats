@@ -74,6 +74,7 @@ installed for their screener hooks; without it the registry falls back to the ge
 | GET | `/paper/equity?from=&to=` | `{series: [equity, cash]}` |
 | GET | `/paper/runner` | runner sessions + marks from `paper_state/` |
 | GET | `/paper/strategy-stats?from=&to=` | per strategy: trades, win rate, P&L, profit factor, drawdown, days held, vs its stored backtest |
+| GET | `/paper/regime-split?strategy=&from=&to=&regime_source=NDX\|SPX\|SPY&at=prior_close\|session` | a strategy's paper P&L per day by the recorded GEX regime, per-regime summary vs the in-sample backtest |
 | GET | `/market/tickers` | daily-bar coverage per ticker |
 | GET | `/market/bars/{ticker}?from=&to=&interval=1d\|1m` | OHLCV arrays (DB, Polygon fallback) |
 | GET | `/market/quote/{ticker}` | yfinance quote (DB fallback) |
@@ -84,7 +85,8 @@ installed for their screener hooks; without it the registry falls back to the ge
 | GET | `/market/vix-term` · `/market/iv-term/{ticker}` | VIX term structure · a ticker's ATM IV by expiry |
 | GET | `/market/iv/{ticker}` | `engine.iv_metrics` dict |
 | GET | `/market/gex/{ticker}?source=auto\|db\|polygon\|hub` | dealer GEX + per-strike Table (indices from the hub's live chain) |
-| GET | `/market/gex/{ticker}/history?days=365` | daily proxy GEX from the stored option snapshots (SPY) |
+| GET | `/market/gex/{ticker}/history?days=365&interval=1d\|session\|30m` | recorded live GEX (app.GexHistory), before it the daily proxy from the stored SPY snapshots |
+| GET | `/market/gex-recorder` | the GEX recorder: on / running, last tick, rows written, failed slots, what app.GexHistory holds |
 | GET | `/data/coverage` | what the DB holds, per table |
 | GET | `/runner/sessions` | every paper runner: the service's own children and any found running elsewhere |
 | POST | `/runner/{strategy}/start` · `/runner/{strategy}/stop` | start (`replay` a stored day or `live` today) / stop the service's own |

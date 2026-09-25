@@ -63,3 +63,20 @@ def paper_strategy_stats(from_: Optional[str] = Query(default=None, alias="from"
         return SS.stats(from_, to)
     except ValueError as exc:
         raise HTTPException(422, str(exc))
+
+
+@router.get("/paper/regime-split")
+def paper_regime_split(strategy: str = "ndx_0dte_tasty", from_: Optional[str] = Query(default=None, alias="from"),
+                       to: Optional[str] = None, regime_source: Literal["NDX", "SPX", "SPY"] = "NDX",
+                       at: Literal["prior_close", "session"] = "prior_close"):
+    from api.services import regime_split as RS
+    for v in (from_, to):
+        if v:
+            try:
+                date.fromisoformat(v[:10])
+            except ValueError:
+                raise HTTPException(422, f"{v!r} is not an ISO date (YYYY-MM-DD)")
+    try:
+        return RS.split(strategy, from_, to, regime_source, at)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc))
