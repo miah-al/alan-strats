@@ -18,6 +18,11 @@ holidays skipped) and records what happened in the arm's ``last_result``:
                     paper_state/runner_logs/arm/ in the service's checkout. The service tracks it as its own
                     (pid + creation time in the arm row), so the kill switch still works after a restart.
   gex_positioning   (the GEX paper allocator) at 15:50 ET, in the service — see api/services/gex_alloc.py.
+  ndx_gamma_walls   the platform's paper runner for the strategy, started at 09:25 ET from THIS checkout (so the
+                    strategy overlay applies — api/bootstrap.py) and detached the same way (WMI):
+                        "<venv python>" -m api.runner_launch --strategy ndx_gamma_walls --poll 15 --log-dir <…>
+                    It waits for the open and exits after 16:01 ET; a late start (up to 15:00, the end of its entry
+                    window) builds no stream backfill (the strategy needs no lookback).
 
 Rules: if a runner for the strategy is already running anywhere (the service's own or external: another
 process, the scheduled task, a fresh heartbeat), the day is "skipped: already running (...)". A service that
@@ -67,7 +72,10 @@ SPECS: dict[str, Spec] = {
                            "the scheduled task's start_paper_runner.ps1 from the live checkout"),
     "gex_positioning": Spec("allocator", _dt.time(15, 50), _dt.time(16, 0), ("vix", "gex"),
                             "the service's GEX paper allocator on the whole paper account"),
+    "ndx_gamma_walls": Spec("runner", _dt.time(9, 25), _dt.time(15, 0), ("",),
+                            "the platform's paper runner from the service checkout (detached)"),
 }
+RUNNER_POLL_S = 15
 
 
 def enabled_store() -> str:
@@ -288,6 +296,51 @@ def wmi_launch(command: str, cwd: str) -> tuple[int, float]:
     return pid, psutil.Process(pid).create_time()
 
 
+def python_exe() -> str:
+    """The service checkout's own interpreter (its venv), else this process's."""
+    import sys
+    from api.bootstrap import WORKING_COPY
+    venv = WORKING_COPY / ".venv-win" / "Scripts" / "python.exe"
+    return str(venv) if venv.is_file() else sys.executable
+
+
+def runner_command(strategy: str, log: Path, csv_dir: Path, py: Optional[str] = None) -> str:
+    """The platform's paper runner for ``strategy`` from this checkout (live, ledger on), its console output
+    captured to ``log`` and its exit code to ``log``.exit."""
+    inner = (f'"{py or python_exe()}" -m api.runner_launch --strategy {strategy} --poll {RUNNER_POLL_S} '
+             f'--log-dir "{csv_dir}"')
+    return f'cmd.exe /d /v:on /s /c "{inner} > "{log}" 2>&1 & echo !ERRORLEVEL! > "{log}.exit""'
+
+
+def launch_runner(strategy: str, log_dir: Path) -> dict:
+    from api.bootstrap import WORKING_COPY
+    log_dir.mkdir(parents=True, exist_ok=True)
+    csv_dir = WORKING_COPY / "paper_state" / "runner_logs" / strategy / "live"
+    csv_dir.mkdir(parents=True, exist_ok=True)
+    log = log_dir / f"{strategy}_{_dt.datetime.now():%Y-%m-%d_%H%M%S}.log"
+    cmd = runner_command(strategy, log, csv_dir)
+    pid, created = wmi_launch(cmd, str(WORKING_COPY))
+    return {"pid": pid, "created": created, "log": str(log), "exit_file": f"{log}.exit", "cmdline": cmd,
+            "task_command": cmd, "cwd": str(WORKING_COPY)}
+
+
+def launch_later(strategy: str, at: str, day: Optional[_dt.date] = None, log_dir: Optional[Path] = None) -> dict:
+    """The fallback when the service will not be running at an arm's time: a detached process (WMI, as the arms)
+    that sleeps until ``at`` (ET) on ``day`` and then runs the same paper runner the arm would
+    (``python -m api.launch_later``). The service does not track it: it is an external runner to it."""
+    from api.bootstrap import WORKING_COPY
+    log_dir = log_dir or (WORKING_COPY / "paper_state" / "runner_logs" / "arm")
+    log_dir.mkdir(parents=True, exist_ok=True)
+    csv_dir = WORKING_COPY / "paper_state" / "runner_logs" / strategy / "live"
+    csv_dir.mkdir(parents=True, exist_ok=True)
+    log = log_dir / f"{strategy}_later_{_dt.datetime.now():%Y-%m-%d_%H%M%S}.log"
+    inner = (f'"{python_exe()}" -m api.launch_later --at {at}' + (f" --date {day.isoformat()}" if day else "") +
+             f' -- --strategy {strategy} --poll {RUNNER_POLL_S} --log-dir "{csv_dir}"')
+    cmd = f'cmd.exe /d /v:on /s /c "{inner} > "{log}" 2>&1 & echo !ERRORLEVEL! > "{log}.exit""'
+    pid, created = wmi_launch(cmd, str(WORKING_COPY))
+    return {"pid": pid, "created": created, "log": str(log), "cmdline": cmd}
+
+
 def launch_task_script(strategy: str, log_dir: Path) -> dict:
     checkout = live_checkout()
     script = checkout / "scripts" / "start_paper_runner.ps1"
@@ -306,7 +359,8 @@ def launch_task_script(strategy: str, log_dir: Path) -> dict:
 class ArmScheduler:
     def __init__(self, store, runners, publish: Optional[Callable[[dict], None]] = None,
                  clock: Optional[Callable[[], pd.Timestamp]] = None,
-                 launcher: Optional[Callable[[str], dict]] = None, allocator=None):
+                 launcher: Optional[Callable[[str], dict]] = None, allocator=None,
+                 runner_launcher: Optional[Callable[[str], dict]] = None):
         from api.bootstrap import WORKING_COPY
         self.store = store
         self.runners = runners
@@ -314,6 +368,7 @@ class ArmScheduler:
         self.clock = clock or (lambda: pd.Timestamp.now(tz=NY))
         self.log_dir = WORKING_COPY / "paper_state" / "runner_logs" / "arm"
         self.launcher = launcher or (lambda strategy: launch_task_script(strategy, self.log_dir))
+        self.runner_launcher = runner_launcher or (lambda strategy: launch_runner(strategy, self.log_dir))
         self.allocator = allocator
         self._stop = threading.Event()
         self._thread: Optional[threading.Thread] = None
@@ -467,7 +522,7 @@ class ArmScheduler:
     def _view(self, arm: dict, now: pd.Timestamp) -> dict:
         spec = SPECS.get(arm["strategy"])
         running = None
-        if self.runners is not None and spec is not None and spec.kind == "script":
+        if self.runners is not None and spec is not None and spec.kind in ("script", "runner"):
             c = self.runners.mine_running(arm["strategy"])
             running = c.proc.pid if c is not None else None
         nr = self.next_run(arm, now)
@@ -564,9 +619,10 @@ class ArmScheduler:
             why = f"skipped: already running (external, {where})"
             self.store.record(arm["id"], why)
             return self._event("skipped", arm, why)
-        info = self.launcher(arm["strategy"])
+        info = (self.runner_launcher if spec.kind == "runner" else self.launcher)(arm["strategy"])
         child = self.runners.adopt(arm["strategy"], info["pid"], info["created"], log=info["log"],
                                    cmdline=info.get("cmdline") or "", exit_file=info.get("exit_file"),
+                                   kind="runner" if spec.kind == "runner" else "task_script",
                                    extra={"arm_id": arm["id"], "task_command": info.get("task_command")})
         with self._lock:
             self._runs[child.proc.pid] = arm["id"]
@@ -620,3 +676,15 @@ class ArmScheduler:
                        f"ended while the service was down (exit {code})")
                 self.store.record(arm["id"], msg, keep_run=True)
         return n
+
+
+if __name__ == "__main__":                       # python -m api.services.arms later ndx_gamma_walls 09:25 2026-09-25
+    import sys as _sys
+    if len(_sys.argv) >= 4 and _sys.argv[1] == "later":
+        from api.bootstrap import bootstrap
+        bootstrap()
+        out = launch_later(_sys.argv[2], _sys.argv[3],
+                           _dt.date.fromisoformat(_sys.argv[4]) if len(_sys.argv) > 4 else None)
+        print(out)
+    else:
+        print("usage: python -m api.services.arms later <strategy> <HH:MM> [YYYY-MM-DD]")

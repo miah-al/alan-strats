@@ -373,6 +373,49 @@ class PaperSession:
             logger.warning("state restore failed (%s); starting fresh", exc)
             return None
 
+    def _other_runners_active(self, day: date) -> list[str]:
+        """Other paper runners still in today's session (a fresh heartbeat not marked finished), in this state
+        directory and in other checkouts' (read only). Their day balance write must come first."""
+        import json as _json
+        dirs = [self.state_dir]
+        try:
+            from paper.providers import _external_state_dirs
+            dirs += [Path(d) for d in _external_state_dirs()]
+        except Exception:
+            pass
+        out = []
+        for d in dirs:
+            for hb in Path(d).glob("heartbeat_*.json"):
+                try:
+                    h = _json.loads(hb.read_text(encoding="utf-8"))
+                    at = datetime.fromisoformat(str(h.get("at")))
+                except (OSError, ValueError, TypeError):
+                    continue
+                if h.get("slug") == self.slug or str(h.get("day")) != day.isoformat():
+                    continue
+                if h.get("note") != "finished" and (datetime.now() - at).total_seconds() < 180:
+                    out.append(str(h.get("slug")))
+        return out
+
+    def _record_day_balance(self, day: date, sleep_fn=time.sleep, wait_s: float = 600.0) -> None:
+        """The account's day balance holds every runner's P&L: wait for other runners of the day to finish (they
+        write their own balance, which only knows their P&L), then write the account's total from the ledger."""
+        waited = 0.0
+        while waited < wait_s:
+            others = self._other_runners_active(day)
+            if not others:
+                break
+            logger.info("waiting for %s to finish before writing the day balance", ", ".join(others))
+            sleep_fn(30.0); waited += 30.0
+        if waited:
+            sleep_fn(60.0)                              # their balance write follows their "finished" heartbeat
+        try:
+            total = L.account_day_pnl(self.db, self.account_id, day)
+        except Exception as exc:
+            logger.warning("account day P&L unavailable (%s); writing this session's", exc)
+            total = None
+        L.record_day_balance(self.db, self.account_id, day, total if total is not None else 0.0)
+
     def _gate(self, day: date) -> tuple[bool, str]:
         try:
             return self.strategy.session_gate(day)
@@ -579,7 +622,7 @@ class PaperSession:
         res.trades, res.fills, res.day_pnl, res.bars = session.trades, session.fills, session.day_pnl, n
         res.n_fills_written, res.log_path, res.state_path = self._written, str(self._log_path(day)), str(self._state_path(day))
         if self.write_ledger:
-            L.record_day_balance(self.db, self.account_id, day, session.day_pnl)
+            self._record_day_balance(day, sleep_fn=sleep_fn)
         logger.info("session done: %d bars, %d trades, day P&L %+.0f%s", n, len(session.trades), session.day_pnl, (f"; HALTED: {self.halted}" if self.halted else ""))
         self._alert(f"{day} done: {len(session.trades)} trades, day P&L {session.day_pnl:+,.0f}" + (f"; HALTED: {self.halted}" if self.halted else ""))
         res.reason = res.reason or (self.halted or "")

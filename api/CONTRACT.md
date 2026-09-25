@@ -567,3 +567,21 @@ clarifications of what the service does where the spec leaves room.
   - Asking for a symbol watches it for 20 minutes, only while the broker streams (no polling cost). Regular hours
     only (09:30–16:00 ET). `minutes` 1–390 (the last N minutes of the session), `interval` 1, 2, 5, 10, 15 or 30.
     Cached 15 s. 422 for another interval or an option symbol.
+- **ndx_gamma_walls: a strategy overlay and a second paper runner.**
+  - Overlay: a strategy folder from another checkout of the plugin (a worktree on a branch) is registered without
+    touching the plugin checkout the service loads — list the folder in `strategy_overlays.txt` in the service checkout
+    (untracked, one per line) or in `ALAN_TRADER_STRATEGY_OVERLAYS`. `/api/health`'s bootstrap info lists them; the
+    strategy appears in `/api/strategies` like any other (its meta says active, ui_visible).
+  - Arm: `POST /api/runner/ndx_gamma_walls/arm` `{"schedule": "once|weekdays"}` (paper only; `kind: "runner"`). At
+    09:25 ET (late up to 15:00, the end of its entry window; after that `missed`) the service starts, detached (WMI, as
+    the NDX task script), `"<service venv python>" -m api.runner_launch --strategy ndx_gamma_walls --poll 15 --log-dir
+    <service checkout>/paper_state/runner_logs/ndx_gamma_walls/live` from its own checkout. It is the service's own
+    session (`/api/runner/sessions` `kind: runner`, `launched_by: arm`; the kill switch stops it).
+  - Beside the NDX runner: runner detection is by strategy, so the NDX arm is never skipped for it; the paper runner's
+    broker budget now counts the other checkouts' runners (read only) against its day cap; and a runner writing the
+    account's day balance waits for the other runners of the day to finish, then writes the account's total P&L from
+    the ledger (a runner used to write only its own, and the last writer won). `--check` also prints the quotes of
+    the structures a strategy declares (`check_structures`).
+  - Fallback when the service will not be running at the arm's time: `python -m api.services.arms later ndx_gamma_walls
+    09:25 YYYY-MM-DD` starts a detached waiter (`python -m api.launch_later`) that runs the same runner at that time;
+    the service does not track it (an external runner to it).

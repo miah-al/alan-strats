@@ -14,6 +14,13 @@ through its parent directory: it is loaded by file path and registered in
 ``engine`` are asserted to resolve inside this checkout — the process refuses to start
 otherwise. The service never imports the Dash app (``app/``).
 
+Strategy OVERLAYS: a strategy folder from another checkout of the plugin (a worktree on a feature branch) can be
+added without touching the plugin checkout the service loads: list the folder (…/strategies/<slug>) in
+``ALAN_TRADER_STRATEGY_OVERLAYS`` (os.pathsep-separated) or, one per line, in ``strategy_overlays.txt`` in this
+checkout (a local, untracked setting). Its parent is appended to ``alan_trader_strategies.strategies.__path__``
+(the plugin's own strategies still resolve first) and its metadata is registered like discovery would; a slug
+the plugin already has is left alone.
+
 Everything here is idempotent; ``bootstrap()`` may be called any number of times.
 ``install_db_read_only_guard()`` makes every SQLAlchemy engine in the process refuse
 any write outside the service's allow-list (the paper ledger, the market-data tables the sync
@@ -115,6 +122,72 @@ def _load_plugin_by_path() -> Optional[Path]:
     logger.warning("no %s directory found (tried %s); running strategy-free", PLUGIN_PACKAGE,
                    ", ".join(str(p) for p in strategies_dir_candidates()))
     return None
+
+
+OVERLAY_FILE = "strategy_overlays.txt"
+ENV_OVERLAYS = "ALAN_TRADER_STRATEGY_OVERLAYS"
+
+
+def overlay_folders() -> list[Path]:
+    raw = os.environ.get(ENV_OVERLAYS)
+    items: list[str] = []
+    if raw is not None:
+        items = [x for x in raw.split(os.pathsep) if x.strip()]
+    else:
+        f = WORKING_COPY / OVERLAY_FILE
+        if f.is_file():
+            try:
+                items = [ln.strip() for ln in f.read_text(encoding="utf-8").splitlines()
+                         if ln.strip() and not ln.strip().startswith("#")]
+            except OSError:
+                items = []
+    return [Path(x.strip().strip('"')) for x in items]
+
+
+def apply_overlays(folders: Optional[list[Path]] = None) -> list[str]:
+    """Register overlay strategy folders with the loaded plugin (see the module docstring). Returns the slugs."""
+    plug = sys.modules.get(PLUGIN_PACKAGE)
+    if plug is None:
+        return []
+    added = []
+    for folder in (overlay_folders() if folders is None else folders):
+        slug = folder.name
+        if not (folder / "meta.py").is_file():
+            logger.warning("strategy overlay %s has no meta.py; skipped", folder)
+            continue
+        meta_all = getattr(plug, "STRATEGY_METADATA", None)
+        if meta_all is None or slug in meta_all:
+            continue
+        try:
+            pkg = importlib.import_module(f"{PLUGIN_PACKAGE}.strategies")
+            parent = str(folder.parent.resolve())
+            if parent not in [str(Path(p).resolve()) for p in pkg.__path__]:
+                pkg.__path__.append(parent)
+            base = f"{PLUGIN_PACKAGE}.strategies.{slug}"
+            mod = importlib.import_module(base)
+            if Path(mod.__file__).resolve().parent != folder.resolve():
+                logger.warning("strategy overlay %s resolves to %s; skipped", folder, mod.__file__)
+                continue
+            meta = dict(importlib.import_module(f"{base}.meta").METADATA)
+        except Exception:
+            logger.exception("strategy overlay %s failed to load; skipped", folder)
+            continue
+        if (folder / "ui.py").is_file():
+            meta.setdefault("ui", f"{base}.ui")
+        if (folder / "guide.md").is_file():
+            meta.setdefault("guide_path", str(folder / "guide.md"))
+        if (folder / "charts.py").is_file():
+            meta.setdefault("guide_chart", f"{base}.charts")
+        if (folder / "tests").is_dir():
+            meta.setdefault("tests_dir", str(folder / "tests"))
+        if (folder / "models").is_dir():
+            meta.setdefault("model_dir", str(folder / "models"))
+        meta.setdefault("root", str(folder))
+        meta["overlay"] = str(folder)
+        meta_all[slug] = meta
+        added.append(slug)
+        logger.info("strategy overlay: %s from %s", slug, folder)
+    return added
 
 
 def _reload_registries() -> None:
@@ -325,8 +398,10 @@ def bootstrap() -> dict:
     from engine.env import load_env
     load_env()                      # <working copy>/.env into os.environ (existing variables win)
     plugin_dir = _load_plugin_by_path()
+    overlays = apply_overlays()
     _reload_registries()
     _assert_paths(plugin_dir)
-    info = {"working_copy": str(WORKING_COPY), "strategies_dir": str(plugin_dir) if plugin_dir else None}
+    info = {"working_copy": str(WORKING_COPY), "strategies_dir": str(plugin_dir) if plugin_dir else None,
+            "strategy_overlays": overlays}
     _STATE.update(done=True, info=info)
     return info

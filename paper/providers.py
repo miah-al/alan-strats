@@ -255,7 +255,7 @@ class RequestBudget:
     needs about 4 a minute, so these are set far below what would ever draw a 429."""
 
     def __init__(self, min_interval_s: float = 5.0, per_minute: int = 20, per_day: int = 3000, clock=None, sleep=None,
-                 shared_path: Optional["Path"] = None):
+                 shared_path: Optional["Path"] = None, external_dirs: Optional[list] = None):
         import time as _time
         self.min_interval_s = float(min_interval_s); self.per_minute = int(per_minute); self.per_day = int(per_day)
         self._clock = clock or _time.monotonic; self._sleep = sleep or _time.sleep
@@ -272,6 +272,20 @@ class RequestBudget:
             shared_path = _Path(BUDGET_STATE_DIR) / f"broker_calls_{date.today().isoformat()}.json"
         self.shared_path = shared_path
         self.shared_calls = 0
+        # Other checkouts' runners count into their own state directory (a worktree's runner beside the main
+        # checkout's): their day totals are READ, never written, and count against this budget's day cap.
+        self.external_dirs = [__import__("pathlib").Path(d) for d in (external_dirs or [])]
+
+    def external_calls(self) -> int:
+        import json
+        total = 0
+        for d in self.external_dirs:
+            try:
+                total += int(json.loads((d / f"broker_calls_{date.today().isoformat()}.json").read_text(encoding="utf-8"))
+                             .get("calls", 0))
+            except (OSError, ValueError, TypeError):
+                continue
+        return total
 
     def _bump_shared(self) -> int:
         """Add one to the day's cross-process total and return it (0 when the file is unusable)."""
@@ -319,6 +333,11 @@ class RequestBudget:
         if self.shared_calls >= self.per_day:
             raise RuntimeError(f"tastytrade request budget spent across all processes: {self.shared_calls} calls today "
                                f"(cap {self.per_day}); not calling again today")
+        if self.external_dirs:
+            ext = self.external_calls()
+            if self.shared_calls + ext >= self.per_day:
+                raise RuntimeError(f"tastytrade request budget spent across this checkout ({self.shared_calls}) and other "
+                                   f"checkouts' runners ({ext}) today (cap {self.per_day}); not calling again today")
         now = self._clock()
         if self._last is not None and now - self._last < self.min_interval_s:
             self._sleep(self.min_interval_s - (now - self._last)); self.waits += 1; now = self._clock()
@@ -328,6 +347,20 @@ class RequestBudget:
             self._minute = [x for x in self._minute if now - x < 60.0]
         self._last = now; self._minute.append(now); self.calls_today += 1
         self._bump_shared()
+
+
+def _external_state_dirs() -> list:
+    """Other checkouts' paper_state directories whose broker-call totals count against this runner's day budget:
+    ALAN_TRADER_EXTERNAL_STATE_DIRS, else — for a runner started from a linked worktree (the service's) — the main
+    checkout's (api.config.external_state_dirs); none for a runner of the main checkout."""
+    env = os.environ.get("ALAN_TRADER_EXTERNAL_STATE_DIRS")
+    if env is not None:
+        return [p for p in env.split(os.pathsep) if p.strip()]
+    try:
+        from api.config import external_state_dirs
+        return [str(p) for p in external_state_dirs()]
+    except Exception:
+        return []
 
 
 class TastytradeProvider:
@@ -355,7 +388,7 @@ class TastytradeProvider:
         self._chain: dict = {}
         self._samples: list[tuple[datetime, float]] = []
         self.expiry: Optional[date] = None
-        self.budget = RequestBudget()                 # every REST call goes through it (see RequestBudget)
+        self.budget = RequestBudget(external_dirs=_external_state_dirs())   # every REST call goes through it (see RequestBudget)
 
     # chain for today's expiry
     def load_chain(self, day: date) -> int:
