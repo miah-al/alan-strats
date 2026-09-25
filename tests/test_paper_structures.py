@@ -119,7 +119,7 @@ def test_a_structure_replay_under_the_live_spread_model_brackets_each_leg_by_its
     prov._prints = {("C", K): ([630], [140.0]), ("P", K): ([630], [135.0])}
     assert prov.h is None and prov.mode == "conservative"
     q = prov.quote_structure("straddle", K, K, 630, S=K)              # both legs at the money: 2.0 each
-    assert q is not None and q.last == 275.0 and q.ask - q.bid == pytest.approx(2 * LiveSpread().leg(0.0))
+    assert q is not None and q.last == 275.0 and q.ask - q.bid == pytest.approx(2 * 2 * LiveSpread().leg(0.0))   # twice the summed leg half-spreads
     q2 = prov.quote_structure("straddle", K, K, 630, S=K + 40)        # the call 40 in, the put 40 out
     assert q2.ask - q2.bid == pytest.approx(2 * (LiveSpread().leg(40.0) + LiveSpread().leg(-40.0)))
     q3 = prov.quote_structure("straddle", K, K, 630)                  # no spot: the value curve, per leg
