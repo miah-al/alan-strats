@@ -629,3 +629,100 @@ clarifications of what the service does where the spec leaves room.
   bid), quoted from its four legs, bounded by the wing width (`structure_bound`), booked as ONE position with four
   Legs and four Transactions (the vertical's paths untouched). A structure quote's `age_s` is now the legs' QUOTE age
   (`updated`, falling back to the last print): a far wing that has not traded for an hour is fresh while its market is.
+- **The event desk** (`/api/events/*`; api/services/event_signals.py, event_desk.py, event_alloc.py, crypto_flush.py):
+  opportunistic PAPER trades on overreactions to war news / posts in crude, VIX and BTC. Nothing is armed by default;
+  the two daily allocators are EXPERIMENTAL (the rules-based fades lost out of sample) and every playbook row says so.
+  Times are ISO-8601 with the ET offset; numbers are null when unknown; `change_pct`, `z*`, `r*` are percentages /
+  standard deviations as plain numbers (`2.3` = 2.3 % / 2.3 σ). Errors: 422 with a `detail` string, 404 for an unknown
+  id, 503 when the desk is not wired.
+  - `GET /api/events/desk` →
+    `{"as_of", "regime": {"war": bool, "note", "updated"}, "signals": [signal, ×7], "playbooks": [playbook, ×4],
+    "open_trades": [trade], "events": [event] (last 14 days, newest first), "signal_log": [signal_log_row] (last 20,
+    newest first), "crypto_flush": crypto_status | null, "params": {oil_fade, btc_dip, vix_note, signal_log},
+    "warnings": [string]}`.
+    - **signal** (order: CL, USO, OVX, VIX, VIX3M, BTC, IBIT): `{"symbol", "name", "last", "close", "close_date",
+      "prev_close", "change_pct", "move_z20", "z20", "z60", "mean20", "mean60", "sd20_pct", "dist_mean20_pct",
+      "higher_streak": int, "source": "daily|live", "mark_source", "as_of", "sessions": int,
+      "history": [["YYYY-MM-DD", close], … last 60 closes], "warnings": [string]}`. `last` is the hub's mark
+      (`source: live` — USO, VIX, IBIT when a provider streams them), else today's partial daily row from yfinance
+      (`mark_source: "yfinance partial day"`), else the last close. `change_pct` is `last` against the close before it;
+      `z20`/`z60` = (last − mean)/sd of the 20/60 closes before the point scored (null under 20/60 closes or a zero sd);
+      `move_z20` is `change_pct` against the 20 daily changes before it (the "2σ move"); `higher_streak` counts closes
+      above their previous close at the end of the daily series (a live mark never extends it); `mean20`/`mean60` are
+      levels, `sd20_pct` the sd of daily changes in %, `dist_mean20_pct` = (last/mean20 − 1)·100.
+      Data: USO/IBIT the stored daily bars (yfinance when short or behind), VIX the stored CBOE closes, CL (`CL=F`,
+      the front WTI future), OVX, VIX3M and BTC (`BTC-USD`) yfinance daily only — no hub provider carries them, so
+      crude/OVX/VIX3M/BTC are never `live`. Daily data is cached 20 minutes.
+    - **playbook**: `{"id": "oil_fade|btc_dip|vix_note|crypto_flush", "title", "verdict": "fade|add|wait|leave|buy|none",
+      "headline": one sentence, "reasons": [string], "checklist": [{"label", "ok": true|false|null, "value": string}],
+      "trade": trade_suggestion | null, "armed": bool, "experimental": bool, "detail": {…}}` (`btc_dip` adds
+      `"action": "buy_dip" | null`). Verdicts: `oil_fade` — `fade` (enter: threat-only spike, first down close seen,
+      OVX < 60, no three higher closes, war regime off or a de-escalation logged), `add` (a position is open and the
+      first de-escalation after the entry was logged), `wait`, `leave` (barrels lost / OVX ≥ 60 / three higher closes),
+      `none` (no spike in the last 5 sessions); `btc_dip` — `fade` = a buy candidate at the next NYSE open (a logged
+      risk-off event with BTC ≥ 2% under its pre-shock close, or a −3% day), `wait`, `none`; `vix_note` — always `none`
+      (a note only); `crypto_flush` — `buy` (an R0 trigger in the last hour), `wait` (a paper leg open), `none`.
+      `trade_suggestion`: `{"structure": "USO put vertical" | "IBIT shares" | "IBIT call vertical" | "synthetic micro
+      future (log-only)", "legs": "+P148 −P139 2026-10-30" | "+147 IBIT" | "+1 MBT (0.1 BTC)", "expiry": "YYYY-MM-DD" |
+      null, "est_debit": per-unit price or null (no two-sided quote), "max_loss", "max_profit" (dollars, null when
+      unpriced or unbounded), "hold_rule": string}` plus, for verticals, `"dte", "long_strike", "short_strike",
+      "width", "quantity", "order_legs"` (the order body's legs). Checklist rows for `oil_fade`, in order: the spike;
+      no barrels lost (from the logged events of the spike window: `ok` null when none is logged); OVX < 60; not
+      three higher closes; first down close since the spike; de-escalation within 3 sessions; war regime off.
+    - **trade** (open event trades, from the paper ledger under strategies `event:oil_fade` / `event:btc_dip`):
+      `{"playbook", "trade_group_id", "opened": "YYYY-MM-DD", "description", "underlying", "expiry", "quantity",
+      "entry": per-unit entry (commission included) or null, "entry_net": cash moved, "mark": per unit or null,
+      "pnl", "pnl_pct", "days_held": sessions since the open, "nights_held": calendar nights, "exit_rule", "priced_by"}`.
+    - **event**: `{"id", "ts", "kind": "escalation|de-escalation|supply_loss|policy|post", "region", "text",
+      "barrels_lost": "Y|P|N|unknown", "source", "created"}`.
+    - **signal_log_row**: `{"id", "date", "symbol": "USO|VIX|BTC", "close", "change_pct", "move_z", "level_z",
+      "mean20", "sd20", "vix", "vix_change_pct", "ovx", "tag": "iran_headline|other_geopolitical|supply_loss|macro|none"
+      | null, "note", "tagged_at", "half_back": true|false|null (pending), "half_back_days": int | null, "r3", "r10",
+      "r20" (% from the row's close; null until observed), "outcome_asof", "created", "complete": bool}`.
+  - `GET /api/events/log?days=14` → `[event]` (newest first). `POST /api/events/log` body `{"ts"?: ISO (default now;
+    a naive time is ET), "kind", "region"?, "text", "barrels_lost"?: "Y|P|N|unknown" (default unknown), "source"?}` →
+    the stored event (422: a bad kind / barrels value, an empty text, an unreadable ts).
+    `DELETE /api/events/log/{id}` → 204 (404 unknown).
+  - `GET /api/events/regime` → `{"war": bool, "note", "updated"}`; `PUT /api/events/regime` body `{"war": bool,
+    "note"?}` → the regime (422 without `war`). The switch the crude playbook reads ("2026 war regime").
+  - `GET /api/events/signals?days=90` → `[signal_log_row]` (newest first). `PUT /api/events/signals/{id}/tag` body
+    `{"tag": one of the five | null (clear), "note"?}` → the row (422 bad tag, 404 unknown id).
+  - `GET /api/events/decisions?days=30&playbook=oil_fade|btc_dip` → `{"days", "playbook", "decisions": [{"playbook",
+    "date", "status": "opened|added|closed|held|no_trade|no_quote|order_failed|failed", "verdict", "action":
+    "open|add|exit|null", "trade_group_id", "summary", "detail": {verdict, headline, reasons, checklist, open_trades,
+    params, orders, playbook_detail, why | error}, "decided_at"}]}` — every allocator decision, trade or not.
+  - `GET /api/events/crypto-flush?days=30` → `{"days", "status": crypto_status, "signals": [crypto_signal]}`.
+    `crypto_status`: `{"enabled", "running", "ticks", "last_tick", "source": "okx public REST", "params", "armed",
+    "coins": {"BTC"|"ETH": {"price", "max240", "drop_pct", "oi", "oi_max240", "oi_drop_pct", "oi_age_min", "oi_rising",
+    "price_samples", "oi_samples", "cooldown_min_left", "reasons", "at", "error", "inst", "micro"}}}`.
+    `crypto_signal`: `{"id", "ts", "coin", "price", "max240", "drop_pct", "oi", "oi_max240", "oi_drop_pct", "oi_age_min",
+    "trade": bool (the paper leg was taken: armed at the time), "micro": "MBT|MET", "size": 0.1, "entry_ts",
+    "entry_price" (next minute's price + 0.1%), "exit_ts", "exit_price" (+24 h, − 0.1%), "pnl_usd", "ret_pct", "r1h",
+    "r4h", "r24h" (% from the trigger price, back-filled by the poller), "created", "open": bool}`.
+  - Arming (all `kind: allocator`, `mode: paper`, never armed by default; `POST /api/runner/{strategy}/arm`,
+    `DELETE …/arm` as the other arms): `oil_fade` 15:45 ET (window to 16:00) — when the crude playbook says `fade`
+    and nothing is open, ONE USO put vertical (long ~ATM, short ~6% lower, 21–42 DTE nearest 30) at a limit of net
+    mid + 0.05 through the paper order book (ledger strategy `event:oil_fade`, client order id
+    `event-oil_fade-<date>-open|add|close-<group>`); `add` adds one more spread, once; exits with a market order,
+    never before one night: crude ≤ its 20-day mean, 10 sessions held, the spread ≤ 50% of its debit, or expiry within
+    two sessions. `btc_dip` 09:31 ET (to 10:30) — when the BTC playbook fired and nothing is open, floor($5,000 /
+    IBIT) shares with a market order (or, `vehicle: call_vertical`, one IBIT call vertical), ledger `event:btc_dip`;
+    exits after one night: BTC back at the pre-shock close, −4% of the entry, or 3 sessions. `event_signal_log`
+    16:15 ET — the post-close signal log: a row per symbol whose closes earn it (USO |move z| ≥ 2, VIX level z ≥ 2,
+    BTC day ≤ −3%; unique per date + symbol) and the outcome back-fill of every pending row. `crypto_flush` — armed
+    means the 24/7 poller records the log-only paper micro-future leg on each trigger (unarmed it still logs the
+    trigger and its returns). Each decision is an event on `/api/events`: `{"type": "event_alloc", "playbook", "date",
+    "status", "verdict", "action", "trade_group_id", "summary", "orders"}`, `{"type": "event_signal_log", "date",
+    "logged", "already", "backfilled", "summary"}`, `{"type": "crypto_flush", "event": "signal", …crypto_signal}`.
+    `/api/runner/arms` rows carry `status`: the allocator's `{"playbook", "ledger_strategy", "experimental",
+    "open_trades", "params", "last_decision"}`, the signal log's `{"rows", "pending", "untagged", "last"}`, the
+    poller's `crypto_status`.
+  - The crypto-flush poller (rule R0, per coin every minute: price ≤ 95% of its 240-minute max, perp open interest
+    ≤ 95% of its 240-minute max with the OI print ≤ 10 minutes old, OI not rising over the last 30 minutes, one signal
+    per coin per 24 h) polls OKX's public REST (`BTC-USDT-SWAP`, `ETH-USDT-SWAP`: ticker + open interest a minute,
+    240 one-minute candles once on start to seed the price window; the OI window warms up from the live polls, so
+    the first 10 minutes after a start cannot trigger). `ALAN_TRADER_CRYPTO_FLUSH=0` turns it off; it is off whenever
+    `ALAN_TRADER_PROVIDERS=none` (the test suite).
+  - Tables (api/services/appdb.py, created on first use): `app.EventLog`, `app.EventDeskSetting`, `app.EventDeskLog`
+    (unique playbook + day), `app.EventSignalLog` (unique date + symbol), `app.CryptoFlushSignal`. Memory stores under
+    `ALAN_TRADER_ARMS=memory`.

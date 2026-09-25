@@ -92,6 +92,15 @@ SPECS: dict[str, Spec] = {
     "ndx_0dte_condor": Spec("runner", _dt.time(9, 45), _dt.time(10, 25), ("",),
                             "the platform's paper runner from the service checkout (detached; the strategy is an overlay; "
                             "quote-gated)"),
+    # the event desk (api/services/event_desk.py, event_alloc.py, crypto_flush.py) — never armed by default
+    "oil_fade": Spec("allocator", _dt.time(15, 45), _dt.time(16, 0), ("",),
+                     "EXPERIMENTAL: the event desk's USO put-vertical fade of a threat-only crude spike"),
+    "btc_dip": Spec("allocator", _dt.time(9, 31), _dt.time(10, 30), ("",),
+                    "EXPERIMENTAL: the event desk's IBIT buy at the open after a geopolitical BTC dip"),
+    "event_signal_log": Spec("allocator", _dt.time(16, 15), _dt.time(23, 0), ("",),
+                             "the event desk's post-close signal log (USO 2σ moves, VIX 2σ, BTC −3%) and outcome back-fill"),
+    "crypto_flush": Spec("allocator", _dt.time(0, 5), _dt.time(23, 55), ("",),
+                         "the crypto liquidation-flush paper leg: armed = the 24/7 poller records the synthetic micro future"),
 }
 RUNNER_POLL_S = 15
 
@@ -378,7 +387,7 @@ class ArmScheduler:
     def __init__(self, store, runners, publish: Optional[Callable[[dict], None]] = None,
                  clock: Optional[Callable[[], pd.Timestamp]] = None,
                  launcher: Optional[Callable[[str], dict]] = None, allocator=None,
-                 runner_launcher: Optional[Callable[[str], dict]] = None):
+                 runner_launcher: Optional[Callable[[str], dict]] = None, allocators: Optional[dict] = None):
         from api.bootstrap import WORKING_COPY
         self.store = store
         self.runners = runners
@@ -387,7 +396,8 @@ class ArmScheduler:
         self.log_dir = WORKING_COPY / "paper_state" / "runner_logs" / "arm"
         self.launcher = launcher or (lambda strategy: launch_task_script(strategy, self.log_dir))
         self.runner_launcher = runner_launcher or (lambda strategy: launch_runner(strategy, self.log_dir))
-        self.allocator = allocator
+        self.allocator = allocator                      # gex_positioning's
+        self.allocators = dict(allocators or {})        # other allocator-kind strategies -> their runner (run / status)
         self._stop = threading.Event()
         self._thread: Optional[threading.Thread] = None
         self._lock = threading.RLock()
@@ -440,6 +450,17 @@ class ArmScheduler:
                 logger.debug("arm event publish failed", exc_info=True)
         return ev
 
+    def _alloc(self, strategy: str):
+        """The allocator that runs ``strategy`` (gex_positioning's, or one of ``allocators``), else None."""
+        a = self.allocators.get(strategy)
+        return a if a is not None else (self.allocator if strategy == "gex_positioning" else None)
+
+    def is_armed(self, strategy: str) -> bool:
+        try:
+            return self.store is not None and any(a["strategy"] == strategy for a in self.store.active())
+        except Exception:  # noqa: BLE001
+            return False
+
     # ── arming ────────────────────────────────────────────────────────────────
     def _need_store(self):
         if self.store is None:
@@ -456,7 +477,7 @@ class ArmScheduler:
         if schedule not in ("once", "weekdays"):
             raise ArmError("schedule must be once or weekdays")
         variants = self._variants(strategy, spec, variant)
-        if spec.kind == "allocator" and self.allocator is None:
+        if spec.kind == "allocator" and self._alloc(strategy) is None:
             raise ArmError(f"{strategy}'s paper allocator is not available in this service")
         now = self.clock()
         day = None
@@ -556,9 +577,10 @@ class ArmScheduler:
                 "status": self._status(arm, spec, nr, running, now)}
 
     def _status(self, arm, spec, nr, running, now) -> Optional[dict]:
-        if self.allocator is not None and spec is not None and spec.kind == "allocator":
+        alloc = self._alloc(arm["strategy"]) if spec is not None and spec.kind == "allocator" else None
+        if alloc is not None:
             try:
-                return self.allocator.status(arm["variant"])
+                return alloc.status(arm["variant"])
             except Exception as exc:  # noqa: BLE001
                 return {"error": f"{type(exc).__name__}: {exc}"[:200]}
         return None
@@ -619,9 +641,10 @@ class ArmScheduler:
 
     def _start(self, arm: dict, spec: Spec, now: pd.Timestamp, late: bool) -> dict:
         if spec.kind == "allocator":
-            if self.allocator is None:
-                raise RuntimeError("the GEX paper allocator is not available in this service")
-            res = self.allocator.run(arm["variant"], now=now)
+            alloc = self._alloc(arm["strategy"])
+            if alloc is None:
+                raise RuntimeError(f"{arm['strategy']}'s paper allocator is not available in this service")
+            res = alloc.run(arm["variant"], now=now)
             note = self._late_note(spec, now, late)
             msg = f"ran{note}: {res.get('summary', '')}".strip()
             self.store.record(arm["id"], msg)

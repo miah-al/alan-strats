@@ -38,6 +38,8 @@ os.environ.setdefault("ALAN_TRADER_BARS_TOPUP", "0")
 # ... arms live in memory only and nothing is ever started on a schedule (a test must never launch a paper run).
 os.environ.setdefault("ALAN_TRADER_ARMS", "memory")
 os.environ.setdefault("ALAN_TRADER_ARM_SCHEDULER", "0")
+# ... and the crypto-flush poller never polls an exchange under test (tests inject a fake OKX client).
+os.environ.setdefault("ALAN_TRADER_CRYPTO_FLUSH", "0")
 
 
 @pytest.fixture(autouse=True)
