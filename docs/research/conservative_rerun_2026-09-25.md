@@ -202,3 +202,30 @@ One bug found on the way: the strategy's `extra.replay.overview` (the Backtest t
 the previous day's P&L and dropped the last day (the equity list is anchored at the starting capital one day before
 the first session and was zipped against the dates from index 0). Fixed on the strategy branch with a test; the
 first pass of this study showed 2026-09-23's numbers under 2026-09-24 because of it.
+
+## Deploying this (for the lead)
+
+1. **Service** (`conservative-backtests` off `service-api`, commit 77f9efd): merge; nothing changes for a running live
+   session. `paper_runner --replay` now prints two columns; the Performance page reads the checked-in baseline
+   at once (`bt_mode` = conservative, `source` = file), and `python -m scripts.store_conservative_baseline` writes the
+   conservative rows into `app.BacktestRun` when the DB may be written (not done here: the DB was read-only for this
+   work). The desktop already shows `bt_avg_pnl`; a negative expectation reads as "no backtest to compare" in its
+   verdict text, so the page may want to show `bt_mode` and the number.
+2. **Strategies, ndx_0dte_tasty** (`conservative-backtests` off `origin/master`): the live runner runs the
+   `ndx/v2.2-time-stop-crossing-cost` branch, which is not on master. Rebasing one onto the other touches the same
+   hunks in params.py (the execution block: add `spread_model`, set stale/carry 0, keep the cross_cost fields),
+   live.py (the maker-through edits sit beside the v2.2 cross-cost edits) and strategy.py (`LIVE_PARAMS`: v2.2 has
+   `{"fill_model": "mid", "cross_cost_model": "moneyness"}`; this branch has `{"stale_min": 5, "carry_min": 30}` --
+   the merged live set needs all four). Do not deploy a strategy whose live_params lack stale/carry: a live session
+   would refuse every quote whose legs had not both traded this minute.
+3. **Strategies, ndx_gamma_walls** (`gamma-walls/conservative` off `gamma-walls/v1`): the service's
+   `strategy_overlays.txt` points at the `alan_trader_gw` worktree on gamma-walls/v1; check the new branch out there
+   (or point the overlay at `alan_trader_strats_conservative_gw`) after today's session ends. Its live entry then
+   sells at the bid (taker) -- decide whether the paper trial should run taker or maker; the params default is taker.
+4. **Worktrees to remove when merged:** `alan_trader_conservative` (its `.venv-win` is a junction to
+   `alan_trader_service\.venv-win`, not a copy), `alan_trader_strats_conservative`, `alan_trader_strats_conservative_gw`.
+5. Known, pre-existing failures in the service suite on this machine (not from this change): `test_api.py::
+   test_scan_rejects_bad_requests` (no Polygon key), `test_api_runner.py::test_the_services_own_sessions_start_run_and_stop`
+   (the live runner already owns the slug), `test_check_data_day.py` (2026-09-24 has 389 bars), and
+   `test_paper_ledger.py::test_open_add_close_round_trip` in the full suite only (the DB guard installed by an earlier
+   API test refuses its writes to account 1; it passes alone).
