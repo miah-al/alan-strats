@@ -6,7 +6,9 @@ writes any new fills to the portfolio ledger and to a CSV paper log in the strat
 saves the engine state so a restart resumes where it left off.
 
 Two clocks: ``run_replay`` walks a stored session as fast as it can (tests, dry runs, the
-reconciliation replay); ``run_live`` follows the wall clock with a real-time provider.
+reconciliation replay); ``run_live`` follows the wall clock with a real-time provider. Live, an
+engine that declares ``on_poll`` also sees every poll's quotes between bar closes (resting orders
+checked every 15 seconds); one without it behaves exactly as before.
 Strategy logic never lives here: the engine and the gate come from the plugin
 (strategy_api.live).
 """
@@ -217,6 +219,23 @@ class PaperSession:
             problems.append("strategy exposes no live instrument")
         return problems
 
+    @staticmethod
+    def _fill_guard(session) -> int:
+        """The runaway guard's ceiling: the runner's, unless the engine declares its own (an engine that logs every
+        order placed and cancelled in ``fills`` would trip the default on a normal day; see strategy_api.live)."""
+        try:
+            return int(getattr(session, "max_fills_per_session", MAX_FILLS_PER_SESSION))
+        except (TypeError, ValueError):
+            return MAX_FILLS_PER_SESSION
+
+    def _guard(self, session) -> bool:
+        if len(session.fills) > self._fill_guard(session):
+            self.halted = f"runaway guard: {len(session.fills)} fills"
+            logger.error(self.halted)
+            self._alert(self.halted)
+            return False
+        return True
+
     def _step(self, session, minute: int, bar: Bar, quote_fn, is_last: bool, day: date, expiry: date, symbols_fn) -> bool:
         """One bar through the engine with the guards. Returns False when the session must halt."""
         if self.halted:
@@ -229,12 +248,31 @@ class PaperSession:
             self._alert(self.halted)
             return False
         self._write_new_fills(session, day, expiry, bar.close, symbols_fn)
-        if len(session.fills) > MAX_FILLS_PER_SESSION:
-            self.halted = f"runaway guard: {len(session.fills)} fills"
-            logger.error(self.halted)
+        return self._guard(session)
+
+    def _poll(self, session, now: datetime, spot: Optional[float], quote_fn, day: date, expiry: date, symbols_fn) -> bool:
+        """The engine's optional per-poll hook (``on_poll``): resting orders checked against the quotes just fetched.
+        Fills it produces are logged, alerted and saved like a bar's. Returns False when the session must halt."""
+        on_poll = getattr(session, "on_poll", None)
+        if on_poll is None or self.halted:
+            return not self.halted
+        n_before = len(session.fills)
+        try:
+            on_poll(now, spot, quote_fn)
+        except Exception as exc:
+            self.halted = f"engine error at {now:%H:%M:%S} (poll): {exc}"
+            logger.exception("engine error in on_poll; halting the session")
             self._alert(self.halted)
             return False
-        return True
+        if len(session.fills) > n_before:
+            S = float(spot) if spot is not None else (float(session.closes[-1]) if session.closes else 0.0)
+            for f in session.fills[n_before:]:
+                if f["kind"] in ("open", "add", "close"):
+                    self._alert(f"{now:%H:%M:%S} {f['kind']} {f['direction']} {f['kl']:.0f}/{f['kh']:.0f} @ {f['px']:.2f} ({f['reason']}); "
+                                f"day {session.day_pnl:+,.0f}")
+            self._write_new_fills(session, day, expiry, S, symbols_fn)
+            self._save_state(session, day)
+        return self._guard(session)
 
     def _log_session_features(self, session, day: date, minute: int) -> None:
         """Once per session, at the strategy's first entry minute: the ex-ante features a gate model
@@ -253,7 +291,8 @@ class PaperSession:
             feats.update(am_range_pct=round((hi - lo) / last * 100, 3), am_move_pct=round((last / o - 1) * 100, 3), open=round(o, 2), level=round(last, 2))
             if self.db is not None:
                 from db.client import get_price_bars
-                from datetime import timedelta
+                # (timedelta is the module's: importing it here again made it a local of this function, unbound at
+                # the log write below whenever there is no database engine)
                 px = get_price_bars(self.db, self.underlying, day - timedelta(days=10), day - timedelta(days=1))
                 if len(px) >= 2:
                     c1, c2 = float(px["close"].iloc[-1]), float(px["close"].iloc[-2])
@@ -534,7 +573,18 @@ class PaperSession:
                 syms += list(prov.leg_symbols(pos.kind, pos.k_low, pos.k_high))
             if getattr(session, "pending", None) is not None:
                 pe = session.pending; syms += list(prov.leg_symbols(pe.kind, pe.k_low, pe.k_high))
-            return [s for s in syms if s]
+            watch = getattr(session, "watch_structures", None)         # an engine that wants more quoted each poll
+            if watch is not None:
+                try:
+                    for kind, k_low, k_high in watch():
+                        syms += list(prov.leg_symbols(kind, k_low, k_high))
+                except Exception as exc:
+                    logger.warning("watch_structures failed: %s", exc)
+            out = []
+            for s in syms:
+                if s and s not in out:
+                    out.append(s)
+            return out
 
         n = 0
         last_good_fetch: Optional[datetime] = None
@@ -591,6 +641,9 @@ class PaperSession:
             spot_now = float(iq.last) if (iq is not None and iq.last is not None) else None
             self._heartbeat(day, now, session, live_marks=live_marks, live_legs=live_legs, spot=spot_now)
             prov.sample_underlying(quotes, now)
+            # an engine with resting orders sees every poll's quotes, not one a minute (strategy_api.live: on_poll)
+            if not self._poll(session, now, spot_now, quote_fn, day, prov.expiry or day, prov.leg_symbols):
+                break
             this_minute = now.replace(second=0, microsecond=0)
             if cur_minute is None:
                 cur_minute = this_minute

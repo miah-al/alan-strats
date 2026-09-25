@@ -11,6 +11,18 @@ A strategy that can be paper traded exposes:
 and the engine is driven one bar at a time with ``on_bar``. The runner reads ``fills`` after
 every bar and writes the new ones to the ledger; ``to_dict`` / ``from_dict`` let it resume after
 a restart. Quotes are for the strategy's instrument (here a vertical spread) as one number set.
+
+Optional hooks (the live runner looks for them with ``getattr``; an engine without them behaves as before):
+
+  ``on_poll(now, spot, quote_fn)``
+      called at every quote poll between bar closes with the quotes just fetched, for engines that work
+      resting orders and must see every quote, not one a minute; ``spot`` may be None
+  ``watch_structures() -> [(kind, k_low, k_high)]``
+      structures to keep quoted every poll beyond the open and pending ones (e.g. the other right of a
+      vertical, read by parity); their legs are fetched in the same request as everything else
+  ``max_fills_per_session: int``
+      the engine's own ceiling for the runner's runaway guard, for engines that log every order placed
+      and cancelled in ``fills``
 """
 from __future__ import annotations
 
@@ -27,6 +39,9 @@ class Quote:
     last: float
     age: int = 0
     legs: Optional[tuple] = None   # ((bid, ask, age), (bid, ask, age)) of the long and short leg when the quote came from leg quotes
+    prints: Optional[tuple] = None  # ((last, last_time), (last, last_time)) of the long and short leg's most recent trade, when
+                                    # the feed reports one (None entries otherwise); a resting-order engine tells a NEW print
+                                    # from the previous poll's by comparing both
 
     @property
     def mid(self) -> float:

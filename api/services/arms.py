@@ -74,6 +74,10 @@ SPECS: dict[str, Spec] = {
                             "the service's GEX paper allocator on the whole paper account"),
     "ndx_gamma_walls": Spec("runner", _dt.time(9, 25), _dt.time(15, 0), ("",),
                             "the platform's paper runner from the service checkout (detached)"),
+    # the maker's window is 13:00-15:45 and its 30-minute lookback is backfilled from the broker's candle feed, so it
+    # starts after lunch: polling from the open would spend half the day's shared broker budget for nothing
+    "ndx_0dte_maker": Spec("runner", _dt.time(12, 25), _dt.time(15, 30), ("",),
+                           "the platform's paper runner from the service checkout (detached; the strategy is an overlay)"),
 }
 RUNNER_POLL_S = 15
 

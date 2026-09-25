@@ -585,3 +585,10 @@ clarifications of what the service does where the spec leaves room.
   - Fallback when the service will not be running at the arm's time: `python -m api.services.arms later ndx_gamma_walls
     09:25 YYYY-MM-DD` starts a detached waiter (`python -m api.launch_later`) that runs the same runner at that time;
     the service does not track it (an external runner to it).
+- **ndx_0dte_maker: a resting-order execution trial, the same way.** An overlay (its folder in `strategy_overlays.txt`),
+  armed with `POST /api/runner/ndx_0dte_maker/arm`; the runner starts at 12:25 ET (late up to 15:30; the strategy's
+  window is 13:00-15:45 and its lookback is backfilled from the broker's candle feed). For engines that work resting
+  orders the paper runner has three optional hooks (`strategy_api/live.py`): `on_poll(now, spot, quote_fn)` is called
+  at every quote poll between bar closes, `watch_structures()` names extra structures to keep quoted each poll, and
+  `max_fills_per_session` sets the engine's own runaway ceiling; a vertical quote now carries each leg's last print
+  (`Quote.prints`). An engine without the hooks sees the loop exactly as before.

@@ -117,7 +117,10 @@ def vertical_quote(long_leg: LegQuote, short_leg: LegQuote, now: datetime, carry
     if age > carry_min:
         return None
     legs = tuple((float(leg.bid), float(leg.ask), max(0, a)) for leg, a in zip((long_leg, short_leg), ages))
-    return Quote(bid=bid, ask=ask, last=last, age=age, legs=legs)
+    # the legs' most recent trades, as reported: a resting-order engine compares them with the previous poll's
+    # to know that a leg actually printed since (a price alone cannot say that, a stale one repeats for hours)
+    prints = tuple(((float(leg.last) if leg.last is not None else None), leg.last_time) for leg in (long_leg, short_leg))
+    return Quote(bid=bid, ask=ask, last=last, age=age, legs=legs, prints=prints)
 
 
 # ── replay ────────────────────────────────────────────────────────────────────
