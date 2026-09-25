@@ -12,9 +12,8 @@ from pathlib import Path
 import pytest
 
 REPO = Path(__file__).resolve().parents[1]
-for _p in (str(REPO), str(REPO.parent)):
-    if _p not in sys.path:
-        sys.path.insert(0, _p)
+if str(REPO) not in sys.path:      # only the checkout: its parent holds the live alan_trader (conftest binds ours by path)
+    sys.path.insert(0, str(REPO))
 
 from api.bootstrap import bootstrap  # noqa: E402
 

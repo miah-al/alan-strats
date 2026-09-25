@@ -15,9 +15,8 @@ import pandas as pd
 import pytest
 
 REPO = Path(__file__).resolve().parents[1]
-for _p in (str(REPO), str(REPO.parent)):
-    if _p not in sys.path:
-        sys.path.insert(0, _p)
+if str(REPO) not in sys.path:      # only the checkout: its parent holds the live alan_trader (conftest binds ours by path)
+    sys.path.insert(0, str(REPO))
 
 from alan_trader.strategy_api import registry as R
 from alan_trader.strategy_api.base import BaseStrategy, StubStrategy, SignalResult, BacktestResult
@@ -188,7 +187,9 @@ def test_page_builds_with_zero_plugins():
     notice instead of crashing when no plugin is discoverable."""
     code = (
         "import os, sys\n"
-        "sys.path.insert(0, %r); sys.path.insert(0, %r)\n"
+        "sys.path.insert(0, %r)\n"
+        # this checkout is alan_trader by path: with the parent on sys.path the live checkout next door would be tested
+        "from api.bootstrap import register_platform_package; register_platform_package()\n"
         "os.environ['ALAN_TRADER_STRATEGY_PACKAGES'] = 'none'\n"
         "from alan_trader.strategy_api import registry as R\n"
         "assert R.STRATEGY_METADATA == {}, R.STRATEGY_METADATA\n"
@@ -198,7 +199,7 @@ def test_page_builds_with_zero_plugins():
         "from app.pages.tools.tabs import _registry_tab\n"
         "_registry_tab()\n"
         "print('OK')\n"
-    ) % (str(REPO), str(REPO.parent))
+    ) % str(REPO)
     proc = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True,
                           cwd=str(REPO), timeout=300)
     assert proc.returncode == 0 and "OK" in proc.stdout, proc.stderr[-2000:]

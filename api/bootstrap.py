@@ -2,17 +2,16 @@
 api/bootstrap.py — make the platform importable for the service process, safely.
 
 The platform imports itself two ways: ``db.*``, ``engine.*``, ``paper.*`` … relative to
-this checkout, and ``alan_trader.*`` relative to its parent directory. Strategies come
-from the ``alan_trader_strategies`` plugin package, which normally sits next to the
-checkout and is imported by name.
+this checkout, and as the package ``alan_trader.*``. Strategies come from the
+``alan_trader_strategies`` plugin package, which normally sits next to the checkout.
 
-A service checkout can live next to ANOTHER copy of ``alan_trader`` (a git worktree
-beside the live original). Putting the directory that holds both on ``sys.path`` would
-let ``import alan_trader`` resolve to the wrong copy, so the plugin is never imported
-through its parent directory: it is loaded by file path and registered in
-``sys.modules`` before the registry runs discovery. After that, ``alan_trader`` and
-``engine`` are asserted to resolve inside this checkout — the process refuses to start
-otherwise. The service never imports the Dash app (``app/``).
+A service checkout lives beside ANOTHER copy of ``alan_trader`` (a git worktree next to
+the live original, in a folder of its own name), so nothing here is resolved through a
+parent directory on ``sys.path``: ``alan_trader`` is bound to this checkout by file path
+(``register_platform_package``) whatever the folder is called, and the plugin is loaded
+by file path and registered in ``sys.modules`` before the registry runs discovery.
+After that, ``alan_trader`` and ``engine`` are asserted to resolve inside this checkout —
+the process refuses to start otherwise. The service never imports the Dash app (``app/``).
 
 Strategy OVERLAYS: a strategy folder from another checkout of the plugin (a worktree on a feature branch) can be
 added without touching the plugin checkout the service loads: list the folder (…/strategies/<slug>) in
@@ -40,9 +39,10 @@ logger = logging.getLogger("alan_trader.api")
 
 #: This checkout (the directory holding app/, db/, engine/, api/ …).
 WORKING_COPY: Path = Path(__file__).resolve().parent.parent
-#: Its parent — on sys.path so ``import alan_trader`` resolves to WORKING_COPY.
+#: Its parent. Never put on sys.path: it holds the live ``alan_trader`` checkout when this one sits beside it.
 PARENT: Path = WORKING_COPY.parent
 
+PLATFORM_PACKAGE = "alan_trader"
 PLUGIN_PACKAGE = "alan_trader_strategies"
 ENV_STRATEGIES_DIR = "ALAN_TRADER_STRATEGIES_DIR"
 
@@ -81,9 +81,26 @@ def _fix_sys_path() -> None:
         logger.warning("removing %r from sys.path: it holds a different alan_trader checkout", p)
         while p in sys.path:
             sys.path.remove(p)
-    for p in (str(PARENT), str(WORKING_COPY)):
-        if p not in sys.path:
-            sys.path.insert(0, p)
+    if str(WORKING_COPY) not in sys.path:
+        sys.path.insert(0, str(WORKING_COPY))
+
+
+def register_platform_package() -> None:
+    """Bind ``alan_trader`` to this checkout by file path, so the folder may be called anything and the
+    live checkout beside it is never picked up through ``sys.path``. Idempotent. A copy imported from
+    somewhere else before this ran cannot be swapped underneath its users: that is a refusal, like
+    ``_assert_paths``."""
+    existing = sys.modules.get(PLATFORM_PACKAGE)
+    if existing is not None:
+        if _inside(getattr(existing, "__file__", None), WORKING_COPY):
+            return
+        raise BootstrapError(f"{PLATFORM_PACKAGE} was already imported from {getattr(existing, '__file__', None)!r}, "
+                             f"not this checkout ({WORKING_COPY}); bootstrap must run before the platform is imported")
+    spec = importlib.util.spec_from_file_location(
+        PLATFORM_PACKAGE, str(WORKING_COPY / "__init__.py"), submodule_search_locations=[str(WORKING_COPY)])
+    mod = importlib.util.module_from_spec(spec)
+    sys.modules[PLATFORM_PACKAGE] = mod
+    spec.loader.exec_module(mod)
 
 
 def strategies_dir_candidates() -> list[Path]:
@@ -392,6 +409,7 @@ def bootstrap() -> dict:
     if _STATE["done"]:
         return _STATE["info"]
     _fix_sys_path()
+    register_platform_package()
     if sys.pycache_prefix is None:
         # Never write __pycache__ into the plugin checkout (it is imported read-only).
         sys.pycache_prefix = str(WORKING_COPY / ".pycache")
