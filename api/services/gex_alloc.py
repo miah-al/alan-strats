@@ -347,8 +347,9 @@ class LiveInputs:
         if missing:
             try:
                 import yfinance as yf
-                h = yf.Ticker("^VIX").history(start=missing[0].date().isoformat(),
-                                              end=(until + _dt.timedelta(days=1)).isoformat(), auto_adjust=False)
+                with patience(60.0):                         # through the request gate, waiting out a backoff
+                    h = yf.Ticker("^VIX").history(start=missing[0].date().isoformat(),
+                                                  end=(until + _dt.timedelta(days=1)).isoformat(), auto_adjust=False)
                 got = {pd.Timestamp(pd.Timestamp(i).date()): float(c) for i, c in h["Close"].items()}
                 add = {d: got[d] for d in missing if d in got}
                 if add:
