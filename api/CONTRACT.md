@@ -707,7 +707,8 @@ clarifications of what the service does where the spec leaves room.
     never before one night: crude ≤ its 20-day mean, 10 sessions held, the spread ≤ 50% of its debit, or expiry within
     two sessions. `btc_dip` 09:31 ET (to 10:30) — when the BTC playbook fired and nothing is open, floor($5,000 /
     IBIT) shares with a market order (or, `vehicle: call_vertical`, one IBIT call vertical), ledger `event:btc_dip`;
-    exits after one night: BTC back at the pre-shock close, −4% of the entry, or 3 sessions. `event_signal_log`
+    exits (no minimum hold: IBIT is a crypto ETP, 0 nights under the account's holding rule) when BTC is back at the
+    pre-shock close, at −4% of the entry, or after 3 sessions. `event_signal_log`
     16:15 ET — the post-close signal log: a row per symbol whose closes earn it (USO |move z| ≥ 2, VIX level z ≥ 2,
     BTC day ≤ −3%; unique per date + symbol) and the outcome back-fill of every pending row. `crypto_flush` — armed
     means the 24/7 poller records the log-only paper micro-future leg on each trigger (unarmed it still logs the

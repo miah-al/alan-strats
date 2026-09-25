@@ -57,7 +57,9 @@ OIL_PARAMS = {
 BTC_PARAMS = {
     "dip_pct": 2.0, "drop_24h_pct": -3.0, "event_sessions": 3, "dollars": 5000.0, "vehicle": "shares",
     "short_pct": 0.06, "dte_min": 21, "dte_max": 42, "dte_target": 30, "strike_step": 1.0, "slippage": 0.02,
-    "max_sessions": 3, "stop_pct": 0.04, "min_nights": 1,
+    # min_nights 0: IBIT is a crypto ETP and the account's holding rule treats crypto as crypto (0 nights; ETFs 1,
+    # single names 3), so the dip buy may be closed the same session its exit rule fires
+    "max_sessions": 3, "stop_pct": 0.04, "min_nights": 0,
 }
 VIX_PARAMS = {"z": 2.0}
 SIGNAL_LOG_RULES = {"USO": ("move_z20", 2.0, "abs"), "VIX": ("z20", 2.0, "ge"), "BTC": ("change_pct", -3.0, "le")}
@@ -754,7 +756,7 @@ def evaluate_vix(vix: dict, vix3m: Optional[dict] = None, params: Optional[dict]
 
 EXIT_RULES = {
     "oil_fade": "≥ 1 night; out when crude is back at its 20-day mean, after 10 sessions, or at −50% of the debit",
-    "btc_dip": "≥ 1 night; out after 3 sessions, at −4%, or when BTC is back at the pre-shock price",
+    "btc_dip": "no minimum hold (a crypto ETP: 0 nights); out after 3 sessions, at −4%, or when BTC is back at the pre-shock price",
 }
 
 

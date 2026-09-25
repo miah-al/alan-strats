@@ -7,7 +7,7 @@ api/services/event_alloc.py — the event desk's paper allocators (EXPERIMENTAL;
              Exits, never before one night: crude back at its 20-day mean, 10 sessions, the spread worth
              ≤ 50% of its debit, or two sessions to expiry. One position (campaign) at a time.
   btc_dip    at 09:31 ET: when the BTC playbook fired, ~$5k of IBIT shares (or one IBIT call vertical) with
-             a market order; out — after one night — after 3 sessions, at −4% of the entry, or when BTC is
+             a market order; out (no minimum hold: a crypto ETP counts as crypto, 0 nights) after 3 sessions, at −4% of the entry, or when BTC is
              back at the pre-shock close.
 
 Both decide once per trading day (app.EventDeskLog is unique on playbook + day; client order ids carry the

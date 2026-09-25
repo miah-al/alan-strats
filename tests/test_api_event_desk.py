@@ -434,7 +434,8 @@ def test_btc_dip_allocator(world):
     ibit = float(daily.closes["IBIT"].iloc[-1])                                 # sized off IBIT's own last close
     assert body["order_type"] == "market" and body["legs"] == [{"type": "stock", "side": "buy", "quantity": int(5000 // ibit)}]
     assert body["strategy"] == "event:btc_dip" and body["client_order_id"] == "event-btc_dip-2026-09-25-open"
-    # the same day nothing closes (one night); Monday BTC back at the pre-shock price: target
+    # (the allocator decides once a day: a same-day exit is the exit rule's business, tested below)
+    # Monday BTC back at the pre-shock price: target
     clock["t"] = pd.Timestamp("2026-09-28 09:31", tz=NY)
     daily.closes["BTC"] = series(list(daily.closes["BTC"].values) + [pre * 1.001], end=D(2026, 9, 28))
     r = a.run()
@@ -444,7 +445,22 @@ def test_btc_dip_allocator(world):
     assert EA.btc_exit_reason(t, 59000.0, 60000.0, D(2026, 9, 28), p) is None
     assert EA.btc_exit_reason(dict(t, mark=32.5), 59000.0, 60000.0, D(2026, 9, 28), p).startswith("stop")
     assert EA.btc_exit_reason(dict(t, days_held=3), 59000.0, 60000.0, D(2026, 9, 30), p).startswith("time")
-    assert EA.btc_exit_reason(dict(t, mark=30.0), 59000.0, 60000.0, D(2026, 9, 25), p) is None                    # same day
+
+
+def test_the_btc_dip_has_no_minimum_hold_because_a_crypto_etp_is_crypto():
+    """The account's holding rule: ETFs 1 night, single names 3, index and crypto 0 -- and IBIT / ETHA are crypto.
+    So btc_dip's min_nights is 0: a stop or the target closes the buy the same session (the same-day open, the same
+    session), where oil_fade's USO spread (an ETF option) still waits a night."""
+    p = ED.BTC_PARAMS
+    assert p["min_nights"] == 0 and ED.OIL_PARAMS["min_nights"] == 1
+    t = {"opened": "2026-09-25", "entry": 34.0, "mark": 30.0, "days_held": 0}
+    assert EA.btc_exit_reason(t, 59000.0, 60000.0, D(2026, 9, 25), p).startswith("stop")                          # same day
+    assert EA.btc_exit_reason(dict(t, mark=34.0), 60100.0, 60000.0, D(2026, 9, 25), p).startswith("target")
+    assert EA.btc_exit_reason(dict(t, mark=34.0), 59000.0, 60000.0, D(2026, 9, 25), p) is None                    # no rule: held
+    assert EA.nights_ok("2026-09-25", D(2026, 9, 25), 0) and not EA.nights_ok("2026-09-25", D(2026, 9, 25), 1)
+    o = {"opened": "2026-09-25", "entry": 1.0, "mark": 0.1, "days_held": 0}
+    assert EA.oil_exit_reason(o, 80.0, 90.0, D(2026, 9, 25), ED.OIL_PARAMS) is None                                # the ETF waits
+    assert "0 nights" in ED.EXIT_RULES["btc_dip"] and "1 night" in ED.EXIT_RULES["oil_fade"]
 
 
 def test_a_failed_input_is_logged_not_traded(world):
