@@ -94,9 +94,22 @@ def market_iv(ticker: str):
     return cached(("iv", ticker.upper()), DAILY_TTL, lambda: M.iv(ticker), cache_errors=_NO_DATA)
 
 
+@router.get("/market/gex-recorder")
+def market_gex_recorder(request: Request):
+    """The GEX recorder's state in this process and what app.GexHistory holds (read only)."""
+    from api.services import gex_recorder as REC
+    rec = getattr(request.app.state, "gex_recorder", None)
+    out = rec.status() if rec is not None else {"enabled": REC.enabled(), "running": False}
+    try:
+        out["table"] = REC.table_counts()
+    except Exception as exc:  # noqa: BLE001 — the DB being down is not the recorder's state
+        out["table"] = {"error": f"{type(exc).__name__}: {exc}"[:200]}
+    return out
+
+
 @router.get("/market/gex/{ticker}/history")
 def market_gex_history(ticker: str, days: int = Query(default=365, ge=1, le=3650),
-                       interval: Literal["1d", "30m"] = "1d"):
+                       interval: Literal["1d", "session", "30m"] = "1d"):
     from api.services import gex_history as GH
     try:
         return GH.points(ticker, days, interval)

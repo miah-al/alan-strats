@@ -97,21 +97,55 @@ def test_real_history_on_a_month_of_stored_snapshots():
 def test_recorder_schedule_and_one_tick(monkeypatch):
     import api.services.gex_recorder as REC
     NY = "America/New_York"
+    E = _dt.datetime
     day = pd.Timestamp("2026-09-23 10:47", tz=NY)                           # a Wednesday
-    assert REC.due_slots(day, streaming=True) == [("intraday", _dt.datetime(2026, 9, 23, 10, 30))]
+    assert REC.due_slots(day, streaming=True) == [("intraday", E(2026, 9, 23, 10, 30))]
     assert REC.due_slots(day, streaming=False) == []                         # auto: intraday only while streaming
-    assert REC.due_slots(day, streaming=False, mode="on") == [("intraday", _dt.datetime(2026, 9, 23, 10, 30))]
+    assert REC.due_slots(day, streaming=False, mode="on") == [("intraday", E(2026, 9, 23, 10, 30))]
+    # the decision-time snapshot, streaming or not, 10:55 until 11:30
+    assert REC.due_slots(pd.Timestamp("2026-09-23 10:56", tz=NY), streaming=False) == [("session", E(2026, 9, 23, 10, 55))]
+    assert REC.due_slots(pd.Timestamp("2026-09-23 11:10", tz=NY), streaming=True) == [
+        ("intraday", E(2026, 9, 23, 11, 0)), ("session", E(2026, 9, 23, 10, 55))]
+    assert REC.due_slots(pd.Timestamp("2026-09-23 11:31", tz=NY), streaming=False) == []
     late = pd.Timestamp("2026-09-23 16:20", tz=NY)
-    assert REC.due_slots(late, streaming=True) == [("eod", _dt.datetime(2026, 9, 23, 16, 0))]
-    assert REC.due_slots(pd.Timestamp("2026-09-26 12:00", tz=NY), streaming=True) == []          # Saturday
-    assert REC.due_slots(pd.Timestamp("2026-11-26 16:30", tz=NY), streaming=True) == []          # Thanksgiving
+    assert REC.due_slots(late, streaming=True) == [("eod", E(2026, 9, 23, 16, 0))]
+    # a missed close can still be recorded until the next session opens — only the last one, never an older day
+    assert REC.due_slots(pd.Timestamp("2026-09-26 12:00", tz=NY), streaming=True) == [("eod", E(2026, 9, 25, 16, 0))]
+    assert REC.due_slots(pd.Timestamp("2026-09-28 09:00", tz=NY), streaming=True) == [("eod", E(2026, 9, 25, 16, 0))]
+    assert REC.due_slots(pd.Timestamp("2026-09-28 09:45", tz=NY), streaming=False) == []
+    assert REC.due_slots(pd.Timestamp("2026-11-26 16:30", tz=NY), streaming=True) == [("eod", E(2026, 11, 25, 16, 0))]
+    assert REC.is_late("eod", E(2026, 9, 23, 16), E(2026, 9, 23, 16, 30)) is False
+    assert REC.is_late("eod", E(2026, 9, 23, 16), E(2026, 9, 23, 19, 0)) is True
+    assert REC.is_late("eod", E(2026, 9, 25, 16), E(2026, 9, 28, 8, 0)) is True
+    assert REC.is_late("session", E(2026, 9, 23, 10, 55), E(2026, 9, 23, 11, 1)) is False
+    assert REC.is_late("session", E(2026, 9, 23, 10, 55), E(2026, 9, 23, 11, 20)) is True
+    monkeypatch.setenv("ALAN_TRADER_GEX_TICKERS", "IBIT,ETHA,SPY")
+    assert REC.tickers() == ["IBIT", "ETHA", "SPY", "NDX", "SPX"] and REC.session_tickers() == ["NDX", "SPX", "SPY"]
+
     saved = []
     monkeypatch.setattr(REC, "tickers", lambda: ["IBIT", "ETHA"])
     monkeypatch.setattr(REC, "recorded", lambda t, k, s: t == "ETHA")        # ETHA's slot is already there
-    monkeypatch.setattr(REC, "save", lambda t, k, s, g: saved.append((t, k, s, g["net_gex"])) or True)
+    monkeypatch.setattr(REC, "save", lambda t, k, s, g: saved.append((t, k, s, g["net_gex"], g.get("source"))) or True)
     import api.services.market as M
     calls = []
-    monkeypatch.setattr(M, "gex", lambda t, source, hub=None: calls.append((t, source)) or {"net_gex": 1.0, "regime": "positive"})
+    monkeypatch.setattr(M, "gex", lambda t, source, hub=None, spot=None: calls.append((t, source, spot))
+                        or {"net_gex": 1.0, "regime": "positive", "source": "hub:x"})
     rec = REC.GexRecorder(hub=None)
-    assert rec.tick(late) == 1 and calls == [("IBIT", "hub")]
-    assert saved == [("IBIT", "eod", _dt.datetime(2026, 9, 23, 16, 0), 1.0)]
+    assert rec.tick(late) == 1 and calls == [("IBIT", "hub", None)]
+    assert saved == [("IBIT", "eod", E(2026, 9, 23, 16, 0), 1.0, "hub:x")]
+    assert rec.tick(late) == 0 and len(calls) == 1                           # done slots cost nothing
+
+    # a late end-of-day row (Saturday, for Friday) is valued at the stored close; without one it is not recorded,
+    # and a failed slot waits before it is tried again
+    saved.clear(), calls.clear()
+    monkeypatch.setattr(REC, "recorded", lambda t, k, s: False)
+    closes = {"IBIT": 47.5, "ETHA": None}
+    monkeypatch.setattr(REC, "session_close", lambda t, d, hub=None: closes[t])
+    sat = pd.Timestamp("2026-09-26 12:00", tz=NY)
+    assert rec.tick(sat) == 1 and calls == [("IBIT", "hub", 47.5)]
+    assert saved == [("IBIT", "eod", E(2026, 9, 25, 16, 0), 1.0, "hub:x spot=close")]
+    assert rec.last["IBIT"]["late"] is True
+    st = rec.status()
+    assert [f["ticker"] for f in st["failed"]] == ["ETHA"] and st["failed"][0]["tries"] == 1
+    closes["ETHA"] = 20.0
+    assert rec.tick(sat) == 0 and len(calls) == 1                            # ETHA waits RETRY_S before a retry

@@ -438,10 +438,13 @@ def _polygon_chain(ticker: str, spot: Optional[float] = None):
 GEX_DB_MAX_AGE_DAYS = 5
 
 
-def gex(ticker: str, source: str = "auto", hub=None) -> dict:
+def gex(ticker: str, source: str = "auto", hub=None, spot: Optional[float] = None) -> dict:
     """``source``: ``auto`` — a recent stored chain; else, for an index (NDX, SPX, RUT …; NDXP / SPXW name
     the root), the market-data hub's live chain, and for anything else Polygon's snapshot with the hub's
-    chain as the fallback; else a stale stored chain with a warning. ``db``, ``polygon`` or ``hub`` force one."""
+    chain as the fallback; else a stale stored chain with a warning. ``db``, ``polygon`` or ``hub`` force one.
+    ``spot``: value a live chain at this underlying price instead of the current one (the GEX recorder's late
+    end-of-day row, at the session's close)."""
+    spot_at = spot
     from analytics.gex_engine import _compute_gamma_column, _normalize_chain, compute_dealer_gex, _GEX_NOTIONAL_SCALE
     from api.marketdata import symbols as SYM
     ticker = ticker.upper().strip()
@@ -460,7 +463,7 @@ def gex(ticker: str, source: str = "auto", hub=None) -> dict:
     spot = None
     have_hub = hub is not None and getattr(hub, "providers", None)
     if got is None and source in ("auto", "polygon", "hub"):
-        spot = gex_spot(und, hub)
+        spot = spot_at or gex_spot(und, hub)
         if not spot:
             raise MissingData(f"No spot price for {und}: the market-data hub, yfinance and the stored bars "
                               f"have none.")

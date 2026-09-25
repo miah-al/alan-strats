@@ -183,23 +183,25 @@ LIVE_METHOD = ("recorded by the service from the live chain (/api/market/gex?sou
 
 
 def points(ticker: str, days: int = 365, interval: str = "1d") -> dict:
-    """Recorded live GEX (app.GexHistory: ``1d`` = the end-of-day rows, ``30m`` = the intraday ones) and, for a
-    ticker with stored option snapshots, the daily snapshot proxy before the recording began."""
+    """Recorded live GEX (app.GexHistory: ``1d`` = the end-of-day rows, ``session`` = the 10:55 ET decision-time
+    ones, ``30m`` = the intraday ones) and, for a ticker with stored option snapshots, the daily snapshot proxy
+    before the recording began."""
     from api.serialize import to_jsonable
     from api.services import gex_recorder as REC
     t = ticker.upper()
     since = _dt.date.today() - _dt.timedelta(days=int(days))
-    live = REC.history_rows(t, "eod" if interval == "1d" else "intraday", since)
+    live = REC.history_rows(t, {"1d": "eod", "session": "session"}.get(interval, "intraday"), since)
+    daily = interval in ("1d", "session")
     pts, sources = [], []
     first_live = None
     if not live.empty:
         first_live = pd.Timestamp(live["SlotTs"].min()).date()
         for r in live.itertuples(index=False):
-            pts.append({"date": pd.Timestamp(r.SlotTs).date() if interval == "1d" else pd.Timestamp(r.SlotTs),
+            pts.append({"date": pd.Timestamp(r.SlotTs).date() if daily else pd.Timestamp(r.SlotTs),
                         "net_gex": r.NetGex, "flip": r.Flip, "call_wall": r.CallWall, "put_wall": r.PutWall,
                         "spot": r.Spot, "regime": r.Regime, "dist_to_flip_pct": r.DistToFlipPct,
                         "call_gex": r.CallGex, "put_gex": r.PutGex, "max_pain": r.MaxPain,
-                        "contracts": r.Contracts, "source": "live"})
+                        "contracts": r.Contracts, "source": "live", "late": bool(getattr(r, "Late", False))})
         sources.append("live")
     caveats = []
     if interval == "1d":
