@@ -13,6 +13,7 @@ everything else — DDL is allowed in this schema only:
   app.RunnerArm    armed scheduled paper runs (a strategy, its variant, once / weekdays) and their last result
   app.GexAllocState the GEX paper allocator's state per variant (the VIX variant's streak / cooldown)
   app.GexAllocLog  the GEX paper allocator's daily decisions (regime, weight, target, orders)
+  app.MorningBrief the AI morning brief's decision row per strategy and day (api/services/morning_brief.py)
 """
 from __future__ import annotations
 
@@ -160,6 +161,25 @@ _TABLES = {
             DetailJson     NVARCHAR(MAX)  NULL,
             DecidedAt      DATETIME2      NOT NULL CONSTRAINT DF_GexAllocLog_At DEFAULT SYSUTCDATETIME()
         )""",
+    "MorningBrief": """
+        CREATE TABLE app.MorningBrief (
+            BriefId        INT IDENTITY(1,1) NOT NULL CONSTRAINT PK_MorningBrief PRIMARY KEY,
+            Strategy       NVARCHAR(80)   NOT NULL CONSTRAINT DF_MorningBrief_Strategy DEFAULT 'ndx_0dte_condor',
+            BriefDate      DATE           NOT NULL,
+            CreatedAt      DATETIME2      NOT NULL CONSTRAINT DF_MorningBrief_Created DEFAULT SYSUTCDATETIME(),
+            Decision       NVARCHAR(12)   NOT NULL,
+            Confidence     FLOAT          NOT NULL,
+            SizeMultiplier FLOAT          NOT NULL,
+            Headline       NVARCHAR(400)  NULL,
+            ReasonsJson    NVARCHAR(MAX)  NULL,
+            EventsJson     NVARCHAR(MAX)  NULL,
+            FlagsJson      NVARCHAR(MAX)  NULL,
+            ChangeMind     NVARCHAR(600)  NULL,
+            Source         NVARCHAR(60)   NOT NULL,
+            PromptVersion  NVARCHAR(30)   NULL,
+            InputsJson     NVARCHAR(MAX)  NULL,
+            NotesJson      NVARCHAR(MAX)  NULL
+        )""",
 }
 _INDEXES = {
     ("GexAllocLog", "UX_GexAllocLog_Day"):
@@ -173,6 +193,8 @@ _INDEXES = {
         "WHERE ClientOrderId IS NOT NULL",
     ("PaperOrder", "IX_PaperOrder_Status"):
         "CREATE INDEX IX_PaperOrder_Status ON app.PaperOrder (AccountId, Status)",
+    ("MorningBrief", "UX_MorningBrief_Day"):
+        "CREATE UNIQUE INDEX UX_MorningBrief_Day ON app.MorningBrief (Strategy, BriefDate)",
 }
 
 _LOCK = threading.Lock()

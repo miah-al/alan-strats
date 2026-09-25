@@ -100,6 +100,8 @@ def create_app():
     nightly_bars = NightlyBars(jobs)
     from api.services.intraday import MinuteAggregator
     minutes = MinuteAggregator(market_hub)
+    from api.services.morning_brief import MorningBrief
+    brief = MorningBrief(market_hub, arms=arm_scheduler, recorder=quote_recorder, publish=hub.publish)
 
     from api.redact import RedactingFilter, install_redaction, redact
     forwarder.addFilter(RedactingFilter())
@@ -121,6 +123,7 @@ def create_app():
         quote_recorder.start()
         nightly_bars.start()
         minutes.start()
+        brief.start()
         beat = asyncio.create_task(hub.heartbeat_forever())
         logger.info("alan_trader service %s (%s) up; strategies from %s",
                     build["version"], build["branch"], info.get("strategies_dir"))
@@ -137,6 +140,7 @@ def create_app():
             quote_recorder.stop()
             nightly_bars.stop()
             minutes.stop()
+            brief.stop()
             await market_hub.stop()
             if request_gate.installed() is market_hub.gate:
                 request_gate.install(None)
@@ -160,6 +164,7 @@ def create_app():
     app.state.quote_recorder = quote_recorder
     app.state.nightly_bars = nightly_bars
     app.state.minutes = minutes
+    app.state.brief = brief
     app.state.build = build
     app.state.bootstrap = info
     app.state.json_response = SafeJSONResponse
@@ -237,6 +242,8 @@ def create_app():
     from api.routers import events as events_router, stream as stream_router
     app.include_router(events_router.router, prefix="/api")
     app.include_router(stream_router.router, prefix="/api")
+    from api.routers import brief as brief_router
+    app.include_router(brief_router.router, prefix="/api")
     return app
 
 

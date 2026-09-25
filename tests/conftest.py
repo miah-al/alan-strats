@@ -38,6 +38,11 @@ os.environ.setdefault("ALAN_TRADER_BARS_TOPUP", "0")
 # ... arms live in memory only and nothing is ever started on a schedule (a test must never launch a paper run).
 os.environ.setdefault("ALAN_TRADER_ARMS", "memory")
 os.environ.setdefault("ALAN_TRADER_ARM_SCHEDULER", "0")
+# ... the morning brief keeps its rows in memory, runs only on demand, fetches no feed and calls no model.
+os.environ.setdefault("ALAN_TRADER_BRIEF", "memory")
+os.environ.setdefault("ALAN_TRADER_BRIEF_SCHEDULER", "0")
+os.environ.setdefault("ALAN_TRADER_BRIEF_NETWORK", "0")
+os.environ.pop("ANTHROPIC_API_KEY", None)
 
 
 @pytest.fixture(autouse=True)
