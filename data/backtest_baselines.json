@@ -128,6 +128,14 @@
           "max_drawdown": -19721.0
         }
       }
+    },
+    "ndx_0dte_condor": {
+      "avg_pnl": 677.0,
+      "win_rate": 0.86,
+      "trades": 170,
+      "mode": "conservative",
+      "ran": "2026-09-25T20:00:00Z",
+      "execution": "CONSERVATIVE: legs same minute, 2.5 pts/side (the quote gate caps the four-leg market at 5 pts): +$580/trade in sample (n 89), +$784 out of sample (n 81, CI +$246..+$1,229); at the per-leg spread model +$194 / +$354 (CIs through zero). 1 survivor of 52 cells, chosen post hoc; worst day -$8,737."
     }
   }
 }
