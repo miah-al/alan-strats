@@ -28,17 +28,17 @@ from api.services.db import require_db
 logger = logging.getLogger("alan_trader.api.strategy_stats")
 
 FIELDS = ["strategy", "strategy_label", "trades", "wins", "win_rate", "pnl", "avg_win", "avg_loss", "profit_factor",
-          "max_drawdown", "avg_days_held", "open_positions", "bt_win_rate", "bt_avg_pnl", "bt_trades", "bt_ran", "bt_mode"]
+          "max_drawdown", "avg_days_held", "open_positions", "bt_win_rate", "bt_avg_pnl", "bt_trades", "bt_ran", "bt_mode", "bt_execution"]
 _HEADERS = {"strategy": "Strategy (slug)", "strategy_label": "Strategy", "trades": "Trades", "wins": "Wins",
             "win_rate": "Win Rate", "pnl": "P&L", "avg_win": "Avg Win", "avg_loss": "Avg Loss",
             "profit_factor": "Profit Factor", "max_drawdown": "Max Drawdown", "avg_days_held": "Avg Days Held",
             "open_positions": "Open", "bt_win_rate": "Backtest Win Rate", "bt_avg_pnl": "Backtest Avg P&L",
-            "bt_trades": "Backtest Trades", "bt_ran": "Backtest Run", "bt_mode": "Backtest Execution"}
+            "bt_trades": "Backtest Trades", "bt_ran": "Backtest Run", "bt_mode": "Backtest Mode", "bt_execution": "Backtest Execution"}
 _FORMATS = {"win_rate": "ratio", "pnl": "money", "avg_win": "money", "avg_loss": "money", "max_drawdown": "money",
             "bt_win_rate": "ratio", "bt_avg_pnl": "money", "trades": "int", "wins": "int", "open_positions": "int",
             "bt_trades": "int"}
 _TYPES = {"strategy": "string", "strategy_label": "string", "trades": "integer", "wins": "integer",
-          "open_positions": "integer", "bt_trades": "integer", "bt_ran": "datetime", "bt_mode": "string"}
+          "open_positions": "integer", "bt_trades": "integer", "bt_ran": "datetime", "bt_mode": "string", "bt_execution": "string"}
 
 #: the checked-in conservative baselines (written by docs/research/conservative_rerun.py)
 BASELINES_FILE = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
@@ -171,7 +171,8 @@ def stored_backtests(limit: int = 400) -> list[dict]:
         out.append({"slug": r[0], "ticker": r[1], "from": r[2], "to": r[3], "capital": r[4], "trades": r[5], "win_rate": r[6],
                     "avg_pnl": r[7], "avg_win": r[8], "avg_loss": r[9], "profit_factor": r[10],
                     "total_return_pct": r[11], "sharpe": r[12], "max_drawdown_pct": r[13], "ran": _iso_utc(r[14]),
-                    "mode": execution_mode(params if isinstance(params, dict) else {}), "source": "db"})
+                    "mode": (execution_mode(params) if isinstance(params, dict) and MODE_KEY in params else OPTIMISTIC),
+                    "source": "db"})
     return out
 
 
@@ -247,7 +248,8 @@ def stats(from_date: Optional[str] = None, to_date: Optional[str] = None) -> dic
         b = bt.get(s)
         row["backtest_expectation"] = b
         row.update(bt_win_rate=(b or {}).get("win_rate"), bt_avg_pnl=(b or {}).get("avg_pnl"),
-                   bt_trades=(b or {}).get("trades"), bt_ran=(b or {}).get("ran"), bt_mode=(b or {}).get("mode"))
+                   bt_trades=(b or {}).get("trades"), bt_ran=(b or {}).get("ran"), bt_mode=(b or {}).get("mode"),
+                   bt_execution=(b or {}).get("execution"))
         out.append(row)
     total = {"strategy": "all", **summarize(closed), "open_positions": sum(opens.values())}
     table = table_from_rows([{f: r.get(f) for f in FIELDS} for r in out], field_order=FIELDS, headers=_HEADERS,

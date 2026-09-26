@@ -1,133 +1,133 @@
 {
- "note": "Conservative re-run of 2026-09-25 (docs/research/conservative_rerun_2026-09-25.md): the expectation the Performance page reads paper against until a conservative app.BacktestRun row exists.",
- "strategies": {
-  "ndx_0dte_tasty": {
-   "ticker": "NDX",
-   "from": "2024-10-01",
-   "to": "2026-09-24",
-   "capital": 30000.0,
-   "trades": 380,
-   "win_rate": 0.097,
-   "avg_pnl": -2872.0,
-   "avg_win": 913.0,
-   "avg_loss": -3280.0,
-   "profit_factor": 0.03,
-   "total_return_pct": -3637.75,
-   "sharpe": -14.28,
-   "max_drawdown_pct": -3637.75,
-   "ran": "2026-09-25T16:38:18Z",
-   "mode": "conservative",
-   "execution": "CONSERVATIVE: legs same minute, live spread, taker (cross to the far side)",
-   "win_day_rate": 0.028,
-   "worst_day": -12376.0,
-   "max_drawdown": -1091326.0,
-   "params": {
-    "v2.2 live": true,
-    "stale_min": 0,
-    "carry_min": 0,
-    "spread_model": "live",
-    "fill_model": "taker"
-   },
-   "runs": {
-    "conservative taker": {
-     "label": "CONSERVATIVE: legs same minute, live spread, taker (cross to the far side)",
-     "trades": 380,
-     "avg_pnl": -2872.0,
-     "win_rate": 0.097,
-     "win_day_rate": 0.028,
-     "total": -1091326.0,
-     "worst_day": -12376.0,
-     "max_drawdown": -1091326.0
+  "note": "Conservative re-run of 2026-09-25 (docs/research/conservative_rerun_2026-09-25.md): the expectation the Performance page reads paper against until a conservative app.BacktestRun row exists.",
+  "strategies": {
+    "ndx_0dte_tasty": {
+      "ticker": "NDX",
+      "from": "2024-10-01",
+      "to": "2026-09-24",
+      "capital": 30000.0,
+      "trades": 1137,
+      "win_rate": 0.763,
+      "avg_pnl": 10.0,
+      "avg_win": 913.0,
+      "avg_loss": -3280.0,
+      "profit_factor": 0.03,
+      "total_return_pct": -3637.75,
+      "sharpe": -14.28,
+      "max_drawdown_pct": -3637.75,
+      "ran": "2026-09-25T16:38:18Z",
+      "mode": "conservative",
+      "execution": "REFERENCE: legs same minute, the measured 1.2-pt crossing cost (how the live runner fills); taker at the full derived quote: -$2,872/trade; optimistic upper bound: +$489/trade",
+      "win_day_rate": 0.028,
+      "worst_day": -12376.0,
+      "max_drawdown": -1091326.0,
+      "params": {
+        "v2.2 live": true,
+        "stale_min": 0,
+        "carry_min": 0,
+        "spread_model": "live",
+        "fill_model": "taker"
+      },
+      "runs": {
+        "conservative taker": {
+          "label": "CONSERVATIVE: legs same minute, live spread, taker (cross to the far side)",
+          "trades": 380,
+          "avg_pnl": -2872.0,
+          "win_rate": 0.097,
+          "win_day_rate": 0.028,
+          "total": -1091326.0,
+          "worst_day": -12376.0,
+          "max_drawdown": -1091326.0
+        },
+        "conservative maker": {
+          "label": "CONSERVATIVE: legs same minute, live spread, maker (rest; fill only through the limit)",
+          "trades": 997,
+          "avg_pnl": -314.0,
+          "win_rate": 0.721,
+          "win_day_rate": 0.298,
+          "total": -313060.0,
+          "worst_day": -8710.0,
+          "max_drawdown": -313060.0
+        },
+        "reference: carry 0, crossing cost 1.2": {
+          "label": "REFERENCE: legs same minute, a flat 1.2-pt bracket (the measured multi-leg crossing cost), taker",
+          "trades": 1137,
+          "avg_pnl": 10.0,
+          "win_rate": 0.763,
+          "win_day_rate": 0.484,
+          "total": 11308.0,
+          "worst_day": -8440.0,
+          "max_drawdown": -54878.0
+        },
+        "optimistic (upper bound)": {
+          "label": "OPTIMISTIC: legs carried 30 min, flat 0.5, taker -- the pre-2026-09-25 headline",
+          "trades": 3090,
+          "avg_pnl": 489.0,
+          "win_rate": 0.932,
+          "win_day_rate": 0.758,
+          "total": 1510496.0,
+          "worst_day": -7320.0,
+          "max_drawdown": -10970.0
+        }
+      }
     },
-    "conservative maker": {
-     "label": "CONSERVATIVE: legs same minute, live spread, maker (rest; fill only through the limit)",
-     "trades": 997,
-     "avg_pnl": -314.0,
-     "win_rate": 0.721,
-     "win_day_rate": 0.298,
-     "total": -313060.0,
-     "worst_day": -8710.0,
-     "max_drawdown": -313060.0
-    },
-    "reference: carry 0, crossing cost 1.2": {
-     "label": "REFERENCE: legs same minute, a flat 1.2-pt bracket (the measured multi-leg crossing cost), taker",
-     "trades": 1137,
-     "avg_pnl": 10.0,
-     "win_rate": 0.763,
-     "win_day_rate": 0.484,
-     "total": 11308.0,
-     "worst_day": -8440.0,
-     "max_drawdown": -54878.0
-    },
-    "optimistic (upper bound)": {
-     "label": "OPTIMISTIC: legs carried 30 min, flat 0.5, taker -- the pre-2026-09-25 headline",
-     "trades": 3090,
-     "avg_pnl": 489.0,
-     "win_rate": 0.932,
-     "win_day_rate": 0.758,
-     "total": 1510496.0,
-     "worst_day": -7320.0,
-     "max_drawdown": -10970.0
+    "ndx_gamma_walls": {
+      "ticker": "NDX",
+      "from": "2024-10-01",
+      "to": "2026-09-24",
+      "capital": 30000.0,
+      "trades": 137,
+      "win_rate": 0.73,
+      "avg_pnl": -42.0,
+      "avg_win": 949.0,
+      "avg_loss": -2721.0,
+      "profit_factor": 0.94,
+      "total_return_pct": -19.11,
+      "sharpe": -0.19,
+      "max_drawdown_pct": -72.24,
+      "ran": "2026-09-25T16:38:18Z",
+      "mode": "conservative",
+      "execution": "CONSERVATIVE: legs same minute, live spread, the call spread sold at its bid",
+      "win_day_rate": 0.73,
+      "worst_day": -4965.0,
+      "max_drawdown": -21671.0,
+      "params": {
+        "stale_min": 0,
+        "carry_min": 0,
+        "fill_model": "taker"
+      },
+      "runs": {
+        "conservative taker": {
+          "label": "CONSERVATIVE: legs same minute, live spread, the call spread sold at its bid",
+          "trades": 137,
+          "avg_pnl": -42.0,
+          "win_rate": 0.73,
+          "win_day_rate": 0.73,
+          "total": -5734.0,
+          "worst_day": -4965.0,
+          "max_drawdown": -21671.0
+        },
+        "conservative maker": {
+          "label": "CONSERVATIVE: legs same minute, live spread, rested at the mid and filled only through it",
+          "trades": 55,
+          "avg_pnl": 240.0,
+          "win_rate": 0.8,
+          "win_day_rate": 0.8,
+          "total": 13186.0,
+          "worst_day": -3929.0,
+          "max_drawdown": -8450.0
+        },
+        "optimistic (upper bound)": {
+          "label": "OPTIMISTIC: legs carried 30 min, flat 0.5, filled at the mid + 1.5 -- the study's middle case",
+          "trades": 148,
+          "avg_pnl": 138.0,
+          "win_rate": 0.743,
+          "win_day_rate": 0.748,
+          "total": 20474.0,
+          "worst_day": -4765.0,
+          "max_drawdown": -19721.0
+        }
+      }
     }
-   }
-  },
-  "ndx_gamma_walls": {
-   "ticker": "NDX",
-   "from": "2024-10-01",
-   "to": "2026-09-24",
-   "capital": 30000.0,
-   "trades": 137,
-   "win_rate": 0.73,
-   "avg_pnl": -42.0,
-   "avg_win": 949.0,
-   "avg_loss": -2721.0,
-   "profit_factor": 0.94,
-   "total_return_pct": -19.11,
-   "sharpe": -0.19,
-   "max_drawdown_pct": -72.24,
-   "ran": "2026-09-25T16:38:18Z",
-   "mode": "conservative",
-   "execution": "CONSERVATIVE: legs same minute, live spread, the call spread sold at its bid",
-   "win_day_rate": 0.73,
-   "worst_day": -4965.0,
-   "max_drawdown": -21671.0,
-   "params": {
-    "stale_min": 0,
-    "carry_min": 0,
-    "fill_model": "taker"
-   },
-   "runs": {
-    "conservative taker": {
-     "label": "CONSERVATIVE: legs same minute, live spread, the call spread sold at its bid",
-     "trades": 137,
-     "avg_pnl": -42.0,
-     "win_rate": 0.73,
-     "win_day_rate": 0.73,
-     "total": -5734.0,
-     "worst_day": -4965.0,
-     "max_drawdown": -21671.0
-    },
-    "conservative maker": {
-     "label": "CONSERVATIVE: legs same minute, live spread, rested at the mid and filled only through it",
-     "trades": 55,
-     "avg_pnl": 240.0,
-     "win_rate": 0.8,
-     "win_day_rate": 0.8,
-     "total": 13186.0,
-     "worst_day": -3929.0,
-     "max_drawdown": -8450.0
-    },
-    "optimistic (upper bound)": {
-     "label": "OPTIMISTIC: legs carried 30 min, flat 0.5, filled at the mid + 1.5 -- the study's middle case",
-     "trades": 148,
-     "avg_pnl": 138.0,
-     "win_rate": 0.743,
-     "win_day_rate": 0.748,
-     "total": 20474.0,
-     "worst_day": -4765.0,
-     "max_drawdown": -19721.0
-    }
-   }
   }
- }
 }
