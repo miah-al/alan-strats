@@ -240,7 +240,8 @@ def stats(from_date: Optional[str] = None, to_date: Optional[str] = None) -> dic
     except Exception as exc:
         logger.warning("stored backtests unavailable: %s", exc)
         bt = {}
-    names = sorted(set(closed["strategy"]) | set(opens), key=lambda s: (s == "manual", s))
+    # A strategy with a checked-in baseline is listed before its first paper trade, so its card shows what to expect.
+    names = sorted(set(closed["strategy"]) | set(opens) | set(file_baselines()), key=lambda s: (s == "manual", s))
     out = []
     for s in names:
         row = {"strategy": s, "strategy_label": labels.get(s, "Manual" if s == "manual" else s),
