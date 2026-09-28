@@ -10,6 +10,9 @@ import pytest
 
 DAY = date(2026, 8, 26)
 SLUG = "ndx_0dte_tasty"
+# v2.2's window and target (v2.3 enters from 10:00 at +10): the test needs trades on both sides of the 12:30 kill,
+# and it tests the resume, not the rules
+PARAMS = {"entry_start": "11:00", "target_pts": 5.0}
 
 
 def _setup():
@@ -26,7 +29,9 @@ def _setup():
     except Exception as exc:
         pytest.skip(str(exc))
     from paper.providers import ReplayProvider
-    replay = ReplayProvider(eng, "NDX", DAY, half_spread=0.5)
+    # Loop mechanics, not execution realism: the OPTIMISTIC replay settings (legs carried 30 min, a flat half point) are
+    # pinned so the day has fills to compare; tests/test_paper_replay_conservative.py covers the conservative defaults.
+    replay = ReplayProvider(eng, "NDX", DAY, half_spread=0.5, carry_min=30)
     if not replay.has_option_data():
         pytest.skip("no prints for the test day")
     return eng, replay
@@ -45,12 +50,12 @@ def test_killed_session_resumes_to_the_same_result(tmp_path):
 
     # unbroken run
     now1, sleep1, _ = _clock(start)
-    ps1 = PaperSession(SLUG, FakeLiveProvider(replay, now1), eng, write_ledger=False, log_dir=tmp_path / "a", state_dir=tmp_path / "sa")
+    ps1 = PaperSession(SLUG, FakeLiveProvider(replay, now1), eng, write_ledger=False, log_dir=tmp_path / "a", state_dir=tmp_path / "sa", params=PARAMS)
     full = ps1.run_live(day=DAY, poll_seconds=20, now_fn=now1, sleep_fn=sleep1)
 
     # killed at 12:30, restarted from state with a fresh process (new provider, new session object)
     now2, sleep2, t2 = _clock(start)
-    ps2 = PaperSession(SLUG, FakeLiveProvider(replay, now2), eng, write_ledger=False, log_dir=tmp_path / "b", state_dir=tmp_path / "sb")
+    ps2 = PaperSession(SLUG, FakeLiveProvider(replay, now2), eng, write_ledger=False, log_dir=tmp_path / "b", state_dir=tmp_path / "sb", params=PARAMS)
     part = ps2.run_live(day=DAY, poll_seconds=20, now_fn=now2, sleep_fn=sleep2, until=datetime(2026, 8, 26, 12, 30).time())
     st = json.loads((tmp_path / "sb" / f"{SLUG}_{DAY}.json").read_text(encoding="utf-8"))
     assert st["finished"] is True                                   # the runner marks a clean end as finished ...
@@ -58,7 +63,7 @@ def test_killed_session_resumes_to_the_same_result(tmp_path):
     (tmp_path / "sb" / f"{SLUG}_{DAY}.json").write_text(json.dumps(st), encoding="utf-8")
     now3, sleep3, _ = _clock(datetime(2026, 8, 26, 12, 30, 5))
     prov3 = FakeLiveProvider(replay, now3)
-    ps3 = PaperSession(SLUG, prov3, eng, write_ledger=False, log_dir=tmp_path / "b", state_dir=tmp_path / "sb")
+    ps3 = PaperSession(SLUG, prov3, eng, write_ledger=False, log_dir=tmp_path / "b", state_dir=tmp_path / "sb", params=PARAMS)
     rest = ps3.run_live(day=DAY, poll_seconds=20, now_fn=now3, sleep_fn=sleep3)
     key = lambda x: (x["entry_time"], x["exit_time"], x["k_low"], x["k_high"], round(x["entry_px"], 2), round(x["exit_px"], 2), x["exit_reason"])
     assert [key(x) for x in rest.trades] == [key(x) for x in full.trades]

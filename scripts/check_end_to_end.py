@@ -26,9 +26,13 @@ import traceback
 from datetime import date
 
 _REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-for _p in (_REPO, os.path.dirname(_REPO)):
-    if _p not in sys.path:
-        sys.path.insert(0, _p)
+if _REPO not in sys.path:
+    sys.path.insert(0, _REPO)
+# alan_trader is this checkout by file path, whatever its folder is called; the parent stays off sys.path
+# (beside the live checkout it would expose that copy) — api/bootstrap.py.
+from api.bootstrap import register_platform_package  # noqa: E402
+
+register_platform_package()
 
 # Force UTF-8 output on Windows so the box-drawing characters don't raise.
 if hasattr(sys.stdout, "reconfigure"):

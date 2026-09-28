@@ -53,15 +53,19 @@ def test_vertical_quote_from_legs():
 
 
 def test_replay_matches_backtest_for_a_stored_day(tmp_path):
+    """The OPTIMISTIC settings on both sides (legs carried 30 min, a flat half point): the day then has
+    fills to compare. test_paper_replay_conservative.py does the same under the conservative defaults."""
     eng = _db()
     s = _strategy()
     day = date(2026, 8, 26)
     from paper.providers import ReplayProvider
     from paper.runner import PaperSession
-    prov = ReplayProvider(eng, "NDX", day, half_spread=0.5)
+    prov = ReplayProvider(eng, "NDX", day, half_spread=0.5, carry_min=30)
+    assert prov.mode == "optimistic" and "OPTIMISTIC" in prov.describe()
     if not prov.has_option_data():
         pytest.skip("no option prints for the test day")
-    ps = PaperSession(SLUG, prov, eng, write_ledger=False, log_dir=tmp_path, state_dir=tmp_path / "state")
+    ps = PaperSession(SLUG, prov, eng, write_ledger=False, log_dir=tmp_path, state_dir=tmp_path / "state",
+                      params={"stale_min": 5, "carry_min": 30, "spread_model": "flat", "half_spread_pts": 0.5, "fill_model": "taker"})
     res = ps.run_replay(day)
     assert res.bars == len(prov.bars)
     # the backtest of the same day with the same assumptions
@@ -69,7 +73,7 @@ def test_replay_matches_backtest_for_a_stored_day(tmp_path):
     from db.client import get_minute_bars, get_option_minute_bars
     from alan_trader_strategies.strategies.ndx_0dte_tasty.strategy import simulate_day
     from alan_trader_strategies.strategies.ndx_0dte_tasty.pricing import MarketPricer
-    p = type(s.params).from_kwargs(s.params, fill_model="taker", half_spread_pts=0.5, pricing="market")
+    p = type(s.params).from_kwargs(s.params, fill_model="taker", half_spread_pts=0.5, pricing="market", stale_min=5, carry_min=30, spread_model="flat")
     bars = get_minute_bars(eng, "NDX", day, day); bars["bar_min"] = 1
     pr = MarketPricer.from_frame(get_option_minute_bars(eng, "NDX", day, day, expiry=day), half_spread=0.5, stale_min=p.stale_min, carry_min=p.carry_min)
     bt = simulate_day(bars, day, pr, p, blocked_reason=res.reason if res.blocked else "")
@@ -92,7 +96,7 @@ def test_replay_matches_backtest_for_a_stored_day(tmp_path):
         assert "vxn_prev" in (feats.get("ai_features") or {})
     import json
     st = json.loads(open(res.state_path, encoding="utf-8").read())
-    restored = type(s.live_session(day)).from_dict(s.params, st["state"])
+    restored = type(s.live_session(day)).from_dict(ps.strategy.params, st["state"])
     assert len(restored.trades) == len(res.trades) and restored.day_pnl == res.day_pnl
 
 

@@ -1,13 +1,18 @@
-"""Ledger round trip on the live database (skips without it): open, add, close on a far-past
-fake day, read back, delete. Leaves nothing behind."""
+"""Ledger round trip on the live database (skips without it): open, add, close on a far-past fake day, read
+back, delete. On a THROWAWAY account and a test-only strategy slug -- never the real paper account (AccountId 1,
+"Paper Account", which the live runners share until 16:00 ET). Leaves nothing behind: the day's rows, the
+account, and the option Security rows the fills created."""
 from __future__ import annotations
 
 from datetime import date
 
 import pytest
 
-SLUG = "ndx_0dte_tasty"
-DAY = date(2001, 1, 2)          # a day no real session will ever use
+SLUG = "zz_ledger_test"           # a slug no real session uses
+DAY = date(2001, 1, 2)            # a day no real session will ever use
+ACCOUNT = "Paper Account (ledger test)"
+REAL_PAPER_ACCOUNT = 1
+LONG, SHORT = "NDXP010102C29100000", "NDXP010102C29200000"
 
 
 def _db():
@@ -21,19 +26,38 @@ def _db():
         pytest.skip(f"database unavailable: {exc}")
 
 
+def _wipe(eng, aid: int) -> int:
+    """Everything this test wrote: the day's positions, then the account's rows, the account, and the two contracts'
+    Security rows unless a real transaction references them. Returns the positions removed."""
+    from sqlalchemy import text
+    from paper import ledger as L
+    assert aid != REAL_PAPER_ACCOUNT
+    n = L.delete_paper_day(eng, SLUG, DAY)
+    with eng.begin() as c:
+        c.execute(text("DELETE FROM portfolio.[Transaction] WHERE AccountId = :a"), {"a": aid})
+        c.execute(text("DELETE FROM portfolio.Balance WHERE AccountId = :a"), {"a": aid})
+        c.execute(text("DELETE FROM portfolio.Account WHERE AccountId = :a"), {"a": aid})
+        c.execute(text("DELETE FROM portfolio.Security WHERE Symbol IN (:l, :s) AND SecurityType = 'Option' AND NOT EXISTS "
+                       "(SELECT 1 FROM portfolio.[Transaction] t WHERE t.SecurityId = portfolio.Security.SecurityId)"),
+                  {"l": LONG, "s": SHORT})
+    return n
+
+
 def test_open_add_close_round_trip():
     eng = _db()
     from paper import ledger as L
-    aid = L.ensure_paper_account(eng)
+    aid = L.ensure_paper_account(eng, name=ACCOUNT)
+    assert aid != REAL_PAPER_ACCOUNT
     L.delete_paper_day(eng, SLUG, DAY)
+    pid = None
     try:
         opn = dict(m=661, kind="open", direction="bull", kl=29100.0, kh=29200.0, px=60.0, lots=1, cash=-6002.0, reason="trend")
-        pid = L.record_fill(eng, aid, SLUG, "NDX", DAY, DAY, opn, "NDXP010102C29100000", "NDXP010102C29200000")
+        pid = L.record_fill(eng, aid, SLUG, "NDX", DAY, DAY, opn, LONG, SHORT)
         assert pid is not None
         add = dict(m=670, kind="add", direction="bull", kl=29100.0, kh=29200.0, px=50.0, lots=1, cash=-5002.0, reason="add")
-        assert L.record_fill(eng, aid, SLUG, "NDX", DAY, DAY, add, "NDXP010102C29100000", "NDXP010102C29200000", position_id=pid) == pid
+        assert L.record_fill(eng, aid, SLUG, "NDX", DAY, DAY, add, LONG, SHORT, position_id=pid) == pid
         cls = dict(m=700, kind="close", direction="bull", kl=29100.0, kh=29200.0, px=60.0, lots=2, cash=11997.0, reason="target")
-        L.record_fill(eng, aid, SLUG, "NDX", DAY, DAY, cls, "NDXP010102C29100000", "NDXP010102C29200000", position_id=pid)
+        L.record_fill(eng, aid, SLUG, "NDX", DAY, DAY, cls, LONG, SHORT, position_id=pid)
         L.record_session(eng, DAY, "NDX", SLUG, False, "", note="test")
         df = L.load_paper_positions(eng, SLUG, from_date=DAY)
         row = df[df.PositionId == pid].iloc[0]
@@ -49,14 +73,17 @@ def test_open_add_close_round_trip():
         with eng.connect() as c:
             assert c.execute(text("SELECT COUNT(*) FROM portfolio.Leg WHERE PositionId = :p"), {"p": pid}).scalar() == 6
             assert c.execute(text("SELECT COUNT(*) FROM portfolio.[Transaction] WHERE PositionId = :p"), {"p": pid}).scalar() == 6   # one row per leg per fill
+            # every row this test wrote sits on the throwaway account
+            assert c.execute(text("SELECT COUNT(*) FROM portfolio.[Transaction] WHERE PositionId = :p AND AccountId <> :a"),
+                             {"p": pid, "a": aid}).scalar() == 0
     finally:
-        n = L.delete_paper_day(eng, SLUG, DAY)
+        n = _wipe(eng, aid)
         assert n >= 1
-        # only this test's own rows: asserting the table is empty fails whenever a real paper
-        # session holds a position for the same strategy, which is exactly when the suite is most
-        # likely to be run
         left = L.load_paper_positions(eng, SLUG, from_date=DAY)
         assert left.empty or pid not in set(left.PositionId)
+        from sqlalchemy import text
+        with eng.connect() as c:
+            assert c.execute(text("SELECT COUNT(*) FROM portfolio.Account WHERE AccountId = :a"), {"a": aid}).scalar() == 0
 
 
 def test_paper_account_is_seeded_once_with_starting_cash():
@@ -71,13 +98,31 @@ def test_paper_account_is_seeded_once_with_starting_cash():
             c.execute(text("DELETE FROM portfolio.Balance WHERE AccountId = :a"), {"a": row[0]})
             c.execute(text("DELETE FROM portfolio.Account WHERE AccountId = :a"), {"a": row[0]})
     aid = L.ensure_paper_account(eng, name=name, starting_cash=150_000.0)
-    L.ensure_paper_account(eng, name=name, starting_cash=150_000.0)
-    L.ensure_paper_account(eng, name=name)
-    with eng.begin() as c:
-        rows = c.execute(text("SELECT BalanceType, Amount FROM portfolio.Balance WHERE AccountId = :a"), {"a": aid}).fetchall()
+    assert aid != REAL_PAPER_ACCOUNT
+    try:
+        L.ensure_paper_account(eng, name=name, starting_cash=150_000.0)
+        L.ensure_paper_account(eng, name=name)
+        with eng.connect() as c:
+            rows = c.execute(text("SELECT BalanceType, Amount FROM portfolio.Balance WHERE AccountId = :a"), {"a": aid}).fetchall()
         assert [(r[0], float(r[1])) for r in rows] == [("Cash", 150_000.0)]
-        c.execute(text("DELETE FROM portfolio.Balance WHERE AccountId = :a"), {"a": aid})
-        c.execute(text("DELETE FROM portfolio.Account WHERE AccountId = :a"), {"a": aid})
+    finally:
+        with eng.begin() as c:
+            c.execute(text("DELETE FROM portfolio.Balance WHERE AccountId = :a"), {"a": aid})
+            c.execute(text("DELETE FROM portfolio.Account WHERE AccountId = :a"), {"a": aid})
+
+
+def test_the_real_paper_account_is_refused_under_the_suite():
+    """The suite's guard (tests/conftest.py, api/bootstrap.py): a ledger write for AccountId 1 raises before
+    reaching the server, whatever test happens to run first."""
+    eng = _db()
+    from sqlalchemy import text
+    from api.bootstrap import ReadOnlyViolation, db_guard_installed
+    assert db_guard_installed()
+    with pytest.raises(ReadOnlyViolation):
+        with eng.begin() as c:
+            c.execute(text("INSERT INTO portfolio.Balance (AccountId, BalanceDate, CashBalance, PortfolioValue, TotalEquity, "
+                           "BalanceType, Amount, BusinessDate) VALUES (:a, :d, 0, 0, 0, 'Cash', 0, :d)"),
+                      {"a": REAL_PAPER_ACCOUNT, "d": DAY})
 
 
 def test_leg_prices_split_the_spread_at_each_legs_own_market():

@@ -37,15 +37,10 @@ _WARMUP_DAYS = 420
 
 
 def _get_ui_params_for_slug(slug: str) -> list:
-    """Instantiate the strategy and return its get_backtest_ui_params()."""
-    try:
-        strategy = get_strategy(slug)
-        if isinstance(strategy, StubStrategy):
-            return []
-        return list(strategy.get_backtest_ui_params() or [])
-    except Exception:
-        logger.exception(f"{slug}: get_backtest_ui_params failed")
-        return []
+    """Instantiate the strategy and return its get_backtest_ui_params()
+    (engine.strategy_backtest.backtest_param_specs, shared with the service API)."""
+    from engine.strategy_backtest import backtest_param_specs
+    return backtest_param_specs(slug)
 
 
 #: The last backtest's trades per strategy, served by the "Download CSV" button.

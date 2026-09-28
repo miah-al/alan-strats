@@ -33,9 +33,16 @@ The invariant "no platform module names a strategy" is enforced by
 ## Import roots
 
 The codebase uses two import roots: `app.*`, `db.*`, `engine.*` … relative
-to this directory, and `alan_trader.*` relative to its parent. Both must be on
-`sys.path`; `app/app.py` and the test suite arrange that. Plugins import the
+to this directory, and the package `alan_trader.*`. Plugins import the
 platform as `alan_trader.*`.
+
+The service and its test suite bind `alan_trader` to this checkout by file
+path (`api/bootstrap.py`, `register_platform_package`), so a service checkout
+can sit in a folder of any name — e.g. `alan_trader_service/` directly beside
+the live `alan_trader/` — and never resolves `alan_trader.*` to the copy next
+door. `app/app.py`, `main.py` and `scripts/` still use the older convention
+(the parent directory on `sys.path`, which needs the folder to be called
+`alan_trader`): run those from the live checkout.
 
 ## Running
 

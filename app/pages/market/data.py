@@ -27,57 +27,12 @@ from engine.screener import UNIVERSES
 logger = logging.getLogger(__name__)
 
 
-_TREASURY_FRED_SERIES = {
-    "rate_3m":  "DGS3MO", "rate_6m":  "DGS6MO",
-    "rate_1y":  "DGS1",   "rate_2y":  "DGS2",
-    "rate_5y":  "DGS5",   "rate_10y": "DGS10",
-    "rate_30y": "DGS30",
-}
-_MATURITIES = [
-    ("3M",  0.25, "rate_3m"),  ("6M", 0.5,  "rate_6m"),
-    ("1Y",  1.0,  "rate_1y"),  ("2Y", 2.0,  "rate_2y"),
-    ("5Y",  5.0,  "rate_5y"),  ("10Y",10.0, "rate_10y"),
-    ("30Y", 30.0, "rate_30y"),
-]
-_YIELD_CACHE: dict = {}
-
-
-def _load_yield_curve() -> pd.DataFrame | None:
-    if "df" in _YIELD_CACHE:
-        return _YIELD_CACHE["df"]
-    import requests
-    from io import StringIO
-    from concurrent.futures import ThreadPoolExecutor, as_completed
-
-    def _fetch(item):
-        col, sid = item
-        try:
-            r = requests.get(f"https://fred.stlouisfed.org/graph/fredgraph.csv?id={sid}", timeout=10)
-            r.raise_for_status()
-            df = pd.read_csv(StringIO(r.text))
-            df.columns = ["date", col]
-            df["date"] = pd.to_datetime(df["date"], errors="coerce").dt.date
-            df[col]    = pd.to_numeric(df[col], errors="coerce")
-            return col, df.dropna(subset=["date"]).set_index("date")
-        except Exception:
-            return col, None
-
-    series = {}
-    with ThreadPoolExecutor(max_workers=8) as pool:
-        for col, df in pool.map(_fetch, _TREASURY_FRED_SERIES.items()):
-            if df is not None:
-                series[col] = df
-
-    if not series:
-        return None
-    merged = None
-    for col, df in series.items():
-        merged = df if merged is None else merged.join(df, how="outer")
-    merged = merged.reset_index().sort_values("date")
-    merged["spread_2s10s"] = merged.get("rate_10y", 0) - merged.get("rate_2y", 0)
-    merged["spread_3m10y"] = merged.get("rate_10y", 0) - merged.get("rate_3m", 0)
-    _YIELD_CACHE["df"] = merged.reset_index(drop=True)
-    return _YIELD_CACHE["df"]
+# The FRED Treasury curve loader lives in data/treasury_curve.py (headless, shared with the
+# service); these names stay for this page's renderers.
+from data.treasury_curve import (  # noqa: E402
+    TREASURY_FRED_SERIES as _TREASURY_FRED_SERIES, MATURITIES as _MATURITIES,
+    CACHE as _YIELD_CACHE, load_treasury_curve as _load_yield_curve,
+)
 
 
 # ── Polygon helpers ────────────────────────────────────────────────────────────
@@ -123,72 +78,8 @@ def _fetch_quote(ticker: str, api_key: str) -> dict | None:
     return yf_quote(ticker)
 
 
-def _fetch_grouped_movers(api_key: str, top_n: int = 12,
-                          min_price: float = 5.0,
-                          min_dollar_vol: float = 2e7) -> dict | None:
-    """Top gainers/losers for the most recent completed session, computed from
-    grouped daily aggregates. The dedicated gainers/losers snapshot endpoint is
-    not authorized on EOD/options plans, but grouped daily is — this gives a
-    genuine market-wide movers board (filtered to liquid names).
-
-    Change is measured vs the prior session's close when available, else the
-    session's own open. Returns {"asof", "gainers", "losers", "all"} or None.
-    """
-    import datetime as _dt
-    c = _polygon_client(api_key)
-
-    def _grouped(day: _dt.date) -> list[dict]:
-        try:
-            d = c._get(f"/v2/aggs/grouped/locale/us/market/stocks/{day}",
-                       {"adjusted": "true"})
-            return d.get("results", []) or []
-        except Exception:
-            return []
-
-    # Walk back to the two most recent sessions that actually have data
-    # (skips weekends, holidays, and today — usually not yet available intraday).
-    sessions: list[tuple[_dt.date, list[dict]]] = []
-    day = _dt.date.today()
-    for _ in range(8):
-        day -= _dt.timedelta(days=1)
-        if day.weekday() >= 5:
-            continue
-        res = _grouped(day)
-        if res:
-            sessions.append((day, res))
-        if len(sessions) == 2:
-            break
-    if not sessions:
-        return None
-
-    cur_day, cur = sessions[0]
-    prev_close = {b.get("T"): b.get("c") for b in sessions[1][1]} if len(sessions) > 1 else {}
-
-    rows = []
-    for b in cur:
-        t, cl, o, v = b.get("T"), b.get("c"), b.get("o"), b.get("v")
-        if not t or not cl or cl < min_price:
-            continue
-        if cl * (v or 0) < min_dollar_vol:
-            continue
-        base = prev_close.get(t) or o
-        if not base:
-            continue
-        rows.append({
-            "ticker": t, "price": float(cl),
-            "change_pct": round((cl - base) / base * 100, 2),
-            "volume": int(v or 0),
-        })
-    if not rows:
-        return None
-
-    rows.sort(key=lambda r: r["change_pct"])
-    return {
-        "asof":    cur_day.isoformat(),
-        "gainers": rows[-top_n:][::-1],
-        "losers":  rows[:top_n],
-        "all":     rows,
-    }
+# The movers board lives in data/movers.py (headless, shared with the service).
+from data.movers import fetch_grouped_movers as _fetch_grouped_movers  # noqa: E402
 
 
 # ── UI helpers ─────────────────────────────────────────────────────────────────

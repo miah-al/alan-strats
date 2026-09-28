@@ -7,8 +7,20 @@ vertical on today's expiry. Two implementations:
   TastytradeProvider  real time, from the tastytrade REST market-data endpoint (OAuth session
                       from TT_SECRET / TT_REFRESH in .env), option chain from the same API
   ReplayProvider      a stored session from the platform database (mkt.MinuteBar for the
-                      underlying, mkt.OptionMinuteBar prints for the legs, bid/ask = print -/+ a
-                      half spread), for tests and dry runs; runs as fast as the loop lets it
+                      underlying, mkt.OptionMinuteBar prints for the legs, bid/ask = print -/+ the
+                      spread model's half spread), for tests and dry runs; runs as fast as the loop
+                      lets it. CONSERVATIVE by default (paper/spread_model.py): both legs must have
+                      printed in the same minute and the spread is the calibrated live one.
+
+The 16k trap (2026-09-24). The replay of that day showed +$16,384 on 24 trades where the live paper
+runner made -$1,117 on 2. The replay had priced each vertical from each leg's LAST print, carried for up
+to 30 minutes: a leg that printed this minute paired with one that printed 20 minutes ago at a different
+NDX level produces a spread move that never happened -- 11 of the day's 45 replay price moves were larger
+than NDX's own move over the same minutes, which a vertical cannot do. Requiring both legs to have printed
+in the same minute (carry 0) turned the day into -$2,392 on 2 trades, matching live. Over 38 days the
+same replay went from +$171k (carry 30) to +$12k (carry 0) to -$54k (carry 0, crossing a 3-point half
+spread). So a replay now carries nothing and quotes the calibrated spread; the old behaviour is still
+available and is labelled OPTIMISTIC wherever it prints.
 """
 from __future__ import annotations
 
@@ -20,7 +32,7 @@ from typing import Optional
 
 import pandas as pd
 
-from strategy_api.live import Quote
+from strategy_api.live import Quote, structure_bound, structure_legs
 
 logger = logging.getLogger("paper.providers")
 ET = "US/Eastern"
@@ -29,9 +41,10 @@ MAX_SPREAD_PTS = 20.0        # a vertical quoted wider than this (points) is tre
 # hard-coded path so the test suite can point it at a temporary folder: tests must neither read the live
 # runner's count (and fail against their own small caps) nor add to it (and spend its budget).
 BUDGET_STATE_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "paper_state")
-# The day's cap on broker REST calls. Each runner polls once every 15 s (about 4 a minute), so five runners
-# spend ~6,000 on a full day; 3,000 ran out by lunch on 2026-09-28. 8,000 a day is still under 0.35 a second
-# against tastytrade's suggested 50 a second. ALAN_TRADER_BROKER_DAY_CAP overrides it.
+# The day's cap on broker REST calls, across this checkout and the other checkouts' runners. Each runner polls
+# once every 15 s (about 4 a minute), so five runners spend ~6,000 on a full day; 3,000 ran out by lunch on
+# 2026-09-28. 8,000 a day is still under 0.35 a second against tastytrade's suggested 50 a second.
+# ALAN_TRADER_BROKER_DAY_CAP overrides it.
 DEFAULT_BROKER_DAY_CAP = 8000
 
 
@@ -128,40 +141,151 @@ def vertical_quote(long_leg: LegQuote, short_leg: LegQuote, now: datetime, carry
     if age > carry_min:
         return None
     legs = tuple((float(leg.bid), float(leg.ask), max(0, a)) for leg, a in zip((long_leg, short_leg), ages))
-    return Quote(bid=bid, ask=ask, last=last, age=age, legs=legs)
+    # the legs' most recent trades, as reported: a resting-order engine compares them with the previous poll's
+    # to know that a leg actually printed since (a price alone cannot say that, a stale one repeats for hours)
+    prints = tuple(((float(leg.last) if leg.last is not None else None), leg.last_time) for leg in (long_leg, short_leg))
+    return Quote(bid=bid, ask=ask, last=last, age=age, legs=legs, prints=prints)
+
+
+#: the note an engine puts on a put vertical it booked as the equivalent of a call credit spread (ndx_gamma_walls:
+#: "priced via call parity"); the runner and the service mark such a position off the calls, see parity_put_quote
+PARITY_TAG = "priced via call parity"
+
+
+def parity_put_quote(call_q: Optional[Quote], width: float) -> Optional[Quote]:
+    """The bear put spread's quote from the bull call spread's at the same strikes: put = width - call (put-call
+    parity on a vertical; no carry on a same-day expiry). The put's bid is the width less the call's ask, its ask
+    the width less the call's bid, so the quote is as wide as the CALL quote -- the tight one. A call-wall fade
+    sells the out-of-the-money calls, quoted a point or two either side, and books the trade as the deep
+    in-the-money put spread, quoted 10-20 points wide: marked on its own legs the same position read -$732 and
+    -$257 five minutes apart on 2026-09-25 while the trade it stands for had not moved. The age is the call's.
+    None without a call quote or a width."""
+    if call_q is None or not width or float(width) <= 0:
+        return None
+    w = float(width)
+    bid, ask, mid = w - float(call_q.ask), w - float(call_q.bid), w - float(call_q.last)
+    bid, ask, mid = max(0.0, bid), min(w, ask), min(w, max(0.0, mid))
+    if ask < bid or not (bid <= mid <= ask):
+        return None
+    return Quote(bid=bid, ask=ask, last=mid, age=int(call_q.age), age_s=call_q.age_s)
+
+
+def parity_leg_mid(call_mid: float, spot: float, strike: float) -> float:
+    """One put's price from the call's at the same strike and expiry: put = call - (spot - strike), never below
+    zero (put-call parity without carry: a same-day expiry). Leg by leg this is the same construction as
+    parity_put_quote: the two legs' parity prices difference to width - the call spread's value."""
+    return max(0.0, float(call_mid) - (float(spot) - float(strike)))
+
+
+def structure_quote(leg_quotes: list, legs: list, now: datetime, carry_min: int = 30,
+                    max_width: Optional[float] = None) -> Optional[Quote]:
+    """Two-sided quote of a LONG multi-leg structure (a straddle, an iron fly) from its legs' quotes:
+    bid = sum of the bought legs' bids minus the sold legs' asks, ask = the bought asks minus the sold bids, last
+    = the midpoint, age = minutes since the oldest leg updated (``age_s`` the same in seconds). ``legs`` is the
+    structure's [(cp, strike, sign), ...] in the same order as ``leg_quotes``. A missing, crossed or one-sided
+    leg is no quote; a quote wider than ``max_width`` (default 20% of the structure's mid, at least 20 points)
+    says nothing and is refused; a bounded structure (an iron fly) has its mid kept inside [0, width]."""
+    if len(leg_quotes) != len(legs) or not legs:
+        return None
+    for leg in leg_quotes:
+        if leg is None or leg.bid is None or leg.ask is None or leg.ask <= 0 or leg.bid < 0 or leg.ask < leg.bid:
+            return None
+    bid = sum((float(q.bid) if s > 0 else -float(q.ask)) for q, (_, _, s) in zip(leg_quotes, legs))
+    ask = sum((float(q.ask) if s > 0 else -float(q.bid)) for q, (_, _, s) in zip(leg_quotes, legs))
+    mid = (bid + ask) / 2.0
+    cap = float(max_width) if max_width else max(float(MAX_SPREAD_PTS), 0.2 * abs(mid))
+    if ask - bid > cap:
+        return None
+    w = structure_bound(legs)
+    if w is not None:                                      # an iron fly / condor is worth between 0 and its wing width
+        bounded = min(max(mid, 0.0), w)
+        if bounded != mid:
+            shift = bounded - mid
+            bid, ask, mid = bid + shift, ask + shift, bounded
+    # freshness is the QUOTE's: a far wing may not trade for an hour while its market updates every second, so
+    # ``updated`` comes first here (the vertical's convention, the last print first, is unchanged)
+    ages_s = []
+    for leg in leg_quotes:
+        ref = leg.updated or leg.last_time
+        ages_s.append((now - ref).total_seconds() if ref is not None else (carry_min + 1) * 60.0)
+    age_s = max(0.0, max(ages_s))
+    age = int(age_s // 60)
+    if age > carry_min:
+        return None
+    legs_out = tuple((float(leg.bid), float(leg.ask), max(0, int(a // 60))) for leg, a in zip(leg_quotes, ages_s))
+    prints = tuple(((float(leg.last) if leg.last is not None else None), leg.last_time) for leg in leg_quotes)
+    return Quote(bid=bid, ask=ask, last=mid, age=age, legs=legs_out, prints=prints, age_s=age_s)
 
 
 # ── replay ────────────────────────────────────────────────────────────────────
 
+#: replay defaults (2026-09-25): legs must share the minute, the spread is the calibrated live one
+REPLAY_CARRY_MIN = 0
+#: the old replay defaults, kept for an upper bound: legs carried half an hour, a flat half point
+OPTIMISTIC_CARRY_MIN = 30
+OPTIMISTIC_HALF_SPREAD = 0.5
+
+
 class ReplayProvider:
-    """Serves a stored session minute by minute. ``half_spread`` brackets each print into a
-    bid/ask, the same assumption the market-priced backtest uses, so a replay run of the
-    runner must reproduce the backtest's fills for that day."""
+    """Serves a stored session minute by minute. Each vertical is priced from its legs' prints of the
+    SAME minute (``carry_min`` = 0; parity from the other right in the same minute is fine) and bracketed
+    by the spread model (``half_spread``: None = the calibrated live model, a number = a flat bracket, a
+    callable (value, width) -> points). A market-priced backtest under the same settings reproduces a
+    replay's fills for the day. ``mode`` says which side of the trap a provider sits on."""
 
     name = "replay"
 
-    def __init__(self, engine, underlying: str, day: date, half_spread: float = 0.5, carry_min: int = 30, root: str = "NDXP"):
+    def __init__(self, engine, underlying: str, day: date, half_spread=None, carry_min: int = REPLAY_CARRY_MIN, root: str = "NDXP"):
         from db.client import get_minute_bars, get_option_minute_bars
+        bars = get_minute_bars(engine, underlying.upper(), day, day)
+        if bars.empty:
+            raise RuntimeError(f"no {underlying.upper()} minute bars stored for {day}")
+        prints = get_option_minute_bars(engine, underlying.upper(), day, day, expiry=day)
+        self._init(underlying, day, bars, prints, half_spread, carry_min, root)
+
+    @classmethod
+    def from_frames(cls, underlying: str, day: date, bars: pd.DataFrame, prints: pd.DataFrame, half_spread=None,
+                    carry_min: int = REPLAY_CARRY_MIN, root: str = "NDXP") -> "ReplayProvider":
+        """A provider over frames already in hand (tests; a study that loaded a range in one query).
+        ``bars``: ts, open, high, low, close; ``prints``: right, strike, ts, close."""
+        self = cls.__new__(cls)
+        self._init(underlying, day, bars, prints, half_spread, carry_min, root)
+        return self
+
+    def _init(self, underlying: str, day: date, bars: pd.DataFrame, prints, half_spread, carry_min: int, root: str) -> None:
+        from paper.spread_model import make_spread
         self.day = day
         self.underlying = underlying.upper()
         self.root = root
-        self.h = float(half_spread)
+        self.spread = make_spread(half_spread)
         self.carry = int(carry_min)
-        bars = get_minute_bars(engine, self.underlying, day, day)
-        if bars.empty:
-            raise RuntimeError(f"no {self.underlying} minute bars stored for {day}")
         self.bars = bars.sort_values("ts").reset_index(drop=True)
-        prints = get_option_minute_bars(engine, self.underlying, day, day, expiry=day)
         self._prints: dict[tuple[str, float], tuple[list[int], list[float]]] = {}
-        if len(prints):
+        if prints is not None and len(prints):
             prints = prints.copy()
             ts = pd.to_datetime(prints["ts"])
             prints["m"] = (ts.dt.hour * 60 + ts.dt.minute + 1).astype(int)
-            for (r, k), g in prints.groupby([prints["right"].str.upper().str[0], prints["strike"].astype(float)]):
+            for (r, k), g in prints.groupby([prints["right"].astype(str).str.upper().str[0], prints["strike"].astype(float)]):
                 g = g.sort_values("m").drop_duplicates("m", keep="last")
                 self._prints[(r, float(k))] = (g["m"].tolist(), g["close"].astype(float).tolist())
         self._i = -1
         self.expiry = day
+
+    @property
+    def h(self) -> Optional[float]:
+        """The flat half-spread when the bracket is flat; None under the live model (it depends on the quote)."""
+        return getattr(self.spread, "h", None)
+
+    @property
+    def mode(self) -> str:
+        """'conservative' (no carry, a conservative spread) or 'optimistic' (an upper bound)."""
+        from paper.spread_model import is_conservative
+        return "conservative" if self.carry == 0 and is_conservative(self.spread) else "optimistic"
+
+    def describe(self) -> str:
+        from paper.spread_model import label_of
+        tag = "CONSERVATIVE" if self.mode == "conservative" else "OPTIMISTIC (an upper bound, not an expectation)"
+        return f"{tag}: legs carried {self.carry} min, {label_of(self.spread)}"
 
     def has_option_data(self) -> bool:
         return bool(self._prints)
@@ -191,8 +315,11 @@ class ReplayProvider:
             return None
         return px[i], age
 
-    def quote_vertical(self, kind: str, k_low: float, k_high: float, minute: int) -> Optional[Quote]:
-        """Same valuation as the backtest's MarketPricer: the fresher of the two sides, parity for the other."""
+    def quote_vertical(self, kind: str, k_low: float, k_high: float, minute: int, S: Optional[float] = None) -> Optional[Quote]:
+        """Same valuation as the backtest's MarketPricer: the fresher of the two sides, parity for the other;
+        under carry 0 that is the side whose two legs both printed THIS minute. bid/ask = value -/+ the
+        spread model's half spread for that structure (``S``, the underlying now, lets the model price
+        each leg by its moneyness; without it the model falls back to the spread's value)."""
         width = float(k_high - k_low)
         same = "C" if kind == "call" else "P"; other = "P" if same == "C" else "C"
         cands = []
@@ -206,7 +333,8 @@ class ReplayProvider:
             return None
         v, age = min(cands, key=lambda t: t[1])
         v = min(width, max(0.0, v))
-        return Quote(bid=v - self.h, ask=v + self.h, last=v, age=int(age))
+        h = float(self.spread(v, width, S, float(k_low), float(k_high), kind))
+        return Quote(bid=v - h, ask=v + h, last=v, age=int(age))
 
     def leg_symbols(self, kind: str, k_low: float, k_high: float) -> tuple[str, str]:
         """OCC-style symbols for the ledger (long leg, short leg)."""
@@ -214,6 +342,182 @@ class ReplayProvider:
         long_k, short_k = (k_low, k_high) if kind == "call" else (k_high, k_low)
         occ = lambda k: f"{self.root}{self.day.strftime('%y%m%d')}{cp}{int(round(k * 1000)):08d}"
         return occ(long_k), occ(short_k)
+
+    # ── multi-leg structures (strategy_api.live.STRUCTURE_KINDS) ──────────────
+    def _occ(self, cp: str, K: float) -> str:
+        return f"{self.root}{self.day.strftime('%y%m%d')}{cp}{int(round(K * 1000)):08d}"
+
+    def structure_symbols(self, kind: str, k_low: float, k_high: float) -> list[str]:
+        """OCC-style symbols of the structure's legs, in ``structure_legs`` order."""
+        return [self._occ(cp, K) for cp, K, _ in structure_legs(kind, k_low, k_high)]
+
+    def quote_structure(self, kind: str, k_low: float, k_high: float, minute: int, S: Optional[float] = None) -> Optional[Quote]:
+        """The structure valued on its legs' same-day prints (every leg needed, the oldest sets the age), bracketed
+        by the half spread PER LEG: a conservative replay quote, no prints reported. Under the live spread model
+        each leg's half-spread is read off its moneyness when ``S`` (the underlying now) is known."""
+        legs = structure_legs(kind, k_low, k_high)
+        vals = []
+        for cp, K, sign in legs:
+            leg = self._leg(cp, K, minute)
+            if leg is None:
+                return None
+            vals.append((sign * leg[0], leg[1]))
+        v = sum(x for x, _ in vals)
+        age = max(a for _, a in vals)
+        w = structure_bound(legs)
+        v = min(max(v, 0.0), w) if w is not None else max(v, 0.0)
+        h = self._structure_half_spread(legs, v, w, S)
+        return Quote(bid=max(0.0, v - h), ask=v + h, last=v, age=int(age), age_s=float(age) * 60.0)
+
+    def _structure_half_spread(self, legs: list, value: float, bound: Optional[float], S: Optional[float]) -> float:
+        """The structure's half-spread: the sum of its legs' half-spreads. A flat model brackets each leg by its
+        constant; the live model prices each leg by how far it is in the money (calls S - K, puts K - S) when
+        spot is known, else falls back to its value curve scaled from a two-leg vertical to this leg count."""
+        flat = getattr(self.spread, "h", None)
+        if flat is not None:
+            return float(flat) * len(legs)
+        leg_fn = getattr(self.spread, "leg", None)
+        if S is not None and leg_fn is not None:
+            return float(sum(leg_fn((float(S) - float(K)) if cp == "C" else (float(K) - float(S))) for cp, K, _ in legs))
+        from paper.spread_model import REFERENCE_WIDTH
+        width = float(bound) if bound else REFERENCE_WIDTH
+        return float(self.spread(value, width)) * len(legs) / 2.0
+
+
+# ── replay on recorded quotes ─────────────────────────────────────────────────
+
+#: where api/services/quote_recorder.py writes the day's quotes: <quotes dir>/<root>/<YYYY-MM-DD>.csv.gz
+QUOTES_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "paper_state", "quotes")
+
+
+class QuoteReplayProvider:
+    """Replays a day from the quotes the service recorded (api/services/quote_recorder.py: every watched contract's
+    bid, ask and last trade every 15 seconds) and prices it the way the LIVE runner does: a vertical is
+    ``vertical_quote`` of its two legs, a structure ``structure_quote`` of its legs, from the same fields the broker
+    feed supplies. So a replay on quotes asks what the live session would have done that day, not what the prints
+    say -- the print-priced replay fills +5 targets the live quotes never reach
+    (research/hard_look_2026-09-28/live_vs_backtest), this one cannot.
+
+    - The engine steps at a minute's end on the first snapshot at or after the boundary: the live runner steps on
+      the first poll after the minute closes, with the quotes that poll fetched.
+    - The underlying's minute bars (09:30-15:59, bar START times like the stored bars) come from the index level
+      recorded with each snapshot: open/high/low/close of the minute's snapshots.
+    - A leg's last trade time, which the live quote's freshness rule reads first (``carry_min``), is not recorded;
+      it is inferred as the snapshot at which the leg's day volume (else its last price) last changed. Before any
+      trade is seen that day the quote's own update time stands in, which errs toward quoting."""
+
+    name = "quote_replay"
+    mode = "quotes"
+
+    def __init__(self, day: date, underlying: str = "NDX", root: str = "NDXP", carry_min: int = 30,
+                 quotes_dir: Optional[str] = None, frame: Optional[pd.DataFrame] = None):
+        self.day = day
+        self.underlying = underlying.upper()
+        self.root = root
+        self.carry = int(carry_min)
+        self.expiry = day
+        if frame is None:
+            path = os.path.join(quotes_dir or QUOTES_DIR, root, f"{day.isoformat()}.csv.gz")
+            if not os.path.exists(path):
+                raise RuntimeError(f"no recorded {root} quotes for {day}: {path}")
+            frame = pd.read_csv(path)
+        q = frame.copy()
+
+        def naive_et(s):
+            t = pd.to_datetime(s, utc=True, errors="coerce")
+            return t.dt.tz_convert(ET).dt.tz_localize(None)
+        q["ts"] = naive_et(q["ts"])
+        q["quote_time"] = naive_et(q["quote_time"]) if "quote_time" in q else pd.NaT
+        q = q.dropna(subset=["ts"]).sort_values(["symbol", "ts"])
+        # the last trade: the snapshot at which the day volume grew (the last price changed, where volume is missing)
+        q["volume"] = pd.to_numeric(q["volume"], errors="coerce") if "volume" in q else float("nan")
+        q["last"] = pd.to_numeric(q["last"], errors="coerce")
+        g = q.groupby("symbol", sort=False)
+        vol, prev_vol = q["volume"], g["volume"].shift()
+        last, prev_last = q["last"], g["last"].shift()
+        with_vol = vol.notna() & prev_vol.notna()
+        # the first sighting is not a trade seen happening; neither is a volume that merely starts being reported
+        traded = (with_vol & (vol > prev_vol)) | (~with_vol & last.notna() & prev_last.notna() & (last != prev_last))
+        q["last_time"] = q["ts"].where(traded)
+        q["last_time"] = q.groupby("symbol", sort=False)["last_time"].ffill()
+        self._snaps: list = sorted(q["ts"].unique())
+        self._by_snap = {pd.Timestamp(ts): grp.set_index("symbol") for ts, grp in q.groupby("ts")}
+        u = q.drop_duplicates("ts")[["ts", "underlying"]].sort_values("ts")
+        u = u[(u["ts"].dt.time >= dtime(9, 30)) & (u["ts"].dt.time < dtime(16, 0))]
+        b = u.groupby(u["ts"].dt.floor("min"))["underlying"].agg(["first", "max", "min", "last"])
+        self.bars = pd.DataFrame({"ts": b.index, "open": b["first"].to_numpy(), "high": b["max"].to_numpy(),
+                                  "low": b["min"].to_numpy(), "close": b["last"].to_numpy()}).reset_index(drop=True)
+        self._i = -1
+
+    def describe(self) -> str:
+        return f"RECORDED QUOTES: {len(self._snaps)} snapshots, legs carried {self.carry} min by last trade (live's rule)"
+
+    def has_option_data(self) -> bool:
+        return bool(self._snaps)
+
+    def next_bar(self) -> Optional[Bar]:
+        self._i += 1
+        if self._i >= len(self.bars):
+            return None
+        r = self.bars.iloc[self._i]
+        return Bar(ts=pd.Timestamp(r.ts).to_pydatetime(), open=float(r.open), high=float(r.high), low=float(r.low), close=float(r.close))
+
+    def is_last_bar(self) -> bool:
+        return self._i >= len(self.bars) - 1
+
+    def _snapshot(self, minute: int) -> Optional[tuple[pd.Timestamp, pd.DataFrame]]:
+        """The first snapshot at or after the minute's end (within a minute), else the last one before it (within
+        two): what the live runner's first poll after the boundary would have seen."""
+        import bisect
+        boundary = pd.Timestamp(datetime.combine(self.day, dtime(0, 0))) + pd.Timedelta(minutes=int(minute))
+        i = bisect.bisect_left(self._snaps, boundary.to_datetime64())
+        if i < len(self._snaps) and pd.Timestamp(self._snaps[i]) - boundary < pd.Timedelta(minutes=1):
+            ts = pd.Timestamp(self._snaps[i])
+        elif i > 0 and boundary - pd.Timestamp(self._snaps[i - 1]) <= pd.Timedelta(minutes=2):
+            ts = pd.Timestamp(self._snaps[i - 1])
+        else:
+            return None
+        return ts, self._by_snap[ts]
+
+    @staticmethod
+    def _leg(snap: pd.DataFrame, symbol: str) -> Optional[LegQuote]:
+        if symbol not in snap.index:
+            return None
+        r = snap.loc[symbol]
+        if isinstance(r, pd.DataFrame):                          # a duplicate row in one snapshot: take the last
+            r = r.iloc[-1]
+        num = lambda v: (None if pd.isna(v) else float(v))
+        tm = lambda v: (None if pd.isna(v) else pd.Timestamp(v).to_pydatetime())
+        return LegQuote(symbol=symbol, bid=num(r["bid"]), ask=num(r["ask"]), last=num(r["last"]),
+                        last_time=tm(r["last_time"]), updated=tm(r["quote_time"]))
+
+    def quote_vertical(self, kind: str, k_low: float, k_high: float, minute: int, S: Optional[float] = None) -> Optional[Quote]:
+        got = self._snapshot(minute)
+        if got is None:
+            return None
+        ts, snap = got
+        long_s, short_s = self.leg_symbols(kind, k_low, k_high)
+        long_q, short_q = self._leg(snap, long_s), self._leg(snap, short_s)
+        if long_q is None or short_q is None:
+            return None
+        return vertical_quote(long_q, short_q, ts.to_pydatetime(), carry_min=self.carry, max_width=float(k_high - k_low))
+
+    def quote_structure(self, kind: str, k_low: float, k_high: float, minute: int, S: Optional[float] = None) -> Optional[Quote]:
+        got = self._snapshot(minute)
+        if got is None:
+            return None
+        ts, snap = got
+        legs = structure_legs(kind, k_low, k_high)
+        return structure_quote([self._leg(snap, self._occ(cp, K)) for cp, K, _ in legs], legs, ts.to_pydatetime(), carry_min=self.carry)
+
+    def _occ(self, cp: str, K: float) -> str:
+        return f"{self.root}{self.day.strftime('%y%m%d')}{cp}{int(round(K * 1000)):08d}"
+
+    def leg_symbols(self, kind: str, k_low: float, k_high: float) -> tuple[str, str]:
+        """OCC-style symbols (long leg, short leg), spelled as the recorder spells them."""
+        cp = "C" if kind == "call" else "P"
+        long_k, short_k = (k_low, k_high) if kind == "call" else (k_high, k_low)
+        return self._occ(cp, long_k), self._occ(cp, short_k)
 
 
 # ── tastytrade ────────────────────────────────────────────────────────────────
@@ -266,7 +570,7 @@ class RequestBudget:
     needs about 4 a minute, so these are set far below what would ever draw a 429."""
 
     def __init__(self, min_interval_s: float = 5.0, per_minute: int = 20, per_day: Optional[int] = None, clock=None, sleep=None,
-                 shared_path: Optional["Path"] = None):
+                 shared_path: Optional["Path"] = None, external_dirs: Optional[list] = None):
         import time as _time
         self.min_interval_s = float(min_interval_s); self.per_minute = int(per_minute)
         self.per_day = int(per_day) if per_day is not None else broker_day_cap()
@@ -284,6 +588,20 @@ class RequestBudget:
             shared_path = _Path(BUDGET_STATE_DIR) / f"broker_calls_{date.today().isoformat()}.json"
         self.shared_path = shared_path
         self.shared_calls = 0
+        # Other checkouts' runners count into their own state directory (a worktree's runner beside the main
+        # checkout's): their day totals are READ, never written, and count against this budget's day cap.
+        self.external_dirs = [__import__("pathlib").Path(d) for d in (external_dirs or [])]
+
+    def external_calls(self) -> int:
+        import json
+        total = 0
+        for d in self.external_dirs:
+            try:
+                total += int(json.loads((d / f"broker_calls_{date.today().isoformat()}.json").read_text(encoding="utf-8"))
+                             .get("calls", 0))
+            except (OSError, ValueError, TypeError):
+                continue
+        return total
 
     def _bump_shared(self) -> int:
         """Add one to the day's cross-process total and return it (0 when the file is unusable)."""
@@ -331,6 +649,11 @@ class RequestBudget:
         if self.shared_calls >= self.per_day:
             raise RuntimeError(f"tastytrade request budget spent across all processes: {self.shared_calls} calls today "
                                f"(cap {self.per_day}); not calling again today")
+        if self.external_dirs:
+            ext = self.external_calls()
+            if self.shared_calls + ext >= self.per_day:
+                raise RuntimeError(f"tastytrade request budget spent across this checkout ({self.shared_calls}) and other "
+                                   f"checkouts' runners ({ext}) today (cap {self.per_day}); not calling again today")
         now = self._clock()
         if self._last is not None and now - self._last < self.min_interval_s:
             self._sleep(self.min_interval_s - (now - self._last)); self.waits += 1; now = self._clock()
@@ -340,6 +663,20 @@ class RequestBudget:
             self._minute = [x for x in self._minute if now - x < 60.0]
         self._last = now; self._minute.append(now); self.calls_today += 1
         self._bump_shared()
+
+
+def _external_state_dirs() -> list:
+    """Other checkouts' paper_state directories whose broker-call totals count against this runner's day budget:
+    ALAN_TRADER_EXTERNAL_STATE_DIRS, else — for a runner started from a linked worktree (the service's) — the main
+    checkout's (api.config.external_state_dirs); none for a runner of the main checkout."""
+    env = os.environ.get("ALAN_TRADER_EXTERNAL_STATE_DIRS")
+    if env is not None:
+        return [p for p in env.split(os.pathsep) if p.strip()]
+    try:
+        from api.config import external_state_dirs
+        return [str(p) for p in external_state_dirs()]
+    except Exception:
+        return []
 
 
 class TastytradeProvider:
@@ -354,8 +691,8 @@ class TastytradeProvider:
         self.root = root.upper()
         self.poll_seconds = int(poll_seconds)
         try:
-            from app import _load_env                     # the platform's own .env reader (no python-dotenv needed)
-            _load_env()
+            from engine.env import load_env               # the platform's own .env reader (no python-dotenv needed)
+            load_env()
         except Exception:
             pass
         secret, refresh = os.environ.get("TT_SECRET"), os.environ.get("TT_REFRESH")
@@ -367,7 +704,7 @@ class TastytradeProvider:
         self._chain: dict = {}
         self._samples: list[tuple[datetime, float]] = []
         self.expiry: Optional[date] = None
-        self.budget = RequestBudget()                 # every REST call goes through it (see RequestBudget)
+        self.budget = RequestBudget(external_dirs=_external_state_dirs())   # every REST call goes through it (see RequestBudget)
 
     # chain for today's expiry
     def load_chain(self, day: date) -> int:
@@ -411,6 +748,17 @@ class TastytradeProvider:
         cp = "C" if kind == "call" else "P"
         long_k, short_k = (k_low, k_high) if kind == "call" else (k_high, k_low)
         return self._symbol(cp, long_k), self._symbol(cp, short_k)
+
+    def structure_symbols(self, kind: str, k_low: float, k_high: float) -> list[Optional[str]]:
+        """The chain's symbols of the structure's legs, in ``structure_legs`` order (None for a strike not listed)."""
+        return [self._symbol(cp, K) for cp, K, _ in structure_legs(kind, k_low, k_high)]
+
+    def quote_structure(self, kind: str, k_low: float, k_high: float, quotes: dict[str, LegQuote], now: datetime,
+                        carry_min: int = 30) -> Optional[Quote]:
+        syms = self.structure_symbols(kind, k_low, k_high)
+        if any(s is None or s not in quotes for s in syms):
+            return None
+        return structure_quote([quotes[s] for s in syms], structure_legs(kind, k_low, k_high), now, carry_min)
 
     def _relogin(self) -> None:
         """A fresh OAuth session (the access token expires during a long day)."""

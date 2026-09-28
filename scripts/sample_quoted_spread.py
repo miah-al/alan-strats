@@ -37,9 +37,13 @@ from datetime import date, datetime, time as dtime
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-for p in (str(ROOT.parent), str(ROOT)):
-    if p not in sys.path:
-        sys.path.insert(0, p)
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+# alan_trader is this checkout by file path, whatever its folder is called; the parent stays off sys.path
+# (beside the live checkout it would expose that copy) — api/bootstrap.py.
+from api.bootstrap import register_platform_package  # noqa: E402
+
+register_platform_package()
 
 SPREAD_COLS = ["ts", "ndx", "k_low", "k_high",
                "long_sym", "long_bid", "long_ask", "long_last", "long_volume", "long_bid_size", "long_ask_size",

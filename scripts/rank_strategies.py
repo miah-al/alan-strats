@@ -29,9 +29,13 @@ import traceback
 # The codebase mixes two import roots: `app.*` / `strategies.*` (repo-relative)
 # and `alan_trader.*` (parent-relative). Both must be importable.
 _REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-for _p in (_REPO, os.path.dirname(_REPO)):
-    if _p not in sys.path:
-        sys.path.insert(0, _p)
+if _REPO not in sys.path:
+    sys.path.insert(0, _REPO)
+# alan_trader is this checkout by file path, whatever its folder is called; the parent stays off sys.path
+# (beside the live checkout it would expose that copy) — api/bootstrap.py.
+from api.bootstrap import register_platform_package  # noqa: E402
+
+register_platform_package()
 from dataclasses import dataclass, field, asdict
 from datetime import date, timedelta
 from typing import Any, Optional

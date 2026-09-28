@@ -39,8 +39,9 @@ from app.ui import components as C
 
 logger = logging.getLogger(__name__)
 
-# Matches scripts/rank_strategies.py so the tab and the ranking agree.
-WARMUP_DAYS = 420
+# Matches scripts/rank_strategies.py so the tab and the ranking agree (one value,
+# kept with the headless backtest path in engine.strategy_backtest).
+from engine.strategy_backtest import WARMUP_DAYS  # noqa: E402
 _DEF_FROM = "2021-01-01"
 _DEF_TO = date.today().isoformat()      # the latest stored session is the natural end of the window
 
@@ -145,85 +146,14 @@ def compute_performance(slug: str, ticker: str, from_date: str, to_date: str,
     """
     Run the strategy through the production path and return everything the tab
     renders. Raises on failure so the caller can surface the real reason.
+
+    The path itself (bars with warm-up, VIX / rates, the strategy's loaders, the
+    backtest, window-only metrics, buy & hold on the identical window) lives in the
+    headless ``engine.strategy_backtest.run_backtest``, shared with the service API.
+    The tab runs it with the strategy's default backtest parameters.
     """
-    from db.client import get_engine, get_price_bars, get_vix_bars, get_macro_bars
-    from app.pages.backtest_loaders import run_loaders_for
-    from app.pages.strategies.backtest_view import _get_ui_params_for_slug
-    from alan_trader.strategy_api.base import StubStrategy
-    from alan_trader.strategy_api.registry import get_strategy
-    from risk.metrics import compute_all_metrics
-
-    strategy = get_strategy(slug)
-    if isinstance(strategy, StubStrategy):
-        raise ValueError(f"No implementation registered for {slug!r}.")
-
-    fd, td = date.fromisoformat(from_date), date.fromisoformat(to_date)
-    load_fd = fd - timedelta(days=WARMUP_DAYS)   # indicators warm up before fd
-
-    engine = get_engine()
-    bars = get_price_bars(engine, ticker, load_fd, td)
-    if bars is None or bars.empty:
-        raise ValueError(f"No price bars for {ticker} in {from_date} → {to_date}.")
-    if "date" in bars.columns:
-        bars = bars.set_index("date")
-    bars.index = pd.to_datetime(bars.index)
-
-    try:
-        vix_df = get_vix_bars(engine, load_fd, td)
-        rate_df = get_macro_bars(engine, load_fd, td)
-    except Exception:
-        vix_df, rate_df = pd.DataFrame(), pd.DataFrame()
-    if not vix_df.empty:
-        vix_df.index = pd.to_datetime(vix_df.index)
-    if not rate_df.empty:
-        rate_df.index = pd.to_datetime(rate_df.index)
-
-    aux = {"vix": vix_df, "rate10y": rate_df, "ticker": ticker}
-    extra, block = run_loaders_for(slug, engine, ticker, fd, td, price_data=bars)
-    aux.update(extra)
-    if block is not None:
-        raise ValueError(
-            f"{slug} is missing required data for this window — see the "
-            f"Backtest tab for the loader's message.")
-
-    params = {p["key"]: p["default"]
-              for p in _get_ui_params_for_slug(slug) if "default" in p}
-    result = strategy.backtest(bars, aux, starting_capital=float(capital), **params)
-
-    equity = pd.Series(result.equity_curve).copy()
-    equity.index = pd.to_datetime(equity.index)
-    equity = equity[equity.index >= pd.Timestamp(fd)]
-    if len(equity) < 3:
-        raise ValueError("Backtest produced too few equity points to analyse.")
-
-    trades = result.trades if result.trades is not None else pd.DataFrame()
-    if not trades.empty:
-        for col in ("exit_date", "entry_date"):
-            if col in trades.columns:
-                when = pd.to_datetime(trades[col], errors="coerce")
-                trades = trades[when >= pd.Timestamp(fd)]
-                break
-
-    metrics = compute_all_metrics(equity, trades if not trades.empty else None)
-
-    # Benchmark on the identical window.
-    close = bars["close"] if "close" in bars.columns else bars.iloc[:, -1]
-    close = close[close.index >= pd.Timestamp(fd)]
-    bench_equity = float(capital) * (close / close.iloc[0])
-    bench_metrics = compute_all_metrics(bench_equity)
-
-    span_days = int((equity.index.max() - equity.index.min()).days)
-    window_days = int((td - fd).days)
-
-    return {
-        "slug": slug, "ticker": ticker,
-        "equity": equity, "bench_equity": bench_equity,
-        "metrics": metrics, "bench_metrics": bench_metrics,
-        "trades": trades,
-        "coverage": (span_days / window_days) if window_days else 0.0,
-        "span_days": span_days, "window_days": window_days,
-        "from_date": from_date, "to_date": to_date,
-    }
+    from engine.strategy_backtest import run_backtest
+    return run_backtest(slug, ticker, from_date, to_date, capital)
 
 
 # ── rendering ─────────────────────────────────────────────────────────────────
@@ -256,30 +186,10 @@ def _kpis(perf: dict) -> html.Div:
 
 
 def _warnings_panel(perf: dict) -> html.Div | None:
-    """Surface the things that make a headline number untrustworthy."""
-    notes = []
-    m = perf["metrics"]
-    n = int(m.get("num_trades") or 0)
-    if 0 < n < 30:
-        notes.append(f"Only {n} trades — too few to be statistically meaningful. "
-                     f"Treat CAGR, Sharpe and profit factor as anecdotes.")
-    if n == 0:
-        notes.append("No trades in this window; every metric below is the "
-                     "equity curve sitting flat.")
-    if perf["coverage"] < 0.6 and perf["window_days"]:
-        notes.append(
-            f"The equity curve covers only {perf['span_days']}d of a "
-            f"{perf['window_days']}d window ({perf['coverage']:.0%}). CAGR "
-            f"annualizes that partial period — read total return instead.")
-    pf = m.get("profit_factor")
-    if pf in (float("inf"), None) and n > 5:
-        notes.append("Profit factor is infinite — there are no losing trades at "
-                     "all. Over this many trades that usually means losses are "
-                     "not being realised, not that the strategy cannot lose.")
-    if float(m.get("max_drawdown_pct") or 0) == 0.0 and n > 5:
-        notes.append("Max drawdown is exactly zero, which normally means open "
-                     "positions are never marked to market — the curve only "
-                     "moves on close.")
+    """Surface the things that make a headline number untrustworthy
+    (the notes themselves: engine.strategy_backtest.performance_warnings)."""
+    from engine.strategy_backtest import performance_warnings
+    notes = performance_warnings(perf)
     if not notes:
         return None
     return dbc.Alert(

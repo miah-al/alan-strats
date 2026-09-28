@@ -84,11 +84,9 @@ def get_score_color(score: int) -> str:
 
 # ── Universe options ──────────────────────────────────────────────────────────
 
-_UNIVERSE_TICKERS: dict[str, list[str]] = {
-    "ETF Core":  ["SPY", "QQQ", "IWM", "GLD", "TLT", "EEM", "XLF", "XLE", "XLV", "XLK"],
-    "Mega Cap":  ["AAPL", "MSFT", "GOOGL", "AMZN", "META", "NVDA", "TSLA", "BRK-B", "JPM", "JNJ"],
-    "High IV":   ["TSLA", "NVDA", "AMD", "META", "NFLX", "COIN", "MSTR", "PLTR", "SMCI", "ARM"],
-}
+# The universes live with the headless scan pipeline (engine.strategy_scan), which
+# the page and the service API share; this is the page's historical name for them.
+from engine.strategy_scan import UNIVERSE_TICKERS as _UNIVERSE_TICKERS  # noqa: E402
 
 _UNIVERSE_OPTIONS = [{"label": k, "value": k} for k in _UNIVERSE_TICKERS] + [
     {"label": "Custom", "value": "Custom"},

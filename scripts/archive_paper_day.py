@@ -23,9 +23,13 @@ from datetime import date
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-for p in (str(ROOT.parent), str(ROOT)):
-    if p not in sys.path:
-        sys.path.insert(0, p)
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+# alan_trader is this checkout by file path, whatever its folder is called; the parent stays off sys.path
+# (beside the live checkout it would expose that copy) — api/bootstrap.py.
+from api.bootstrap import register_platform_package  # noqa: E402
+
+register_platform_package()
 
 # credentials carried in a query string, as urllib3's DEBUG log prints them
 _SECRET_IN_URL = re.compile(rb"(?i)((?:api[_-]?key|access_token|refresh_token|client_secret)=)[^&\s\"')]+")
