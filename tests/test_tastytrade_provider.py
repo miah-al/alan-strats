@@ -84,6 +84,19 @@ def test_chain_quotes_and_bars(fake_sdk):
     assert p.close_minute(datetime(2026, 9, 17, 13, 31)) is None
 
 
+def test_a_quote_stamped_before_the_open_is_not_a_sample(fake_sdk):
+    """At 09:30 the index is still served at yesterday's close for a few seconds; sampled, that stale
+    value became the first bar's open and high (2026-09-24)."""
+    from paper.providers import LegQuote, TastytradeProvider
+    p = TastytradeProvider("NDX", "NDXP")
+    stale = {"NDX": LegQuote("NDX", None, None, 30470.29, None, datetime(2026, 9, 23, 16, 15))}
+    fresh = {"NDX": LegQuote("NDX", None, None, 30211.27, None, datetime(2026, 9, 24, 9, 30, 3))}
+    assert p.sample_underlying(stale, datetime(2026, 9, 24, 9, 30, 2)) is None
+    assert p.sample_underlying(fresh, datetime(2026, 9, 24, 9, 30, 17)) == 30211.27
+    bar = p.close_minute(datetime(2026, 9, 24, 9, 30))
+    assert (bar.open, bar.high, bar.low, bar.close) == (30211.27, 30211.27, 30211.27, 30211.27)
+
+
 def test_fetch_relogins_once_on_auth_error(fake_sdk):
     from paper.providers import TastytradeProvider
     p = TastytradeProvider("NDX", "NDXP")
@@ -222,3 +235,14 @@ def test_request_budget_day_cap_holds_across_processes(tmp_path):
     import pytest
     with pytest.raises(RuntimeError, match="across all processes"):
         b.take()
+
+
+def test_request_budget_day_cap_is_a_setting(tmp_path, monkeypatch):
+    from paper.providers import DEFAULT_BROKER_DAY_CAP, RequestBudget
+    monkeypatch.delenv("ALAN_TRADER_BROKER_DAY_CAP", raising=False)
+    assert RequestBudget(shared_path=tmp_path / "a.json").per_day == DEFAULT_BROKER_DAY_CAP == 8000
+    monkeypatch.setenv("ALAN_TRADER_BROKER_DAY_CAP", "5000")
+    assert RequestBudget(shared_path=tmp_path / "b.json").per_day == 5000
+    assert RequestBudget(per_day=7, shared_path=tmp_path / "c.json").per_day == 7    # an explicit cap wins
+    monkeypatch.setenv("ALAN_TRADER_BROKER_DAY_CAP", "lots")
+    assert RequestBudget(shared_path=tmp_path / "d.json").per_day == DEFAULT_BROKER_DAY_CAP

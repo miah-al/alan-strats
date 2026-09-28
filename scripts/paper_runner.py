@@ -6,7 +6,8 @@
     python -m scripts.paper_runner --strategy ndx_0dte_tasty --check              # credentials, chain, one quote; no trading
 
 Live needs TT_SECRET and TT_REFRESH (tastytrade OAuth) in .env. Fills, quotes and cancels go to
-<strategy folder>/paper_log/YYYY-MM-DD.csv (replays: paper_log/replay/); the ledger to the portfolio
+<strategy folder>/paper_log/YYYY-MM-DD.csv (replays: paper_log/replay/), each fill with the index level
+on the poll that priced it; the index's minute bars to paper_log/underlying_YYYY-MM-DD.csv; the ledger to the portfolio
 schema (Paper Trading page); state to paper_state/ so a restart resumes the session. A first live
 day with credentials can be kept out of the record with --log-dir <somewhere> --no-ledger.
 
@@ -75,8 +76,22 @@ def _columns(rows: list[tuple[str, str, str]], left: str, right: str) -> str:
         out.append(f"{k:{w0}}{a:{w1}}{b}")
     return "\n".join(out)
 
+# The runner's diary for the day (<strategy>_<date>.log). A module setting so the test suite can point it
+# elsewhere: tests that ran main() were writing their own warnings and simulated halts into the live diary.
+DIARY_DIR = ROOT / "logs" / "paper"
+
 
 def main(argv=None) -> int:
+    handlers: list = []
+    try:
+        return _main(argv, handlers)
+    finally:
+        for h in handlers:          # a caller in the same process must not go on writing into the day's diary
+            logging.getLogger().removeHandler(h)
+            h.close()
+
+
+def _main(argv, handlers: list) -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--strategy", required=True)
     ap.add_argument("--replay", metavar="YYYY-MM-DD", help="run a stored session instead of live")
@@ -104,9 +119,10 @@ def main(argv=None) -> int:
     args = ap.parse_args(argv)
 
     logging.basicConfig(level=logging.DEBUG if args.verbose else logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
-    log_dir = ROOT / "logs" / "paper"; log_dir.mkdir(parents=True, exist_ok=True)
+    log_dir = Path(DIARY_DIR); log_dir.mkdir(parents=True, exist_ok=True)
     fh = logging.FileHandler(log_dir / f"{args.strategy}_{date.today().isoformat()}.log", encoding="utf-8")
     fh.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s")); logging.getLogger().addHandler(fh)
+    handlers.append(fh)
 
     try:
         info = bootstrap()

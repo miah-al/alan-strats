@@ -812,6 +812,12 @@ class TastytradeProvider:
         q = quotes.get(self.underlying)
         if q is None:
             return None
+        # A quote stamped before the open is the previous session's close, still served for the first seconds
+        # after 09:30. Sampled, it became the day's first open and high (2026-09-24: 30,470.29, yesterday's
+        # close, against a 30,211 open). The first real print follows within seconds.
+        stamp = q.last_time or q.updated
+        if stamp is not None and stamp < datetime.combine(when.date(), dtime(9, 30)):
+            return None
         px = q.last if q.last is not None else (((q.bid or 0) + (q.ask or 0)) / 2.0 if q.bid and q.ask else None)
         if px is not None:
             self._samples.append((when, float(px)))
