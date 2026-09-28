@@ -61,6 +61,12 @@ _OPEN_COLS = [
          "cell-positive": {"function": "params.data._pnl > 0"},
          "cell-negative": {"function": "params.data._pnl < 0"},
      }},
+    # Which feed priced this row: a paper position is marked by the venue that filled it, and saying
+    # so on the row is the difference between a mark you can act on and one you have to go and verify.
+    # which way the position leans: this strategy trades bull call and bear put spreads, and the
+    # strategy name alone does not distinguish them
+    {"field": "Structure",   "minWidth": 150, "flex": 1},
+    {"field": "Priced by",   "minWidth": 100, "width": 110},
     {"field": "Alerts",      "minWidth": 80,  "width": 90},
     {"field": "_tgid",       "hide": True},
 ]
@@ -486,9 +492,31 @@ def _metric_card(label: str, value: str, color: str = T.TEXT_PRIMARY) -> html.Di
 
 # ── Legs table (MRT) ──────────────────────────────────────────────────────────
 
+def _net_legs(grp: pd.DataFrame) -> pd.DataFrame:
+    """One row per contract actually held, not one per fill.
+
+    A position that was added to has two fills per leg, so the raw rows list the same contract twice
+    and the table reads as four legs when two are held. Netting by (symbol, direction) gives the
+    position as it stands: quantity summed, entry price averaged by quantity.
+    """
+    if grp.empty or "Symbol" not in grp.columns:
+        return grp
+    rows = []
+    for (sym, dirn), g in grp.groupby(["Symbol", "Direction"], sort=False):
+        qty = float(pd.to_numeric(g["Quantity"], errors="coerce").fillna(0).sum())
+        px = pd.to_numeric(g["TransactionPrice"], errors="coerce").fillna(0.0)
+        q = pd.to_numeric(g["Quantity"], errors="coerce").fillna(0.0)
+        avg = float((px * q).sum() / q.sum()) if q.sum() else 0.0
+        r = g.iloc[0].copy()
+        r["Quantity"] = qty
+        r["TransactionPrice"] = avg
+        rows.append(r)
+    return pd.DataFrame(rows).reset_index(drop=True) if rows else grp
+
+
 def _build_legs_table(grp: pd.DataFrame, live_prices: dict | None = None):
     legs = []
-    for _, r in grp.iterrows():
+    for _, r in _net_legs(grp).iterrows():
         stype = str(r.get("SecurityType", "")).lower()
         if stype == "cash":
             continue
@@ -496,7 +524,11 @@ def _build_legs_table(grp: pd.DataFrame, live_prices: dict | None = None):
         qty  = float(r.get("Quantity")   or 0)
         mult = float(r.get("Multiplier") or 100)
         dirn = str(r.get("Direction", "")).upper()
-        sign = 1.0 if dirn == "SELL" else -1.0
+        # Liquidation convention, the same one live_market_value uses: a long leg is an asset you
+        # sell (+), a short leg a liability you buy back (-). This was inverted, so every long leg
+        # showed a negative market value and every short a positive one, and the legs summed to
+        # roughly minus the position's real value.
+        sign = 1.0 if dirn == "BUY" else -1.0
         sym  = str(r.get("Symbol", ""))
 
         live    = (live_prices or {}).get(sym, {})
@@ -567,15 +599,9 @@ def _build_ic_modal_body(
     # Live prices for current-price marker + position value
     spot: float | None = None
     live_prices: dict = {}
-    try:
-        from app import get_polygon_api_key
-        from engine.positions import fetch_stock_price, fetch_option_prices
-        api_key = get_polygon_api_key()
-        if api_key:
-            spot = fetch_stock_price(api_key, underlying)
-            live_prices = fetch_option_prices(api_key, grp)
-    except Exception:
-        pass
+    # From the broker the paper session trades on, never a second vendor (see live_leg_prices).
+    from app.pages.paper_trading.data import live_leg_prices
+    live_prices, spot = live_leg_prices(grp)
 
     opt = grp[grp["SecurityType"].str.lower() == "option"].copy()
 
@@ -765,15 +791,9 @@ def _build_screener_modal_body(
     # Live prices: spot for chart marker, option marks for position value + legs table
     spot: float | None = None
     live_prices: dict  = {}
-    try:
-        from app import get_polygon_api_key
-        from engine.positions import fetch_stock_price, fetch_option_prices
-        api_key = get_polygon_api_key()
-        if api_key and underlying:
-            spot        = fetch_stock_price(api_key, underlying)
-            live_prices = fetch_option_prices(api_key, grp)
-    except Exception:
-        pass
+    # From the broker the paper session trades on, never a second vendor (see live_leg_prices).
+    from app.pages.paper_trading.data import live_leg_prices
+    live_prices, spot = live_leg_prices(grp)
 
     opt = grp[grp["SecurityType"].str.lower() == "option"].copy() \
         if "SecurityType" in grp.columns else pd.DataFrame()

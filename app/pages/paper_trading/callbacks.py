@@ -54,6 +54,8 @@ def refresh_all(_n, _btn):
     open_groups, closed_rows, txns_df = _load_data()
 
     # ── Open positions ────────────────────────────────────────────────────────
+    from app.pages.paper_trading.data import paper_runner_marks, runner_mark_for, structure_label
+    _runner_marks = paper_runner_marks()     # {tgid: (mark, units, feed that filled it)}
     open_data = []
     market_value = 0.0   # accumulated per-position below (live mark-to-market)
     for tgid, grp in open_groups.items():
@@ -111,6 +113,8 @@ def refresh_all(_n, _btn):
             "Net Entry":   f"+${ne:,.2f}" if ne >= 0 else f"-${abs(ne):,.2f}",
             "P&L":         f"{'+' if upnl >= 0 else '-'}${abs(upnl):,.2f}",
             "P&L %":       f"{pnl_pct:+.1f}%" if pnl_pct is not None else "—",
+            "Structure":   structure_label(grp),
+            "Priced by":   (runner_mark_for(_runner_marks, tgid) or (None, None, "entry price"))[2],
             "Alerts":      alert_str,
             "_net":        ne,
             "_pnl":        upnl,
@@ -207,8 +211,16 @@ def refresh_all(_n, _btn):
         return html.Div(children, style={
             **T.STYLE_CARD, "minWidth": "150px", "flex": "1", "padding": "12px 14px"})
 
-    # Total P&L = realized (closed) + unrealized (open). Total return vs starting capital.
-    total_pnl = unrealized_pnl + total_closed
+    # Total P&L is what the account is actually up or down: account value against the capital put in.
+    # Realized + unrealized is the same figure only when nothing sits outside those two, which is not
+    # true -- commissions and fees leave cash but are in neither -- so the sum was quietly reporting a
+    # smaller loss than the account had taken, and disagreed with the % on its own subtitle.
+    total_pnl = (account_value - starting_capital) if starting_capital else (unrealized_pnl + total_closed)
+    # The three headline P&L cards must add up. Unrealized computed from entry prices leaves out the
+    # commission already paid on the open fills (it sits in cash), so Realized + Unrealized came out a
+    # few dollars above Total. Showing Unrealized as the remainder makes it the open positions' true
+    # P&L, costs included, and the cards reconcile by construction.
+    unrealized_shown = (total_pnl - total_closed) if starting_capital else unrealized_pnl
     win_rate_str = f"{win_rate:.0f}%" if win_rate is not None else "—"
     win_rate_color = (T.SUCCESS if win_rate and win_rate >= 50 else T.DANGER) if win_rate is not None else T.TEXT_MUTED
 
@@ -225,14 +237,15 @@ def refresh_all(_n, _btn):
                 T.SUCCESS if cash_bal >= 0 else T.DANGER,
                 sub="available to deploy"),
         _metric("Positions", _sd(market_value), _c(market_value),
-                sub=f"{n_open} open · live mark"),
+                sub=f"{n_open} open · " + (" / ".join(sorted({v[2] for v in _runner_marks.values()}))
+                                           or ("live mark" if n_open else "none"))),
         _metric("Total P&L", _sd(total_pnl), _c(total_pnl),
                 sub=f"{'+' if ytd_return >= 0 else ''}{ytd_return:.1f}% vs start", big=True),
     ], style={"display": "flex", "gap": "10px", "flexWrap": "wrap"})
 
     # Row 2 — P&L breakdown + activity.
     row2 = html.Div([
-        _metric("Unrealized P&L", _sd(unrealized_pnl), _c(unrealized_pnl), sub="open positions"),
+        _metric("Unrealized P&L", _sd(unrealized_shown), _c(unrealized_shown), sub="open positions, after costs"),
         _metric("Realized P&L",   _sd(total_closed),   _c(total_closed),   sub="closed trades"),
         _metric("Today's P&L",    _sd(today_pnl),      _c(today_pnl),      sub="realized today"),
         _metric("Open Positions", str(n_open)),
@@ -458,7 +471,9 @@ def build_modal_body(tgid):
     ne        = _net_entry(grp)
     ne_str    = f"{'+' if ne >= 0 else ''}${ne:,.2f}"
 
-    title = f"{underlying}  ·  {strategy}  ·  {ne_str}  ·  opened {open_date}"
+    from app.pages.paper_trading.data import structure_label
+    _struct = structure_label(grp)
+    title = f"{underlying}  ·  {strategy}" + (f"  ·  {_struct}" if _struct else "") + f"  ·  {ne_str}  ·  opened {open_date}"
     sl    = strategy.lower()
 
     has_options = (
@@ -698,19 +713,29 @@ def execute_delete(n_confirm, n_cancel, action, current_n):
 @callback(
     Output("pt-close-confirm-modal", "is_open",       allow_duplicate=True),
     Output("pt-close-confirm-body",  "children"),
+    Output("pt-close-confirm-btn",   "disabled",      allow_duplicate=True),
     Input("pt-close-btn",            "n_clicks"),
     State("pt-selected-tgid",        "data"),
     prevent_initial_call=True,
 )
 def open_close_confirm(n_clicks, tgid):
     if not n_clicks or not tgid:
-        return no_update, no_update
+        return no_update, no_update, no_update
+    from app.pages.paper_trading.data import managed_by_runner
+    feed = managed_by_runner(tgid)
+    if feed:
+        return True, dbc.Alert(
+            f"This position is held by the live paper session ({feed}), which closes it itself -- at its "
+            "target, or at settlement. Closing it here would write an exit to the ledger while the session "
+            "still holds the position, and the session would then record a second exit of its own. "
+            "To intervene, stop the paper runner first.",
+            color="warning", style={"fontSize": "12.5px"}), True
     _, _, txns_df = _load_data()
     if txns_df.empty:
-        return no_update, no_update
+        return no_update, no_update, no_update
     grp = txns_df[txns_df["TradeGroupId"] == tgid].copy()
     if grp.empty:
-        return no_update, no_update
+        return no_update, no_update, no_update
 
     rows = []
     for _, r in grp.iterrows():
@@ -740,7 +765,7 @@ def open_close_confirm(n_clicks, tgid):
         enable_pagination=False,
         height=240,
     )
-    return True, table
+    return True, table, False
 
 
 @callback(
@@ -760,33 +785,22 @@ def execute_close(n_confirm, n_cancel, tgid, current_n):
     if not n_confirm or not tgid:
         return no_update, no_update, no_update
 
-    from engine.positions import (insert_closing_transactions, fetch_option_prices,
-                                   fetch_stock_price)
-    from app import get_polygon_api_key
+    from engine.positions import insert_closing_transactions
+    from app.pages.paper_trading.data import managed_by_runner, live_leg_prices
+    if managed_by_runner(tgid):                 # the session that holds it closes it; never twice
+        return False, False, no_update
     _, _, txns_df = _load_data()
     if not txns_df.empty:
         grp = txns_df[txns_df["TradeGroupId"] == tgid].copy()
         if not grp.empty:
             engine  = _get_engine()
-            api_key = get_polygon_api_key()
-            # Realize the close at LIVE marks (not entry), so realized P&L is real.
-            # Options via the chain snapshot; stock/ETF legs via yfinance. Any leg
-            # without a live quote falls back to its entry price inside the inserter.
-            live: dict = {}
+            # Close at the paper session's own leg quotes where it publishes them; any leg it does
+            # not quote falls back to its entry price inside the inserter. No third-party quotes:
+            # a paper position is priced by the feed paper trading uses, or not at all.
             try:
-                live = fetch_option_prices(api_key, grp) if api_key else {}
+                live, _spot = live_leg_prices(grp)
             except Exception:
                 live = {}
-            try:
-                for _, r in grp.iterrows():
-                    st  = str(r.get("SecurityType", "")).lower()
-                    sym = str(r.get("Symbol", ""))
-                    if st and st not in ("option", "cash") and sym not in live:
-                        px = fetch_stock_price(api_key, str(r.get("Underlying") or sym))
-                        if px:
-                            live[sym] = {"price": float(px)}
-            except Exception:
-                pass
             insert_closing_transactions(
                 engine=engine, account_id=_ACCOUNT_ID,
                 open_grp=grp, live_opt=live, fallback_price=0.0,

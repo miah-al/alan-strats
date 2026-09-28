@@ -50,6 +50,19 @@ def _load_data():
 
 
 def _net_entry(grp: pd.DataFrame) -> float:
+    """The cash a position has moved so far: credits +, debits -.
+
+    Taken from the booked Amount of every leg when all of them carry one -- that is what left or
+    reached the account, commission and fees included. Recomputing it from prices alone leaves the
+    costs out, so a position's P&L (net entry + value) read a few dollars better than the account
+    did and the popup's figures did not add up to the page's. Rows without an Amount (a manually
+    entered trade) fall back to price x quantity x multiplier, as before.
+    """
+    if "Amount" in grp.columns and not grp.empty:
+        rows = grp[grp["SecurityType"].astype(str).str.lower() != "cash"] if "SecurityType" in grp.columns else grp
+        amt = pd.to_numeric(rows["Amount"], errors="coerce")
+        if len(amt) and amt.notna().all():
+            return float(amt.sum())
     total = 0.0
     for _, r in grp.iterrows():
         sign = -1.0 if str(r.get("Direction", "")).upper() == "BUY" else 1.0
@@ -154,18 +167,15 @@ def _compute_risk_matrix(
 
     # Get unique underlyings and fetch spot prices
     underlyings = list(txns_df["Underlying"].dropna().unique()) if "Underlying" in txns_df.columns else []
+    # The underlying level comes from the paper session that holds these positions -- the feed it
+    # trades on, published every poll. The greeks are only as good as the spot behind them, and a
+    # spot from a different vendor (or a stale one) makes every number in the risk table wrong while
+    # looking perfectly plausible.
     spots: dict[str, float] = {}
-    try:
-        from app import get_polygon_api_key
-        from engine.positions import fetch_stock_price
-        api_key = get_polygon_api_key()
-        if api_key:
-            for und in underlyings:
-                px = fetch_stock_price(api_key, und)
-                if px:
-                    spots[und] = px
-    except Exception:
-        pass
+    for _u in underlyings:
+        _s = session_spot(str(_u))
+        if _s:
+            spots[str(_u)] = _s
 
     # Aggregate across all underlyings + legs
     pnl_none    = [0.0] * len(shocks)
@@ -196,7 +206,15 @@ def _compute_risk_matrix(
         exp_str = str(row.get("Expiration") or "")
         try:
             exp_date = datetime.date.fromisoformat(exp_str[:10])
-            T_years  = max((exp_date - today).days / 365.0, 1 / 365)
+            if exp_date == today:
+                # 0DTE: hours, not days. Flooring at a whole day on a position with three hours left
+                # prices in time value that cannot exist and flattens the gamma that dominates it.
+                now = datetime.datetime.now()
+                close = datetime.datetime.combine(today, datetime.time(16, 0))
+                mins = max((close - now).total_seconds() / 60.0, 1.0)
+                T_years = mins / (365.0 * 24.0 * 60.0)
+            else:
+                T_years = max((exp_date - today).days / 365.0, 1 / 365)
         except Exception:
             T_years = 21 / 365.0
 
@@ -303,6 +321,15 @@ def _expiry_settle_spot(und: str, exp_date: "datetime.date", api_key, cache: dic
     if key in cache:
         return cache[key]
     spot = None
+    # An option that expires TODAY settles on today's close, and the session that traded it watched
+    # that close tick by tick. Its own last level is therefore the settlement basis -- the same feed
+    # the fills came from -- and it is available immediately, where a daily history source has
+    # nothing for today until well after the bell.
+    if exp_date == datetime.date.today():
+        spot = session_spot(und)
+    if spot is not None:
+        cache[key] = spot
+        return spot
     try:
         from data.stock_data import yf_daily_bars
         df = yf_daily_bars(und, n_days=30)
@@ -314,14 +341,8 @@ def _expiry_settle_spot(und: str, exp_date: "datetime.date", api_key, cache: dic
                 spot = float(on_or_before["close"].iloc[-1])
     except Exception:
         spot = None
-    if spot is None:
-        try:
-            from engine.positions import fetch_stock_price
-            spot = fetch_stock_price(api_key, und)
-        except Exception:
-            spot = None
-    cache[key] = spot
-    return spot
+    cache[key] = spot          # no third-party fallback: a settlement basis from another vendor
+    return spot                # would price the expiry differently from the fills that made it
 
 
 def _expired_option_intrinsic(row, api_key, spot_cache: dict) -> float | None:
@@ -429,6 +450,205 @@ def _vertical_bound(grp) -> "tuple[float, float] | None":
         return None
 
 
+def paper_runner_marks() -> dict:
+    """Live marks published by the paper runners themselves, as {trade group id: (mark, units, source)}.
+
+    ``source`` is the feed the session actually traded on, carried through so a position is always
+    marked by the venue that filled it -- a tastytrade paper trade is priced with tastytrade prices,
+    and a position from some other provider with that provider's -- and so the page can say which.
+
+    A paper position is priced by the session that owns it, off the same broker feed it trades on.
+    Nothing else can be correct: a second vendor's quote for the same legs disagrees with the fills,
+    and a stale one disagrees badly -- prior-day closes on a 0DTE spread value a deep in-the-money
+    leg at almost nothing and then present it as a live mark.
+
+    ``mark`` is the vertical's liquidation value in points per unit. Missing or unreadable state
+    simply yields no marks, and the caller falls back to net entry value.
+    """
+    import json
+    from pathlib import Path
+    out: dict = {}
+    try:
+        today = datetime.date.today().isoformat()
+        state_dir = Path(__file__).resolve().parents[3] / "paper_state"
+        for f in state_dir.glob(f"*_{today}.json"):
+            try:
+                d = json.loads(f.read_text(encoding="utf-8"))
+            except (ValueError, OSError):
+                continue
+            tgids = d.get("tgids") or {}
+            source = str(d.get("provider") or "paper runner")
+            # The heartbeat is rewritten every poll and carries a mark from that poll's quote; the
+            # session state is only saved when a minute bar closes. Prefer the fresher one.
+            live: dict = {}
+            hb = f.parent / f"heartbeat_{f.name.rsplit('_', 1)[0]}.json"
+            try:
+                if hb.exists():
+                    h = json.loads(hb.read_text(encoding="utf-8"))
+                    live = h.get("live_marks") or {}
+                    # A runner that has stopped leaves its last mark behind, and a page that keeps
+                    # showing it says nothing is wrong. Say how old the price is instead: the number
+                    # is still the best available, but the reader gets to know it has stopped moving.
+                    at = h.get("at")
+                    if at:
+                        age = (datetime.datetime.now() - datetime.datetime.fromisoformat(at)).total_seconds()
+                        if age > 120:
+                            source = f"{source} · STALE {int(age // 60)}m"
+                            live = {}          # do not present a stale mark as a live one
+                    if h.get("halted"):
+                        source = f"{source} · HALTED"
+            except (ValueError, OSError):
+                live = {}
+            for pos in (d.get("state") or {}).get("positions") or []:
+                key = f"{pos.get('direction')}|{pos.get('k_low')}|{pos.get('k_high')}"
+                mark, units = live.get(key, pos.get("last_mark")), pos.get("units")
+                if mark is None or not units:
+                    continue
+                for tgid in tgids.get(key) or []:
+                    out[str(tgid)] = (float(mark), float(units), source)
+    except Exception:
+        return {}
+    return out
+
+
+def session_spot(underlying: str) -> "float | None":
+    """The index level the paper session trading ``underlying`` last published, or None.
+
+    Matched on the underlying the heartbeat names, so a level is never handed to a position on a
+    different underlying -- the NDX session's 30,400 is not a price for an SPY leg. A heartbeat from an
+    older runner that does not name its underlying is only trusted when it is the only one there is.
+    """
+    import json
+    from pathlib import Path
+    und = str(underlying or "").upper()
+    unnamed = []
+    for hb in (Path(__file__).resolve().parents[3] / "paper_state").glob("heartbeat_*.json"):
+        try:
+            d = json.loads(hb.read_text(encoding="utf-8"))
+        except (ValueError, OSError):
+            continue
+        s = d.get("spot")
+        if not s:
+            continue
+        named = str(d.get("underlying") or "").upper()
+        if named and named == und:
+            return float(s)
+        if not named:
+            unnamed.append(float(s))
+    return unnamed[0] if len(unnamed) == 1 else None
+
+
+_BROKER_PROVIDER: dict = {}          # one provider per underlying, reused across popups
+
+
+def live_leg_prices(grp) -> "tuple[dict, float | None]":
+    """Per-leg mid prices and the underlying level, from the broker the paper session trades on.
+
+    Returns ({symbol: {"price": mid}}, spot). Both empty/None when the broker cannot be reached --
+    the caller then shows a dash, which is the honest answer. It must never fall back to a second
+    vendor: a leg priced off somebody else's stale close is worse than no price, because it looks
+    like a number and gets read as one.
+
+    The prices come from the running paper session, which already quotes these legs every poll and
+    publishes them in its heartbeat. The web process therefore opens no broker connection of its
+    own: no second set of credentials, no extra requests, no second opinion about the price -- and
+    no event loop belonging to another thread, which is what made the first attempt at this return
+    nothing at all from inside a Dash callback.
+    """
+    import json
+    from pathlib import Path
+    try:
+        syms = [str(s) for s in grp["Symbol"].dropna().unique()
+                if str(grp.loc[grp["Symbol"] == s, "SecurityType"].iloc[0]).lower() == "option"]
+        if not syms:
+            return {}, None
+        state_dir = Path(__file__).resolve().parents[3] / "paper_state"
+        legs: dict = {}
+        spot = None
+        for hb in state_dir.glob("heartbeat_*.json"):
+            try:
+                d = json.loads(hb.read_text(encoding="utf-8"))
+            except (ValueError, OSError):
+                continue
+            legs.update(d.get("live_legs") or {})         # option symbols are unique across underlyings
+        und = str(grp["Underlying"].dropna().iloc[0]) if "Underlying" in grp.columns and not grp["Underlying"].dropna().empty else ""
+        spot = session_spot(und)
+        out = {s: {"price": float(legs[s])} for s in syms if s in legs}
+        return out, spot
+    except Exception:
+        return {}, None
+
+
+def structure_label(grp) -> str:
+    """What the position actually is, in the words a trader would use: "Bear put 30475/30525".
+
+    A strategy name alone does not say which way you are leaning, and this one trades both
+    directions -- a bull call spread on an up day and a bear put spread on a down day look
+    identical on the page until something tells them apart.
+
+    Read off the legs rather than a note, so it is right whatever wrote the rows: for calls,
+    buying the lower strike is bullish and buying the higher strike is bearish; for puts it is
+    the other way round.
+    """
+    try:
+        legs = grp[grp["SecurityType"].astype(str).str.lower() == "option"]
+        if legs.empty:
+            return ""
+        buys = legs[legs["Direction"].astype(str).str.upper() == "BUY"]
+        sells = legs[legs["Direction"].astype(str).str.upper() == "SELL"]
+        if buys.empty or sells.empty:
+            return ""
+        kb = float(pd.to_numeric(buys["Strike"], errors="coerce").dropna().iloc[0])
+        ks = float(pd.to_numeric(sells["Strike"], errors="coerce").dropna().iloc[0])
+        otype = str(buys["OptionType"].dropna().iloc[0]).lower() if "OptionType" in buys.columns and not buys["OptionType"].dropna().empty else ""
+        if otype.startswith("c"):
+            side = "Bull call" if kb < ks else "Bear call"
+        elif otype.startswith("p"):
+            side = "Bear put" if kb > ks else "Bull put"
+        else:
+            return ""
+        lo, hi = sorted((kb, ks))
+        return f"{side} {lo:.0f}/{hi:.0f}"
+    except Exception:
+        return ""
+
+
+def managed_by_runner(tgid) -> "str | None":
+    """The feed of the live paper session that holds this position, or None if no session does.
+
+    A position a runner holds must only be closed by that runner. Closing it from the page writes
+    closing rows to the ledger while the engine still owns the position; the runner then closes it
+    again at its target or at settlement, and the ledger records two exits for one position.
+    """
+    import json
+    from pathlib import Path
+    tail = str(tgid).rsplit("-", 1)[-1]
+    try:
+        today = datetime.date.today().isoformat()
+        for f in (Path(__file__).resolve().parents[3] / "paper_state").glob(f"*_{today}.json"):
+            try:
+                d = json.loads(f.read_text(encoding="utf-8"))
+            except (ValueError, OSError):
+                continue
+            for ids in (d.get("tgids") or {}).values():
+                if tail in {str(i) for i in (ids or [])}:
+                    return str(d.get("provider") or "paper runner")
+    except Exception:
+        return None
+    return None
+
+
+def runner_mark_for(marks: dict, tgid) -> "tuple | None":
+    """Look a position up in the runner marks. The page keys a group as 'NDX-NDX_0DTE-10029' while the
+    runner records the bare ledger id it was given, so the numeric tail is the reliable join."""
+    if not marks:
+        return None
+    key = str(tgid)
+    if key in marks:
+        return marks[key]
+    return marks.get(key.rsplit("-", 1)[-1])
+
+
 def live_market_value(open_groups: dict) -> tuple[float, bool, int, int]:
     """Live mark-to-market *liquidation* value of all open positions.
 
@@ -444,26 +664,25 @@ def live_market_value(open_groups: dict) -> tuple[float, bool, int, int]:
     quote falls back to its entry price so the figure is always complete.
     `is_live` is True only when every leg got a live quote.
     """
-    api_key = None
-    try:
-        from app import get_polygon_api_key
-        api_key = get_polygon_api_key()
-    except Exception:
-        pass
-
-    from engine.positions import fetch_option_prices, fetch_stock_price
+    api_key = None                     # no third-party market data here: paper marks come from the
+                                       # broker feed the session trades on (see paper_runner_marks)
+    runner_marks = paper_runner_marks()
 
     mv = 0.0
     n_priced = 0
     n_total  = 0
     settle_cache: dict = {}   # (underlying, expiry) → settlement spot
     for _tgid, grp in open_groups.items():
+        # the owning paper session's own mark, where there is one: authoritative, and free
+        rm = runner_mark_for(runner_marks, _tgid)
+        if rm is not None:
+            mark, units, _src = rm
+            n_legs = int((grp["SecurityType"].astype(str).str.lower() == "option").sum()) if "SecurityType" in grp.columns else 2
+            mv += mark * units * 100.0
+            n_priced += n_legs
+            n_total += n_legs
+            continue
         live_opt: dict = {}
-        if api_key:
-            try:
-                live_opt = fetch_option_prices(api_key, grp)
-            except Exception:
-                live_opt = {}
         spots: dict[str, float | None] = {}
         grp_live, grp_entry, grp_all_live, grp_n = 0.0, 0.0, True, 0
         for _, r in grp.iterrows():
@@ -701,16 +920,12 @@ def position_pnl(grp, api_key=None) -> dict:
     Returns {value, since_open, dod, is_live}.  since_open = net_entry + value
     (unrealized since the trade was opened); dod = value − prior-session value.
     """
-    if api_key is None:
-        from app import get_polygon_api_key
-        api_key = get_polygon_api_key()
-    from engine.positions import fetch_option_prices, fetch_stock_price
-
-    live_opt = {}
-    try:
-        live_opt = fetch_option_prices(api_key, grp) if api_key else {}
-    except Exception:
-        live_opt = {}
+    # Prices come from the paper session that holds the position (see live_leg_prices): the same
+    # feed it trades on, published every poll. api_key is kept in the signature for callers that
+    # still pass one, and ignored -- a paper position marked off a second vendor's stale close is
+    # how this card came to report a -89.9% loss on a position that was up.
+    api_key = None
+    live_opt, _spot = live_leg_prices(grp)
 
     cur = prior = 0.0
     n = priced = 0
@@ -729,13 +944,10 @@ def position_pnl(grp, api_key=None) -> dict:
         if st == "option":
             cur_px = (live_opt.get(sym) or {}).get("price")
         else:
-            und = str(r.get("Underlying") or sym)
-            if und not in stock_now:
-                try:
-                    stock_now[und] = fetch_stock_price(api_key, und)
-                except Exception:
-                    stock_now[und] = None
-            cur_px = stock_now[und]
+            # a stock or ETF leg has no price in the paper session's feed (it publishes the index level
+            # and its own option legs); leave it unpriced so it falls back to entry, rather than
+            # borrowing the index level as the price of a share
+            cur_px = None
 
         # Expired option legs have no live quote — settle at intrinsic value
         # (incl. $0 when worthless) rather than reverting to entry price.
@@ -762,5 +974,14 @@ def position_pnl(grp, api_key=None) -> dict:
     _b = _vertical_bound(grp)
     if _b is not None:                                  # two stale leg quotes cannot make a vertical worth more than its width
         cur = min(_b[1], max(_b[0], cur)); prior = min(_b[1], max(_b[0], prior))
-    return {"value": cur, "since_open": ne + cur, "dod": cur - prior,
+    dod = cur - prior
+    # A position opened today has no prior close: its day so far IS its life so far. The leg-by-leg
+    # baseline falls back to each leg's price, which leaves out the commission paid on the way in, so
+    # Day P&L read a few dollars better than P&L Since Open on the same 0DTE position.
+    try:
+        if "BusinessDate" in grp.columns and (pd.to_datetime(grp["BusinessDate"]).dt.date == datetime.date.today()).all():
+            dod = ne + cur
+    except Exception:
+        pass
+    return {"value": cur, "since_open": ne + cur, "dod": dod,
             "is_live": n > 0 and priced == n}

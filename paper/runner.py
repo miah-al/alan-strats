@@ -42,7 +42,8 @@ QUOTE_SILENCE_ALERT_MIN = 5         # alert when no quote fetch has succeeded fo
 STATE_DIR = Path(os.path.dirname(os.path.dirname(__file__))) / "paper_state"
 LOG_COLS = ["ts", "minute", "event", "ndx", "k_low", "k_high", "kind", "direction", "bid", "ask", "last", "age",
             "limit", "fill", "lots", "cash", "reason", "tgid", "long_symbol", "short_symbol", "note",
-            "spread", "long_bid", "long_ask", "long_age", "short_bid", "short_ask", "short_age"]   # quoted width and the legs behind it
+            "spread", "long_bid", "long_ask", "long_age", "short_bid", "short_ask", "short_age",   # quoted width and the legs behind it
+            "ndx_at_fill", "filled_at"]      # a fill's index level from the poll that priced it, and that poll's time
 
 
 def _minute_of(ts: datetime) -> int:
@@ -90,6 +91,7 @@ class PaperSession:
         self._written = 0
         self._last_quote: dict = {}
         self._day_bars: list = []
+        self._poll_spot: Optional[tuple] = None          # (poll time, index level) of the latest live poll
         self._features_logged = False
         self.notify = bool(notify)
         self.halted: Optional[str] = None
@@ -154,7 +156,15 @@ class PaperSession:
             pid = self._position_id(f) if f["kind"] in ("open", "add", "close") else None
             tg = "" if pid is None else str(pid)
             q = self._last_quote.get((kind_cp, f["kl"], f["kh"]))
-            row = dict(ts=str(datetime.combine(day, dtime(0, 0)) + timedelta(minutes=int(f["m"]))), minute=f["m"], event=f["kind"], ndx=round(S, 2),
+            ts = str(datetime.combine(day, dtime(0, 0)) + timedelta(minutes=int(f["m"])))
+            # Where the index stood when the fill was priced. Live, that is the level on the same broker
+            # poll as the quotes, seconds after the minute close the engine decided on (``ndx``); a replay
+            # has no poll, so the minute's close.
+            at, spot = self._poll_spot or (None, None)
+            is_fill = f["kind"] in ("open", "add", "close")
+            ndx_fill = round(float(spot if spot is not None else S), 2) if is_fill else ""
+            filled_at = (at.isoformat(sep=" ", timespec="seconds") if (at is not None and spot is not None) else ts) if is_fill else ""
+            row = dict(ts=ts, minute=f["m"], event=f["kind"], ndx=round(S, 2), ndx_at_fill=ndx_fill, filled_at=filled_at,
                        k_low=f["kl"], k_high=f["kh"], kind=kind_cp, direction=f["direction"],
                        bid=(round(q.bid, 2) if q else ""), ask=(round(q.ask, 2) if q else ""), last=(round(q.last, 2) if q else ""), age=(q.age if q else ""),
                        limit=(f["px"] if f["kind"] in ("rest", "cancel") else ""), fill=(f["px"] if f["kind"] in ("open", "add", "close") else ""),
@@ -169,7 +179,8 @@ class PaperSession:
                 try:
                     new_pid = L.record_fill(self.db, self.account_id, self.slug, self.underlying, expiry, day, f,
                                             ls or f"{self.underlying}-{f['kl']:.0f}", ss or f"{self.underlying}-{f['kh']:.0f}", position_id=pid,
-                                            extra={"provider": getattr(self.provider, "name", "?"), "bid": (q.bid if q else None), "ask": (q.ask if q else None), "last": (q.last if q else None),
+                                            extra={"underlying_px": ndx_fill, "underlying_at": filled_at,     # first: Notes is cut at 500 characters
+                                                   "provider": getattr(self.provider, "name", "?"), "bid": (q.bid if q else None), "ask": (q.ask if q else None), "last": (q.last if q else None),
                                                    # per-leg quotes so the ledger can book each leg at its own
                                                    # price instead of hanging the whole debit on the long one
                                                    **({"long_bid": q.legs[0][0], "long_ask": q.legs[0][1],
@@ -288,12 +299,61 @@ class PaperSession:
             except Exception as exc:
                 logger.warning("session features not recorded: %s", exc)
 
-    def _heartbeat(self, day: date, now: datetime, session, note: str = "") -> None:
-        """A small file the Paper tab reads: when the runner last polled, what it holds, the day so far."""
+    def _log_mark(self, day: date, now: datetime, pos, q) -> None:
+        """One row per poll per open position: the quote, and the target it is being measured against.
+
+        The engine acts on bar closes; this records what the price did between them, so "the target
+        was available but the bar had passed" becomes a number instead of an impression.
+        """
+        try:
+            avg = float(getattr(pos, "avg_px", 0.0) or 0.0)
+            target = avg + float(getattr(self.strategy.params, "target_pts", 5.0))
+            p = self.log_dir / f"marks_{day.isoformat()}.csv"
+            new = not p.exists()
+            with p.open("a", newline="", encoding="utf-8") as f:
+                w = csv.writer(f)
+                if new:
+                    w.writerow(["ts", "direction", "k_low", "k_high", "units", "avg_px", "target",
+                                "bid", "ask", "mid", "age", "at_target"])
+                w.writerow([now.isoformat(timespec="seconds"), pos.direction, pos.k_low, pos.k_high,
+                            getattr(pos, "units", ""), round(avg, 2), round(target, 2),
+                            round(float(q.bid), 2), round(float(q.ask), 2), round(float(q.last), 2),
+                            q.age, int(float(q.last) >= target)])
+        except Exception:
+            pass
+
+    def _log_bar(self, day: date, bar, source: str, fresh: bool = False) -> None:
+        """The underlying's minute bars as the session saw them, in underlying_<day>.csv: built from the
+        polls, or the broker's candle feed on a late start (``fresh`` restarts the file, since a backfill
+        supersedes whatever was polled before it). Kept so that replaying or reconciling the day never
+        waits on a vendor that publishes the index a day late, as Polygon does on this plan."""
+        try:
+            p = self.log_dir / f"underlying_{day.isoformat()}.csv"
+            new = fresh or not p.exists()
+            with p.open("w" if fresh else "a", newline="", encoding="utf-8") as f:
+                w = csv.writer(f)
+                if new:
+                    w.writerow(["ts", "open", "high", "low", "close", "source"])
+                w.writerow([bar.ts.strftime("%Y-%m-%d %H:%M"), round(float(bar.open), 2), round(float(bar.high), 2),
+                            round(float(bar.low), 2), round(float(bar.close), 2), source])
+        except Exception:
+            pass
+
+    def _heartbeat(self, day: date, now: datetime, session, note: str = "", live_marks: dict | None = None,
+                   live_legs: dict | None = None, spot: float | None = None) -> None:
+        """A small file the Paper tab reads: when the runner last polled, what it holds, the day so far.
+
+        ``live_marks`` carries each open position's mark from the quote in hand at THIS poll. The
+        engine only remarks a position when a minute bar closes, so without this the page could show
+        a price up to a minute old however often it was refreshed, and would sit unchanged through
+        three perfectly good quotes. These are for display only; the engine still decides on bars.
+        """
         try:
             hb = {"slug": self.slug, "day": str(day), "at": now.isoformat(timespec="seconds"), "provider": getattr(self.provider, "name", "?"),
                   "open_positions": len(session.positions), "fills": len(session.fills), "trades": len(session.trades),
                   "marked": round(session.marked(), 0), "day_pnl": round(session.day_pnl, 0), "halted": self.halted or "", "note": note,
+                  "live_marks": live_marks or {}, "live_legs": live_legs or {}, "spot": spot, "underlying": self.underlying,
+                  "marks_at": now.isoformat(timespec="seconds") if live_marks else "",
                   "api_calls_today": getattr(getattr(self.provider, "budget", None), "calls_today", None)}   # how many broker requests so far
             (self.state_dir / f"heartbeat_{self.slug}.json").write_text(json.dumps(hb), encoding="utf-8")
         except Exception:
@@ -421,13 +481,22 @@ class PaperSession:
         quotes: dict = {}
         # late start: feed the engine today's earlier bars so its lookback and the features are complete
         start_now = now_fn()
-        if not session.closes and start_now.time() > SESSION_OPEN and hasattr(prov, "backfill_bars"):
+        # Not "no history" but "not enough history": a session restarted mid-morning resumes holding
+        # the handful of bars it had polled before stopping, which is worse than none -- it looks
+        # populated, so the backfill is skipped, and the engine then waits out the whole lookback
+        # again before it can signal. The backfill runs to now, so it supersedes that partial history.
+        need = int(getattr(self.strategy.params, "lookback_min", 30))
+        if len(session.closes) < need and start_now.time() > SESSION_OPEN and hasattr(prov, "backfill_bars"):
             back = prov.backfill_bars(day, start_now.replace(second=0, microsecond=0))
             if back:
-                logger.info("late start %s: backfilling %d bars from %s", start_now.strftime("%H:%M"), len(back), back[0].ts.strftime("%H:%M"))
-                for b in back:
+                logger.info("late start %s: backfilling %d bars from %s (had %d)",
+                            start_now.strftime("%H:%M"), len(back), back[0].ts.strftime("%H:%M"), len(session.closes))
+                session.closes.clear()
+                self._day_bars.clear()
+                for i, b in enumerate(back):
                     m = _minute_of(b.ts) + 1
                     self._day_bars.append(b)
+                    self._log_bar(day, b, "broker candles", fresh=(i == 0))
                     session.closes.append(float(b.close))        # history only: no decisions on backfilled bars
                     session.last_minute = m
 
@@ -482,7 +551,32 @@ class PaperSession:
                 self._heartbeat(day, now, session, f"fetch failing ({fetch_failures}), next try in {wait}s: {str(exc)[:60]}")
                 sleep_fn(wait); continue
             fetch_failures = 0
-            self._heartbeat(day, now, session)
+            # Remark every open position off the quote just fetched, so the page moves with the
+            # market rather than in once-a-minute steps. Costs nothing: these quotes are in hand.
+            live_marks: dict = {}
+            live_legs: dict = {}
+            for pos in session.positions:
+                try:
+                    qv = prov.quote_vertical(pos.kind, pos.k_low, pos.k_high, quotes, now, carry)
+                    if qv is not None:
+                        live_marks[f"{pos.direction}|{float(pos.k_low)}|{float(pos.k_high)}"] = round(float(qv.last), 2)
+                        # Every poll's mark against the target the engine will only check at the next
+                        # bar close. Near expiry the quote can travel several points inside a minute,
+                        # so the question of how much a bar-close check leaves on the table is real --
+                        # and unanswerable without keeping the intra-bar prices somewhere.
+                        self._log_mark(day, now, pos, qv)
+                    # the legs too, so the position popup can price each one without opening its own
+                    # broker connection from inside the web process
+                    for sym in prov.leg_symbols(pos.kind, pos.k_low, pos.k_high):
+                        lq = quotes.get(sym) if sym else None
+                        if lq is not None and lq.bid is not None and lq.ask is not None and lq.ask >= lq.bid:
+                            live_legs[str(sym)] = round((float(lq.bid) + float(lq.ask)) / 2.0, 2)
+                except Exception:
+                    pass
+            iq = quotes.get(self.underlying)
+            spot_now = float(iq.last) if (iq is not None and iq.last is not None) else None
+            self._poll_spot = (now, spot_now)          # any fill this poll prices is stamped with this level
+            self._heartbeat(day, now, session, live_marks=live_marks, live_legs=live_legs, spot=spot_now)
             prov.sample_underlying(quotes, now)
             this_minute = now.replace(second=0, microsecond=0)
             if cur_minute is None:
@@ -493,6 +587,7 @@ class PaperSession:
                     minute = _minute_of(bar.ts) + 1
                     is_last = minute >= SESSION_CLOSE_MIN
                     self._day_bars.append(bar)
+                    self._log_bar(day, bar, "polled")
                     self._log_session_features(session, day, minute)
                     if not self._step(session, minute, bar, quote_fn, is_last, day, prov.expiry or day, prov.leg_symbols):
                         break

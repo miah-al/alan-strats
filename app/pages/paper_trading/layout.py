@@ -287,9 +287,9 @@ def layout() -> html.Div:
             ),
             dbc.ModalBody([
                 dbc.Alert(
-                    "Each leg closes at its current live mark (options via the chain, "
-                    "stocks via Yahoo). Any leg without a live quote falls back to its "
-                    "entry price.",
+                    "Each leg closes at the paper session's own live quote where it has one; "
+                    "any leg it does not quote falls back to its entry price. A position a live "
+                    "paper session holds can only be closed by that session.",
                     color="info",
                     style={"fontSize": "12px", "marginBottom": "12px"},
                 ),
@@ -324,6 +324,10 @@ def layout() -> html.Div:
         dcc.Store(id="pt-delete-action",    data=""),   # "date:{d}", "today", "all"
         dcc.Store(id="pt-delete-status",    data=""),
 
-        dcc.Interval(id="pt-refresh", interval=60_000, n_intervals=0),
+        # The timer is off: the page refreshes when the Refresh button is pressed, and nowhere else.
+        # The component itself stays, because other callbacks bump its n_intervals to force a redraw
+        # after they change something (deleting trades, for instance) -- disabling it stops the clock
+        # without breaking any of them.
+        dcc.Interval(id="pt-refresh", interval=60_000, n_intervals=0, disabled=True),
         dcc.Location(id="pt-url", refresh=False),
     ], style=D.PAGE)
