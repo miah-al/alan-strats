@@ -115,6 +115,18 @@ def test_live_loop_with_a_fake_provider_matches_the_replay(tmp_path):
     log = pd.read_csv(tmp_path / "live" / f"{DAY.isoformat()}.csv")
     assert {"spread", "long_bid", "long_ask", "long_age", "short_bid", "short_ask", "short_age"} <= set(log.columns)
     assert (log.loc[log.event.isin(["open", "add", "close"]), "spread"].astype(float) > 0).all()
+    # every fill carries the index level from the poll that priced it (the fake quotes the stored close of the
+    # minute in progress: a poll after the bar the engine decided on), and every minute bar is kept
+    fills = log[log.event.isin(["open", "add", "close"])]
+    assert fills.ndx_at_fill.notna().all() and fills.filled_at.notna().all()
+    closes = {b.ts.strftime("%Y-%m-%d %H:%M"): round(float(b.close), 2) for b in replay.bars.itertuples()}
+    for r in fills.itertuples():
+        polled = datetime.fromisoformat(r.filled_at)
+        assert polled >= datetime.fromisoformat(r.ts)
+        # past the last bar the fake quotes no index, so a settlement falls back to the minute close
+        assert abs(r.ndx_at_fill - closes.get(polled.strftime("%Y-%m-%d %H:%M"), round(float(r.ndx), 2))) < 0.01
+    und = pd.read_csv(tmp_path / "live" / f"underlying_{DAY.isoformat()}.csv")
+    assert len(und) == res.bars and list(und.columns) == ["ts", "open", "high", "low", "close", "source"] and set(und.source) == {"polled"}
     # the replay of the same day: same rules, same prints, same half spread
     ps2 = PaperSession(SLUG, ReplayProvider(eng, "NDX", DAY, half_spread=0.5), eng, write_ledger=False, log_dir=tmp_path / "replay", state_dir=tmp_path / "state2")
     rep = ps2.run_replay(DAY)

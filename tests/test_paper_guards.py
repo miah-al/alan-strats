@@ -141,7 +141,10 @@ def test_replay_of_a_non_session_is_a_clean_error(capsys):
         get_engine().connect().close()
     except Exception as exc:
         import pytest; pytest.skip(f"database unavailable: {exc}")
-    from scripts.paper_runner import main
-    rc = main(["--strategy", "ndx_0dte_tasty", "--replay", "2026-09-12", "--no-ledger"])
+    import logging
+    from scripts import paper_runner
+    rc = paper_runner.main(["--strategy", "ndx_0dte_tasty", "--replay", "2026-09-12", "--no-ledger"])
     out = capsys.readouterr().out
     assert rc == 1 and "cannot replay 2026-09-12" in out and "Traceback" not in out
+    # the diary handler goes with main(): later tests must not write into a day's diary
+    assert not any(isinstance(h, logging.FileHandler) and "_20" in h.baseFilename for h in logging.getLogger().handlers)

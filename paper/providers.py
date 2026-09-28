@@ -29,6 +29,17 @@ MAX_SPREAD_PTS = 20.0        # a vertical quoted wider than this (points) is tre
 # hard-coded path so the test suite can point it at a temporary folder: tests must neither read the live
 # runner's count (and fail against their own small caps) nor add to it (and spend its budget).
 BUDGET_STATE_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "paper_state")
+# The day's cap on broker REST calls. Each runner polls once every 15 s (about 4 a minute), so five runners
+# spend ~6,000 on a full day; 3,000 ran out by lunch on 2026-09-28. 8,000 a day is still under 0.35 a second
+# against tastytrade's suggested 50 a second. ALAN_TRADER_BROKER_DAY_CAP overrides it.
+DEFAULT_BROKER_DAY_CAP = 8000
+
+
+def broker_day_cap() -> int:
+    try:
+        return int(os.environ.get("ALAN_TRADER_BROKER_DAY_CAP", "") or DEFAULT_BROKER_DAY_CAP)
+    except ValueError:
+        return DEFAULT_BROKER_DAY_CAP
 
 
 def now_et() -> datetime:
@@ -254,17 +265,18 @@ class RequestBudget:
     publishes no per-endpoint quota and suggests 50/s as a client-side ceiling; the paper runner
     needs about 4 a minute, so these are set far below what would ever draw a 429."""
 
-    def __init__(self, min_interval_s: float = 5.0, per_minute: int = 20, per_day: int = 3000, clock=None, sleep=None,
+    def __init__(self, min_interval_s: float = 5.0, per_minute: int = 20, per_day: Optional[int] = None, clock=None, sleep=None,
                  shared_path: Optional["Path"] = None):
         import time as _time
-        self.min_interval_s = float(min_interval_s); self.per_minute = int(per_minute); self.per_day = int(per_day)
+        self.min_interval_s = float(min_interval_s); self.per_minute = int(per_minute)
+        self.per_day = int(per_day) if per_day is not None else broker_day_cap()
         self._clock = clock or _time.monotonic; self._sleep = sleep or _time.sleep
         self._last: Optional[float] = None
         self._minute: list[float] = []            # monotonic times of calls in the last 60 s
         self.calls_today = 0
         self.waits = 0
         # The day's cap has to hold across PROCESSES, not just within one: a paper session, a streamer
-        # and an ad-hoc script each counting to 3000 privately is three times the intended ceiling.
+        # and an ad-hoc script each counting to the cap privately is three times the intended ceiling.
         # A small shared file keeps one running total for the day; if it cannot be used the budget
         # still works, just per process, so a filesystem problem never blocks trading.
         if shared_path is None:
@@ -451,6 +463,12 @@ class TastytradeProvider:
     def sample_underlying(self, quotes: dict[str, LegQuote], when: datetime) -> Optional[float]:
         q = quotes.get(self.underlying)
         if q is None:
+            return None
+        # A quote stamped before the open is the previous session's close, still served for the first seconds
+        # after 09:30. Sampled, it became the day's first open and high (2026-09-24: 30,470.29, yesterday's
+        # close, against a 30,211 open). The first real print follows within seconds.
+        stamp = q.last_time or q.updated
+        if stamp is not None and stamp < datetime.combine(when.date(), dtime(9, 30)):
             return None
         px = q.last if q.last is not None else (((q.bid or 0) + (q.ask or 0)) / 2.0 if q.bid and q.ask else None)
         if px is not None:
