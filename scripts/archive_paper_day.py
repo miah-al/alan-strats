@@ -64,6 +64,7 @@ def gather(slug: str, day: date, strategy_folder: Path, backup_dir: Path) -> dic
     sources = {
         "events.csv": log_dir / f"{d}.csv",
         "marks.csv": log_dir / f"marks_{d}.csv",          # every poll's mark against the target, between bar checks
+        "underlying.csv": log_dir / f"underlying_{d}.csv",  # the index's minute bars as the session saw them
         "reconcile.md": log_dir / f"reconcile_{d}.md",
         "runner.log": ROOT / "logs" / "paper" / f"{slug}_{d}.log",
         "state.json": ROOT / "paper_state" / f"{slug}_{d}.json",
