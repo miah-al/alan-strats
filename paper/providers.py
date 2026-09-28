@@ -41,6 +41,18 @@ MAX_SPREAD_PTS = 20.0        # a vertical quoted wider than this (points) is tre
 # hard-coded path so the test suite can point it at a temporary folder: tests must neither read the live
 # runner's count (and fail against their own small caps) nor add to it (and spend its budget).
 BUDGET_STATE_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "paper_state")
+# The day's cap on broker REST calls, across this checkout and the other checkouts' runners. Each runner polls
+# once every 15 s (about 4 a minute), so five runners spend ~6,000 on a full day; 3,000 ran out by lunch on
+# 2026-09-28. 8,000 a day is still under 0.35 a second against tastytrade's suggested 50 a second.
+# ALAN_TRADER_BROKER_DAY_CAP overrides it.
+DEFAULT_BROKER_DAY_CAP = 8000
+
+
+def broker_day_cap() -> int:
+    try:
+        return int(os.environ.get("ALAN_TRADER_BROKER_DAY_CAP", "") or DEFAULT_BROKER_DAY_CAP)
+    except ValueError:
+        return DEFAULT_BROKER_DAY_CAP
 
 
 def now_et() -> datetime:
@@ -372,6 +384,142 @@ class ReplayProvider:
         return float(self.spread(value, width)) * len(legs) / 2.0
 
 
+# ── replay on recorded quotes ─────────────────────────────────────────────────
+
+#: where api/services/quote_recorder.py writes the day's quotes: <quotes dir>/<root>/<YYYY-MM-DD>.csv.gz
+QUOTES_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "paper_state", "quotes")
+
+
+class QuoteReplayProvider:
+    """Replays a day from the quotes the service recorded (api/services/quote_recorder.py: every watched contract's
+    bid, ask and last trade every 15 seconds) and prices it the way the LIVE runner does: a vertical is
+    ``vertical_quote`` of its two legs, a structure ``structure_quote`` of its legs, from the same fields the broker
+    feed supplies. So a replay on quotes asks what the live session would have done that day, not what the prints
+    say -- the print-priced replay fills +5 targets the live quotes never reach
+    (research/hard_look_2026-09-28/live_vs_backtest), this one cannot.
+
+    - The engine steps at a minute's end on the first snapshot at or after the boundary: the live runner steps on
+      the first poll after the minute closes, with the quotes that poll fetched.
+    - The underlying's minute bars (09:30-15:59, bar START times like the stored bars) come from the index level
+      recorded with each snapshot: open/high/low/close of the minute's snapshots.
+    - A leg's last trade time, which the live quote's freshness rule reads first (``carry_min``), is not recorded;
+      it is inferred as the snapshot at which the leg's day volume (else its last price) last changed. Before any
+      trade is seen that day the quote's own update time stands in, which errs toward quoting."""
+
+    name = "quote_replay"
+    mode = "quotes"
+
+    def __init__(self, day: date, underlying: str = "NDX", root: str = "NDXP", carry_min: int = 30,
+                 quotes_dir: Optional[str] = None, frame: Optional[pd.DataFrame] = None):
+        self.day = day
+        self.underlying = underlying.upper()
+        self.root = root
+        self.carry = int(carry_min)
+        self.expiry = day
+        if frame is None:
+            path = os.path.join(quotes_dir or QUOTES_DIR, root, f"{day.isoformat()}.csv.gz")
+            if not os.path.exists(path):
+                raise RuntimeError(f"no recorded {root} quotes for {day}: {path}")
+            frame = pd.read_csv(path)
+        q = frame.copy()
+
+        def naive_et(s):
+            t = pd.to_datetime(s, utc=True, errors="coerce")
+            return t.dt.tz_convert(ET).dt.tz_localize(None)
+        q["ts"] = naive_et(q["ts"])
+        q["quote_time"] = naive_et(q["quote_time"]) if "quote_time" in q else pd.NaT
+        q = q.dropna(subset=["ts"]).sort_values(["symbol", "ts"])
+        # the last trade: the snapshot at which the day volume grew (the last price changed, where volume is missing)
+        q["volume"] = pd.to_numeric(q["volume"], errors="coerce") if "volume" in q else float("nan")
+        q["last"] = pd.to_numeric(q["last"], errors="coerce")
+        g = q.groupby("symbol", sort=False)
+        vol, prev_vol = q["volume"], g["volume"].shift()
+        last, prev_last = q["last"], g["last"].shift()
+        with_vol = vol.notna() & prev_vol.notna()
+        # the first sighting is not a trade seen happening; neither is a volume that merely starts being reported
+        traded = (with_vol & (vol > prev_vol)) | (~with_vol & last.notna() & prev_last.notna() & (last != prev_last))
+        q["last_time"] = q["ts"].where(traded)
+        q["last_time"] = q.groupby("symbol", sort=False)["last_time"].ffill()
+        self._snaps: list = sorted(q["ts"].unique())
+        self._by_snap = {pd.Timestamp(ts): grp.set_index("symbol") for ts, grp in q.groupby("ts")}
+        u = q.drop_duplicates("ts")[["ts", "underlying"]].sort_values("ts")
+        u = u[(u["ts"].dt.time >= dtime(9, 30)) & (u["ts"].dt.time < dtime(16, 0))]
+        b = u.groupby(u["ts"].dt.floor("min"))["underlying"].agg(["first", "max", "min", "last"])
+        self.bars = pd.DataFrame({"ts": b.index, "open": b["first"].to_numpy(), "high": b["max"].to_numpy(),
+                                  "low": b["min"].to_numpy(), "close": b["last"].to_numpy()}).reset_index(drop=True)
+        self._i = -1
+
+    def describe(self) -> str:
+        return f"RECORDED QUOTES: {len(self._snaps)} snapshots, legs carried {self.carry} min by last trade (live's rule)"
+
+    def has_option_data(self) -> bool:
+        return bool(self._snaps)
+
+    def next_bar(self) -> Optional[Bar]:
+        self._i += 1
+        if self._i >= len(self.bars):
+            return None
+        r = self.bars.iloc[self._i]
+        return Bar(ts=pd.Timestamp(r.ts).to_pydatetime(), open=float(r.open), high=float(r.high), low=float(r.low), close=float(r.close))
+
+    def is_last_bar(self) -> bool:
+        return self._i >= len(self.bars) - 1
+
+    def _snapshot(self, minute: int) -> Optional[tuple[pd.Timestamp, pd.DataFrame]]:
+        """The first snapshot at or after the minute's end (within a minute), else the last one before it (within
+        two): what the live runner's first poll after the boundary would have seen."""
+        import bisect
+        boundary = pd.Timestamp(datetime.combine(self.day, dtime(0, 0))) + pd.Timedelta(minutes=int(minute))
+        i = bisect.bisect_left(self._snaps, boundary.to_datetime64())
+        if i < len(self._snaps) and pd.Timestamp(self._snaps[i]) - boundary < pd.Timedelta(minutes=1):
+            ts = pd.Timestamp(self._snaps[i])
+        elif i > 0 and boundary - pd.Timestamp(self._snaps[i - 1]) <= pd.Timedelta(minutes=2):
+            ts = pd.Timestamp(self._snaps[i - 1])
+        else:
+            return None
+        return ts, self._by_snap[ts]
+
+    @staticmethod
+    def _leg(snap: pd.DataFrame, symbol: str) -> Optional[LegQuote]:
+        if symbol not in snap.index:
+            return None
+        r = snap.loc[symbol]
+        if isinstance(r, pd.DataFrame):                          # a duplicate row in one snapshot: take the last
+            r = r.iloc[-1]
+        num = lambda v: (None if pd.isna(v) else float(v))
+        tm = lambda v: (None if pd.isna(v) else pd.Timestamp(v).to_pydatetime())
+        return LegQuote(symbol=symbol, bid=num(r["bid"]), ask=num(r["ask"]), last=num(r["last"]),
+                        last_time=tm(r["last_time"]), updated=tm(r["quote_time"]))
+
+    def quote_vertical(self, kind: str, k_low: float, k_high: float, minute: int, S: Optional[float] = None) -> Optional[Quote]:
+        got = self._snapshot(minute)
+        if got is None:
+            return None
+        ts, snap = got
+        long_s, short_s = self.leg_symbols(kind, k_low, k_high)
+        long_q, short_q = self._leg(snap, long_s), self._leg(snap, short_s)
+        if long_q is None or short_q is None:
+            return None
+        return vertical_quote(long_q, short_q, ts.to_pydatetime(), carry_min=self.carry, max_width=float(k_high - k_low))
+
+    def quote_structure(self, kind: str, k_low: float, k_high: float, minute: int, S: Optional[float] = None) -> Optional[Quote]:
+        got = self._snapshot(minute)
+        if got is None:
+            return None
+        ts, snap = got
+        legs = structure_legs(kind, k_low, k_high)
+        return structure_quote([self._leg(snap, self._occ(cp, K)) for cp, K, _ in legs], legs, ts.to_pydatetime(), carry_min=self.carry)
+
+    def _occ(self, cp: str, K: float) -> str:
+        return f"{self.root}{self.day.strftime('%y%m%d')}{cp}{int(round(K * 1000)):08d}"
+
+    def leg_symbols(self, kind: str, k_low: float, k_high: float) -> tuple[str, str]:
+        """OCC-style symbols (long leg, short leg), spelled as the recorder spells them."""
+        cp = "C" if kind == "call" else "P"
+        long_k, short_k = (k_low, k_high) if kind == "call" else (k_high, k_low)
+        return self._occ(cp, long_k), self._occ(cp, short_k)
+
+
 # ── tastytrade ────────────────────────────────────────────────────────────────
 
 _SDK_LOOP = None            # one loop for the whole process: asyncio.run() per call closes the SDK's
@@ -421,17 +569,18 @@ class RequestBudget:
     publishes no per-endpoint quota and suggests 50/s as a client-side ceiling; the paper runner
     needs about 4 a minute, so these are set far below what would ever draw a 429."""
 
-    def __init__(self, min_interval_s: float = 5.0, per_minute: int = 20, per_day: int = 3000, clock=None, sleep=None,
+    def __init__(self, min_interval_s: float = 5.0, per_minute: int = 20, per_day: Optional[int] = None, clock=None, sleep=None,
                  shared_path: Optional["Path"] = None, external_dirs: Optional[list] = None):
         import time as _time
-        self.min_interval_s = float(min_interval_s); self.per_minute = int(per_minute); self.per_day = int(per_day)
+        self.min_interval_s = float(min_interval_s); self.per_minute = int(per_minute)
+        self.per_day = int(per_day) if per_day is not None else broker_day_cap()
         self._clock = clock or _time.monotonic; self._sleep = sleep or _time.sleep
         self._last: Optional[float] = None
         self._minute: list[float] = []            # monotonic times of calls in the last 60 s
         self.calls_today = 0
         self.waits = 0
         # The day's cap has to hold across PROCESSES, not just within one: a paper session, a streamer
-        # and an ad-hoc script each counting to 3000 privately is three times the intended ceiling.
+        # and an ad-hoc script each counting to the cap privately is three times the intended ceiling.
         # A small shared file keeps one running total for the day; if it cannot be used the budget
         # still works, just per process, so a filesystem problem never blocks trading.
         if shared_path is None:

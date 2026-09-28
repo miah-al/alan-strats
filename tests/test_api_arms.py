@@ -102,13 +102,13 @@ def test_the_task_command_is_the_scheduled_tasks(tmp_path):
 def test_arm_run_stop_and_the_next_day(rig):
     sched, runners, store, clock, events, procs = rig
     [row] = sched.arm("ndx_0dte_tasty", "weekdays")
-    assert row["next_run"] == iso("2026-09-25 10:30") and row["mode"] == "paper" and row["variant"] is None
+    assert row["next_run"] == iso("2026-09-25 09:30") and row["mode"] == "paper" and row["variant"] is None
     assert events[-1]["type"] == "arm" and events[-1]["event"] == "armed"
-    assert sched.tick(ts("2026-09-25 10:29:50")) == [] and not procs
-    [ev] = sched.tick(ts("2026-09-25 10:30:05"))
+    assert sched.tick(ts("2026-09-25 09:29:50")) == [] and not procs
+    [ev] = sched.tick(ts("2026-09-25 09:30:05"))
     assert ev["event"] == "started" and ev["late"] is False and "late" not in ev["detail"] and len(procs) == 1
     assert ev["command"].endswith("start_paper_runner.ps1\" -Strategy ndx_0dte_tasty")
-    assert sched.tick(ts("2026-09-25 10:30:20")) == [] and len(procs) == 1         # the day is claimed
+    assert sched.tick(ts("2026-09-25 09:30:20")) == [] and len(procs) == 1         # the day is claimed
     [a] = sched.arms()
     assert a["running"] is True and a["pid"] == procs[0].pid and a["last_result"].startswith("started (pid")
     s = next(x for x in runners.sessions() if x["pid"] == procs[0].pid)
@@ -118,7 +118,7 @@ def test_arm_run_stop_and_the_next_day(rig):
     assert store.active()[0]["last_result"].startswith("stopped at")
     assert any(e.get("event") == "stopped" for e in events)
     clock.t = ts("2026-09-25 17:00")
-    assert sched.arms()[0]["next_run"] == iso("2026-09-28 10:30")                  # Monday
+    assert sched.arms()[0]["next_run"] == iso("2026-09-28 09:30")                  # Monday
     assert sched.tick(ts("2026-09-26 10:31")) == []                               # Saturday: nothing
     [ev] = sched.tick(ts("2026-09-28 11:12"))                                     # the service came up late
     assert ev["event"] == "started" and "late at 11:12 ET" in ev["detail"] and ev["late"] is True
@@ -134,13 +134,13 @@ def test_missed_skipped_and_never_twice(rig, monkeypatch):
     ext = [{"strategy": "ndx_0dte_tasty", "mode": "live", "date": "2026-09-28", "ledger": True, "pid": 4242,
             "ppid": 1, "started": "x", "cmdline": "powershell -File start_paper_runner.ps1"}]
     monkeypatch.setattr(RN, "scan_processes", lambda: ext)
-    [ev] = sched.tick(ts("2026-09-28 10:30:01"))
+    [ev] = sched.tick(ts("2026-09-28 09:30:01"))
     assert ev["event"] == "skipped" and "already running (external, pid 4242)" in ev["detail"] and not procs
     monkeypatch.setattr(RN, "scan_processes", lambda: [])
     # a second service process on the same arms: only one of them starts the day
     other = A.ArmScheduler(store, RN.RunnerManager(log_dir=runners.log_dir), clock=sched.clock,
                            launcher=sched.launcher)
-    got = sched.tick(ts("2026-09-29 10:30:02")) + other.tick(ts("2026-09-29 10:30:03"))
+    got = sched.tick(ts("2026-09-29 09:30:02")) + other.tick(ts("2026-09-29 09:30:03"))
     assert [e["event"] for e in got] == ["started"] and len(procs) == 1
     runners.stop("ndx_0dte_tasty")
     # armed after today's window: today is not "missed"
@@ -165,9 +165,9 @@ def test_once_arms_and_validation(rig):
     with pytest.raises(A.ArmError):
         sched.arm("gex_positioning", "weekdays", variant="vix")                    # no allocator in this rig
     [row] = sched.arm("ndx_0dte_tasty", "once")                                    # the next session: today
-    assert row["date"] == "2026-09-25" and row["next_run"] == iso("2026-09-25 10:30")
+    assert row["date"] == "2026-09-25" and row["next_run"] == iso("2026-09-25 09:30")
     [row] = sched.arm("ndx_0dte_tasty", "once", "2026-09-29")                      # re-arming replaces it
-    assert len(store.active()) == 1 and row["next_run"] == iso("2026-09-29 10:30")
+    assert len(store.active()) == 1 and row["next_run"] == iso("2026-09-29 09:30")
     assert sched.tick(ts("2026-09-28 10:31")) == []                               # not its day
     [ev] = sched.tick(ts("2026-09-30 09:00"))                                     # its day passed unseen
     assert ev["event"] == "missed" and sched.arms()[0]["next_run"] is None
@@ -178,7 +178,7 @@ def test_once_arms_and_validation(rig):
 def test_a_restarted_service_adopts_its_running_session(rig):
     sched, runners, store, clock, events, procs = rig
     sched.arm("ndx_0dte_tasty", "weekdays")
-    sched.tick(ts("2026-09-25 10:30:05"))
+    sched.tick(ts("2026-09-25 09:30:05"))
     pid = procs[0].pid
     # a new service process (the old one's session keeps running)
     runners2 = RN.RunnerManager(log_dir=runners.log_dir)

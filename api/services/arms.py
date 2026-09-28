@@ -68,16 +68,23 @@ class Spec:
 
 
 SPECS: dict[str, Spec] = {
-    "ndx_0dte_tasty": Spec("script", _dt.time(10, 30), _dt.time(16, 0), ("",),
+    # v2.3 (2026-09-28) enters from 10:00; the start script refreshes data for a minute or two, then the runner
+    # backfills the 30-minute lookback from the broker's candle feed, so it starts at 09:30
+    "ndx_0dte_tasty": Spec("script", _dt.time(9, 30), _dt.time(16, 0), ("",),
                            "the scheduled task's start_paper_runner.ps1 from the live checkout"),
+    # the owner's friend's rules with a theta tilt (2026-09-28): the same start script, from the live checkout; its entries
+    # run 13:00-15:30, so it starts at 12:30 (the 30-minute lookback comes from the broker's candle backfill)
+    "ndx_0dte_friend": Spec("script", _dt.time(12, 30), _dt.time(15, 30), ("",),
+                            "start_paper_runner.ps1 -Strategy ndx_0dte_friend from the live checkout (the friend's rules, theta tilt)"),
     "gex_positioning": Spec("allocator", _dt.time(15, 50), _dt.time(16, 0), ("vix", "gex"),
                             "the service's GEX paper allocator on the whole paper account"),
     "ndx_gamma_walls": Spec("runner", _dt.time(9, 25), _dt.time(15, 0), ("",),
                             "the platform's paper runner from the service checkout (detached)"),
-    # the maker's window is 13:00-15:45 and its 30-minute lookback is backfilled from the broker's candle feed, so it
-    # starts after lunch: polling from the open would spend half the day's shared broker budget for nothing
-    "ndx_0dte_maker": Spec("runner", _dt.time(12, 25), _dt.time(15, 30), ("",),
-                           "the platform's paper runner from the service checkout (detached; the strategy is an overlay)"),
+    # the rally fade (the resting-order trial, once ndx_0dte_maker; branch maker-runner 8741f3a): entries 11:00-15:30,
+    # its 30-minute lookback backfilled from the broker's candle feed, so it starts at 10:25: polling from the open
+    # would spend the shared broker budget on an hour it cannot trade
+    "ndx_0dte_rally_fade": Spec("runner", _dt.time(10, 25), _dt.time(15, 30), ("",),
+                                "the platform's paper runner from the service checkout (detached; the strategy is an overlay)"),
     # the gamma scalper logs the ATM straddle's width from 09:30, enters at 10:00 (behind a 2-pt width gate) and needs the
     # morning's bars (backfilled from the broker's candle feed on a late start), so it starts at 09:45; its entry window
     # closes at 10:30 and it hedges the position (a SYNTHETIC NQ-equivalent, never a real order) until the runner exits

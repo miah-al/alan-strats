@@ -273,8 +273,9 @@ def default_policies() -> list[ProviderPolicy]:
     client's own limiter enforces it too), the options endpoints the paid tier. yfinance and FRED
     publish no quota; these are far below anything that has drawn a 429. tastytrade's hard
     ceiling is the platform's RequestBudget; this policy only counts."""
+    from paper.providers import broker_day_cap
     return [
-        ProviderPolicy.from_env("tastytrade", per_min=20, per_day=3000, burst=5),
+        ProviderPolicy.from_env("tastytrade", per_min=20, per_day=broker_day_cap(), burst=5),
         ProviderPolicy.from_env("polygon", per_min=60, per_day=5000, burst=10,
                                 kinds={"stocks": (4, 2), "options": (60, 10)}),
         ProviderPolicy.from_env("yfinance", per_min=60, per_day=5000, burst=20),

@@ -140,13 +140,24 @@ def test_one_broker_budget_across_checkouts(tmp_path):
     ext = tmp_path / "main_paper_state"
     ext.mkdir()
     (ext / f"broker_calls_{_dt.date.today().isoformat()}.json").write_text(json.dumps({"calls": 2999}), encoding="utf-8")
-    b = RequestBudget(min_interval_s=0, shared_path=tmp_path / "own.json", external_dirs=[ext], sleep=lambda s: None)
+    b = RequestBudget(min_interval_s=0, per_day=3000, shared_path=tmp_path / "own.json", external_dirs=[ext], sleep=lambda s: None)
     assert b.external_calls() == 2999
     b.take()                                                                    # 0 + 2999 < 3000: allowed
     with pytest.raises(RuntimeError, match="other checkouts"):
         b.take()                                                                # 1 + 2999: the day's cap
     alone = RequestBudget(min_interval_s=0, shared_path=tmp_path / "own2.json", sleep=lambda s: None)
     alone.take()                                                                # no external dirs: as before
+
+
+def test_the_broker_day_cap_is_a_setting(tmp_path, monkeypatch):
+    from paper.providers import DEFAULT_BROKER_DAY_CAP, RequestBudget
+    monkeypatch.delenv("ALAN_TRADER_BROKER_DAY_CAP", raising=False)
+    assert RequestBudget(shared_path=tmp_path / "a.json").per_day == DEFAULT_BROKER_DAY_CAP == 8000
+    monkeypatch.setenv("ALAN_TRADER_BROKER_DAY_CAP", "5000")
+    assert RequestBudget(shared_path=tmp_path / "b.json").per_day == 5000
+    assert RequestBudget(per_day=7, shared_path=tmp_path / "c.json").per_day == 7   # an explicit cap wins
+    monkeypatch.setenv("ALAN_TRADER_BROKER_DAY_CAP", "lots")
+    assert RequestBudget(shared_path=tmp_path / "d.json").per_day == DEFAULT_BROKER_DAY_CAP
 
 
 def test_the_day_balance_waits_for_the_other_runner_and_writes_the_account_total(tmp_path, monkeypatch):

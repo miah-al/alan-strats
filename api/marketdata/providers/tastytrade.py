@@ -24,6 +24,7 @@ import logging
 import os
 import threading
 import time
+import traceback
 from datetime import date
 from pathlib import Path
 from typing import Optional
@@ -34,6 +35,22 @@ from api.marketdata.providers.base import Emit, Provider
 from data.request_gate import ProviderUnavailable
 
 logger = logging.getLogger("alan_trader.api.marketdata.tastytrade")
+
+
+def _describe(exc: BaseException) -> str:
+    """One line for a failure. An ExceptionGroup (the SDK's task groups) is shown by the errors inside it: its own text,
+    "unhandled errors in a TaskGroup (1 sub-exception)", names no cause."""
+    leaves: list[str] = []
+
+    def walk(e: BaseException) -> None:
+        if isinstance(e, BaseExceptionGroup):
+            for sub in e.exceptions:
+                walk(sub)
+        else:
+            leaves.append(f"{type(e).__name__}: {e}")
+
+    walk(exc)
+    return "; ".join(leaves) if leaves else f"{type(exc).__name__}: {exc}"
 
 RECONNECT_START_S = 30.0
 RECONNECT_MAX_S = 900.0
@@ -101,13 +118,14 @@ class StreamerLock:
 
 
 class ServiceBrokerBudget:
-    """The platform's ``RequestBudget`` (5 s between calls, 20 a minute, 3000 a day, a day file
-    shared by every process of this checkout), plus the counts other checkouts' runners publish,
-    read-only, so the day's cap holds across all of them."""
+    """The platform's ``RequestBudget`` (5 s between calls, 20 a minute, ``paper.providers.broker_day_cap()``
+    a day, a day file shared by every process of this checkout), plus the counts other checkouts' runners
+    publish, read-only, so the day's cap holds across all of them."""
 
-    def __init__(self, state_dir: Path, external_dirs: list[Path], per_day: int = 3000,
+    def __init__(self, state_dir: Path, external_dirs: list[Path], per_day: Optional[int] = None,
                  min_interval_s: float = 5.0, per_minute: int = 20):
-        from paper.providers import RequestBudget
+        from paper.providers import RequestBudget, broker_day_cap
+        per_day = int(per_day) if per_day is not None else broker_day_cap()
         self.state_dir = Path(state_dir)
         self.external_dirs = [Path(d) for d in external_dirs]
         self._rb = RequestBudget(min_interval_s=min_interval_s, per_minute=per_minute, per_day=per_day,
@@ -329,13 +347,19 @@ class TastytradeProvider(Provider):
             logger.warning("tastytrade: %s", exc)
             delay = max(delay, 300.0)
         except Exception as exc:  # noqa: BLE001 — any failure: report, back off, reconnect
-            msg = f"{type(exc).__name__}: {exc}"
+            msg = _describe(exc)
             if any(k in msg.lower() for k in ("invalid_grant", "invalid_client", "secret mismatch")):
                 self.limits.disable("tastytrade rejected the credentials (TT_SECRET / TT_REFRESH)")
                 logger.error("tastytrade rejected the credentials; streaming disabled")
                 self._stop.set()
                 return delay
             self.limits.fail(f"streamer: {msg[:200]}")
+            # The first few failures with their traceback, redacted: the cause, not just its wrapper.
+            self._traced = getattr(self, "_traced", 0) + 1
+            if self._traced <= 3:
+                from api.redact import redact
+                logger.warning("tastytrade streamer failure #%d:\n%s", self._traced,
+                               redact("".join(traceback.format_exception(exc)))[-4000:])
         finally:
             self._down()
             self._session = None
