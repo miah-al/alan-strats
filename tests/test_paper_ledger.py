@@ -39,7 +39,12 @@ def test_open_add_close_round_trip():
         row = df[df.PositionId == pid].iloc[0]
         assert row.Status == "closed" and float(row.Quantity) == 2.0
         assert abs(float(row.AvgEntryPrice) - 55.0) < 1e-6 and float(row.AvgExitPrice) == 60.0
-        assert abs(float(row.RealizedPnL) - ((60.0 - 55.0) * 100 * 2 - 4.0)) < 1e-6     # 4 opening legs at $1
+        # Realised P&L is the cash the position moved, not a price difference with the commission
+        # column deducted: -6002 - 5002 + 11997 = 993. The old expectation of 996 counted the $4 of
+        # commission and silently dropped the $3 of round-trip fees, so it read better than the
+        # account did -- by a little per trade, and by more every trade after that.
+        assert abs(float(row.RealizedPnL) - (-6002.0 - 5002.0 + 11997.0)) < 1e-6
+        assert abs(float(row.RealizedPnL) - 993.0) < 1e-6
         from sqlalchemy import text
         with eng.connect() as c:
             assert c.execute(text("SELECT COUNT(*) FROM portfolio.Leg WHERE PositionId = :p"), {"p": pid}).scalar() == 6
@@ -47,7 +52,11 @@ def test_open_add_close_round_trip():
     finally:
         n = L.delete_paper_day(eng, SLUG, DAY)
         assert n >= 1
-        assert L.load_paper_positions(eng, SLUG, from_date=DAY).empty
+        # only this test's own rows: asserting the table is empty fails whenever a real paper
+        # session holds a position for the same strategy, which is exactly when the suite is most
+        # likely to be run
+        left = L.load_paper_positions(eng, SLUG, from_date=DAY)
+        assert left.empty or pid not in set(left.PositionId)
 
 
 def test_paper_account_is_seeded_once_with_starting_cash():
@@ -69,3 +78,13 @@ def test_paper_account_is_seeded_once_with_starting_cash():
         assert [(r[0], float(r[1])) for r in rows] == [("Cash", 150_000.0)]
         c.execute(text("DELETE FROM portfolio.Balance WHERE AccountId = :a"), {"a": aid})
         c.execute(text("DELETE FROM portfolio.Account WHERE AccountId = :a"), {"a": aid})
+
+
+def test_leg_prices_split_the_spread_at_each_legs_own_market():
+    """Each leg is booked near its own mid, and the two always difference to exactly the spread price
+    paid; without leg quotes the old convention (all on the long leg) stands."""
+    from paper.ledger import _leg_prices
+    lpx, spx = _leg_prices(34.2, {"long_bid": 67.1, "long_ask": 78.2, "short_bid": 44.0, "short_ask": 47.2})
+    assert abs((lpx - spx) - 34.2) < 1e-9 and 67.1 <= lpx <= 78.2 + 1 and 40 <= spx <= 47.2
+    assert _leg_prices(34.2, None) == (34.2, 0.0)
+    assert _leg_prices(90.0, {"long_bid": 50, "long_ask": 52, "short_bid": 1, "short_ask": 2}) == (90.0, 0.0)   # a split below zero is refused
