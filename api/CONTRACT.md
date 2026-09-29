@@ -800,3 +800,50 @@ the decider (a digest, no secrets); the desktop may ignore it.
   under 20 is the pre-registered "switch to advisory only" line.
 - **`GET /api/brief/status`** → `{"enabled", "scheduler", "run_at": "09:50", "decider": "llm:<model>" | "rules",
   "prompt_version", "last_error"}`.
+
+### Risk: `GET /api/risk` (api/services/risk_stress.py, read only)
+
+The paper book's greeks in dollars and a stress grid, for the portfolio, each strategy and each open position — the
+same open positions, marks and P&L as `GET /api/paper/positions` (runner-held ones from other checkouts included).
+Query: `moves` (underlying moves in %, comma-separated, default `-3,-2,-1,-0.5,0,0.5,1,2,3`, ±50, ≤ 25 values),
+`vols` (IV shocks in vol points, default `-5,0,5,10`, ±100, ≤ 12), `horizon` = `now` | `1h` (`+1h`) | `settlement`,
+optional `strategy` (slug) and `trade_group_id` (the full id or its ledger tail). 422 for a bad parameter.
+```json
+{"asof": "…-04:00", "horizon": "now", "horizons": [{"key": "now" | "1h" | "settlement", "label", "at"}],
+ "settlement_at": "…", "moves": [-3.0, …], "vols": [-5.0, …], "spots": {"NDX": 30316.5},
+ "assumptions": ["…"], "warnings": ["…"], "filter": {"strategy", "trade_group_id"}, "inputs_age_s": 4.1,
+ "portfolio": Entity, "by_strategy": [Entity + {"strategy", "strategy_label"}],
+ "positions": [Entity + {"trade_group_id", "strategy", "strategy_label", "underlying", "structure", "contracts",
+                "expiry", "priced_by", "entry_net", "market_value", "model_value", "max_profit", "paper_greeks",
+                "legs": [{"symbol", "type", "strike", "expiry", "qty", "multiplier", "mark", "mark_source", "iv", "iv_source"}]}]}
+Entity = {"kind": "portfolio" | "strategy" | "position", "key", "label", "underlyings": ["NDX"], "positions": 2,
+          "priced": true, "spot", "pnl", "max_loss" (at expiry vs entry, negative; null when unbounded),
+          "max_loss_unbounded", "greeks": Greeks | null,
+          "stress": {"cells": [[Cell per vol] per move], "worst": Cell + {"scenario": "NDX -3% · IV +10"}, "best"} | null}
+Greeks = {"delta" ($ per +1% move), "delta_units" (units of the underlying), "gamma" ($ delta change per +1% move),
+          "gamma_units" (delta units per 1 point), "theta" ($/day; a same-day option: per session), "theta_hour" ($/h),
+          "vega" ($ per +1 vol point)}      — the unit figures are null across more than one underlying
+Cell = {"move", "vol", "spot" (null across underlyings), "pnl" (change from now), "pnl_total" (P&L since entry there),
+        "greeks": Greeks re-computed at that spot, vol and time | null once every leg has settled}
+```
+Each cell revalues every leg in full with Black-Scholes at spot × (1 + move) and its IV + the shock — no Taylor
+expansion. A leg's IV is implied from its own mark on the grid's clock (a same-day option on the session clock:
+trading minutes to 16:00 ET / 390 / 252 years, at least 5 minutes), so an unchanged market reads $0 at now / +1h. At
+`settlement` (the close of the nearest expiry held) expiring legs are worth their intrinsic value and `pnl_total` is the
+expiry payoff against entry. With several underlyings every one moves by the same percentage. Inputs are re-read at
+most every 20 s: one hub snapshot of the same legs and underlyings the positions table quotes, nothing more.
+
+### Limits: `/api/limits` (api/services/limits.py; app.TradeLimit + app.TradeLimitChange)
+The limits the trader sets, database driven. Scopes: Claude's desks (`claude_discretionary`, `claude_events`), every
+armed strategy (its own parameters whose key names a cap, max, stop, loss, lots, contracts or the entry window), and
+`system` (the broker's day cap; the tournament kill rule, which is reviewed, not enforced).
+- `GET /api/limits` → `{"asof", "scopes": [{"scope", "kind": "desk|strategy|system", "label", "day_pnl", "limits":
+  [{"name", "label", "unit", "kind": "number|time", "value", "default", "is_default", "min", "max", "applies":
+  "now|next_session|next_launch|review", "help", "used", "status": "ok|near|hit", "updated_by", "updated_at"}]}],
+  "changes": [{"id", "scope", "name", "old", "new", "by", "reason", "at"}]}` (the last 30 changes, newest first).
+- `GET /api/limits/{scope}` → `{"scope", "values": {name: value}}`: what is in force (the desk reads it per order).
+- `PUT /api/limits/{scope}/{name}` body `{"value", "by", "reason"}` → the updated limit row; 422 when the value is out
+  of range, not HH:MM for a time, or the scope has no such limit. Every PUT writes a change row.
+- Applies: a desk's at once; a strategy's from its next session (the arm launcher passes the stored values as
+  `--param`, the task script as `-Params "k=v;k2=v2"`); the broker cap from the next launch
+  (`ALAN_TRADER_BROKER_DAY_CAP` in the runner's environment).

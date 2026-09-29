@@ -19,6 +19,8 @@ everything else — DDL is allowed in this schema only:
   app.EventSignalLog the post-close signal log (USO 2σ moves, VIX 2σ, BTC −3%) with the trader's tag and outcomes
   app.CryptoFlushSignal the crypto liquidation-flush triggers (R0) and their log-only paper micro-future legs
   app.MorningBrief the AI morning brief's decision row per strategy and day (api/services/morning_brief.py)
+  app.TradeLimit   the limits the trader sets (a desk's, a strategy's, the system's): scope, name, value
+  app.TradeLimitChange every change to a limit: old and new value, who and why (api/services/limits.py)
 """
 from __future__ import annotations
 
@@ -265,6 +267,26 @@ _TABLES = {
             PromptVersion  NVARCHAR(30)   NULL,
             InputsJson     NVARCHAR(MAX)  NULL,
             NotesJson      NVARCHAR(MAX)  NULL
+        )""",
+    "TradeLimit": """
+        CREATE TABLE app.TradeLimit (
+            Scope          NVARCHAR(80)   NOT NULL,
+            Name           NVARCHAR(60)   NOT NULL,
+            ValueJson      NVARCHAR(200)  NOT NULL,
+            UpdatedBy      NVARCHAR(40)   NULL,
+            UpdatedAt      DATETIME2      NOT NULL CONSTRAINT DF_TradeLimit_Updated DEFAULT SYSUTCDATETIME(),
+            CONSTRAINT PK_TradeLimit PRIMARY KEY (Scope, Name)
+        )""",
+    "TradeLimitChange": """
+        CREATE TABLE app.TradeLimitChange (
+            Id             INT IDENTITY(1,1) NOT NULL CONSTRAINT PK_TradeLimitChange PRIMARY KEY,
+            Scope          NVARCHAR(80)   NOT NULL,
+            Name           NVARCHAR(60)   NOT NULL,
+            OldJson        NVARCHAR(200)  NULL,
+            NewJson        NVARCHAR(200)  NOT NULL,
+            ChangedBy      NVARCHAR(40)   NULL,
+            Reason         NVARCHAR(400)  NULL,
+            ChangedAt      DATETIME2      NOT NULL CONSTRAINT DF_TradeLimitChange_At DEFAULT SYSUTCDATETIME()
         )""",
 }
 _INDEXES = {
