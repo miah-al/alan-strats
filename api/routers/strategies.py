@@ -4,7 +4,7 @@ from __future__ import annotations
 from datetime import date
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException, Query, Request
+from fastapi import APIRouter, Body, HTTPException, Query, Request
 from pydantic import BaseModel, ConfigDict, Field
 
 from api.services import strategies as S
@@ -130,6 +130,46 @@ def start_backtest(slug: str, body: BacktestRequest, request: Request):
         lambda ctx: S.backtest_job(ctx, slug, ticker, fd.isoformat(), td.isoformat(), capital, params),
         slug=slug, params={"ticker": ticker, "from": fd.isoformat(), "to": td.isoformat(),
                            "capital": capital, "params": params})
+    return _accepted(request, job)
+
+
+# ── Replay on real quotes ─────────────────────────────────────────────────────
+
+@router.get("/strategies/{slug}/quote-replay/days")
+def quote_replay_days(slug: str):
+    """The days with recorded quotes, and whether this strategy has a live session to replay on them."""
+    _known(slug)
+    from api.services import quote_replay as QR
+    try:
+        inst = QR.live_instrument(slug)
+    except Exception:
+        inst = {}
+    root = inst.get("root", "NDXP") if inst else "NDXP"
+    return {"slug": slug, "replayable": bool(inst), "days": [d.isoformat() for d in QR.recorded_days(root)]}
+
+
+@router.post("/strategies/{slug}/quote-replay", status_code=202)
+def start_quote_replay(slug: str, request: Request, body: Optional[dict] = Body(default=None)):
+    """Replay the strategy on the recorded bid/ask, as its live runner would have traded (a job; the result has each
+    day's P&L, trades and fills). Body: {"params": {...}, "days": ["YYYY-MM-DD", ...]} (both optional)."""
+    _known(slug)
+    from api.services import quote_replay as QR
+    try:
+        inst = QR.live_instrument(slug)
+    except Exception:
+        inst = {}
+    if not inst:
+        raise HTTPException(422, f"{slug} has no live session to replay on the recorded quotes")
+    b = body or {}
+    try:
+        params = S.validate_backtest_params(slug, b.get("params") or {})
+        days = [date.fromisoformat(str(d)[:10]) for d in b["days"]] if b.get("days") else None
+    except ValueError as exc:
+        raise HTTPException(422, str(exc))
+    job = request.app.state.jobs.submit(
+        "quote_replay", f"Replay {slug} on real quotes",
+        lambda ctx: QR.replay(slug, days, overrides=params, progress=ctx.progress),
+        slug=slug, params={"params": params, "days": [d.isoformat() for d in days] if days else "all"})
     return _accepted(request, job)
 
 

@@ -648,7 +648,10 @@ class ArmScheduler:
                 continue
             if t >= spec.until:
                 armed = _et(arm["armed_at"])
-                if armed is None or armed.date() < today or armed.time() < spec.until:
+                # Armed after today's window closed: nothing was missed. A stamp later than ``now`` is not that (the
+                # memory store stamps the wall clock while a test's scheduler runs a fake one, which made these tests
+                # fail only when run after 16:00, 2026-09-29): it was armed before this tick.
+                if armed is None or armed > now or armed.date() < today or armed.time() < spec.until:
                     why = (f"missed: the service was not running between {spec.at:%H:%M} and "
                            f"{spec.until:%H:%M} ET")
                     if self.store.claim(arm["id"], today, why):
