@@ -48,7 +48,11 @@ class YFinanceProvider(Provider):
             limits.disable("yfinance not installed")
 
     def supports(self, symbol: str) -> bool:
-        return self.available()
+        # Not options. yfinance's option quotes are delayed; when the tastytrade stream blinked, the hub moved option
+        # legs here, and a spread with one leg from each feed priced below zero (2026-09-29: a fresh 12.05 put spread
+        # marked at 0.0, -$2,412, in the ledger). An option keeps its last tastytrade quote rather than take a delayed
+        # one; stocks and indexes still fall back here.
+        return self.available() and not SYM.is_option(symbol)
 
     # ── quotes ────────────────────────────────────────────────────────────────
     def poll(self, symbols: list[str]) -> dict[str, dict]:

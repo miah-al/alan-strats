@@ -48,10 +48,15 @@ class StreamClient:
 
 
 class MarketDataHub:
-    def __init__(self, gate: Gate, providers: list[Provider]):
+    def __init__(self, gate: Gate, providers: list[Provider], live_quotes: Optional[Iterable[str]] = None):
         self.gate = gate
         self.providers = list(providers)
         self.by_name = {p.name: p for p in self.providers}
+        # The providers that may SERVE LIVE QUOTES (None = every provider, in order). The others stay in the hub for
+        # what they are for -- chains, expirations, history -- but never price a live symbol: a delayed feed standing
+        # in for a blinking stream mixed feeds inside one spread (2026-09-29), and the owner wants live prices from
+        # the broker only ("isolate the yfinance, and polygon").
+        self.live_quotes = {n.lower() for n in live_quotes} if live_quotes is not None else None
         self._lock = threading.RLock()
         self._cond = threading.Condition(self._lock)
         self.quotes: dict[str, QuoteState] = {}
@@ -156,6 +161,8 @@ class MarketDataHub:
 
     def _best(self, s: str) -> Optional[Provider]:
         for p in self.providers:
+            if self.live_quotes is not None and p.name not in self.live_quotes:
+                continue
             try:
                 if p.supports(s):
                     return p

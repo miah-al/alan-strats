@@ -6,8 +6,12 @@
 param(
     [string]$Strategy = "ndx_0dte_tasty",
     [string]$Python = "d:\tmp\alan_venv\Scripts\python.exe",
-    [int]$Poll = 15
+    [int]$Poll = 15,
+    # "key=value;key2=value2": the limits the trader set for this strategy (the service's app.TradeLimit), as --param
+    [string]$Params = ""
 )
+$extra = @()
+foreach ($kv in ($Params -split ';')) { if ($kv.Trim()) { $extra += '--param'; $extra += $kv.Trim() } }
 $env:PYTHONIOENCODING = "utf-8"
 Set-Location "D:\Work\Project Dream\alan_trader"
 # keep the reference data current: yesterday's VXN close is the gate, the event calendar the skip list
@@ -17,7 +21,7 @@ Set-Location "D:\Work\Project Dream\alan_trader"
 $attempt = 0
 do {
     $attempt++
-    & $Python -m scripts.paper_runner --strategy $Strategy --poll $Poll --notify
+    & $Python -m scripts.paper_runner --strategy $Strategy --poll $Poll --notify @extra
     $code = $LASTEXITCODE
     $nowEt = [System.TimeZoneInfo]::ConvertTimeBySystemTimeZoneId((Get-Date), "Eastern Standard Time")
     if ($code -ne 0 -and $nowEt.TimeOfDay -lt [TimeSpan]"16:01" -and $attempt -lt 20) { Start-Sleep -Seconds 30 }

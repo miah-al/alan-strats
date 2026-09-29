@@ -289,6 +289,33 @@ def test_fallback_to_polling_and_back_when_the_streamer_reconnects():
     _run(go())
 
 
+def test_live_quotes_can_be_limited_to_the_broker_feed():
+    """With live_quotes set, a feed outside it never prices a live symbol, even while the streamer is down: the
+    symbol waits for the stream instead of taking a delayed quote (2026-09-29: mixed feeds inside one spread)."""
+    async def go():
+        st, pl = FakeStream(), FakePoll()
+        st.connected = False
+        hub = MarketDataHub(Gate([]), [st, pl], live_quotes=["faketasty"])
+        hub.start()
+        hub.watch("a", ["QQQ"])
+        assert "QQQ" not in hub.route                    # nothing may serve it: the poller is not a live source
+        await asyncio.sleep(0.3)
+        assert not pl.polls
+        st.connected = True
+        await asyncio.sleep(1.3)
+        assert hub.route["QQQ"] == "faketasty"
+        await hub.stop()
+    _run(go())
+
+
+def test_the_service_defaults_live_quotes_to_tastytrade(monkeypatch):
+    from api.marketdata import service as S
+    monkeypatch.delenv("ALAN_TRADER_LIVE_QUOTES", raising=False)
+    assert S.live_quote_providers() == ["tastytrade"]
+    monkeypatch.setenv("ALAN_TRADER_LIVE_QUOTES", "all")
+    assert S.live_quote_providers() is None
+
+
 def test_fan_out_is_throttled_to_four_messages_a_second_per_symbol():
     async def go():
         st = FakeStream()

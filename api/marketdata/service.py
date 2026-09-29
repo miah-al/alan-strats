@@ -26,6 +26,16 @@ def provider_names() -> list[str]:
     return [n.strip().lower() for n in raw.split(",") if n.strip()]
 
 
+#: the providers allowed to serve LIVE quotes; the rest (polygon, yfinance) keep their chains / history roles but never
+#: price a live symbol. "all" restores the old failover through every provider.
+DEFAULT_LIVE_QUOTES = "tastytrade"
+
+
+def live_quote_providers() -> list[str] | None:
+    raw = os.environ.get("ALAN_TRADER_LIVE_QUOTES", DEFAULT_LIVE_QUOTES).strip().lower()
+    return None if raw == "all" else [n.strip() for n in raw.split(",") if n.strip()]
+
+
 def build_hub(names: list[str] | None = None, gate: Gate | None = None) -> MarketDataHub:
     from engine.env import get_polygon_api_key, tastytrade_credentials
     gate = gate or Gate()
@@ -45,4 +55,4 @@ def build_hub(names: list[str] | None = None, gate: Gate | None = None) -> Marke
             providers.append(YFinanceProvider(gate["yfinance"]))
         else:
             logger.warning("unknown market-data provider %r ignored", n)
-    return MarketDataHub(gate, providers)
+    return MarketDataHub(gate, providers, live_quotes=live_quote_providers())

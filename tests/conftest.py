@@ -28,6 +28,10 @@ register_platform_package()
 # The service's market-data hub starts no live provider under test (no DXLink stream, no polling):
 # hub tests inject fakes. A developer who really wants live providers sets the variable explicitly.
 os.environ.setdefault("ALAN_TRADER_PROVIDERS", "none")
+# ... and the fakes they inject carry names of their own (faketasty, fakeyf, polygon): let any of them serve live
+# quotes. The production default is tastytrade only (api.marketdata.service.DEFAULT_LIVE_QUOTES); the isolation
+# itself is tested in test_api_marketdata.py.
+os.environ.setdefault("ALAN_TRADER_LIVE_QUOTES", "all")
 # The runner's real paper account (AccountId 1): the service's DB guard refuses any ledger / app write
 # for it while the suite runs. Service tests trade a throwaway account of their own and delete it.
 os.environ.setdefault("ALAN_TRADER_PROTECTED_ACCOUNTS", "1")

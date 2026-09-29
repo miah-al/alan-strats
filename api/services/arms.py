@@ -38,6 +38,7 @@ from __future__ import annotations
 import datetime as _dt
 import logging
 import os
+import re
 import subprocess
 import threading
 import time
@@ -299,15 +300,32 @@ def live_checkout() -> Path:
     return main
 
 
+def limit_params(strategy: str) -> dict:
+    """The limits the trader set for ``strategy`` (app.TradeLimit, api/services/limits.py): its runner gets them as
+    --param, so a change applies from the next session. {} when none are set."""
+    from api.services.limits import launch_params
+    return {k: v for k, v in launch_params(strategy).items() if re.fullmatch(r"[A-Za-z0-9_]+", str(k))
+            and re.fullmatch(r"[-+0-9.:]+", str(v))}
+
+
+def limit_env() -> str:
+    """``set "ALAN_TRADER_BROKER_DAY_CAP=N" & `` when the trader set the broker's day cap, else ""."""
+    from api.services.limits import launch_broker_cap
+    cap = launch_broker_cap()
+    return f'set "ALAN_TRADER_BROKER_DAY_CAP={int(cap)}" & ' if cap else ""
+
+
 def task_command(strategy: str, checkout: Optional[Path] = None) -> str:
-    """The scheduled task's own command line (register_paper_task.ps1's /TR)."""
+    """The scheduled task's own command line (register_paper_task.ps1's /TR), with the strategy's limits as -Params."""
     script = (checkout or live_checkout()) / "scripts" / "start_paper_runner.ps1"
-    return f'powershell -NoProfile -ExecutionPolicy Bypass -File "{script}" -Strategy {strategy}'
+    params = ";".join(f"{k}={v}" for k, v in limit_params(strategy).items())
+    return (f'powershell -NoProfile -ExecutionPolicy Bypass -File "{script}" -Strategy {strategy}'
+            + (f' -Params "{params}"' if params else ""))
 
 
 def wrapped_command(strategy: str, log: Path, checkout: Optional[Path] = None) -> str:
     """The task's command, its console output captured to ``log`` and its exit code to ``log``.exit."""
-    return (f'cmd.exe /d /v:on /s /c "{task_command(strategy, checkout)} > "{log}" 2>&1 '
+    return (f'cmd.exe /d /v:on /s /c "{limit_env()}{task_command(strategy, checkout)} > "{log}" 2>&1 '
             f'& echo !ERRORLEVEL! > "{log}.exit""')
 
 
@@ -316,8 +334,12 @@ def wmi_launch(command: str, cwd: str) -> tuple[int, float]:
     (so neither the desktop's kill-on-close job nor a service restart ends it), with the user's logon
     environment. Returns (pid, creation time)."""
     import psutil
-    ps = ("$r = Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments "
-          "@{CommandLine=$env:ALAN_TRADER_ARM_CMD; CurrentDirectory=$env:ALAN_TRADER_ARM_CWD}; "
+    # ShowWindow 0 (SW_HIDE): the runner's console stays hidden. Its output already goes to a log file, and on
+    # Windows 11 each visible console became a Windows Terminal tab that one click on "close" would kill (2026-09-29:
+    # the owner found four runner windows open and asked why).
+    ps = ("$si = New-CimInstance -ClassName Win32_ProcessStartup -ClientOnly -Property @{ShowWindow=[uint16]0}; "
+          "$r = Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments "
+          "@{CommandLine=$env:ALAN_TRADER_ARM_CMD; CurrentDirectory=$env:ALAN_TRADER_ARM_CWD; ProcessStartupInformation=$si}; "
           "'' + $r.ReturnValue + ' ' + $r.ProcessId")
     env = dict(os.environ, ALAN_TRADER_ARM_CMD=command, ALAN_TRADER_ARM_CWD=cwd)
     kw = {"creationflags": subprocess.CREATE_NO_WINDOW} if os.name == "nt" else {}
@@ -342,8 +364,8 @@ def runner_command(strategy: str, log: Path, csv_dir: Path, py: Optional[str] = 
     """The platform's paper runner for ``strategy`` from this checkout (live, ledger on), its console output
     captured to ``log`` and its exit code to ``log``.exit."""
     inner = (f'"{py or python_exe()}" -m api.runner_launch --strategy {strategy} --poll {RUNNER_POLL_S} '
-             f'--log-dir "{csv_dir}"')
-    return f'cmd.exe /d /v:on /s /c "{inner} > "{log}" 2>&1 & echo !ERRORLEVEL! > "{log}.exit""'
+             f'--log-dir "{csv_dir}"' + "".join(f" --param {k}={v}" for k, v in limit_params(strategy).items()))
+    return f'cmd.exe /d /v:on /s /c "{limit_env()}{inner} > "{log}" 2>&1 & echo !ERRORLEVEL! > "{log}.exit""'
 
 
 def launch_runner(strategy: str, log_dir: Path) -> dict:
@@ -369,8 +391,9 @@ def launch_later(strategy: str, at: str, day: Optional[_dt.date] = None, log_dir
     csv_dir.mkdir(parents=True, exist_ok=True)
     log = log_dir / f"{strategy}_later_{_dt.datetime.now():%Y-%m-%d_%H%M%S}.log"
     inner = (f'"{python_exe()}" -m api.launch_later --at {at}' + (f" --date {day.isoformat()}" if day else "") +
-             f' -- --strategy {strategy} --poll {RUNNER_POLL_S} --log-dir "{csv_dir}"')
-    cmd = f'cmd.exe /d /v:on /s /c "{inner} > "{log}" 2>&1 & echo !ERRORLEVEL! > "{log}.exit""'
+             f' -- --strategy {strategy} --poll {RUNNER_POLL_S} --log-dir "{csv_dir}"'
+             + "".join(f" --param {k}={v}" for k, v in limit_params(strategy).items()))
+    cmd = f'cmd.exe /d /v:on /s /c "{limit_env()}{inner} > "{log}" 2>&1 & echo !ERRORLEVEL! > "{log}.exit""'
     pid, created = wmi_launch(cmd, str(WORKING_COPY))
     return {"pid": pid, "created": created, "log": str(log), "cmdline": cmd}
 

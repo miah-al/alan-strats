@@ -57,6 +57,13 @@ RECONNECT_MAX_S = 900.0
 CHAIN_TTL_S = 4 * 3600.0          # a nested chain changes with new listings (daily): one REST call per underlying per 4 h
 LOCK_RETRY_S = 60.0
 SUB_CHUNK = 250
+# DXLink closes the stream with "Your subscription rate is too high" when symbols come and go too fast. On 2026-09-29 it
+# did so every 1-2 minutes (44 reconnects in 80 minutes): previews, marks and charts watch a symbol for a minute, and
+# every add and drop was sent at once (four messages each: Quote, Trade, Summary, Greeks). After each reconnect the whole
+# set went out in one burst and tripped the limit again. So a symbol no longer wanted stays subscribed this long (extra
+# streaming costs nothing; the churn is what gets the stream cut), and subscription messages are paced.
+UNSUB_GRACE_S = 600.0
+SUB_PACE_S = 0.25
 
 
 class StreamerLock:
@@ -384,6 +391,7 @@ class TastytradeProvider(Provider):
         from tastytrade.dxfeed import Greeks, Quote, Summary, Trade
         pumps = [asyncio.create_task(self._pump(st, cls)) for cls in (Quote, Trade, Summary, Greeks)]
         have: set[str] = set()
+        unwanted_since: dict[str, float] = {}
         try:
             while not self._stop.is_set():
                 for t in pumps:
@@ -391,7 +399,14 @@ class TastytradeProvider(Provider):
                         exc = t.exception()
                         raise exc if exc else ConnectionError("streamer listener ended")
                 want = self.wanted()
-                add, rem = sorted(want - have), sorted(have - want)
+                now = time.monotonic()
+                for s in have - want:                             # dropped from the wanted set: start its grace clock
+                    unwanted_since.setdefault(s, now)
+                for s in list(unwanted_since):
+                    if s in want or s not in have:
+                        unwanted_since.pop(s, None)
+                add = sorted(want - have)
+                rem = sorted(s for s in have - want if now - unwanted_since.get(s, now) >= UNSUB_GRACE_S)
                 if add:
                     await self._sub(st, add, True)
                     have.update(add)
@@ -421,9 +436,11 @@ class TastytradeProvider(Provider):
             part = stream[i:i + SUB_CHUNK]
             for cls in (Quote, Trade, Summary):
                 await (st.subscribe(cls, part) if add else st.unsubscribe(cls, part))
+                await asyncio.sleep(SUB_PACE_S)                   # paced: a burst trips the rate limit
         for i in range(0, len(opts), SUB_CHUNK):
             part = opts[i:i + SUB_CHUNK]
             await (st.subscribe(Greeks, part) if add else st.unsubscribe(Greeks, part))
+            await asyncio.sleep(SUB_PACE_S)
         logger.debug("tastytrade %s %d symbols", "subscribed" if add else "unsubscribed", len(syms))
 
     def _stream_sym(self, sym: str) -> str:

@@ -117,6 +117,10 @@ def create_app():
     minutes = MinuteAggregator(market_hub)
     from api.services.morning_brief import MorningBrief
     brief = MorningBrief(market_hub, arms=arm_scheduler, recorder=quote_recorder, publish=hub.publish)
+    # the trader's limits (app.TradeLimit): the desks read them per order, the arm launcher passes a strategy's own
+    from api.services import limits as trade_limits
+    limits_store = trade_limits.make_store()
+    trade_limits.install(limits_store)
 
     from api.redact import RedactingFilter, install_redaction, redact
     forwarder.addFilter(RedactingFilter())
@@ -185,6 +189,7 @@ def create_app():
     app.state.event_allocators = {"oil_fade": oil_fade, "btc_dip": btc_dip, "event_signal_log": signal_log}
     app.state.crypto_flush = crypto_flush
     app.state.brief = brief
+    app.state.limits_store = limits_store
     app.state.build = build
     app.state.bootstrap = info
     app.state.json_response = SafeJSONResponse
@@ -266,6 +271,12 @@ def create_app():
     app.include_router(event_desk_router.router, prefix="/api")
     from api.routers import brief as brief_router
     app.include_router(brief_router.router, prefix="/api")
+    from api.routers import processes as processes_router
+    app.include_router(processes_router.router, prefix="/api")
+    from api.routers import limits as limits_router
+    app.include_router(limits_router.router, prefix="/api")
+    from api.routers import risk as risk_router
+    app.include_router(risk_router.router, prefix="/api")
     return app
 
 
