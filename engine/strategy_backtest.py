@@ -287,8 +287,12 @@ def performance_warnings(perf: dict) -> list[str]:
             notes.append("Not priced like the live runner: " + "; ".join(f"{k} is {used.get(k)!r} here, {named.get(k)!r} live" for k in off)
                          + ". Read the result as a model comparison, not a forecast of paper fills.")
         elif not rules:
-            notes.append(f"Priced like the live runner ({what}). The fills are still modelled on last-trade prints, not the "
-                         "recorded bid/ask; the quote replay is the real-quote check.")
+            # The strategy says what its prices are (a calibrated model, last-trade prints...); the platform only knows
+            # the fill rules it shares with the live runner.
+            extra = getattr(perf.get("result"), "extra", None) or {}
+            basis = extra.get("pricing_basis") or ("The fills are still modelled on last-trade prints, not the recorded "
+                                                   "bid/ask; the quote replay is the real-quote check.")
+            notes.append(f"Priced like the live runner ({what}). {basis}")
     # The same days on the recorded bid/ask (api/services/quote_replay.calibrate): how far the print-priced fills are
     # from real quotes (2026-09-29: Friend on 9/28 made +8,227 on prints, +2,462 on the recorded quotes).
     cal = perf.get("calibration")

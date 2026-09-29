@@ -55,3 +55,11 @@ def test_a_run_that_is_not_the_live_strategy_says_so():
     same = B.performance_warnings({**perf, "params": {"width": 100, "counter_trend": 1, "stop_pts": 0, "fill_model": 1}})
     assert any(n.startswith("Priced like the live runner") for n in same)
     assert not any(n.startswith("Not the strategy") for n in same)
+
+
+def test_the_strategy_states_its_pricing_basis():
+    from types import SimpleNamespace
+    perf = {"metrics": {"num_trades": 40}, "coverage": 1.0, "window_days": 100, "span_days": 100,
+            "live_params": {"fill_model": 1}, "live_params_named": {"fill_model": "mid"}, "live_defaults": {"fill_model": 1},
+            "params": {"fill_model": 1}, "result": SimpleNamespace(extra={"pricing_basis": "Priced on the calibrated model."})}
+    assert any(n == "Priced like the live runner (fill_model mid). Priced on the calibrated model." for n in B.performance_warnings(perf))
