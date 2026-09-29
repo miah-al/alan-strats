@@ -847,3 +847,17 @@ armed strategy (its own parameters whose key names a cap, max, stop, loss, lots,
 - Applies: a desk's at once; a strategy's from its next session (the arm launcher passes the stored values as
   `--param`, the task script as `-Params "k=v;k2=v2"`); the broker cap from the next launch
   (`ALAN_TRADER_BROKER_DAY_CAP` in the runner's environment).
+
+### Backtests: synced to the live runner, checked on real quotes (engine/strategy_backtest.py, api/services/quote_replay.py)
+- The Backtest tab's defaults (`GET /api/strategies/{slug}` → `backtest.params[].default`) are the live runner's settings:
+  the strategy's `get_params()`, then its `LIVE_PARAMS`, written in each slider's terms ("Fill model (0 maker, 1 mid,
+  2 taker)" takes "mid" as 1). A run prices like the runner unless the caller overrides it.
+- A backtest job's `warnings` ("Read with care") say how the fills were priced, which settings differ from the live
+  runner, and, for the recorded days in the window, the backtest's P&L next to the live engine's on the recorded
+  bid/ask. The same check is in `calibration: {"recorded": [...], "days": [{"day", "backtest", "backtest_trades",
+  "replay", "replay_trades"}]}` (null for a strategy without a live session).
+- `GET /api/strategies/{slug}/quote-replay/days` → `{"slug", "replayable", "days": [ISO]}`.
+- `POST /api/strategies/{slug}/quote-replay` body `{"params": {...}, "days": [ISO] | null}` → 202 job. Its result:
+  `{"slug", "params", "days": [{"day", "blocked", "reason", "pnl", "trades", "quotes", "fills": [{"at", "kind",
+  "direction", "strikes", "units", "price", "reason"}]}], "total", "trades", "winning_days", "replayed_days", "basis"}`.
+  A dry run on the live runner's engine: no ledger, no broker call.

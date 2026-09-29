@@ -53,8 +53,8 @@ def main(argv=None) -> int:
 
     from db.client import get_engine
     from strategy_api import registry as R
-    from paper.providers import QUOTES_DIR, QuoteReplayProvider
-    from paper.runner import PaperSession
+    from paper.providers import QUOTES_DIR
+    from api.services.quote_replay import replay_day
     qdir = Path(a.quotes_dir or QUOTES_DIR)
     slugs = [s.strip() for s in a.strategy.split(",") if s.strip()]
     days = recorded_days(qdir) if a.day == "all" else [date.fromisoformat(a.day)]
@@ -70,11 +70,8 @@ def main(argv=None) -> int:
             print(f"{slug} does not expose a live session (live_instrument is empty)")
             continue
         run_params = {**dict(inst.get("live_params") or {}), **overrides}
-        out_dir = Path(__file__).resolve().parents[1] / "paper_state" / "quote_replay" / slug
         for day in days:
-            prov = QuoteReplayProvider(day, underlying=inst.get("underlying", "NDX"), root=inst.get("root", "NDXP"),
-                                       carry_min=int(run_params.get("carry_min", 30)), quotes_dir=str(qdir))
-            res = PaperSession(slug, prov, eng, write_ledger=False, log_dir=out_dir, state_dir=out_dir, params=run_params).run_replay(day)
+            res, prov = replay_day(slug, day, run_params, inst, qdir=qdir, eng=eng)       # api/services/quote_replay.py
             table[(slug, day)] = res
             if a.quiet:
                 continue

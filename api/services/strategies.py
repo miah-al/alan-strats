@@ -426,6 +426,13 @@ def backtest_job(ctx: JobContext, slug: str, ticker: str, from_date: str, to_dat
         raise JobError(exc.reason) from exc
     except (ValueError, NotImplementedError) as exc:
         raise JobError(str(exc) or type(exc).__name__) from exc
+    ctx.progress(0.93, "checking the fills on the recorded quotes")
+    try:
+        from api.services.quote_replay import calibrate
+        perf["calibration"] = calibrate(slug, perf["trades"], from_date, to_date, perf["params"])
+    except Exception:
+        logger.exception("%s: the real-quote check failed", slug)
+        perf["calibration"] = None
     ctx.progress(0.95, "building the result")
     result = perf["result"]
     equity, bench = perf["equity"], perf["bench_equity"]
@@ -450,6 +457,7 @@ def backtest_job(ctx: JobContext, slug: str, ticker: str, from_date: str, to_dat
         "trades": _trades_table(perf["trades"], extra),
         "coverage": perf["coverage"], "span_days": perf["span_days"], "window_days": perf["window_days"],
         "warnings": warnings,
+        "calibration": perf.get("calibration"),
         "extra": safe_extra, "extra_dropped": dropped,
     }
 
