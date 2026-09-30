@@ -65,6 +65,41 @@ DESKS: dict[str, dict] = {
 
 SYSTEM_SCOPE = "system"
 
+# The supervisor's controls, on every strategy scope (paper/supervisor.py; from 2026-09-30 Claude supervises the armed
+# strategies and may only take risk off). The runner reads them every poll; each counts only on the day it was set.
+SUPERVISOR: list[dict] = [
+    _lim("sup_entries", "Supervisor: new entries", "on/off", 1, 0, 1, "now",
+         "1 = the rules open positions; 0 = no new entries today (a resting entry is cancelled). Today only."),
+    _lim("sup_adds", "Supervisor: adds", "on/off", 1, 0, 1, "now",
+         "1 = the rules add to a loser as written; 0 = no adds today. Today only."),
+    _lim("sup_close", "Supervisor: close now", "request", 0, 0, 9_999_999_999, "now",
+         "Each new value closes every open position at the next poll, at the strategy's forced-exit price; the rules "
+         "carry on afterwards unless entries are off."),
+]
+_SUP_NAMES = frozenset(l["name"] for l in SUPERVISOR)
+
+
+def _sup_today(st: Optional[dict]) -> bool:
+    """Whether a stored supervisor control was set today (New York): one set on an earlier day is not in force."""
+    at = (st or {}).get("updated_at")
+    if not isinstance(at, _dt.datetime):
+        return False
+    from paper.supervisor import et_naive
+    return et_naive(at).date() == _dt.datetime.now(tz=_dt.timezone.utc).astimezone(_ET()).date()
+
+
+def _ET():
+    from zoneinfo import ZoneInfo
+    return ZoneInfo("America/New_York")
+
+
+def _in_force(scope: str, name: str, stored: dict) -> Optional[dict]:
+    """The stored row of (scope, name) when it is in force: always for a limit, only today's for a supervisor control."""
+    st = stored.get((scope, name))
+    if st is not None and name in _SUP_NAMES and not _sup_today(st):
+        return None
+    return st
+
 
 def _system_catalogue() -> list[dict]:
     try:
@@ -254,6 +289,8 @@ class Limits:
         if hit and time.monotonic() - hit[0] < 300:
             return hit[1]
         cat = _strategy_catalogue(scope, self._specs_for, self._values_for or (_live_values if self._specs_for is None else (lambda _s: {})))
+        if cat or scope in set(self._strategies()):          # a strategy (not a stray name): it can be supervised
+            cat = cat + SUPERVISOR
         self._cat_cache[scope] = (time.monotonic(), cat)
         return cat
 
@@ -269,12 +306,13 @@ class Limits:
     def values(self, scope: str) -> dict:
         """{name: value} in force for one scope: the stored value, else the default."""
         stored = self.store.all() if self.store else {}
-        return {l["name"]: stored.get((scope, l["name"]), {}).get("value", l["default"]) for l in self.catalogue(scope)}
+        return {l["name"]: (_in_force(scope, l["name"], stored) or {}).get("value", l["default"]) for l in self.catalogue(scope)}
 
     def overrides(self, scope: str) -> dict:
-        """{name: value} only for what the trader has set (the launcher passes these, nothing else)."""
+        """{name: value} only for what the trader has set (the launcher passes these, nothing else). Never the
+        supervisor's controls: the runner reads those itself, and they are no strategy parameter."""
         stored = self.store.all() if self.store else {}
-        names = {l["name"] for l in self.catalogue(scope)}
+        names = {l["name"] for l in self.catalogue(scope)} - _SUP_NAMES
         return {n: v["value"] for (s, n), v in stored.items() if s == scope and n in names}
 
     def set(self, scope: str, name: str, value, *, by: Optional[str] = None, reason: Optional[str] = None) -> dict:
@@ -302,7 +340,7 @@ class Limits:
                 continue
             rows = []
             for l in self.catalogue(scope):
-                st = stored.get((scope, l["name"]))
+                st = _in_force(scope, l["name"], stored)
                 value = st["value"] if st else l["default"]
                 used, status = _usage_of(l["name"], value, usage.get(scope, {}), usage)
                 rows.append({**l, "value": value, "is_default": st is None,

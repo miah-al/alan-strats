@@ -25,6 +25,13 @@ Optional hooks (the live runner looks for them with ``getattr``; an engine witho
   ``max_fills_per_session: int``
       the engine's own ceiling for the runner's runaway guard, for engines that log every order placed
       and cancelled in ``fills``
+  ``supervise(entries: bool, adds: bool, reason: str)`` and ``flatten(minute, S, quote_fn, reason) -> int``
+      the supervisor's controls (paper/supervisor.py), which only take risk off: no new positions while
+      ``entries`` is False (a resting entry is cancelled), no adds while ``adds`` is False, and ``flatten``
+      closes every open position now at the engine's forced-exit price (and cancels a resting entry),
+      returning how many it closed. The rules' exits carry on under any control. The runner calls
+      ``supervise`` whenever the controls change and ``flatten`` on each new close request; an engine
+      without both hooks is not supervised
 
 Fill rows beyond the vertical's (``kind`` rest | open | add | close | cancel with direction bull | bear):
   a STRUCTURE fill carries ``struct`` (straddle | iron_fly | iron_condor:<wing>), ``direction`` long | short and
