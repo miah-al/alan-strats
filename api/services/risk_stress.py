@@ -30,12 +30,19 @@ Units (dollars, signed for the position): ``delta`` $ per +1% move of the underl
 units of the underlying (shares / index units); ``gamma`` the change in that $ delta per +1% move, ``gamma_units`` the
 change in delta units per 1 point (risk.py's shares per $1); ``theta`` $ per day (a same-day option: per session) and
 ``theta_hour`` $ per hour; ``vega`` $ per +1 vol point. Units figures are null across more than one underlying.
+``theta_close`` is what the scope makes (or pays) by the settlement close if the underlying and the IVs stay where
+they are: the Settlement column's unchanged cell, and for same-day options the real payoff of the decay (``theta`` is
+only its rate, and the rate speeds up into the close). ``breakeven_pts`` is how far the underlying can move, in points
+either way, before the gamma P&L (1/2 * gamma_units * points^2) cancels ``theta_close``: a short-gamma book collecting
+theta keeps it inside +/- that, a long-gamma book paying theta needs a bigger move. Both are approximations
+(gamma changes as the price moves); the grid below them is the full revaluation.
 Multipliers are the ledger's (100 for NDX/NDXP, SPX/SPXW options).
 """
 from __future__ import annotations
 
 import datetime as _dt
 import logging
+import math
 import threading
 import time
 from dataclasses import dataclass, field
@@ -62,7 +69,7 @@ INPUT_TTL_S = 20.0            # positions, marks and IVs are re-read at most thi
 MAX_MOVES, MAX_VOLS = 25, 12
 MOVE_LIMIT, VOL_LIMIT = 50.0, 100.0
 
-_GREEK_KEYS = ("delta", "delta_units", "gamma", "gamma_units", "theta", "theta_hour", "vega")
+_GREEK_KEYS = ("delta", "delta_units", "gamma", "gamma_units", "theta", "theta_hour", "vega", "theta_close")
 _UNIT_KEYS = ("delta_units", "gamma_units")
 
 
@@ -404,7 +411,16 @@ def _round_greeks(g: Optional[dict]) -> Optional[dict]:
         return None
     return {"delta": _r(g["delta"]), "delta_units": _r(g.get("delta_units"), 4), "gamma": _r(g["gamma"]),
             "gamma_units": _r(g.get("gamma_units"), 6), "theta": _r(g["theta"]), "theta_hour": _r(g["theta_hour"]),
-            "vega": _r(g["vega"])}
+            "vega": _r(g["vega"]), "theta_close": _r(g.get("theta_close")), "breakeven_pts": _r(g.get("breakeven_pts"), 1)}
+
+
+def breakeven_points(theta_close: Optional[float], gamma_units: Optional[float]) -> Optional[float]:
+    """How far the underlying can move, in points either way, before the gamma P&L (1/2 * gamma_units * x^2, gamma_units
+    being the change in $-per-point delta per point) cancels ``theta_close``. None when there is no single underlying,
+    no gamma, or theta and gamma are on the same side (nothing to break even: a long-gamma book earning theta)."""
+    if theta_close is None or not gamma_units or theta_close * gamma_units >= 0:
+        return None
+    return math.sqrt(2.0 * abs(theta_close) / abs(gamma_units))
 
 
 def _sum_greeks(items: list[Optional[dict]], single: bool) -> Optional[dict]:
@@ -412,6 +428,8 @@ def _sum_greeks(items: list[Optional[dict]], single: bool) -> Optional[dict]:
     if not items:
         return None
     out = {k: sum(float(g.get(k) or 0.0) for g in items) for k in _GREEK_KEYS}
+    if all(g.get("theta_close") is None for g in items):     # a stress cell's greeks: no theta to the close there
+        out["theta_close"] = None
     if not single:
         for k in _UNIT_KEYS:
             out[k] = None
@@ -440,7 +458,8 @@ def _extremes(cells: list[list[dict]], underlyings: list[str]) -> tuple[Optional
     return lite(nearest(min(c["pnl"] for c in flat))), lite(nearest(max(c["pnl"] for c in flat)))
 
 
-def _position_entity(p: StressPosition, moves, vols, horizon: str, at: pd.Timestamp, now: pd.Timestamp) -> dict:
+def _position_entity(p: StressPosition, moves, vols, horizon: str, at: pd.Timestamp, now: pd.Timestamp,
+                     settle_at: Optional[pd.Timestamp] = None) -> dict:
     ent = {
         "kind": "position", "key": p.trade_group_id, "trade_group_id": p.trade_group_id, "label": p.structure,
         "strategy": p.strategy, "strategy_label": p.strategy_label, "underlying": p.underlying,
@@ -460,6 +479,11 @@ def _position_entity(p: StressPosition, moves, vols, horizon: str, at: pd.Timest
     ref, tot_now = position_value(p, S0, 0.0, now)
     ent["model_value"] = _r(ref)
     ent["greeks"] = dollar_greeks(tot_now, S0)
+    if ent["greeks"] is not None and settle_at is not None:
+        # theta to the close: the settlement value with the underlying and the IVs unchanged, against the Paper page's
+        # value now (the Settlement column's unchanged cell)
+        val_close, _ = position_value(p, S0, 0.0, settle_at)
+        ent["greeks"]["theta_close"] = val_close - p.market_value
     cells = []
     for m in moves:
         S = S0 * (1.0 + m / 100.0)
@@ -515,7 +539,10 @@ def _finish(ent: dict) -> dict:
         for k in ("worst", "best"):
             if st[k] is not None:
                 st[k].update(pnl=_r(st[k]["pnl"]), pnl_total=_r(st[k]["pnl_total"]), spot=_r(st[k]["spot"], 4))
-    ent["greeks"] = _round_greeks(ent.get("greeks"))
+    g = ent.get("greeks")
+    if g is not None:
+        g["breakeven_pts"] = breakeven_points(g.get("theta_close"), g.get("gamma_units"))
+    ent["greeks"] = _round_greeks(g)
     for k in ("pnl", "max_loss"):
         ent[k] = _r(ent.get(k))
     return ent
@@ -530,7 +557,7 @@ def compute(positions: list[StressPosition], moves: Iterable[float] = DEFAULT_MO
     settle_at = settlement_time([p for p in positions if p.priced], now)
     times = {"now": now, "1h": now + pd.Timedelta(hours=1), "settlement": settle_at}
     at = times[horizon]
-    pos = [_position_entity(p, moves, vols, horizon, at, now) for p in positions]
+    pos = [_position_entity(p, moves, vols, horizon, at, now, settle_at) for p in positions]
     by_strategy: dict[str, list[dict]] = {}
     for e in pos:
         by_strategy.setdefault(e["strategy"], []).append(e)
@@ -554,6 +581,9 @@ def compute(positions: list[StressPosition], moves: Iterable[float] = DEFAULT_MO
         f"{MIN_MINUTES:g} minutes); later expiries on calendar time. Each leg's IV is implied from its own mark on that clock.",
         "Greeks in dollars: delta = $ per +1% move of the underlying; gamma = change in that $ delta per +1% move; "
         "theta = $ per day (a same-day option: per session) and per hour; vega = $ per +1 vol point.",
+        "Theta to the close = what the scope makes by the settlement close if the underlying and IVs stay put (the "
+        "Settlement column's unchanged cell). Breakeven = how far the underlying can move, in points either way, before "
+        "gamma (1/2 x gamma units x points squared) cancels it; approximate, since gamma changes as the price moves.",
     ]
     if len(spots) > 1:
         assumptions.insert(0, "More than one underlying: every underlying moves by the same percentage at once "
