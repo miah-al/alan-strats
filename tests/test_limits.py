@@ -20,9 +20,11 @@ def make(usage=None):
 
 
 def test_a_strategys_limits_are_found_by_name_among_its_params():
-    names = [l["name"] for l in make().catalogue("demo_strategy")]
-    assert names == ["daily_loss_cap", "max_adds", "entry_start"]           # target_pts is not a limit
-    assert all(l["applies"] == "next_session" for l in make().catalogue("demo_strategy"))
+    cat = make().catalogue("demo_strategy")
+    names = [l["name"] for l in cat]
+    assert names[:3] == ["daily_loss_cap", "max_adds", "entry_start"]       # target_pts is not a limit
+    assert names[3:] == ["sup_entries", "sup_adds", "sup_close"]            # the supervisor's controls (test_supervisor)
+    assert all(l["applies"] == "next_session" for l in cat[:3])
 
 
 def test_values_are_the_defaults_until_set_and_every_change_is_logged():

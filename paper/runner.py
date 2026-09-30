@@ -30,6 +30,7 @@ from strategy_api.live import Quote, is_structure
 from strategy_api import registry as R
 from .providers import PARITY_TAG, ReplayProvider, TastytradeProvider, Bar, now_et, parity_leg_mid, parity_put_quote
 from . import ledger as L
+from . import supervisor as SUP
 
 logger = logging.getLogger("paper.runner")
 
@@ -76,7 +77,7 @@ class PaperSession:
 
     def __init__(self, slug: str, provider, engine_db=None, *, write_ledger: bool = True, log_dir: Optional[Path] = None,
                  account_name: str = "Paper Account", params: Optional[dict] = None, state_dir: Optional[Path] = None, starting_cash: Optional[float] = None,
-                 notify: bool = False):
+                 notify: bool = False, controls_fn: Optional[Callable[[str], dict]] = None):
         self.slug = slug
         self.provider = provider
         self.db = engine_db
@@ -101,6 +102,12 @@ class PaperSession:
         self._features_logged = False
         self.notify = bool(notify)
         self.halted: Optional[str] = None
+        # the supervisor's controls (paper/supervisor.py), read every poll; in a test, ``controls_fn(slug)``
+        self._controls_fn = controls_fn or (lambda slug: SUP.read_controls(self.db, slug))
+        self._sup_applied: tuple = (True, True)          # (entries, adds) last handed to the engine
+        self._sup_close_seen: Optional[datetime] = None  # the latest close request acted on (or older than the run)
+        self._sup_unsupported = False
+        self._sup_read_failures = 0
 
     # ── helpers ───────────────────────────────────────────────────────────────
     @staticmethod
@@ -426,6 +433,60 @@ class PaperSession:
                 elif f["kind"] in ("open", "add", "close"):
                     self._alert(f"{now:%H:%M:%S} {f['kind']} {f['direction']} {f.get('struct') or ''} {f['kl']:.0f}/{f['kh']:.0f} @ {f['px']:.2f} "
                                 f"({f['reason']}); day {session.day_pnl:+,.0f}")
+            self._write_new_fills(session, day, expiry, S, symbols_fn)
+            self._save_state(session, day)
+        return self._guard(session)
+
+    def _supervise(self, session, now: datetime, spot: Optional[float], quote_fn, day: date, expiry: date, symbols_fn) -> bool:
+        """The supervisor's controls (paper/supervisor.py) at this poll: entries and adds on or off through the engine's
+        ``supervise`` hook, and a new close request through its ``flatten``. They only take risk off, so a failure to
+        read them leaves the rules in charge; returns False only when the session must halt (the runaway guard)."""
+        if self.halted:
+            return False
+        try:
+            c = SUP.effective(self._controls_fn(self.slug) or {}, day)
+            self._sup_read_failures = 0
+        except Exception as exc:
+            self._sup_read_failures += 1
+            if self._sup_read_failures in (1, 30):
+                logger.warning("supervisor controls unreadable (%d): %s", self._sup_read_failures, exc)
+            return True
+        sup, flat = getattr(session, "supervise", None), getattr(session, "flatten", None)
+        want = (c.entries, c.adds)
+        close_new = c.close_at is not None and (self._sup_close_seen is None or c.close_at > self._sup_close_seen)
+        if (want != self._sup_applied or close_new) and (sup is None or flat is None):
+            if not self._sup_unsupported:
+                self._sup_unsupported = True
+                logger.warning("SUPERVISOR: %s's engine has no supervise/flatten hooks: the controls are ignored", self.slug)
+                self._alert(f"supervisor: {self.slug} cannot be supervised (no hooks); controls ignored")
+            self._sup_applied = want
+            if close_new:
+                self._sup_close_seen = c.close_at
+            return True
+        if want != self._sup_applied:
+            sup(c.entries, c.adds, c.reason)
+            self._sup_applied = want
+            msg = f"supervisor: entries {'on' if c.entries else 'OFF'}, adds {'on' if c.adds else 'OFF'}" + (f" ({c.reason})" if c.reason else "")
+            logger.info("%s %s", f"{now:%H:%M:%S}", msg)
+            self._alert(msg)
+        if close_new:
+            self._sup_close_seen = c.close_at
+            if not session.positions and getattr(session, "pending", None) is None:
+                logger.info("%s supervisor: close requested, nothing open", f"{now:%H:%M:%S}")
+                return True
+            S = float(spot) if spot is not None else (float(session.closes[-1]) if session.closes else 0.0)
+            n_before = len(session.fills)
+            try:
+                n = flat(_minute_of(now) + 1, S, quote_fn, "supervisor")
+            except Exception as exc:                      # the rules keep managing whatever is still open
+                logger.exception("supervisor: flatten failed")
+                self._alert(f"supervisor: close FAILED ({exc}); the rules still manage the position")
+                return True
+            for f in session.fills[n_before:]:
+                if f["kind"] in ("open", "add", "close"):
+                    self._alert(f"{now:%H:%M:%S} {f['kind']} {f['direction']} {f['kl']:.0f}/{f['kh']:.0f} @ {f['px']:.2f} "
+                                f"({f['reason']}); day {session.day_pnl:+,.0f}")
+            logger.info("%s supervisor: closed %d position(s)%s", f"{now:%H:%M:%S}", n, f" ({c.reason})" if c.reason else "")
             self._write_new_fills(session, day, expiry, S, symbols_fn)
             self._save_state(session, day)
         return self._guard(session)
@@ -791,6 +852,7 @@ class PaperSession:
         n = 0
         last_good_fetch: Optional[datetime] = None
         silence_alerted = False
+        self._sup_close_seen = now_fn()                 # a close requested before this run started is not this run's
         while True:
             now = now_fn()
             if now.time() >= until:
@@ -845,6 +907,9 @@ class PaperSession:
             self._poll_spot = (now, spot_now)          # any fill this poll prices is stamped with this level
             self._heartbeat(day, now, session, live_marks=live_marks, live_legs=live_legs, spot=spot_now)
             prov.sample_underlying(quotes, now)
+            # the supervisor's controls first (paper/supervisor.py): they only take risk off
+            if not self._supervise(session, now, spot_now, quote_fn, day, prov.expiry or day, prov.leg_symbols):
+                break
             # an engine with resting orders sees every poll's quotes, not one a minute (strategy_api.live: on_poll)
             if not self._poll(session, now, spot_now, quote_fn, day, prov.expiry or day, prov.leg_symbols):
                 break
