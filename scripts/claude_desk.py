@@ -251,7 +251,28 @@ def levels(spot: float | None) -> list[str]:
             L.append("gamma: " + ", ".join(parts) + (f" ({g.get('regime')})" if g.get("regime") else ""))
     except Exception:
         pass
+    try:
+        line = spx_walls_in_ndx(api("GET", "/market/gex/SPX", timeout=30), spot)
+        if line:
+            L.append(line)
+    except Exception:
+        pass
     return L
+
+
+def spx_walls_in_ndx(g: dict, ndx_spot: float | None) -> str:
+    """The S&P's dealer gamma levels (SPX's call and put walls, flip and max pain) in NDX points, at the live NDX/SPX
+    ratio: most of the market's dealer gamma sits in SPX, so its walls can cap or pin NDX too (the owner, 2026-09-30:
+    "ndx based on spx wall"). "" when either spot is missing."""
+    spx = g.get("spot") if isinstance(g, dict) else None
+    if not ndx_spot or not isinstance(spx, (int, float)) or spx <= 0:
+        return ""
+    r = float(ndx_spot) / float(spx)
+    parts = [f"{k.replace('_', ' ')} {g[k] * r:,.0f} ({g[k]:,.0f})" for k in ("call_wall", "put_wall", "flip", "max_pain")
+             if isinstance(g.get(k), (int, float))]
+    if not parts:
+        return ""
+    return "SPX gamma in NDX pts: " + ", ".join(parts) + (f" (SPX {g.get('regime')})" if g.get("regime") else "")
 
 
 def trades_today(st: dict) -> int:
