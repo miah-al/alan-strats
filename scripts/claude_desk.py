@@ -17,8 +17,8 @@ Every open and close is journaled BEFORE the order goes: the thesis, the exit pl
 
 Commands:
   snapshot [--news]                 market, the level map (opening range, VWAP, yesterday's H/L/C, gamma walls /
-                                    flip / max pain), my book, candidate spreads, the rails; new headlines and posts every
-                                    10 minutes (or now, with --news)
+                                    flip / max pain), my book, candidate spreads, the rails; new posts and official releases
+                                    every 10 minutes (or now, with --news); headlines are the news desk's (claude_news)
   open --leg buy:C:30250 --leg sell:C:30275 [--lots 1] --thesis ... --exit ... --wrong ...
   trim --lots N --reason ...        take N lots off (an offsetting order: the paper book closes groups whole)
   close --reason ...                close every open claude_discretionary position at market (paper mid)
@@ -260,7 +260,9 @@ def news(since: datetime) -> list[str]:
         from api.bootstrap import bootstrap
         bootstrap()
         from api.services import brief_sources as B
-        for label, fn in (("post", B.posts_block), ("news", B.headlines_block), ("official", B.official_block)):
+        # no GDELT headlines here: the news desk's watch fetches them (scripts/claude_news.py). Two processes asking
+        # GDELT for the same thing broke its one-request-per-5-seconds rule all day on 2026-09-30 (a 429 every cycle).
+        for label, fn in (("post", B.posts_block), ("official", B.official_block)):
             try:
                 items = (fn(since) or {}).get("items") or []
             except Exception as exc:  # noqa: BLE001 - a source down is a line, not a failure

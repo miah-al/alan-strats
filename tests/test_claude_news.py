@@ -48,3 +48,36 @@ def test_item_times_read_both_formats():
     assert N._item_time({"time": "14:05"}, now) == pd.Timestamp("2026-09-29 14:05", tz=NY)
     assert N._item_time({"time": "2026-09-29 18:00:00+00:00"}, now) == pd.Timestamp("2026-09-29 14:00", tz=NY)
     assert N._item_time({"time": None}, now) == now
+
+
+def test_the_account_cannot_short_and_the_rails_read_the_share_price(monkeypatch, capsys):
+    """2026-09-30: the owner's account cannot short ("Use a long call or put to get the exposure"), so a share sale is
+    refused before any order. And the preview's net is signed (a sale is a credit: -145.85): the rails must read the
+    share price, or a long's risk and notional come out wrong."""
+    from types import SimpleNamespace
+    calls: list = []
+
+    def fake_api(method, path, body=None, timeout=20.0):
+        calls.append((method, path))
+        if path == "/orders/preview":
+            sign = -1.0 if body["legs"][0]["side"] == "sell" else 1.0
+            return {"ok": True, "net_mid": sign * 145.85, "legs": [{"source": "tastytrade"}]}
+        if path.startswith("/paper/positions"):
+            return {"rows": []}
+        if path == "/orders":
+            return {"status": "filled", "trade_group_id": "TG1", "fill_price": 145.85}
+        raise AssertionError(path)
+
+    monkeypatch.setattr(N, "api", fake_api)
+    monkeypatch.setattr(N, "now_et", lambda: pd.Timestamp("2026-09-30 10:00", tz=NY))
+    monkeypatch.setattr(N, "journal", lambda *a, **k: None)
+    monkeypatch.setattr(N, "load_state", lambda: {})
+    monkeypatch.setattr(N, "save_state", lambda st: None)
+    monkeypatch.setattr(N, "MAX_RISK", 1000.0)
+    monkeypatch.setattr(N, "MAX_NOTIONAL", 10000.0)
+    args = SimpleNamespace(symbol="USO", side="sell", qty=68, stop=146.45, target=144.0, leg=None, lots=1, stop_under=None,
+                           stop_over=None, until=None, event=None, thesis="t", exit_plan="e", wrong="w")
+    assert N.cmd_open(args) == 2
+    assert "cannot short" in capsys.readouterr().out and ("POST", "/orders") not in calls
+    args.side, args.stop, args.target = "buy", 145.20, 148.0                    # long 68: $44 to the stop, $9,918 in
+    assert N.cmd_open(args) == 0 and ("POST", "/orders") in calls
