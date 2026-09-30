@@ -354,9 +354,34 @@ def test_the_endpoint(monkeypatch):
         assert len(j["portfolio"]["stress"]["cells"]) == 3 and len(j["portfolio"]["stress"]["cells"][0]) == 2
         assert {s["strategy"] for s in j["by_strategy"]} == {"alpha", "beta"} and len(j["positions"]) == 2
         assert j["warnings"] == ["w"] and j["filter"] == {"strategy": None, "trade_group_id": None}
-        assert set(j["portfolio"]["greeks"]) == {"delta", "delta_units", "gamma", "gamma_units", "theta", "theta_hour", "vega"}
+        assert set(j["portfolio"]["greeks"]) == {"delta", "delta_units", "gamma", "gamma_units", "theta", "theta_hour", "vega",
+                                                 "theta_close", "breakeven_pts"}
         j2 = c.get("/api/risk", params={"strategy": "alpha"}).json()
         assert [p["trade_group_id"] for p in j2["positions"]] == ["NDX-A-1"] and len(j2["portfolio"]["stress"]["cells"]) == 9
         assert c.get("/api/risk", params={"horizon": "tomorrow"}).status_code == 422
         assert c.get("/api/risk", params={"moves": "1,abc"}).status_code == 422
         assert c.get("/api/risk", params={"vols": "500"}).status_code == 422
+
+
+# ── theta to the close and the breakeven move (2026-09-30: "theta 11k/day?", "maybe show one more theta for the day") ──
+
+def test_theta_to_the_close_is_the_unchanged_settlement_cell_and_sums_up():
+    (a, _ga), (b, _gb) = _call_spread(), _put_spread()
+    now_rep = RS.compute([a, b], horizon="now", now=NOW)
+    settle = RS.compute([a, b], horizon="settlement", now=NOW)
+    for ent, ent_s in zip(_entities(now_rep), _entities(settle)):
+        assert ent["greeks"]["theta_close"] == pytest.approx(_cell(ent_s, 0.0, 0.0)["pnl"], abs=0.02)
+    port, parts = now_rep["portfolio"]["greeks"], [p["greeks"] for p in now_rep["positions"]]
+    assert port["theta_close"] == pytest.approx(sum(g["theta_close"] for g in parts), abs=0.02)
+    assert _cell(now_rep["positions"][0], 0.0, 0.0)["greeks"]["theta_close"] is None     # none inside the grid
+
+
+def test_a_short_straddle_breaks_even_where_gamma_eats_the_theta():
+    (p, _g) = _position("NDX-F-5", "fly", [("call", 20000, "Sell", 1, 460.0), ("put", 20000, "Sell", 1, 440.0)])
+    rep = RS.compute([p], horizon="now", now=NOW)
+    g = rep["positions"][0]["greeks"]
+    assert g["theta_close"] > 0 and g["gamma_units"] < 0
+    assert g["breakeven_pts"] == pytest.approx(math.sqrt(2 * g["theta_close"] / abs(g["gamma_units"])), rel=0.01)
+    assert RS.breakeven_points(500.0, 0.5) is None                       # long gamma earning theta: nothing to break even
+    assert RS.breakeven_points(None, -0.5) is None and RS.breakeven_points(500.0, 0.0) is None
+    assert RS.breakeven_points(5000.0, -0.93) == pytest.approx(103.7, abs=0.1)   # the 2026-09-30 book: about 100 points
