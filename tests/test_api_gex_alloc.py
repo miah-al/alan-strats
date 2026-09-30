@@ -83,7 +83,7 @@ def test_the_plan():
 class FakeInputs:
     def __init__(self):
         self.vix = 14.2
-        self.net_gex = -5.95e9
+        self.net_gex = -59.5e9                     # SPX's size: the variant reads SPX's gamma (x10 thresholds)
         self.price = 767.2
         self.eq = 28883.0
         self.book: dict[str, list[dict]] = {v: [] for v in G.LEDGER.values()}
@@ -97,7 +97,7 @@ class FakeInputs:
     def spy_price(self):
         return self.price
 
-    def spy_net_gex(self):
+    def signal_net_gex(self):
         return self.net_gex, "hub:fake"
 
     def vix_history(self, until, days=G.SEED_DAYS):
@@ -155,7 +155,9 @@ def test_day_one_opens_both_variants_and_decides_once(alloc):
     assert body["client_order_id"] == "gexalloc-vix-2026-09-25-buy"
     g = a.run("gex")
     assert g["regime"] == "DeepNegative" and g["weight"] == 0.15 and g["target"] == 5 and g["status"] == "rebalanced"
-    assert g["detail"]["net_gex_billions"] == pytest.approx(-5.95)          # $B, as _classify_gex expects
+    assert g["detail"]["net_gex_billions"] == pytest.approx(-59.5)          # $B, as _classify_gex expects
+    assert g["detail"]["gex_underlying"] == "SPX" and g["detail"]["threshold_scale"] == 10.0
+    assert g["detail"]["thresholds_b"] == [-30.0, -15.0, 15.0, 30.0]      # the strategy's +-1.5 / +-3 $B x10
     assert g["detail"]["combined_exposure_x"] == pytest.approx((33 + 5) * 767.2 / 28883.0, abs=1e-3)
     n = len(orders.calls)
     again = a.run("vix")
@@ -177,13 +179,13 @@ def test_the_following_days(alloc):
     r = a.run("vix")
     assert r["status"] == "held" and r["regime"] == "HighPositive" and r["detail"]["raw_regime"] == "Negative"
     assert r["detail"]["streak"] == 1 and "caught_up" not in r["detail"]     # the state was already at Friday
-    # the GEX variant follows GEX at once: +4 $B -> HighPositive 90%: buys 28 more
-    inputs.net_gex = 4e9
+    # the GEX variant follows GEX at once: +40 $B (SPX) -> HighPositive 90%: buys 28 more
+    inputs.net_gex = 40e9
     g = a.run("gex")
     assert g["regime"] == "HighPositive" and g["target"] == 33 and orders.calls[-1][1]["legs"][0]["quantity"] == 28
     # Tuesday: GEX deeply negative again -> 5 shares: the oldest lots go first, then 5 are bought back
     clock["t"] = pd.Timestamp("2026-09-29 15:50", tz=NY)
-    inputs.net_gex = -5e9
+    inputs.net_gex = -50e9
     g = a.run("gex")
     closes = [c for c in orders.calls if c[0] == "close"]
     assert g["status"] == "rebalanced" and len(closes) == 2 and orders.calls[-1][1]["legs"][0]["quantity"] == 5
@@ -289,3 +291,15 @@ def test_the_db_store_round_trip():
             c.execute(text("DELETE FROM app.GexAllocState WHERE Variant = :v"), {"v": v})
         if not had:
             uninstall_db_read_only_guard()
+
+
+def test_the_gex_variant_reads_spx_gamma_on_spx_sized_thresholds(alloc):
+    """2026-09-30, the owner: "Spx". SPX's gamma runs about 10x SPY's (+-$7-80B a day recorded, against +-$0.1-12B),
+    so the strategy's +-1.5 / +-3 $B thresholds are scaled x10: the days recorded so far spread over the regimes."""
+    a, inputs, orders, clock, events = alloc
+    for net_b, regime in ((79.4, "HighPositive"), (26.8, "MildPositive"), (7.1, "Neutral"), (-18.8, "Negative"),
+                          (-47.0, "DeepNegative")):
+        inputs.net_gex = net_b * 1e9
+        reg, weight, detail = a._gex_decision(G.strategy(), clock["t"].date())
+        assert reg == regime, (net_b, reg)
+    assert G.SIGNAL_UNDERLYING == "SPX" and G.UNDERLYING == "SPY"                # the gamma is SPX's, the shares SPY
