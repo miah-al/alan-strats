@@ -12,9 +12,14 @@ strategy name:
                         over the stored VIX closes (about two years, on SPY's trading days, carried forward as
                         the backtest does), so day 1 holds what the backtest would hold. Each run applies one
                         day: today's VIX at ~15:50 ET stands in for the close.
-  gex_positioning:gex   the strategy's ``generate_signal`` on SPY's live net GEX in $B per 1% move
-                        (``net_gex_billions`` = /api/market/gex/SPY?source=hub's net_gex / 1e9 — the units
-                        ``_classify_gex`` expects), no confirmation (the author's live mode).
+  gex_positioning:gex   the strategy's ``generate_signal`` on SPX's live net GEX in $B per 1% move
+                        (``net_gex_billions`` = /api/market/gex/SPX?source=hub's net_gex / 1e9), no confirmation
+                        (the author's live mode). Since 2026-09-30 (the owner: "Spx") the gamma is the S&P
+                        index's, where the market's dealer gamma sits, not SPY's; the strategy's thresholds
+                        (+-1.5 / +-3 $B) are scaled x10 to SPX's size (``threshold_scale``): our SPX figures run
+                        +-$7-80B a day, SPY's +-$0.1-12B, and the two disagreed in sign on 2 of the 5 recorded
+                        days, so no fixed ratio converts one into the other. A first calibration: revisit after
+                        20 recorded days (GET /api/market/gex/SPX/history). The instrument stays SPY shares.
 
 Once per armed trading day (api/services/arms.py, 15:50 ET): target shares = floor(weight x account equity /
 SPY price). If |target - current| is worth at least 1% of equity, it rebalances with paper market orders
@@ -41,7 +46,17 @@ NY = "America/New_York"
 SLUG = "gex_positioning"
 VARIANTS = ("vix", "gex")
 LEDGER = {"vix": "gex_positioning:vix", "gex": "gex_positioning:gex"}
-UNDERLYING = "SPY"
+UNDERLYING = "SPY"                 # the instrument (the S&P as shares: SPX itself cannot be bought)
+SIGNAL_UNDERLYING = "SPX"          # whose dealer gamma the gex variant reads
+SPX_THRESHOLD_SCALE = 10.0         # the strategy's $B thresholds x this, in SPX's size
+
+
+def threshold_scale() -> float:
+    """The gex variant's threshold scale (ALAN_TRADER_GEX_THRESHOLD_SCALE overrides SPX_THRESHOLD_SCALE)."""
+    try:
+        return float(os.environ.get("ALAN_TRADER_GEX_THRESHOLD_SCALE", SPX_THRESHOLD_SCALE))
+    except ValueError:
+        return SPX_THRESHOLD_SCALE
 MIN_TRADE_FRAC = 0.01
 SEED_DAYS = 730
 
@@ -308,11 +323,12 @@ class LiveInputs:
         from api.services import market as M
         return M.gex_spot(UNDERLYING, self.hub)
 
-    def spy_net_gex(self) -> tuple[Optional[float], str]:
+    def signal_net_gex(self) -> tuple[Optional[float], str]:
+        """The gex variant's gamma: SPX's live net GEX ($ per 1% move) and its source."""
         from api.marketdata.limits import patience
         from api.services import market as M
         with patience(120.0):
-            g = M.gex(UNDERLYING, "hub", hub=self.hub)
+            g = M.gex(SIGNAL_UNDERLYING, "hub", hub=self.hub)
         return (float(g["net_gex"]) if g.get("net_gex") is not None else None), str(g.get("source") or "")
 
     def vix_history(self, until: _dt.date, days: int = SEED_DAYS) -> tuple[pd.Series, dict]:
@@ -435,17 +451,20 @@ class GexAllocator:
         return state["held"], weight_of(s, state["held"]), detail
 
     def _gex_decision(self, s, day: _dt.date) -> tuple[str, float, dict]:
-        net, src = self.inputs.spy_net_gex()
+        net, src = self.inputs.signal_net_gex()
         if net is None:
-            raise LookupError("no live SPY net GEX")
+            raise LookupError(f"no live {SIGNAL_UNDERLYING} net GEX")
         vix, vsrc = self.inputs.vix_now()
         net_b = net / 1e9                                    # $ per 1% move -> $B, what _classify_gex expects
+        scale = threshold_scale()                            # the thresholds in SPX's size (module docstring)
+        s.gex_pos_thr, s.gex_neg_thr = float(s.gex_pos_thr) * scale, float(s.gex_neg_thr) * scale
         sig = s.generate_signal({"net_gex_billions": net_b, "vix": vix if vix is not None else 20.0})
         md = sig.metadata or {}
         state = {"regime": md.get("regime"), "weight": md.get("spy_weight"), "net_gex_billions": net_b,
                  "asof": day.isoformat()}
         self.store.put_state("gex", state)
         return str(md["regime"]), float(md["spy_weight"]), {"net_gex": net, "net_gex_billions": round(net_b, 4),
+                                                           "gex_underlying": SIGNAL_UNDERLYING, "threshold_scale": scale,
                                                            "gex_source": src, "vix": vix, "vix_source": vsrc,
                                                            "signal": sig.signal, "source": md.get("source"),
                                                            "thresholds_b": [s.gex_neg_thr * 2, s.gex_neg_thr,
