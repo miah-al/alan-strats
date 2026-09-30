@@ -114,6 +114,13 @@ def main(argv=None) -> int:
     ap.add_argument("--day", default=None)
     ap.add_argument("--backup-dir", default=None, help="where the dated zip goes (default: alan-trader-logs, beside the alan_trader repo)")
     args = ap.parse_args(argv)
+    # load the strategy plugins, as scripts/paper_runner.py does: without them the registry knows no strategy folder,
+    # and the start script's after-close archive failed ("strategy folder ... not found", 2026-09-30)
+    from api.bootstrap import BootstrapError, bootstrap
+    try:
+        bootstrap()
+    except BootstrapError as exc:
+        print(f"warning: bootstrap failed ({exc}); looking for the strategy folder anyway")
     from paper.runner import PaperSession
     folder = PaperSession._strategy_folder(args.strategy)
     if folder is None:

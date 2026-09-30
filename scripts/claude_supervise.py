@@ -66,10 +66,10 @@ def cmd_status(only: str | None = None) -> str:
                + ("" if cl.get("is_default", True) else f", close requested {str(cl.get('updated_at'))[11:16]} UTC"))
         p = procs.get(name, {})
         pos = open_positions(name)
-        pos_s = "; ".join(f"{r.get('description') or r.get('symbol') or r.get('structure') or '?'} x{r.get('qty') or r.get('quantity') or '?'} "
+        pos_s = "; ".join(f"{r.get('description') or r.get('symbol') or r.get('structure') or '?'} x{r.get('contracts') or r.get('qty') or '?'} "
                           f"{float(r.get('pnl') or 0):+,.0f}" for r in pos) or "flat"
         day = s.get("day_pnl")
-        out.append(f"  {name:<20} runner {p.get('status', '?')} ({p.get('reason', '')}) | day {('%+,.0f' % day) if day is not None else 'n/a'}"
+        out.append(f"  {name:<20} runner {p.get('status', '?')} ({p.get('reason', '')}) | day {f'{day:+,.0f}' if day is not None else 'n/a'}"
                    f" | {pos_s} | {ctl}")
     return "\n".join(out)
 

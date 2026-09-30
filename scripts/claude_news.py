@@ -183,7 +183,7 @@ def fetch_items(since: datetime, want: set[str], notes: Optional[list] = None) -
                 out.append({"id": "news:" + re.sub(r"\W+", "", str(h.get("title") or ""))[:80].lower(), "kind": "news",
                             "time": h.get("time_et"), "text": h.get("title") or "",
                             "source": f"{h.get('domain') or 'GDELT'}" + (f" +{h['sources'] - 1} more" if (h.get("sources") or 1) > 1 else "")})
-            time.sleep(6)                        # GDELT: one request at a time, 5 s apart
+            time.sleep(12)                       # GDELT: one request at a time, 5 s apart (in practice a burst needs more)
         blk = B.official_block(since) or {}
         notes += [f"official: {n}" for n in blk.get("notes") or []]
         for o in blk.get("items") or []:
@@ -273,6 +273,8 @@ def cmd_open(a) -> int:
     else:
         if a.qty is None or a.stop is None:
             why.append("shares need --qty and --stop")
+        if a.side == "sell":                        # the owner's account cannot short (2026-09-30: "I cannot short")
+            why.append("the account cannot short shares: get the exposure with a long put (--leg buy:P:<strike>:<expiry>)")
         legs = [{"type": "stock", "side": a.side, "quantity": int(a.qty or 0)}]
         body = {"account": "paper", "underlying": sym, "order_type": "market", "tif": "day", "strategy": SLUG, "legs": legs}
     pv = api("POST", "/orders/preview", body)
@@ -288,7 +290,8 @@ def cmd_open(a) -> int:
         elif abs(float(ml)) > MAX_RISK + 1e-6:
             why.append(f"max loss {abs(float(ml)):,.0f} is over ${MAX_RISK:,.0f}")
     elif pv.get("net_mid") is not None and a.stop is not None:
-        why += share_rails(int(a.qty), float(pv["net_mid"]), float(a.stop), a.side)
+        # the preview's net is signed (a sale is a credit, -145.85): the rails want the share price
+        why += share_rails(int(a.qty), abs(float(pv["net_mid"])), float(a.stop), a.side)
     if why:
         print("REFUSED: " + "; ".join(why)); return 2
     label = f"claude_events: {a.thesis[:150]}"
