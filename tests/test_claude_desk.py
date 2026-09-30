@@ -29,3 +29,11 @@ def test_trades_a_day_count_opens_not_trims():
     st = {"positions": {"A": {"lots": 2}, "B": {"lots": 1, "trim_of": "A"}, "C": {"lots": 2}}}
     assert D.trades_today(st) == 2
     assert D.trades_today({}) == 0 and D.trades_today({"positions": {}}) == 0
+
+
+def test_spx_walls_are_shown_in_ndx_points_at_the_live_ratio():
+    g = {"spot": 7674.0, "call_wall": 7750.0, "put_wall": 7600.0, "flip": 7694.0, "max_pain": 7700.0, "regime": "negative"}
+    line = D.spx_walls_in_ndx(g, 30417.0)                              # ratio 3.9636
+    assert line.startswith("SPX gamma in NDX pts: call wall 30,718 (7,750)") and "put wall 30,124 (7,600)" in line
+    assert line.endswith("(SPX negative)")
+    assert D.spx_walls_in_ndx(g, None) == "" and D.spx_walls_in_ndx({"call_wall": 7750.0}, 30417.0) == ""
