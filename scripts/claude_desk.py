@@ -32,6 +32,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 import time
 import urllib.error
@@ -49,6 +50,7 @@ UNDER, ROOT = "NDX", "NDXP"
 # set on the app's Limits page or PUT /api/limits/claude_discretionary/<name>), read before every command and on every
 # feed poll (apply_limits). The desk never changes them itself.
 MAX_LOTS, MAX_RISK, DAY_STOP, MAX_POSITIONS = 2, 2500.0, -2500.0, 1
+MAX_TRADES = 3                                  # new positions per day (a trim or a close is not one)
 ENTRY_START, ENTRY_END, FLAT_AT, FEED_END = "09:45", "15:30", "15:55", "16:00"
 NY = "America/New_York"
 STATE_DIR = Path(__file__).resolve().parents[1] / "paper_state" / "claude_desk"
@@ -60,7 +62,7 @@ NEWS_EVERY_S = 600
 def apply_limits() -> None:
     """Take the limits in force from the service (GET /api/limits/<SLUG>). If it cannot answer, the last values stay:
     the desk cannot trade without the service anyway."""
-    global MAX_LOTS, MAX_RISK, DAY_STOP, MAX_POSITIONS, ENTRY_START, ENTRY_END, FLAT_AT
+    global MAX_LOTS, MAX_RISK, DAY_STOP, MAX_POSITIONS, MAX_TRADES, ENTRY_START, ENTRY_END, FLAT_AT
     try:
         v = api("GET", f"/limits/{SLUG}", timeout=10.0).get("values") or {}
     except Exception:  # noqa: BLE001
@@ -69,6 +71,7 @@ def apply_limits() -> None:
     MAX_RISK = float(v.get("max_risk", MAX_RISK))
     DAY_STOP = -abs(float(v.get("day_stop", DAY_STOP)))
     MAX_POSITIONS = int(v.get("max_positions", MAX_POSITIONS))
+    MAX_TRADES = int(v.get("max_trades", MAX_TRADES))
     ENTRY_START = str(v.get("entry_start", ENTRY_START))
     ENTRY_END = str(v.get("entry_end", ENTRY_END))
     FLAT_AT = str(v.get("flat_at", FLAT_AT))
@@ -251,6 +254,31 @@ def levels(spot: float | None) -> list[str]:
     return L
 
 
+def trades_today(st: dict) -> int:
+    """New positions opened today (a trim's offsetting group is not a trade)."""
+    return sum(1 for m in (st.get("positions") or {}).values() if not m.get("trim_of"))
+
+
+def playbook(levels_text: str, t: pd.Timestamp) -> str:
+    """The veteran's playbook for the regime and the clock (project memory, 2026-09-30): what to trade now, in one
+    line. The regime is the dealer gamma one the level map carries ("(positive)", "(negative)", "(near_flip)")."""
+    hmn = hm(t)
+    if hmn < "10:00":
+        return "the first 30 minutes are noise: no trades; name the day type by 10:30 (trend, range or reversal)"
+    if hmn >= "15:40":
+        return "no new short gamma: the closing-auction imbalances publish at 15:50 and can flush the close"
+    reg = re.search(r"\((positive|negative|near_flip)\)", levels_text or "")
+    if reg is None:
+        return "no gamma regime: small size, trade only at levels"
+    return {
+        "positive": "positive gamma = a range: mean reversion at the range edges and VWAP, breaks fail (no break "
+                    "trades); sell premium outside the range once it is set; let Friend's rules run, adds included",
+        "negative": "negative gamma = moves extend: trade with the trend on pullbacks, never fade; as supervisor, block "
+                    "Friend's adds (and consider its entries) when the trend runs against it",
+        "near_flip": "near the gamma flip: the regime can turn; smaller size, wait for price to leave the flip zone",
+    }[reg.group(1)]
+
+
 def news(since: datetime) -> list[str]:
     """New headlines, official releases and presidential posts since ``since`` (the morning brief's sources)."""
     lines = []
@@ -291,15 +319,18 @@ def cmd_snapshot(force_news: bool = False) -> str:
     lv = levels(spot)
     if lv:
         L.append("  levels: " + " | ".join(lv))
+    L.append("  playbook: " + playbook(" | ".join(lv), t))
     realised, marked, opened = day_pnl(day)
     L.append(f"  book: day {realised + marked:+,.0f} (realised {realised:+,.0f}, open {marked:+,.0f})"
              + (" | DONE for the day" if st.get("done") else ""))
     for r in opened:
         L.append(f"    open {r.get('structure')} x{r.get('contracts')} entry {r.get('entry_net')} mark {r.get('mark')} "
                  f"pnl {r.get('pnl')} max loss {r.get('max_loss')} ({r.get('trade_group_id')})")
-    ok = (not st.get("done")) and len(opened) < MAX_POSITIONS and ENTRY_START <= hm(t) <= ENTRY_END
+    used = trades_today(st)
+    ok = (not st.get("done")) and len(opened) < MAX_POSITIONS and used < MAX_TRADES and ENTRY_START <= hm(t) <= ENTRY_END
     L.append(f"  entries {'OPEN' if ok else 'closed'} (rails: <= {MAX_LOTS} lots, <= ${MAX_RISK:,.0f} at risk, "
-             f"<= {MAX_POSITIONS} position(s), {ENTRY_START}-{ENTRY_END}, stop {DAY_STOP:+,.0f}, flat {FLAT_AT})")
+             f"<= {MAX_POSITIONS} position(s), <= {MAX_TRADES} trades a day ({used} used), {ENTRY_START}-{ENTRY_END}, "
+             f"stop {DAY_STOP:+,.0f}, flat {FLAT_AT})")
     if spot and ok:
         atm = round(spot / 25.0) * 25.0
         cands = [("bull call", [("buy", "C", k), ("sell", "C", k + 25)]) for k in (atm - 25, atm, atm + 25)] + \
@@ -337,6 +368,8 @@ def cmd_open(legs: list[dict], lots: int, thesis: str, exit_plan: str, wrong: st
         why.append("1-4 legs")
     if not (thesis.strip() and exit_plan.strip() and wrong.strip()):
         why.append("thesis, exit and what-proves-me-wrong are all required")
+    if trades_today(st) >= MAX_TRADES:
+        why.append(f"{trades_today(st)} trades opened today, the limit is {MAX_TRADES} (standing aside is a position)")
     realised, marked, opened = day_pnl(day)
     if len(opened) >= MAX_POSITIONS:
         why.append(f"{len(opened)} position(s) open, the limit is {MAX_POSITIONS}")
