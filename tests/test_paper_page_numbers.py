@@ -35,3 +35,20 @@ def test_runner_marks_join_on_the_ledger_id():
     assert runner_mark_for(marks, "NDX-NDX_0DTE-10029") == (36.1, 2.0, "tastytrade")
     assert runner_mark_for(marks, "10029") == (36.1, 2.0, "tastytrade")
     assert runner_mark_for(marks, "NDX-NDX_0DTE-10030") is None
+
+
+def test_closed_rows_are_built_once_and_relabelled_each_time(monkeypatch):
+    """A closed trade never changes: its (slow) row is built once per process, keyed by the ledger's closed-row
+    fields, while the strategy label is applied fresh (2026-10-01: 48 rows took 5-10 s, past the app's timeout)."""
+    import pandas as pd
+    from api.services import paper as PS
+    built = []
+    monkeypatch.setattr(PS, "_CLOSED_ROWS", {})
+    monkeypatch.setattr(PS, "_closed_row", lambda r, t, l: built.append(r["TradeGroupId"]) or
+                        {"trade_group_id": r["TradeGroupId"], "strategy": "s1", "strategy_label": "old", "pnl": 1.0})
+    r = {"TradeGroupId": "G1", "P&L $": 10.0, "Close Date": "2026-10-01", "Net Entry": -5.0}
+    a = PS._closed_row_cached(r, pd.DataFrame(), {"s1": "First"})
+    b = PS._closed_row_cached(r, pd.DataFrame(), {"s1": "Renamed"})
+    assert built == ["G1"] and a["strategy_label"] == "First" and b["strategy_label"] == "Renamed"
+    PS._closed_row_cached({**r, "P&L $": 12.0}, pd.DataFrame(), {})          # a corrected trade is rebuilt
+    assert built == ["G1", "G1"]

@@ -537,6 +537,21 @@ def _closed_row(r: dict, txns: pd.DataFrame, labels: dict) -> dict:
     }
 
 
+#: A closed trade group never changes, so its row is built once per process: the payoff stats are the slow part (~50 ms
+#: a group in pandas; 48 groups took 5-10 s inside the busy service on 2026-10-01, past the app's 10 s timeout, so the
+#: Trades and Performance pages failed). Keyed by the ledger's own closed-row fields: a correction changes the key.
+_CLOSED_ROWS: dict = {}
+
+
+def _closed_row_cached(r: dict, txns: pd.DataFrame, labels: dict) -> dict:
+    key = (str(r.get("TradeGroupId")), str(r.get("P&L $")), str(r.get("Close Date")), str(r.get("Net Entry")))
+    row = _CLOSED_ROWS.get(key)
+    if row is None:
+        row = _CLOSED_ROWS[key] = _closed_row(r, txns, labels)
+    slug = row.get("strategy") or ""
+    return {**row, "strategy_label": labels.get(slug, slug)}          # labels can change; the trade cannot
+
+
 def positions(status: str = "open", hub=None) -> dict:
     open_groups, closed_rows, txns = load()
     labels = _labels()
@@ -547,7 +562,7 @@ def positions(status: str = "open", hub=None) -> dict:
         opened = [_open_row(t, g, marks, labels, hq, hub) for t, g in open_groups.items()]
         rows += sorted(opened, key=lambda x: (x["opened"] or "", x["trade_group_id"]), reverse=True)
     if status in ("closed", "all"):
-        closed = [_closed_row(r, txns, labels) for r in closed_rows or []]
+        closed = [_closed_row_cached(r, txns, labels) for r in closed_rows or []]
         rows += sorted(closed, key=lambda x: (x["closed"] or "", x["trade_group_id"]), reverse=True)
     if not rows:
         from api.serialize import column
