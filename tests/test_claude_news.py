@@ -81,3 +81,25 @@ def test_the_account_cannot_short_and_the_rails_read_the_share_price(monkeypatch
     assert "cannot short" in capsys.readouterr().out and ("POST", "/orders") not in calls
     args.side, args.stop, args.target = "buy", 145.20, 148.0                    # long 68: $44 to the stop, $9,918 in
     assert N.cmd_open(args) == 0 and ("POST", "/orders") in calls
+
+
+def test_shock_follow_flags_a_3_sigma_day_and_sizes_the_trade():
+    """Multi-day shock follows (2026-10-01 study; the owner: "Then etf is fine"): a 3-sigma close in USO / IBIT is a
+    trigger; up = shares with the stop 2 sigma of the hold away, sized so the stop costs the risk cap; down = a put."""
+    from datetime import date
+    import numpy as np
+    from scripts import claude_news as N
+    rng = np.random.default_rng(7)
+    closes = list(100 * np.exp(np.cumsum(rng.normal(0, 0.02, 30))))             # ~2% daily sigma
+    z, move, sigma = N.shock_z(closes, closes[-1] * 1.08)                       # an +8% day
+    assert 0.015 < sigma < 0.03 and z >= 3 and abs(move - np.log(1.08)) < 1e-9
+    assert N.add_sessions(date(2026, 10, 1), 5) == date(2026, 10, 8)            # Thu + 5 weekdays (the weekend skipped)
+    plan = N.shock_plan("USO", 150.0, z, sigma, date(2026, 10, 1), 1000.0, 10000.0)
+    stop_pct = 2 * sigma * np.sqrt(5)
+    assert plan["side"] == "buy" and plan["until"] == "2026-10-08T15:45"
+    assert plan["qty"] == int(min(10000 / 150, 1000 / (150 * stop_pct)))          # the stop costs at most $1,000
+    assert abs(plan["stop"] - round(150 * (1 - stop_pct), 2)) < 1e-9 and "--side buy" in plan["cmd"]
+    down = N.shock_plan("IBIT", 48.0, -3.2, 0.027, date(2026, 10, 1), 1000.0, 10000.0)
+    assert down["side"] == "put" and down["strike"] == 48 and down["expiry_from"] == "2026-10-22"   # 10 + 5 sessions
+    assert "buy:P:48" in down["cmd"] and "--side sell" not in down["cmd"]          # never short shares
+    assert N.shock_plan("USO", 150.0, 2.9, sigma, date(2026, 10, 1), 1000.0, 10000.0) is None
