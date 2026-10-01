@@ -37,3 +37,23 @@ def test_spx_walls_are_shown_in_ndx_points_at_the_live_ratio():
     assert line.startswith("SPX gamma in NDX pts: call wall 30,718 (7,750)") and "put wall 30,124 (7,600)" in line
     assert line.endswith("(SPX negative)")
     assert D.spx_walls_in_ndx(g, None) == "" and D.spx_walls_in_ndx({"call_wall": 7750.0}, 30417.0) == ""
+
+
+def test_premium_only_refuses_a_debit_and_quotes_condors_outside_the_range():
+    """premium_only (agreed 2026-10-01): a debit is refused, a credit passes; the menu sells outside the day's range."""
+    assert "premium only" in D.premium_refusal({"debit_credit": "debit"}, True)
+    assert D.premium_refusal({"debit_credit": "credit"}, True) is None
+    assert D.premium_refusal({"debit_credit": "debit"}, False) is None                  # the owner can switch it off
+    menu = dict(D.premium_menu(30_540.0, 30_616.0, 30_275.0))
+    assert menu["condor"] == [("sell", "C", 30_650.0), ("buy", "C", 30_675.0), ("sell", "P", 30_250.0), ("buy", "P", 30_225.0)]
+    assert menu["condor@edges"][0] == ("sell", "C", 30_625.0) and menu["condor@edges"][2] == ("sell", "P", 30_275.0)
+    assert menu["call credit"] == [("sell", "C", 30_650.0), ("buy", "C", 30_675.0)]
+    assert all(s == "sell" for s, _, _ in [legs[0] for legs in menu.values()])           # every structure opens with a sale
+    # no range yet (first minutes) or the spot outside it: the spot bounds the shorts
+    assert dict(D.premium_menu(30_540.0, None, None))["condor"][0] == ("sell", "C", 30_575.0)
+
+
+def test_the_premium_only_limit_is_on_by_default():
+    from api.services import limits as LIM
+    spec = {s["name"]: s for s in LIM.DESKS["claude_discretionary"]["limits"]}["premium_only"]
+    assert spec["default"] == 1 and (spec["min"], spec["max"]) == (0, 1)
