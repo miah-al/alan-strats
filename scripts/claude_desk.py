@@ -32,6 +32,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import re
 import sys
 import time
@@ -51,6 +52,7 @@ UNDER, ROOT = "NDX", "NDXP"
 # feed poll (apply_limits). The desk never changes them itself.
 MAX_LOTS, MAX_RISK, DAY_STOP, MAX_POSITIONS = 2, 2500.0, -2500.0, 1
 MAX_TRADES = 3                                  # new positions per day (a trim or a close is not one)
+PREMIUM_ONLY = True                             # sell premium only: a debit structure is refused (agreed 2026-10-01)
 ENTRY_START, ENTRY_END, FLAT_AT, FEED_END = "09:45", "15:30", "15:55", "16:00"
 NY = "America/New_York"
 STATE_DIR = Path(__file__).resolve().parents[1] / "paper_state" / "claude_desk"
@@ -62,7 +64,7 @@ NEWS_EVERY_S = 600
 def apply_limits() -> None:
     """Take the limits in force from the service (GET /api/limits/<SLUG>). If it cannot answer, the last values stay:
     the desk cannot trade without the service anyway."""
-    global MAX_LOTS, MAX_RISK, DAY_STOP, MAX_POSITIONS, MAX_TRADES, ENTRY_START, ENTRY_END, FLAT_AT
+    global MAX_LOTS, MAX_RISK, DAY_STOP, MAX_POSITIONS, MAX_TRADES, PREMIUM_ONLY, ENTRY_START, ENTRY_END, FLAT_AT
     try:
         v = api("GET", f"/limits/{SLUG}", timeout=10.0).get("values") or {}
     except Exception:  # noqa: BLE001
@@ -72,6 +74,7 @@ def apply_limits() -> None:
     DAY_STOP = -abs(float(v.get("day_stop", DAY_STOP)))
     MAX_POSITIONS = int(v.get("max_positions", MAX_POSITIONS))
     MAX_TRADES = int(v.get("max_trades", MAX_TRADES))
+    PREMIUM_ONLY = bool(int(float(v.get("premium_only", 1 if PREMIUM_ONLY else 0))))
     ENTRY_START = str(v.get("entry_start", ENTRY_START))
     ENTRY_END = str(v.get("entry_end", ENTRY_END))
     FLAT_AT = str(v.get("flat_at", FLAT_AT))
@@ -280,6 +283,30 @@ def trades_today(st: dict) -> int:
     return sum(1 for m in (st.get("positions") or {}).values() if not m.get("trim_of"))
 
 
+def premium_refusal(pv: dict, premium_only: bool) -> str | None:
+    """Why an open is refused under the premium_only limit: the desk sells premium (condors, credit spreads) and buys
+    no debit. Agreed with the owner on 2026-10-01, after three sessions of 0DTE debit direction calls lost (-$1.6k,
+    37% won): the coin flip pays theta and the crossing cost on every trade."""
+    if premium_only and pv.get("debit_credit") == "debit":
+        return ("premium only (the premium_only limit): this structure is a debit; sell premium outside the range "
+                "(a condor or a credit spread) or stand aside")
+    return None
+
+
+def premium_menu(spot: float, high: float | None, low: float | None) -> list[tuple[str, list[tuple[str, str, float]]]]:
+    """The structures the premium-only desk quotes: an iron condor and its two credit spreads, short strikes one 25-pt
+    step outside the day's range so far (and the spot), 25 wide (a 25-wide condor's max loss fits the $2,500 rail),
+    plus a tighter condor with its shorts at the range edges themselves."""
+    hi = math.ceil(max(high or spot, spot) / 25.0) * 25.0
+    lo = math.floor(min(low or spot, spot) / 25.0) * 25.0
+    return [
+        ("condor", [("sell", "C", hi + 25), ("buy", "C", hi + 50), ("sell", "P", lo - 25), ("buy", "P", lo - 50)]),
+        ("condor@edges", [("sell", "C", hi), ("buy", "C", hi + 25), ("sell", "P", lo), ("buy", "P", lo - 25)]),
+        ("call credit", [("sell", "C", hi + 25), ("buy", "C", hi + 50)]),
+        ("put credit", [("sell", "P", lo - 25), ("buy", "P", lo - 50)]),
+    ]
+
+
 def playbook(levels_text: str, t: pd.Timestamp) -> str:
     """The veteran's playbook for the regime and the clock (project memory, 2026-09-30): what to trade now, in one
     line. The regime is the dealer gamma one the level map carries ("(positive)", "(negative)", "(near_flip)")."""
@@ -351,12 +378,18 @@ def cmd_snapshot(force_news: bool = False) -> str:
     ok = (not st.get("done")) and len(opened) < MAX_POSITIONS and used < MAX_TRADES and ENTRY_START <= hm(t) <= ENTRY_END
     L.append(f"  entries {'OPEN' if ok else 'closed'} (rails: <= {MAX_LOTS} lots, <= ${MAX_RISK:,.0f} at risk, "
              f"<= {MAX_POSITIONS} position(s), <= {MAX_TRADES} trades a day ({used} used), {ENTRY_START}-{ENTRY_END}, "
-             f"stop {DAY_STOP:+,.0f}, flat {FLAT_AT})")
+             f"stop {DAY_STOP:+,.0f}, flat {FLAT_AT}" + (", PREMIUM ONLY: no debits" if PREMIUM_ONLY else "") + ")")
+    if PREMIUM_ONLY:
+        L.append("  mode: premium only - on a range day sell a condor or credit spread outside the range once it is set; "
+                 "on a trend day stand aside")
     if spot and ok:
         atm = round(spot / 25.0) * 25.0
-        cands = [("bull call", [("buy", "C", k), ("sell", "C", k + 25)]) for k in (atm - 25, atm, atm + 25)] + \
-                [("bear put", [("buy", "P", k), ("sell", "P", k - 25)]) for k in (atm + 25, atm, atm - 25)] + \
-                [("iron fly", [("sell", "C", atm), ("buy", "C", atm + 50), ("sell", "P", atm), ("buy", "P", atm - 50)])]
+        if PREMIUM_ONLY:
+            cands = premium_menu(float(spot), m.get("high"), m.get("low"))
+        else:
+            cands = [("bull call", [("buy", "C", k), ("sell", "C", k + 25)]) for k in (atm - 25, atm, atm + 25)] + \
+                    [("bear put", [("buy", "P", k), ("sell", "P", k - 25)]) for k in (atm + 25, atm, atm - 25)] + \
+                    [("iron fly", [("sell", "C", atm), ("buy", "C", atm + 50), ("sell", "P", atm), ("buy", "P", atm - 50)])]
         for name, spec in cands:
             legs = [{"side": s, "cp": c, "strike": k} for s, c, k in spec]
             try:
@@ -403,6 +436,8 @@ def cmd_open(legs: list[dict], lots: int, thesis: str, exit_plan: str, wrong: st
     stale = sorted({str(l.get("source")) for l in pv.get("legs", []) if l.get("source") != "tastytrade"})
     if stale:                                  # a fallback feed (yfinance, polygon) can be minutes old: a fill there is fake
         why.append(f"legs priced from {', '.join(stale)}, not the live tastytrade stream")
+    if (reason := premium_refusal(pv, PREMIUM_ONLY)) is not None:
+        why.append(reason)
     if ml is None:
         why.append("risk is not defined (no finite max loss)")
     elif abs(float(ml)) > MAX_RISK + 1e-6:

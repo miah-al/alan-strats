@@ -51,6 +51,10 @@ DESKS: dict[str, dict] = {
         _lim("max_trades", "Trades per day", "trades", 3, 1, 20, "now",
              "New positions opened per day (a trim or a close is not one); the desk refuses an open past it. Proposed at 3 "
              "on 2026-09-30 after nine trades in a range day cost more than they made."),
+        _lim("premium_only", "Premium only", "0 / 1", 1, 0, 1, "now",
+             "1 = the desk only sells premium (condors, credit spreads outside the day's range) and refuses a debit; 0 = any "
+             "defined-risk structure. Agreed on 2026-10-01 after three sessions of 0DTE debit direction calls lost $1.6k "
+             "(37% won)."),
         _lim("day_stop", "Day stop", "$", -2500, -20000, -100, "now", "At this day P&L (realised + open) everything is closed and the desk is done for the day."),
         _lim("entry_start", "First entry", "ET", "09:45", "09:30", "15:59", "now", "No new position before this time.", "time"),
         _lim("entry_end", "Last entry", "ET", "15:30", "09:31", "15:59", "now", "No new position after this time.", "time"),
