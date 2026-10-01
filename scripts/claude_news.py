@@ -35,6 +35,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import re
 import sys
 import time
@@ -42,6 +43,7 @@ from datetime import date, datetime
 from pathlib import Path
 from typing import Optional
 
+import numpy as np
 import pandas as pd
 
 from scripts.claude_desk import api, hm, now_et
@@ -66,6 +68,13 @@ THEMES: dict[str, tuple[re.Pattern, list[str]]] = {
 }
 # A second headline query for the desk (the brief's own stays as it is): under GDELT's ~120 characters.
 DESK_QUERY = '(bitcoin OR crypto OR crude OR OPEC OR Hormuz OR Powell OR "rate cut" OR tariff) sourcelang:english'
+
+# Multi-day shock follows (the 2026-10-01 study, "find a way to make money on news"): a 3-sigma day in these ETFs
+# drifted on for days, entered at the close or even the next open - so the desk's 25-60 minute headline lag no longer
+# matters. USO, follow 5 sessions: won ~71% in both halves of 2010-26 (+398 bp a trade since 2018). BTC, follow 10:
+# +283-360 bp, won 61% in both halves. The owner approved multi-day holds on ETFs ("Then etf is fine").
+SHOCK_RULES: dict[str, tuple[float, int]] = {"USO": (3.0, 5), "IBIT": (3.0, 10)}   # symbol -> (sigma, sessions held)
+SHOCK_FROM = "15:30"                    # the trigger check, before entries close (the study entered at the close)
 
 
 # ── plumbing ──────────────────────────────────────────────────────────────────
@@ -361,6 +370,69 @@ def cmd_guard() -> list[str]:
     return out
 
 
+# ── multi-day shock follows ───────────────────────────────────────────────────
+
+def shock_z(closes: list[float], last: float) -> tuple[float, float, float]:
+    """(z, today's log move, sigma): the move from the last close in ``closes`` (prior sessions, oldest first) to
+    ``last``, against the std of the trailing 20 daily log returns (no look-ahead: today is not in sigma)."""
+    r = np.diff(np.log(np.asarray(closes, float)))[-20:]
+    sigma = float(np.std(r, ddof=1))
+    move = float(np.log(last / closes[-1]))
+    return (move / sigma if sigma > 0 else 0.0), move, sigma
+
+
+def add_sessions(day: date, n: int) -> date:
+    """``n`` weekdays after ``day`` (exchange holidays are not modelled: a hold then ends a session late at worst)."""
+    d = day
+    while n > 0:
+        d = d + pd.Timedelta(days=1).to_pytimedelta()
+        if d.weekday() < 5:
+            n -= 1
+    return d
+
+
+def shock_plan(sym: str, last: float, z: float, sigma: float, day: date, max_risk: float,
+               max_notional: float) -> Optional[dict]:
+    """The trade a 3-sigma day calls for, or None. Up: buy shares, the stop 2 sigma of the hold away (2 x the daily
+    sigma x sqrt(sessions)) and the size so the stop costs ``max_risk`` (capped by ``max_notional``). Down: the
+    account cannot short, so a put: about at the money, expiring a week past the hold, premium within ``max_risk``."""
+    k, hold = SHOCK_RULES[sym]
+    if abs(z) < k:
+        return None
+    until = f"{add_sessions(day, hold).isoformat()}T15:45"
+    if z > 0:
+        stop_pct = min(0.5, 2.0 * sigma * math.sqrt(hold))
+        qty = int(min(max_notional / last, max_risk / (last * stop_pct)))
+        return {"sym": sym, "side": "buy", "qty": qty, "stop": round(last * (1 - stop_pct), 2), "until": until,
+                "hold": hold, "z": z, "cmd": f"open --symbol {sym} --side buy --qty {qty} "
+                                              f"--stop {last * (1 - stop_pct):.2f} --until {until}"}
+    exp = add_sessions(day, hold + 5)
+    strike = round(last)
+    return {"sym": sym, "side": "put", "strike": strike, "expiry_from": exp.isoformat(), "until": until, "hold": hold,
+            "z": z, "cmd": f"open --symbol {sym} --leg buy:P:{strike}:<first expiry on or after {exp.isoformat()}> "
+                           f"--lots N (premium x 100 x N <= {max_risk:,.0f}) --until {until}"}
+
+
+def shock_check(day: date) -> list[str]:
+    """One line per symbol in SHOCK_RULES: today's move in sigmas, and the trade when it is a trigger."""
+    out = []
+    for sym, (k, hold) in SHOCK_RULES.items():
+        try:
+            bars = api("GET", f"/market/bars/{sym}?interval=1d", timeout=20.0)
+            closes = [float(c) for t_, c in zip(bars.get("t") or [], bars.get("c") or []) if str(t_)[:10] < day.isoformat()]
+            q = quote(sym)
+            last = float(q.get("last") or q.get("mid") or 0)
+            if len(closes) < 21 or last <= 0:
+                out.append(f"{sym}: no data for the shock check"); continue
+            z, move, sigma = shock_z(closes, last)
+            plan = shock_plan(sym, last, z, sigma, day, MAX_RISK, MAX_NOTIONAL)
+            head = f"{sym} {move * 100:+.2f}% = {z:+.2f} sigma (20d sigma {sigma * 100:.2f}%; trigger +-{k:.0f}, follow {hold}d)"
+            out.append(head + (f"  <-- TRIGGER: {plan['cmd']}" if plan else ""))
+        except Exception as exc:  # noqa: BLE001
+            out.append(f"{sym}: shock check failed ({str(exc)[:80]})")
+    return out
+
+
 def cmd_snapshot() -> str:
     t = now_et(); day = t.date()
     L = [f"NEWS DESK {hm(t)} ET"]
@@ -384,6 +456,7 @@ def cmd_snapshot() -> str:
                  f"<= {MAX_POSITIONS} positions, {ENTRY_START}-{ENTRY_END}, day stop {DAY_STOP:+,.0f})")
     except Exception as exc:  # noqa: BLE001
         L.append(f"  book unavailable: {exc}")
+    L += ["  shock " + s for s in shock_check(day)]
     return "\n".join(L)
 
 
@@ -433,6 +506,11 @@ def cmd_watch() -> int:
                 print(cmd_snapshot(), flush=True)
             except Exception as exc:  # noqa: BLE001
                 print(f"{hm(t)} snapshot failed: {exc}", flush=True)
+        # the day's shock check, once, before entries close (multi-day follows enter at the close)
+        if SHOCK_FROM <= hm(t) <= ENTRY_END and st.get("shock_checked") != t.date().isoformat():
+            for line in shock_check(t.date()):
+                print(f"{hm(t)} SHOCK {line}", flush=True)
+            st = load_state(); st["shock_checked"] = t.date().isoformat(); save_state(st)
         if hm(t) >= "16:05" or t.weekday() >= 5:
             print(cmd_summary(t.date()), flush=True)
             return 0
