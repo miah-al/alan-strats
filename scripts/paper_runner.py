@@ -250,7 +250,7 @@ def _main(argv, handlers: list) -> int:
             v = vertical_quote(q[ls], q[ss], now_et()) if ls in q and ss in q else None
             # the width printed here is DERIVED (both legs' widths added), not a market anyone quotes; spreads
             # were measured to trade at the mid, crossing in costing ~1.2 pts deep in the money (2026-09-23)
-            print(f"  NDX {spot:,.2f}; bull call vertical {kl:.0f}/{kh:.0f}: " + (f"mid {v.last:.2f} (derived bid {v.bid:.2f} / ask {v.ask:.2f}: "
+            print(f"  {underlying} {spot:,.2f}; bull call vertical {kl:.0f}/{kh:.0f}: " + (f"mid {v.last:.2f} (derived bid {v.bid:.2f} / ask {v.ask:.2f}: "
                   f"the legs' widths added, {v.ask - v.bid:.2f} pts, not a market), leg ages {v.legs[0][2]} / {v.legs[1][2]} min" if v else "no two-sided quote"))
         if spot is not None and hasattr(strategy, "check_structures"):
             try:

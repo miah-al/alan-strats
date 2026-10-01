@@ -23,6 +23,8 @@ holidays skipped) and records what happened in the arm's ``last_result``:
                         "<venv python>" -m api.runner_launch --strategy ndx_gamma_walls --poll 15 --log-dir <…>
                     It waits for the open and exits after 16:01 ET; a late start (up to 15:00, the end of its entry
                     window) builds no stream backfill (the strategy needs no lookback).
+  spx_gamma_walls   the same on SPX (NDX Gamma Walls' rule on the same-day SPXW chain, a live paper trial; the
+                    strategy is an overlay too): the same runner, time and window.
 
 Rules: if a runner for the strategy is already running anywhere (the service's own or external: another
 process, the scheduled task, a fresh heartbeat), the day is "skipped: already running (...)". A service that
@@ -81,6 +83,9 @@ SPECS: dict[str, Spec] = {
                             "the service's GEX paper allocator on the whole paper account"),
     "ndx_gamma_walls": Spec("runner", _dt.time(9, 25), _dt.time(15, 0), ("",),
                             "the platform's paper runner from the service checkout (detached)"),
+    # NDX Gamma Walls' rule on SPX (2026-09-30; untested on SPX, so a live paper trial): entries 11:00-15:00 like it
+    "spx_gamma_walls": Spec("runner", _dt.time(9, 25), _dt.time(15, 0), ("",),
+                            "the platform's paper runner from the service checkout (detached; the strategy is an overlay)"),
     # the rally fade (the resting-order trial, once ndx_0dte_maker; branch maker-runner 8741f3a): entries 11:00-15:30,
     # its 30-minute lookback backfilled from the broker's candle feed, so it starts at 10:25: polling from the open
     # would spend the shared broker budget on an hour it cannot trade

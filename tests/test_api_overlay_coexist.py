@@ -135,6 +135,19 @@ def test_the_arm_starts_the_runner_from_this_checkout(tmp_path, monkeypatch):
                 pr.wait(5)
 
 
+def test_spx_gamma_walls_arms_like_ndx_gamma_walls():
+    """NDX Gamma Walls' rule on SPX: the same runner kind, start and window; arming it never needs the NDX arm."""
+    spx, ndx = A.SPECS["spx_gamma_walls"], A.SPECS["ndx_gamma_walls"]
+    assert (spx.kind, spx.at, spx.until, spx.variants) == (ndx.kind, ndx.at, ndx.until, ndx.variants)
+    cmd = A.runner_command("spx_gamma_walls", Path(r"C:\l\w.log"), Path(r"C:\csv"), py=r"D:\py.exe")
+    assert "-m api.runner_launch --strategy spx_gamma_walls --poll 15" in cmd
+    sched = A.ArmScheduler(A.MemoryArmStore(), RN.RunnerManager(), clock=lambda: pd.Timestamp("2026-09-30 20:00", tz=NY),
+                           launcher=lambda s: {}, runner_launcher=lambda s: {})
+    [row] = sched.arm("spx_gamma_walls", "weekdays")
+    assert row["next_run"] == "2026-10-01T09:25:00-04:00" and row["kind"] == "runner"
+    assert [a["strategy"] for a in sched.store.active()] == ["spx_gamma_walls"]
+
+
 def test_one_broker_budget_across_checkouts(tmp_path):
     from paper.providers import RequestBudget
     ext = tmp_path / "main_paper_state"
