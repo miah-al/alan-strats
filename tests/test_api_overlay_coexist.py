@@ -135,6 +135,17 @@ def test_the_arm_starts_the_runner_from_this_checkout(tmp_path, monkeypatch):
                 pr.wait(5)
 
 
+def test_friend_starts_before_its_gap_down_entries():
+    """Friend trades from 10:00 after a gap-down (its gap_down_early_pct, 2026-10-02), so its run starts at 09:50 every
+    day; the strategy keeps its 13:00 start on other days."""
+    friend = A.SPECS["ndx_0dte_friend"]
+    assert friend.kind == "script" and friend.at == _dt.time(9, 50) and friend.until == _dt.time(15, 30)
+    sched = A.ArmScheduler(A.MemoryArmStore(), RN.RunnerManager(), clock=lambda: pd.Timestamp("2026-10-02 20:00", tz=NY),
+                           launcher=lambda s: {}, runner_launcher=lambda s: {})
+    [row] = sched.arm("ndx_0dte_friend", "weekdays")
+    assert row["next_run"] == "2026-10-05T09:50:00-04:00"
+
+
 def test_spx_gamma_walls_arms_like_ndx_gamma_walls():
     """NDX Gamma Walls' rule on SPX: the same runner kind, start and window; arming it never needs the NDX arm."""
     spx, ndx = A.SPECS["spx_gamma_walls"], A.SPECS["ndx_gamma_walls"]
