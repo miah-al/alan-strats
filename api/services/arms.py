@@ -76,8 +76,9 @@ SPECS: dict[str, Spec] = {
     "ndx_0dte_tasty": Spec("script", _dt.time(9, 30), _dt.time(16, 0), ("",),
                            "the scheduled task's start_paper_runner.ps1 from the live checkout"),
     # the owner's friend's rules with a theta tilt (2026-09-28): the same start script, from the live checkout; its entries
-    # run 13:00-15:30, so it starts at 12:30 (the 30-minute lookback comes from the broker's candle backfill)
-    "ndx_0dte_friend": Spec("script", _dt.time(12, 30), _dt.time(15, 30), ("",),
+    # run 13:00-15:30, or from 10:00 after a gap-down of 0.75%+ (its gap_down_early_pct, 2026-10-02), so it starts at
+    # 09:50 every day and the strategy decides (the 30-minute lookback comes from the broker's candle backfill)
+    "ndx_0dte_friend": Spec("script", _dt.time(9, 50), _dt.time(15, 30), ("",),
                             "start_paper_runner.ps1 -Strategy ndx_0dte_friend from the live checkout (the friend's rules, theta tilt)"),
     "gex_positioning": Spec("allocator", _dt.time(15, 50), _dt.time(16, 0), ("vix", "gex"),
                             "the service's GEX paper allocator on the whole paper account"),
