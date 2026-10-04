@@ -146,6 +146,24 @@ def test_friend_starts_before_its_gap_down_entries():
     assert row["next_run"] == "2026-10-05T09:50:00-04:00"
 
 
+def test_friend_w50_arms_beside_friend_and_is_never_taken_for_it():
+    """The 50-wide Friend (2026-10-04) runs beside the 100-wide: the same start script, start and window, its own arm,
+    and a runner of one is never read as the other ('ndx_0dte_friend' is the start of 'ndx_0dte_friend_w50')."""
+    w50, friend = A.SPECS["ndx_0dte_friend_w50"], A.SPECS["ndx_0dte_friend"]
+    assert (w50.kind, w50.at, w50.until, w50.variants) == (friend.kind, friend.at, friend.until, friend.variants)
+    sched = A.ArmScheduler(A.MemoryArmStore(), RN.RunnerManager(), clock=lambda: pd.Timestamp("2026-10-04 12:00", tz=NY),
+                           launcher=lambda s: {}, runner_launcher=lambda s: {})
+    for slug in ("ndx_0dte_friend", "ndx_0dte_friend_w50"):
+        [row] = sched.arm(slug, "weekdays")
+        assert row["next_run"] == "2026-10-05T09:50:00-04:00"
+    assert sorted(a["strategy"] for a in sched.store.active()) == ["ndx_0dte_friend", "ndx_0dte_friend_w50"]
+    script = r"D:\Work\Project Dream\alan_trader\scripts\start_paper_runner.ps1"
+    for slug in ("ndx_0dte_friend", "ndx_0dte_friend_w50"):
+        cmd = ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", script, "-Strategy", slug]
+        assert RN.parse_runner_cmdline(cmd)["strategy"] == slug
+        assert RN.parse_runner_cmdline(["python", "-m", "scripts.paper_runner", "--strategy", slug, "--poll", "15"])["strategy"] == slug
+
+
 def test_spx_gamma_walls_arms_like_ndx_gamma_walls():
     """NDX Gamma Walls' rule on SPX: the same runner kind, start and window; arming it never needs the NDX arm."""
     spx, ndx = A.SPECS["spx_gamma_walls"], A.SPECS["ndx_gamma_walls"]

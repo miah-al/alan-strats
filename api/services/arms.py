@@ -80,6 +80,11 @@ SPECS: dict[str, Spec] = {
     # 09:50 every day and the strategy decides (the 30-minute lookback comes from the broker's candle backfill)
     "ndx_0dte_friend": Spec("script", _dt.time(9, 50), _dt.time(15, 30), ("",),
                             "start_paper_runner.ps1 -Strategy ndx_0dte_friend from the live checkout (the friend's rules, theta tilt)"),
+    # Friend's rules on a 50-wide vertical (2026-10-04, the owner: "Arm another version of friend 50 point wide", then
+    # "arm it anyway" over the evidence: the model favours it, the recorded quotes so far do not): a live paper test
+    # beside the 100-wide, so the same start script, start and window
+    "ndx_0dte_friend_w50": Spec("script", _dt.time(9, 50), _dt.time(15, 30), ("",),
+                                "start_paper_runner.ps1 -Strategy ndx_0dte_friend_w50 from the live checkout (Friend's rules, 50 wide)"),
     "gex_positioning": Spec("allocator", _dt.time(15, 50), _dt.time(16, 0), ("vix", "gex"),
                             "the service's GEX paper allocator on the whole paper account"),
     "ndx_gamma_walls": Spec("runner", _dt.time(9, 25), _dt.time(15, 0), ("",),
