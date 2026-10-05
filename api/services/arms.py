@@ -120,6 +120,10 @@ SPECS: dict[str, Spec] = {
                              "the event desk's post-close signal log (USO 2σ moves, VIX 2σ, BTC −3%) and outcome back-fill"),
     "crypto_flush": Spec("allocator", _dt.time(0, 5), _dt.time(23, 55), ("",),
                          "the crypto liquidation-flush paper leg: armed = the 24/7 poller records the synthetic micro future"),
+    # the sector rotation (api/services/rotation_alloc.py): a fixed $5,000 sleeve in the top 3 sector SPDRs, re-ranked on
+    # the month's last trading day; other days it only repairs holdings that differ from the standing picks (2026-10-05)
+    "sector_rotation": Spec("allocator", _dt.time(15, 50), _dt.time(16, 0), ("",),
+                            "the sector rotation's month-end rebalance: the top 3 sector SPDRs on a $5,000 paper sleeve"),
 }
 RUNNER_POLL_S = 15
 
