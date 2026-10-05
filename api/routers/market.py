@@ -6,7 +6,9 @@ backoff); the answers are cached per the contract's minimums (quotes >= 1 s, sna
 """
 from __future__ import annotations
 
+import datetime as _dt
 from typing import Literal, Optional
+from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, HTTPException, Query, Request
 
@@ -17,6 +19,18 @@ router = APIRouter(tags=["market"])
 
 _NO_DATA = (M.MissingData,)
 GEX_TTL = 60.0
+#: Outside the session a chain barely changes, and for a stock (SPY, QQQ …) with no recent stored chain each load is
+#: Polygon's whole snapshot: ~40 paged calls for SPY. The market strip asks for SPY every 5 minutes all night, which
+#: spent the service's 5,000-call Polygon day by 08:47 on 2026-10-04 and 10-05 (before the 09:07 data load needs it).
+GEX_TTL_CLOSED = 3600.0
+
+
+def gex_ttl(now: Optional[_dt.datetime] = None) -> float:
+    """How long a dealer-GEX answer is reused: a minute in the session (09:30-16:15 ET, weekdays), an hour outside."""
+    now = now or _dt.datetime.now(ZoneInfo("America/New_York"))
+    if now.weekday() < 5 and _dt.time(9, 30) <= now.time() < _dt.time(16, 15):
+        return GEX_TTL
+    return GEX_TTL_CLOSED
 IV_TERM_TTL = 60.0
 BARS_TTL = 30.0
 
@@ -138,7 +152,7 @@ def market_gex_history(ticker: str, days: int = Query(default=365, ge=1, le=3650
 def market_gex(ticker: str, request: Request, source: Literal["auto", "db", "polygon", "hub"] = "auto",
                scope: Literal["all", "0dte", "weekly"] = "all", top: int = Query(default=8, ge=0, le=50)):
     hub = getattr(request.app.state, "market", None)
-    return cached(("gex", ticker.upper(), source, scope, top), GEX_TTL,
+    return cached(("gex", ticker.upper(), source, scope, top), gex_ttl(),
                   lambda: M.gex(ticker, source, hub=hub, scope=scope, top=top), cache_errors=_NO_DATA)
 
 
