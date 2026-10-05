@@ -100,8 +100,11 @@ def create_app():
     oil_fade = OilFadeAllocator(event_desk, order_book, hub=market_hub, publish=hub.publish)
     btc_dip = BtcDipAllocator(event_desk, order_book, hub=market_hub, publish=hub.publish)
     signal_log = SignalLogJob(event_desk, publish=hub.publish)
+    from api.services.rotation_alloc import RotationAllocator
+    sector_rotation = RotationAllocator(event_desk.store, order_book, hub=market_hub, publish=hub.publish)
     arm_scheduler = ArmScheduler(make_store(), runners, publish=hub.publish, allocator=gex_allocator,
                                  allocators={"oil_fade": oil_fade, "btc_dip": btc_dip, "event_signal_log": signal_log,
+                                             "sector_rotation": sector_rotation,
                                              "crypto_flush": crypto_flush})
     event_desk.armed = arm_scheduler.is_armed
     crypto_flush.armed = arm_scheduler.is_armed
