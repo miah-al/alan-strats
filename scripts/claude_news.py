@@ -460,6 +460,18 @@ def cmd_snapshot() -> str:
     return "\n".join(L)
 
 
+def fresh_items(items: list[dict], seen: set) -> list[dict]:
+    """The items not seen before, each once, adding them to ``seen``. One poll can carry the same item twice: with
+    GDELT refusing, both desk queries fall back to the same RSS headlines (2026-10-05: every batch printed twice)."""
+    out = []
+    for i in items:
+        if i["id"] in seen:
+            continue
+        seen.add(i["id"])
+        out.append(i)
+    return out
+
+
 def cmd_watch() -> int:
     st = load_state()
     seen = set(st.get("seen", []))
@@ -488,9 +500,8 @@ def cmd_watch() -> int:
                 notes.append(f"news unavailable: {str(exc)[:120]}")
             for n in dict.fromkeys(notes):             # a source down is said once per poll, never silently
                 print(f"{hm(t)} SOURCE {n}", flush=True)
-            fresh = [i for i in items if i["id"] not in seen]
+            fresh = fresh_items(items, seen)
             for i in fresh:
-                seen.add(i["id"])
                 if first and not themes_of(i["text"]):
                     continue                            # the backlog at start: only what could matter
                 try:
