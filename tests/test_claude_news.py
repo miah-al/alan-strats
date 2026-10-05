@@ -103,3 +103,14 @@ def test_shock_follow_flags_a_3_sigma_day_and_sizes_the_trade():
     assert down["side"] == "put" and down["strike"] == 48 and down["expiry_from"] == "2026-10-22"   # 10 + 5 sessions
     assert "buy:P:48" in down["cmd"] and "--side sell" not in down["cmd"]          # never short shares
     assert N.shock_plan("USO", 150.0, 2.9, sigma, date(2026, 10, 1), 1000.0, 10000.0) is None
+
+
+def test_a_poll_shows_each_item_once_even_when_two_queries_return_it():
+    # GDELT refusing: both desk queries fall back to the same RSS headlines in one poll
+    a = {"id": "news:nasdaqhitsrecord", "kind": "news", "text": "Nasdaq hits record"}
+    b = {"id": "news:yieldsat2002high", "kind": "news", "text": "Yields at 2002 high"}
+    seen = {"news:old"}
+    fresh = N.fresh_items([a, b, dict(a), dict(b), {"id": "news:old", "kind": "news", "text": "old"}], seen)
+    assert [i["id"] for i in fresh] == ["news:nasdaqhitsrecord", "news:yieldsat2002high"]
+    assert seen == {"news:old", "news:nasdaqhitsrecord", "news:yieldsat2002high"}
+    assert N.fresh_items([a, b], seen) == []                      # the next poll: nothing new
