@@ -61,6 +61,17 @@ GDELT_RETRY_S = 20.0      # a 429 says "one every 5 seconds", but in practice a 
 GDELT_TRIES = 3
 GDELT_CACHE_S = 600.0
 GDELT_MAX_RECORDS = 75
+#: Headlines when GDELT refuses us. It answered 429 every ten minutes all day on 2026-10-02 and 2026-10-05; the owner,
+#: 2026-10-05: "Alternative source plz". RSS needs no key and states no rate limit. Google News search covers the GDELT
+#: query's themes; CNBC and MarketWatch add the market's own top stories. Yahoo's index feed was weeks stale.
+_GN = "https://news.google.com/rss/search?hl=en-US&gl=US&ceid=US:en&q="
+RSS_HEADLINE_FEEDS = (
+    ("Google News: markets", _GN + '%22stock+market%22+OR+%22nasdaq+100%22+OR+%22S%26P+500%22+OR+%22treasury+yields%22+OR+%22federal+reserve%22+when:1d'),
+    ("Google News: shocks", _GN + 'tariffs+OR+sanctions+OR+ceasefire+OR+airstrike+OR+%22trading+halt%22+OR+%22crude+oil%22+OR+OPEC+when:1d'),
+    ("CNBC", "https://www.cnbc.com/id/100003114/device/rss/rss.html"),
+    ("MarketWatch", "https://feeds.content.dowjones.io/public/rss/mw_topstories"),
+)
+RSS_ATTRIBUTION = "Google News, CNBC, MarketWatch (RSS)"
 TRUTH_URL = "https://ix.cnn.io/data/truth-social/truth_archive.json"
 MAX_HEADLINES = 20
 MAX_POSTS = 30
@@ -296,8 +307,47 @@ def cluster_articles(articles: list[dict], since: _dt.datetime, limit: int = MAX
              "url": g["url"], "shock_terms": bool(_SHOCK_TERMS.search(g["title"]))} for g in rows]
 
 
+def _publisher(title: str, feed: str) -> tuple[str, str]:
+    """(the headline, its publisher): Google News titles end with " - <publisher>"; other feeds publish their own."""
+    if feed.startswith("Google News") and " - " in title:
+        head, pub = title.rsplit(" - ", 1)
+        if head.strip() and pub.strip():
+            return head.strip(), pub.strip()
+    return title, feed
+
+
+def rss_headlines_block(since: _dt.datetime, get: Optional[Callable] = None, limit: int = MAX_HEADLINES) -> dict:
+    """Headlines from RSS_HEADLINE_FEEDS since ``since``, one row per headline (the same story from several publishers
+    is one row counting them), the newest first, in the shape of GDELT's clusters. A failing feed is a note."""
+    get = get or _requests_get
+    groups: dict[str, dict] = {}
+    notes: list[str] = []
+    for name, url in RSS_HEADLINE_FEEDS:
+        try:
+            # a browser-like agent: some feeds refuse a bare script's
+            r = get(url, headers={"User-Agent": f"Mozilla/5.0 (compatible; {contact_user_agent()})"}, timeout=FEED_TIMEOUT_S)
+            if r.status_code != 200:
+                notes.append(f"{name} answered {r.status_code}")
+                continue
+            for it in parse_feed(getattr(r, "content", None) or r.text, name):
+                if it["time"] < since:
+                    continue
+                title, pub = _publisher(it["title"], name)
+                g = groups.setdefault(_norm_title(title), {"title": title, "pubs": set(), "first": it["time"],
+                                                           "last": it["time"], "url": it["link"], "domain": pub})
+                g["pubs"].add(pub)
+                g["first"], g["last"] = min(g["first"], it["time"]), max(g["last"], it["time"])
+        except Exception as exc:  # noqa: BLE001
+            notes.append(f"{name} unavailable: {type(exc).__name__}")
+    rows = sorted(groups.values(), key=lambda g: (g["last"], len(g["pubs"])), reverse=True)[:limit]
+    return {"items": [{"time_et": _et(g["first"]), "sources": len(g["pubs"]), "domain": g["domain"], "title": g["title"],
+                       "url": g["url"], "shock_terms": bool(_SHOCK_TERMS.search(g["title"]))} for g in rows],
+            "notes": notes, "attribution": RSS_ATTRIBUTION}
+
+
 def headlines_block(since: _dt.datetime, now: Optional[_dt.datetime] = None, get: Optional[Callable] = None) -> dict:
-    """The overnight headline clusters from GDELT (one request, rate limited, cached ten minutes)."""
+    """The overnight headline clusters from GDELT (one request, rate limited, cached ten minutes); when GDELT refuses
+    or fails, the RSS feeds' headlines instead (rss_headlines_block), with GDELT's failure kept as a note."""
     global _GDELT_LAST
     get = get or _requests_get
     now = now or _dt.datetime.now(UTC)
@@ -334,6 +384,13 @@ def headlines_block(since: _dt.datetime, now: Optional[_dt.datetime] = None, get
             out = {"items": cluster_articles(arts, since), "notes": [], "attribution": "GDELT Project", "articles": len(arts),
                    **({"retries": attempt} if attempt else {})}
             break
+        if not out["items"] and out["notes"]:                   # GDELT failed: the RSS feeds instead
+            rss = rss_headlines_block(since, get=get)
+            if rss["items"]:
+                out = {"items": rss["items"], "attribution": RSS_ATTRIBUTION, "fallback": "rss",
+                       "notes": out["notes"] + [f"headlines from RSS instead ({len(rss['items'])})"] + rss["notes"]}
+            else:
+                out = {**out, "notes": out["notes"] + rss["notes"]}
         _GDELT_CACHE["last"] = (key, time.monotonic(), out)
         return out
 

@@ -460,8 +460,51 @@ def test_gdelt_429_is_retried_once_and_a_text_refusal_is_a_note(monkeypatch):
     S._GDELT_CACHE.clear()
     S._GDELT_LAST = 0.0
     out = S.headlines_block(since, now, get=lambda *a, **k: Resp(429, None, "slow down"))
-    assert out["items"] == [] and out["notes"] == ["GDELT answered 429"]
+    assert out["items"] == [] and out["notes"][0] == "GDELT answered 429"           # the RSS fallback refused too
+    assert "Google News: markets answered 429" in out["notes"]
     S._GDELT_CACHE.clear()
+
+
+def _rss(*items) -> str:
+    rows = "".join(f"<item><title>{t}</title><link>{l}</link><pubDate>{d}</pubDate></item>" for t, l, d in items)
+    return f'<?xml version="1.0"?><rss version="2.0"><channel>{rows}</channel></rss>'
+
+
+def test_rss_headlines_stand_in_when_gdelt_refuses(monkeypatch):
+    """GDELT answered 429 all day on 2026-10-05 ("Alternative source plz"): the RSS feeds' headlines come instead."""
+    since = D.datetime(2026, 10, 5, 9, 0, tzinfo=S.NY)
+    now = D.datetime(2026, 10, 5, 17, 30, tzinfo=S.UTC)
+    monkeypatch.setattr(S.time, "sleep", lambda s: None)
+    markets = _rss(("U.S. Stocks Mostly Higher as Treasury Yields Rise - WSJ", "g1", "Mon, 05 Oct 2026 16:20:00 GMT"),
+                   ("Nasdaq hits a record - Reuters", "g2", "Mon, 05 Oct 2026 15:00:00 GMT"),
+                   ("Old story - AP", "g3", "Sun, 04 Oct 2026 12:00:00 GMT"))
+    shocks = _rss(("Nasdaq hits a record - Bloomberg", "g4", "Mon, 05 Oct 2026 15:05:00 GMT"),
+                  ("Oil slips as refineries restart - Reuters", "g5", "Mon, 05 Oct 2026 16:52:30 GMT"))
+    cnbc = _rss(("GM says hybrid vehicles are coming", "c1", "Mon, 05 Oct 2026 17:20 GMT"))
+
+    def get(url, params=None, headers=None, timeout=None):
+        if "gdeltproject" in url:
+            return Resp(429, None, "Please limit requests to one every 5 seconds")
+        assert headers["User-Agent"].startswith("Mozilla/5.0")
+        if "news.google.com" in url:
+            return Resp(200, None, markets if "stock+market%22" in url else shocks)
+        if "cnbc.com" in url:
+            return Resp(200, None, cnbc)
+        return Resp(503, None, "")
+    S._GDELT_CACHE.clear()
+    S._GDELT_LAST = 0.0
+    blk = S.headlines_block(since, now, get=get)
+    assert blk["fallback"] == "rss" and blk["attribution"] == S.RSS_ATTRIBUTION
+    assert [i["title"] for i in blk["items"]] == ["GM says hybrid vehicles are coming", "Oil slips as refineries restart",
+                                                  "U.S. Stocks Mostly Higher as Treasury Yields Rise", "Nasdaq hits a record"]
+    by = {i["title"]: i for i in blk["items"]}
+    assert by["Nasdaq hits a record"]["sources"] == 2 and by["Nasdaq hits a record"]["time_et"] == "2026-10-05 11:00"
+    assert by["U.S. Stocks Mostly Higher as Treasury Yields Rise"]["domain"] == "WSJ"
+    assert by["GM says hybrid vehicles are coming"]["domain"] == "CNBC"
+    assert blk["notes"][:2] == ["GDELT answered 429", "headlines from RSS instead (4)"] and "MarketWatch answered 503" in blk["notes"]
+    S._GDELT_CACHE.clear()
+    assert S._publisher("Plain title", "CNBC") == ("Plain title", "CNBC")
+    assert S._publisher("A - B - Reuters", "Google News: shocks") == ("A - B", "Reuters")
 
 
 def test_post_selection_and_tagging():
