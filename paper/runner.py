@@ -28,7 +28,8 @@ import pandas as pd
 
 from strategy_api.live import Quote, is_structure
 from strategy_api import registry as R
-from .providers import PARITY_TAG, ReplayProvider, TastytradeProvider, Bar, now_et, parity_leg_mid, parity_put_quote
+from .providers import (PARITY_TAG, SETTLE_FIRST_READ, ReplayProvider, TastytradeProvider, Bar, now_et, parity_leg_mid,
+                        parity_put_quote)
 from . import ledger as L
 from . import supervisor as SUP
 
@@ -42,6 +43,9 @@ FETCH_BACKOFF_MAX_S = 300          # a failing quote feed is polled less and les
 FETCH_FAILURES_TO_HALT = 12        # ~25 minutes of backoff-spaced failures: stop asking, alert, keep the state
 MIN_POLL_S = 10                    # the broker's API is never polled faster than this, whatever the flag says
 QUOTE_SILENCE_ALERT_MIN = 5         # alert when no quote fetch has succeeded for this long during the session
+SETTLE_STEADY_S = 30                # the settlement level: two readings after the close this far apart that agree
+SETTLE_READ_EVERY_S = 10
+SETTLE_DEADLINE = dtime(16, 5)      # no steady reading by then: the latest one, else the last bar's close (alerted)
 STATE_DIR = Path(os.path.dirname(os.path.dirname(__file__))) / "paper_state"
 LOG_COLS = ["ts", "minute", "event", "ndx", "k_low", "k_high", "kind", "direction", "bid", "ask", "last", "age",
             "limit", "fill", "lots", "cash", "reason", "tgid", "long_symbol", "short_symbol", "note",
@@ -54,6 +58,43 @@ LOG_COLS = ["ts", "minute", "event", "ndx", "k_low", "k_high", "kind", "directio
 
 def _minute_of(ts: datetime) -> int:
     return ts.hour * 60 + ts.minute
+
+
+def settlement_spot(prov, fallback: float, now_fn: Callable[[], datetime] = now_et,
+                    sleep_fn: Callable[[float], None] = time.sleep) -> tuple[float, str]:
+    """The level a day's PM-settled index options settle on: the index's official close, not the last poll before
+    16:00. On 2026-10-05 the 15:59 bar closed at 31,058.25 while NDX's official close was 31,076.44 (published by
+    16:00:14), and a 31025/31075 put spread was settled at 16.75 instead of 0: -593 booked for -5,618 real.
+
+    A replay provider that recorded the post-close level (``settle_close``) answers at once. A live provider is read
+    (``index_last``) from SETTLE_FIRST_READ until two readings SETTLE_STEADY_S apart agree; at SETTLE_DEADLINE the
+    latest reading stands, and with none at all the last bar's close. Returns (level, where it came from)."""
+    recorded = getattr(prov, "settle_close", None)
+    if recorded is not None:
+        return float(recorded), "the recorded close"
+    read = getattr(prov, "index_last", None)
+    if read is None:
+        return float(fallback), "the last bar"
+    seen: Optional[tuple[float, datetime]] = None
+    while True:
+        now = now_fn()
+        if now.time() >= SETTLE_FIRST_READ:
+            try:
+                px = read()
+            except Exception as exc:
+                logger.warning("settlement read failed: %s", exc)
+                px = None
+            if px is not None:
+                if seen is not None and abs(px - seen[0]) < 0.005:
+                    if (now - seen[1]).total_seconds() >= SETTLE_STEADY_S:
+                        return float(px), "the official close"
+                else:
+                    seen = (float(px), now)
+        if now.time() >= SETTLE_DEADLINE:
+            if seen is not None:
+                return seen[0], "the index level at the deadline (never steady)"
+            return float(fallback), "the last bar (no index reading after the close)"
+        sleep_fn(SETTLE_READ_EVERY_S)
 
 
 @dataclass
@@ -619,6 +660,15 @@ class PaperSession:
         except Exception:
             return None
 
+    def _settlement_bar(self, bar: Bar, now_fn=now_et, sleep_fn=time.sleep) -> Bar:
+        """The session's last bar with its close moved to the settlement level (``settlement_spot``): the engine
+        settles open units at intrinsic on the last bar's close."""
+        px, source = settlement_spot(self.provider, float(bar.close), now_fn, sleep_fn)
+        if abs(px - float(bar.close)) >= 0.005:
+            logger.info("settling at %.2f (%s); the %s bar closed at %.2f", px, source, bar.ts.strftime("%H:%M"), bar.close)
+            self._alert(f"settling at {px:,.2f} ({source}), not the last bar's {bar.close:,.2f}")
+        return Bar(ts=bar.ts, open=bar.open, high=max(float(bar.high), px), low=min(float(bar.low), px), close=px)
+
     def _force_settlement(self, session, day: date, quote_fn, expiry: date, symbols_fn, why: str) -> None:
         """The session is over but positions are still open (a missed final bar, a halt): settle
         them now at the last known spot so the ledger and the state never carry a unit overnight."""
@@ -740,6 +790,8 @@ class PaperSession:
             minute = _minute_of(bar.ts) + 1
             self._day_bars.append(bar)
             self._log_session_features(session, day, minute)
+            if prov.is_last_bar() and session.positions:
+                bar = self._settlement_bar(bar)
             if not self._step(session, minute, bar, quote_fn, prov.is_last_bar(), day, prov.expiry, prov.leg_symbols):
                 break
         self._save_state(session, day, finished=True)
@@ -924,6 +976,8 @@ class PaperSession:
                     self._day_bars.append(bar)
                     self._log_bar(day, bar, "polled")
                     self._log_session_features(session, day, minute)
+                    if is_last and session.positions:
+                        bar = self._settlement_bar(bar, now_fn, sleep_fn)
                     if not self._step(session, minute, bar, quote_fn, is_last, day, prov.expiry or day, prov.leg_symbols):
                         break
                     n += 1

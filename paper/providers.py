@@ -388,6 +388,9 @@ class ReplayProvider:
 
 #: where api/services/quote_recorder.py writes the day's quotes: <quotes dir>/<root>/<YYYY-MM-DD>.csv.gz
 QUOTES_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "paper_state", "quotes")
+# The index's official close is published seconds after 16:00 (2026-10-05: NDX 31,076.44 recorded from 16:00:14 on,
+# after a 15:59:59 print of 31,078.13); a reading from this time on is the settlement's candidate.
+SETTLE_FIRST_READ = dtime(16, 0, 10)
 
 
 class QuoteReplayProvider:
@@ -443,6 +446,10 @@ class QuoteReplayProvider:
         self._snaps: list = sorted(q["ts"].unique())
         self._by_snap = {pd.Timestamp(ts): grp.set_index("symbol") for ts, grp in q.groupby("ts")}
         u = q.drop_duplicates("ts")[["ts", "underlying"]].sort_values("ts")
+        # what the day's PM-settled options settle on: the index level the recorder saw after the close, not the
+        # last snapshot before it (None when the recording stopped at 16:00)
+        post = pd.to_numeric(u.loc[u["ts"].dt.time >= SETTLE_FIRST_READ, "underlying"], errors="coerce").dropna()
+        self.settle_close: Optional[float] = float(post.iloc[-1]) if len(post) else None
         u = u[(u["ts"].dt.time >= dtime(9, 30)) & (u["ts"].dt.time < dtime(16, 0))]
         b = u.groupby(u["ts"].dt.floor("min"))["underlying"].agg(["first", "max", "min", "last"])
         self.bars = pd.DataFrame({"ts": b.index, "open": b["first"].to_numpy(), "high": b["max"].to_numpy(),
@@ -803,6 +810,12 @@ class TastytradeProvider:
                                           last=(float(r.last) if r.last is not None else None),
                                           last_time=et(getattr(r, "last_trade_time", None)), updated=et(getattr(r, "updated_at", None)))
         return out
+
+    def index_last(self) -> Optional[float]:
+        """The underlying's level now (one REST call). After 16:00 it becomes the index's official close, which is
+        what the day's PM-settled options settle on (see PaperSession's settlement read)."""
+        q = self.fetch([]).get(self.underlying)
+        return float(q.last) if q is not None and q.last is not None else None
 
     def last_row(self, symbol):
         """The raw SDK row from the most recent fetch (bid and ask sizes, volume, last trade), or None."""
