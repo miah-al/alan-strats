@@ -109,6 +109,8 @@ def _main(argv, handlers: list) -> int:
     ap.add_argument("--ledger", action="store_true", help="replay: also write the portfolio ledger (live always does; the conservative run only)")
     ap.add_argument("--no-ledger", action="store_true", help="live: do not write the ledger")
     ap.add_argument("--poll", type=int, default=15, help="live: seconds between quote polls")
+    ap.add_argument("--stream", action="store_true",
+                    help="live: stream the legs' quotes over DXLink (no REST budget; REST only as the fallback), so --poll can be a few seconds")
     ap.add_argument("--test-env", action="store_true", help="live: tastytrade certification environment")
     ap.add_argument("--check", action="store_true", help="live: verify credentials, today's chain and one quote, then exit")
     ap.add_argument("--resume", action="store_true", help="replay: resume from saved state if present")
@@ -225,7 +227,7 @@ def _main(argv, handlers: list) -> int:
         return 0
 
     try:
-        prov = TastytradeProvider(underlying, root, is_test=args.test_env, poll_seconds=args.poll)
+        prov = TastytradeProvider(underlying, root, is_test=args.test_env, poll_seconds=args.poll, stream=args.stream)
     except RuntimeError as exc:
         print(f"cannot start: {exc}"); return 1
     if args.check:

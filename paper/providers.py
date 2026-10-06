@@ -686,6 +686,156 @@ def _external_state_dirs() -> list:
         return []
 
 
+def _num(x) -> Optional[float]:
+    """A feed number as a float; None when it is missing or not a number (the feed sends NaN for "no value")."""
+    try:
+        v = float(x)
+    except (TypeError, ValueError):
+        return None
+    return v if v == v else None
+
+
+class StreamQuotes:
+    """Live quotes for the runner's legs over DXLink, kept current by a background thread (2026-10-06, the owner:
+    "Fix the execution").
+
+    It is a market-data subscription, not a REST call, so it costs nothing from the day's broker budget. That lets a
+    runner look at its legs every couple of seconds, and a resting order fills the moment the price touches it, as
+    the friend's limits do at the exchange, rather than at a poll once a minute.
+
+    - The thread owns its own event loop and its own OAuth session: the SDK binds a session to the loop it is used
+      on, and the provider's REST calls run on another.
+    - The main thread only reads ``get``.
+    - Options arrive as Quote events (bid / ask).
+    - The cash index has no bid or ask; it publishes its level as Trade events.
+    - A dropped connection reconnects with a growing pause. ``healthy`` says whether events are flowing; when they
+      are not, the provider falls back to REST.
+    """
+
+    STALE_S = 30.0                      # no event for this long: not healthy
+
+    def __init__(self, session_factory, index_symbol: str, streamer_factory=None, quote_cls=None, trade_cls=None,
+                 clock=None, now_fn=None, start: bool = True):
+        import threading
+        import time
+        self._session_factory = session_factory
+        self._streamer_factory, self._quote_cls, self._trade_cls = streamer_factory, quote_cls, trade_cls
+        self.index_symbol = index_symbol
+        self._clock = clock or time.monotonic
+        self._now = now_fn or now_et
+        self._lock = threading.Lock()
+        self._latest: dict[str, LegQuote] = {}           # by streamer symbol
+        self._want: set[str] = set()
+        self._subscribed: set[str] = set()
+        self.last_event: Optional[float] = None
+        self.connected = False
+        self.error = ""
+        self.n_events = 0
+        self._stop = threading.Event()
+        self._thread = None
+        if start:
+            self._thread = threading.Thread(target=self._run, name="dxlink-quotes", daemon=True)
+            self._thread.start()
+
+    def want(self, symbols) -> None:
+        with self._lock:
+            self._want.update(s for s in symbols if s)
+
+    def get(self, symbol: Optional[str]) -> Optional[LegQuote]:
+        if not symbol:
+            return None
+        with self._lock:
+            return self._latest.get(symbol)
+
+    def healthy(self) -> bool:
+        t = self.last_event
+        return bool(self.connected and t is not None and self._clock() - t < self.STALE_S)
+
+    def stop(self) -> None:
+        self._stop.set()
+
+    # ── events (the thread calls these) ────────────────────────────────────────
+    def on_quote(self, ev) -> None:
+        sym = str(ev.event_symbol)
+        now = self._now()
+        with self._lock:
+            old = self._latest.get(sym)
+            self._latest[sym] = LegQuote(sym, _num(ev.bid_price), _num(ev.ask_price), old.last if old else None,
+                                         old.last_time if old else None, now)
+            self.last_event = self._clock()
+            self.n_events += 1
+
+    def on_trade(self, ev) -> None:
+        px = _num(getattr(ev, "price", None))
+        if px is None:
+            return
+        sym = str(ev.event_symbol)
+        now = self._now()
+        ms = getattr(ev, "time", None)
+        when = now
+        if ms:
+            try:
+                when = pd.Timestamp(int(ms), unit="ms", tz="UTC").tz_convert(ET).tz_localize(None).to_pydatetime()
+            except (TypeError, ValueError):
+                when = now
+        with self._lock:
+            old = self._latest.get(sym)
+            self._latest[sym] = LegQuote(sym, old.bid if old else None, old.ask if old else None, px, when, now)
+            self.last_event = self._clock()
+            self.n_events += 1
+
+    # ── the thread ─────────────────────────────────────────────────────────────
+    def _run(self) -> None:
+        import asyncio
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        pause = 2.0
+        while not self._stop.is_set():
+            try:
+                loop.run_until_complete(self._serve())
+                pause = 2.0
+            except Exception as exc:  # noqa: BLE001 - a dropped stream reconnects; the provider falls back to REST meanwhile
+                self.error = str(exc)[:200]
+                logger.warning("quote stream dropped (%s); reconnecting in %.0f s", self.error, pause)
+            self.connected = False
+            with self._lock:
+                self._subscribed.clear()
+            if self._stop.wait(pause):
+                break
+            pause = min(60.0, pause * 2)
+
+    async def _serve(self) -> None:
+        import asyncio
+        if self._streamer_factory is None:
+            from tastytrade import DXLinkStreamer
+            from tastytrade.dxfeed import Quote as DxQuote, Trade as DxTrade
+            self._streamer_factory, self._quote_cls, self._trade_cls = DXLinkStreamer, DxQuote, DxTrade
+        # the SDK logs every feed message at DEBUG: many a second on a live tape, which would drown the runner's diary
+        if logging.getLogger("tastytrade").getEffectiveLevel() < logging.INFO:
+            logging.getLogger("tastytrade").setLevel(logging.INFO)
+        session = self._session_factory()
+        async with self._streamer_factory(session) as st:
+            await st.subscribe(self._trade_cls, [self.index_symbol])
+            self.connected, self.error = True, ""
+            logger.info("quote stream connected (%s)", self.index_symbol)
+            while not self._stop.is_set():
+                with self._lock:
+                    new = sorted(self._want - self._subscribed)
+                if new:
+                    await st.subscribe(self._quote_cls, new)
+                    with self._lock:
+                        self._subscribed.update(new)
+                await asyncio.sleep(0.1)
+                ev = st.get_event_nowait(self._quote_cls)
+                while ev is not None:
+                    self.on_quote(ev)
+                    ev = st.get_event_nowait(self._quote_cls)
+                ev = st.get_event_nowait(self._trade_cls)
+                while ev is not None:
+                    self.on_trade(ev)
+                    ev = st.get_event_nowait(self._trade_cls)
+
+
 class TastytradeProvider:
     """Real-time quotes through the tastytrade API. Needs TT_SECRET and TT_REFRESH (OAuth) in the
     environment or .env; ``is_test`` selects the certification environment. Polls the REST
@@ -693,7 +843,14 @@ class TastytradeProvider:
 
     name = "tastytrade"
 
-    def __init__(self, underlying: str = "NDX", root: str = "NDXP", is_test: bool = False, poll_seconds: int = 15):
+    #: streaming: the stream is down, so REST no more often than this (the day's budget), else the last quotes in hand
+    STREAM_REST_FLOOR_S = 60.0
+    #: streaming: a leg the stream has not sent yet (a strike just chosen) is fetched over REST, at most this often
+    STREAM_MISSING_REST_S = 5.0
+
+    def __init__(self, underlying: str = "NDX", root: str = "NDXP", is_test: bool = False, poll_seconds: int = 15,
+                 stream: bool = False, stream_factory=None, clock=None):
+        import time
         self.underlying = underlying.upper()
         self.root = root.upper()
         self.poll_seconds = int(poll_seconds)
@@ -712,6 +869,14 @@ class TastytradeProvider:
         self._samples: list[tuple[datetime, float]] = []
         self.expiry: Optional[date] = None
         self.budget = RequestBudget(external_dirs=_external_state_dirs())   # every REST call goes through it (see RequestBudget)
+        # --stream: the legs' quotes come from a DXLink subscription (StreamQuotes), REST only as the fallback
+        self.stream_enabled = bool(stream)
+        self._stream_factory = stream_factory or (lambda: StreamQuotes(self._new_session, self.underlying))
+        self._stream: Optional[StreamQuotes] = None
+        self._streamer_of: dict[str, str] = {}
+        self._last_quotes: dict[str, LegQuote] = {}
+        self._clock = clock or time.monotonic
+        self._last_rest_at = -1e18
 
     # chain for today's expiry
     def load_chain(self, day: date) -> int:
@@ -730,6 +895,11 @@ class TastytradeProvider:
         self._chain = {(str(o.option_type.value if hasattr(o.option_type, "value") else o.option_type)[0].upper(), float(o.strike_price)): o
                        for o in opts}
         self.expiry = day
+        self._streamer_of = {str(o.symbol): str(o.streamer_symbol) for o in self._chain.values()
+                             if getattr(o, "streamer_symbol", None)}
+        if self.stream_enabled and self._stream is None:
+            self._stream = self._stream_factory()
+            logger.info("streaming the legs' quotes over DXLink (REST only as the fallback)")
         return len(self._chain)
 
     def near_the_money_vertical(self, spot: float, width: float, itm_offset: float, kind: str = "call") -> tuple[Optional[str], Optional[str], float, float]:
@@ -774,8 +944,52 @@ class TastytradeProvider:
         self.session = Session(secret, refresh, is_test=is_test)
         logger.info("tastytrade session re-created")
 
-    # one REST call: the underlying plus every option symbol requested
+    def _new_session(self):
+        from tastytrade import Session
+        secret, refresh, is_test = self._creds
+        return Session(secret, refresh, is_test=is_test)
+
     def fetch(self, option_symbols: list[str]) -> dict[str, LegQuote]:
+        """The underlying and the requested legs: from the stream when one is running and healthy, else one REST call."""
+        syms = [s for s in option_symbols if s]
+        st = self._stream
+        if st is None:
+            return self._fetch_rest(syms)
+        st.want([self._streamer_of.get(s) for s in syms])
+        if not st.healthy():
+            if self._clock() - self._last_rest_at >= self.STREAM_REST_FLOOR_S or not self._last_quotes:
+                return self._rest_and_keep(syms)
+            return {s: self._last_quotes[s] for s in [self.underlying, *syms] if s in self._last_quotes}
+        now = now_et()
+        out: dict[str, LegQuote] = {}
+        idx = st.get(self.underlying)
+        if idx is not None and idx.last is not None:
+            out[self.underlying] = idx
+        missing = []
+        for s in syms:
+            lq = st.get(self._streamer_of.get(s))
+            if lq is None or lq.bid is None or lq.ask is None:
+                missing.append(s)
+                continue
+            # the stream is live, so the quote it holds stands now, changed or not
+            out[s] = LegQuote(s, lq.bid, lq.ask, lq.last, lq.last_time, now)
+        if (missing or self.underlying not in out) and self._clock() - self._last_rest_at >= self.STREAM_MISSING_REST_S:
+            try:
+                for k, v in self._rest_and_keep(missing).items():
+                    out.setdefault(k, v)
+            except Exception as exc:  # noqa: BLE001 - the streamed quotes still stand; the missing legs come next poll
+                logger.warning("REST for %d legs the stream has not sent yet failed: %s", len(missing), exc)
+        self._last_quotes.update(out)
+        return out
+
+    def _rest_and_keep(self, syms: list[str]) -> dict[str, LegQuote]:
+        q = self._fetch_rest(syms)
+        self._last_rest_at = self._clock()
+        self._last_quotes.update(q)
+        return q
+
+    # one REST call: the underlying plus every option symbol requested
+    def _fetch_rest(self, option_symbols: list[str]) -> dict[str, LegQuote]:
         from tastytrade.market_data import get_market_data_by_type
         syms = [s for s in option_symbols if s]
         if len(syms) > 100:                            # the endpoint takes up to 100 symbols per call; more would mean two
@@ -814,7 +1028,7 @@ class TastytradeProvider:
     def index_last(self) -> Optional[float]:
         """The underlying's level now (one REST call). After 16:00 it becomes the index's official close, which is
         what the day's PM-settled options settle on (see PaperSession's settlement read)."""
-        q = self.fetch([]).get(self.underlying)
+        q = self._fetch_rest([]).get(self.underlying)       # REST even when streaming: the settlement reads the official close
         return float(q.last) if q is not None and q.last is not None else None
 
     def last_row(self, symbol):

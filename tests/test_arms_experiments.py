@@ -9,10 +9,12 @@ from api.services import arms as A
 
 def test_the_experiments_poll_every_60_seconds_and_the_rest_keep_the_default():
     co = Path("D:/checkout")
-    for slug in ("ndx_0dte_always_bull", "ndx_0dte_calm_theta", "ndx_0dte_friend_real"):
+    for slug in ("ndx_0dte_always_bull", "ndx_0dte_calm_theta"):
         spec = A.SPECS[slug]
         assert spec.kind == "script" and spec.poll == 60
         assert f"-Strategy {slug} -Poll 60" in A.task_command(slug, co)
+    # the clone streams its quotes and looks every 2 s from 2026-10-06 (test_stream_quotes.py)
+    assert A.SPECS["ndx_0dte_friend_real"].poll == 2 and A.SPECS["ndx_0dte_friend_real"].stream
     assert "-Poll" not in A.task_command("ndx_0dte_friend", co)
     assert A.SPECS["ndx_0dte_friend"].poll == 0
     assert A.SPECS["ndx_0dte_always_bull"].at.strftime("%H:%M") == "09:45"

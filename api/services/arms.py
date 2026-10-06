@@ -72,6 +72,8 @@ class Spec:
     label: str = ""
     poll: int = 0                # seconds between quote polls (0 = the default: the start script's 15 for a script, RUNNER_POLL_S
                                  # for a runner); a slower poll keeps an experiment inside the broker's daily call budget
+    stream: bool = False         # script runners: the legs' quotes stream over DXLink (-Stream; no REST budget), so the poll can be
+                                 # a few seconds and resting orders fill the moment the price touches them
 
 
 SPECS: dict[str, Spec] = {
@@ -98,9 +100,11 @@ SPECS: dict[str, Spec] = {
                                 poll=60),
     # the friend's decisions learned from his real orders (2026-10-05, the owner: "replicate friend"); his window is
     # 11:00-15:55, so it starts at 10:45 (the 30-minute lookback comes from the candle backfill)
+    # from 2026-10-06 (the owner: "Fix the execution"): its quotes stream (-Stream) and it looks every 2 s, so its resting orders
+    # fill the moment the price touches them, as the friend's limits do; REST only as the stream's fallback
     "ndx_0dte_friend_real": Spec("script", _dt.time(10, 45), _dt.time(15, 30), ("",),
-                                 "EXPERIMENTAL: the friend's decisions (learned entries and cut/add/take), paper execution",
-                                 poll=60),
+                                 "EXPERIMENTAL: the friend's decisions, his resting orders on streamed quotes, fills at the mid",
+                                 poll=2, stream=True),
     "gex_positioning": Spec("allocator", _dt.time(15, 50), _dt.time(16, 0), ("vix", "gex"),
                             "the service's GEX paper allocator on the whole paper account"),
     "ndx_gamma_walls": Spec("runner", _dt.time(9, 25), _dt.time(15, 0), ("",),
@@ -360,6 +364,7 @@ def task_command(strategy: str, checkout: Optional[Path] = None) -> str:
     poll = int(getattr(spec, "poll", 0) or 0)
     return (f'powershell -NoProfile -ExecutionPolicy Bypass -File "{script}" -Strategy {strategy}'
             + (f" -Poll {poll}" if poll else "")
+            + (" -Stream" if getattr(spec, "stream", False) else "")
             + (f' -Params "{params}"' if params else ""))
 
 
