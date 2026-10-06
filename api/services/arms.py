@@ -94,6 +94,11 @@ SPECS: dict[str, Spec] = {
     "ndx_0dte_calm_theta": Spec("script", _dt.time(9, 50), _dt.time(15, 30), ("",),
                                 "EXPERIMENTAL: Friend's fade on calm days only (realised/VXN <= 0.45), 25-wide, settle",
                                 poll=60),
+    # the friend's decisions learned from his real orders (2026-10-05, the owner: "replicate friend"); his window is
+    # 11:00-15:55, so it starts at 10:45 (the 30-minute lookback comes from the candle backfill)
+    "ndx_0dte_friend_real": Spec("script", _dt.time(10, 45), _dt.time(15, 30), ("",),
+                                 "EXPERIMENTAL: the friend's decisions (learned entries and cut/add/take), paper execution",
+                                 poll=60),
     "gex_positioning": Spec("allocator", _dt.time(15, 50), _dt.time(16, 0), ("vix", "gex"),
                             "the service's GEX paper allocator on the whole paper account"),
     "ndx_gamma_walls": Spec("runner", _dt.time(9, 25), _dt.time(15, 0), ("",),
