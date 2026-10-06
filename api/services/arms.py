@@ -25,6 +25,8 @@ holidays skipped) and records what happened in the arm's ``last_result``:
                     window) builds no stream backfill (the strategy needs no lookback).
   spx_gamma_walls   the same on SPX (NDX Gamma Walls' rule on the same-day SPXW chain, a live paper trial; the
                     strategy is an overlay too): the same runner, time and window.
+  spx_0dte_call13   the same runner at 12:50 ET with a 60 s poll (its spec's ``poll``): it sells one SPXW call spread
+                    at 13:00 and holds it to the settlement, so one quote a minute is enough.
 
 Rules: if a runner for the strategy is already running anywhere (the service's own or external: another
 process, the scheduled task, a fresh heartbeat), the day is "skipped: already running (...)". A service that
@@ -68,8 +70,8 @@ class Spec:
     until: _dt.time              # the last moment a late start still makes sense (ET)
     variants: tuple = ("",)      # "" = the strategy has no variants
     label: str = ""
-    poll: int = 0                # script runners: seconds between quote polls (0 = the start script's 15); a slower poll
-                                 # keeps an experiment inside the broker's daily call budget
+    poll: int = 0                # seconds between quote polls (0 = the default: the start script's 15 for a script, RUNNER_POLL_S
+                                 # for a runner); a slower poll keeps an experiment inside the broker's daily call budget
 
 
 SPECS: dict[str, Spec] = {
@@ -106,6 +108,12 @@ SPECS: dict[str, Spec] = {
     # NDX Gamma Walls' rule on SPX (2026-09-30; untested on SPX, so a live paper trial): entries 11:00-15:00 like it
     "spx_gamma_walls": Spec("runner", _dt.time(9, 25), _dt.time(15, 0), ("",),
                             "the platform's paper runner from the service checkout (detached; the strategy is an overlay)"),
+    # the call-spread study's F1 on a 10-wide (2026-10-05, the owner: "we need a winner"; a thin edge, an experiment): one
+    # SPXW call spread sold at 13:00 and held to the settlement. Up at 12:50 with a 60 s poll (~200 broker calls a day);
+    # a runner that is not up by 13:03 trades nothing, so a late start after 13:02 is pointless
+    "spx_0dte_call13": Spec("runner", _dt.time(12, 50), _dt.time(13, 2), ("",),
+                            "EXPERIMENTAL: a 10-wide SPXW call spread ~10 above SPX sold at 13:00, held to settlement",
+                            poll=60),
     # the rally fade (the resting-order trial, once ndx_0dte_maker; branch maker-runner 8741f3a): entries 11:00-15:30,
     # its 30-minute lookback backfilled from the broker's candle feed, so it starts at 10:25: polling from the open
     # would spend the shared broker budget on an hour it cannot trade
@@ -392,10 +400,15 @@ def python_exe() -> str:
     return str(venv) if venv.is_file() else sys.executable
 
 
+def runner_poll(strategy: str) -> int:
+    """Seconds between the runner's quote polls: the spec's own ``poll``, else RUNNER_POLL_S."""
+    return int(getattr(SPECS.get(strategy), "poll", 0) or 0) or RUNNER_POLL_S
+
+
 def runner_command(strategy: str, log: Path, csv_dir: Path, py: Optional[str] = None) -> str:
     """The platform's paper runner for ``strategy`` from this checkout (live, ledger on), its console output
     captured to ``log`` and its exit code to ``log``.exit."""
-    inner = (f'"{py or python_exe()}" -m api.runner_launch --strategy {strategy} --poll {RUNNER_POLL_S} '
+    inner = (f'"{py or python_exe()}" -m api.runner_launch --strategy {strategy} --poll {runner_poll(strategy)} '
              f'--log-dir "{csv_dir}"' + "".join(f" --param {k}={v}" for k, v in limit_params(strategy).items()))
     return f'cmd.exe /d /v:on /s /c "{limit_env()}{inner} > "{log}" 2>&1 & echo !ERRORLEVEL! > "{log}.exit""'
 
@@ -423,7 +436,7 @@ def launch_later(strategy: str, at: str, day: Optional[_dt.date] = None, log_dir
     csv_dir.mkdir(parents=True, exist_ok=True)
     log = log_dir / f"{strategy}_later_{_dt.datetime.now():%Y-%m-%d_%H%M%S}.log"
     inner = (f'"{python_exe()}" -m api.launch_later --at {at}' + (f" --date {day.isoformat()}" if day else "") +
-             f' -- --strategy {strategy} --poll {RUNNER_POLL_S} --log-dir "{csv_dir}"'
+             f' -- --strategy {strategy} --poll {runner_poll(strategy)} --log-dir "{csv_dir}"'
              + "".join(f" --param {k}={v}" for k, v in limit_params(strategy).items()))
     cmd = f'cmd.exe /d /v:on /s /c "{limit_env()}{inner} > "{log}" 2>&1 & echo !ERRORLEVEL! > "{log}.exit""'
     pid, created = wmi_launch(cmd, str(WORKING_COPY))
