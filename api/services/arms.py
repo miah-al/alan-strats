@@ -68,6 +68,8 @@ class Spec:
     until: _dt.time              # the last moment a late start still makes sense (ET)
     variants: tuple = ("",)      # "" = the strategy has no variants
     label: str = ""
+    poll: int = 0                # script runners: seconds between quote polls (0 = the start script's 15); a slower poll
+                                 # keeps an experiment inside the broker's daily call budget
 
 
 SPECS: dict[str, Spec] = {
@@ -85,6 +87,13 @@ SPECS: dict[str, Spec] = {
     # beside the 100-wide, so the same start script, start and window
     "ndx_0dte_friend_w50": Spec("script", _dt.time(9, 50), _dt.time(15, 30), ("",),
                                 "start_paper_runner.ps1 -Strategy ndx_0dte_friend_w50 from the live checkout (Friend's rules, 50 wide)"),
+    # EXPERIMENTS (2026-10-05, the owner: "arm experiments now" -- "i understand no risk no reward"), polled every 60 s
+    # (~400 broker calls a day each instead of ~1,560) so the day stays inside the 8,000-call budget
+    "ndx_0dte_always_bull": Spec("script", _dt.time(9, 45), _dt.time(10, 25), ("",),
+                                 "EXPERIMENTAL: one 25-wide bull call vertical at 10:00, held to settlement", poll=60),
+    "ndx_0dte_calm_theta": Spec("script", _dt.time(9, 50), _dt.time(15, 30), ("",),
+                                "EXPERIMENTAL: Friend's fade on calm days only (realised/VXN <= 0.45), 25-wide, settle",
+                                poll=60),
     "gex_positioning": Spec("allocator", _dt.time(15, 50), _dt.time(16, 0), ("vix", "gex"),
                             "the service's GEX paper allocator on the whole paper account"),
     "ndx_gamma_walls": Spec("runner", _dt.time(9, 25), _dt.time(15, 0), ("",),
@@ -334,7 +343,10 @@ def task_command(strategy: str, checkout: Optional[Path] = None) -> str:
     """The scheduled task's own command line (register_paper_task.ps1's /TR), with the strategy's limits as -Params."""
     script = (checkout or live_checkout()) / "scripts" / "start_paper_runner.ps1"
     params = ";".join(f"{k}={v}" for k, v in limit_params(strategy).items())
+    spec = SPECS.get(strategy)
+    poll = int(getattr(spec, "poll", 0) or 0)
     return (f'powershell -NoProfile -ExecutionPolicy Bypass -File "{script}" -Strategy {strategy}'
+            + (f" -Poll {poll}" if poll else "")
             + (f' -Params "{params}"' if params else ""))
 
 
