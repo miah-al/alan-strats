@@ -160,6 +160,11 @@ def _main(argv, handlers: list) -> int:
     # a runner started by hand without the right flags would otherwise quietly price fills another way.
     live_params = dict(inst.get("live_params") or {})
     engine = get_engine()
+    if inst.get("pair"):
+        # a strategy that trades two indexes at once (ndx_spx_ratio: NDXP against SPXW) has its own loop, with the same
+        # state, heartbeat and ledger as this one (paper/pair_runner.py)
+        from paper.pair_runner import main_pair
+        return main_pair(args, strategy, inst, {**live_params, **params}, engine, starting_cash)
 
     log_dir = Path(args.log_dir) if args.log_dir else None
     if args.replay:
