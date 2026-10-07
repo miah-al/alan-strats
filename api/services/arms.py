@@ -27,6 +27,8 @@ holidays skipped) and records what happened in the arm's ``last_result``:
                     strategy is an overlay too): the same runner, time and window.
   spx_0dte_call13   the same runner at 12:50 ET with a 60 s poll (its spec's ``poll``): it sells one SPXW call spread
                     at 13:00 and holds it to the settlement, so one quote a minute is enough.
+  ndx_spx_ratio     the same launch at 09:25 ET with a 5 s poll; the runner script hands a pair strategy (two indexes) to
+                    paper/pair_runner.py, which streams NDX, SPX and both chains and is flat by 15:45.
 
 Rules: if a runner for the strategy is already running anywhere (the service's own or external: another
 process, the scheduled task, a fresh heartbeat), the day is "skipped: already running (...)". A service that
@@ -118,6 +120,13 @@ SPECS: dict[str, Spec] = {
     "spx_0dte_call13": Spec("runner", _dt.time(12, 50), _dt.time(13, 2), ("",),
                             "EXPERIMENTAL: a 10-wide SPXW call spread ~10 above SPX sold at 13:00, held to settlement",
                             poll=60),
+    # the owner's NDX/SPX ratio structure, faded when the ratio stretches (2026-10-07: "use AI to capture the reversion ...
+    # we need this armed for tomorrow"): the pair runner (paper/pair_runner.py) streams both indexes and both chains, so a
+    # 5 s poll costs no REST budget. Its first decision is the 10:00 bar on an hour of history from 09:30 (a late start
+    # backfills it from the candle feed); entries stop at 15:25 and it is flat by 15:45, so a start after 15:20 is pointless
+    "ndx_spx_ratio": Spec("runner", _dt.time(9, 25), _dt.time(15, 20), ("",),
+                          "EXPERIMENTAL: fade NDX/SPX stretches with 1 NDXP 100-wide call spread vs 4 SPXW 25-wide put "
+                          "spreads, at the mid, 15-minute holds", poll=5),
     # the rally fade (the resting-order trial, once ndx_0dte_maker; branch maker-runner 8741f3a): entries 11:00-15:30,
     # its 30-minute lookback backfilled from the broker's candle feed, so it starts at 10:25: polling from the open
     # would spend the shared broker budget on an hour it cannot trade
