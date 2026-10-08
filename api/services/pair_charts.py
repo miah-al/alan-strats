@@ -9,8 +9,9 @@ spread combo of the NDX/SPX structure "like the one I gave you" from TOS).
                       a pair strategy's stretch (ndx_spx_ratio), so on its pair the lines are where it enters. Any paper
                       pair runner's trades on that pair today are returned as markers.
 ``combo(...)``        a pair strategy's structure as ONE price through the session, like a custom spread in TOS: each leg's
-                      1-minute closes (last trades) from the broker's candle feed (DXLink: market data, no REST budget),
-                      carried forward, summed with the structure's signs and sizes. The legs' own verticals come too.
+                      1-minute MID (DXLink candles priced at the mark, the bid/ask midpoint, so a leg that has not traded for
+                      a while is not carried at a stale print; market data, no REST budget), summed with the structure's
+                      signs and sizes, 09:30-15:59. The legs' own verticals come too.
 """
 from __future__ import annotations
 
@@ -164,14 +165,18 @@ def option_streamer_symbol(root: str, expiry: _dt.date, cp: str, strike: float) 
 
 
 class CandleSource:
-    """1-minute candles (closes) for a handful of symbols from the broker's DXLink candle feed, from 09:30 of ``day``.
-    Market data, not a REST call: it costs nothing from the broker's day budget. One OAuth session, reused; one pull at
-    a time; each symbol set cached for CANDLE_TTL seconds."""
+    """1-minute candles (closes) for a handful of symbols from the broker's DXLink candle feed, 09:30-15:59 of ``day``,
+    priced at the mark (the bid/ask midpoint) by default. Market data, not a REST call: it costs nothing from the
+    broker's day budget. One OAuth session and one event loop, kept for the process (the SDK binds a session to the loop
+    it first runs on: a new loop per pull failed with "Event loop is closed"); one pull at a time; each symbol set cached
+    for CANDLE_TTL seconds."""
 
-    def __init__(self):
+    def __init__(self, price: str = "mark"):
         self._lock = threading.Lock()
         self._session = None
+        self._loop = None
         self._cache: dict = {}
+        self.price = price
 
     def _session_obj(self):
         if self._session is None:
@@ -199,9 +204,15 @@ class CandleSource:
                 return hit[1]
             try:
                 got = self._pull(list(symbols), day)
-            except Exception as exc:  # noqa: BLE001 - one retry on a fresh session (an expired token)
+            except Exception as exc:  # noqa: BLE001 - one retry on a fresh session and loop (an expired token)
                 logger.warning("candle pull failed (%s); retrying on a new session", exc)
                 self._session = None
+                if self._loop is not None:
+                    try:
+                        self._loop.close()
+                    except Exception:  # noqa: BLE001
+                        pass
+                    self._loop = None
                 got = self._pull(list(symbols), day)
             self._cache[key] = (time.monotonic(), got)
             return got
@@ -214,10 +225,11 @@ class CandleSource:
             from tastytrade import DXLinkStreamer
             from tastytrade.dxfeed import Candle
             start = _dt.datetime.combine(day, _dt.time(9, 30))
-            end = _dt.datetime.combine(day, _dt.time(16, 1))
+            end = _dt.datetime.combine(day, _dt.time(16, 0))           # the 16:00 bar is after the bell
             rows: dict = {s: {} for s in symbols}
+            interval = "1m" if self.price in ("", "last") else f"1m,price={self.price}"
             async with DXLinkStreamer(self._session_obj()) as st:
-                await st.subscribe_candle(list(symbols), "1m", start_time=start)
+                await st.subscribe_candle(list(symbols), interval, start_time=start)
                 quiet = 0
                 while quiet < 12:
                     await anyio.sleep(0.25)
@@ -234,11 +246,9 @@ class CandleSource:
                     quiet = 0 if fresh else quiet + 1
             return {s: sorted(v.items()) for s, v in rows.items()}
 
-        loop = asyncio.new_event_loop()
-        try:
-            return loop.run_until_complete(pull())
-        finally:
-            loop.close()
+        if self._loop is None or self._loop.is_closed():
+            self._loop = asyncio.new_event_loop()
+        return self._loop.run_until_complete(pull())
 
 
 _CANDLES: Optional[CandleSource] = None
@@ -342,4 +352,4 @@ def combo(slug: str, day: Optional[_dt.date] = None, k: Optional[list] = None, c
             "legs": [{kk: leg[kk] for kk in ("symbol", "index", "cp", "strike", "sign", "qty")} for leg in legs],
             "times": [t.isoformat(timespec="minutes") for t in frame.index], "combo": [round(float(x), 2) for x in total],
             "verticals": verts, "trades": markers,
-            "source": "the broker's 1-minute candles (last trades), each leg carried forward"}
+            "source": "the broker's 1-minute candles at each leg's mid (mark), 09:30-15:59"}
