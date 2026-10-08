@@ -145,7 +145,8 @@ def ledger(monkeypatch):
     return calls
 
 
-def _run(tmp_path, start=dtime(9, 29, 50), until=PR.PAIR_UNTIL, write_ledger=True):
+def _run(tmp_path, start=dtime(9, 29, 50), until=PR.PAIR_UNTIL, write_ledger=True, controls=None):
+    """``controls(now)`` -> the supervisor's rows at that moment (paper/supervisor.py's shape); none by default."""
     ndx, spx = paths()
     t = [datetime.combine(DAY, start)]
     now_fn = lambda: t[0]                                         # noqa: E731
@@ -155,7 +156,8 @@ def _run(tmp_path, start=dtime(9, 29, 50), until=PR.PAIR_UNTIL, write_ledger=Tru
     provs = {"NDX": FakeIndexProvider("NDX", "NDXP", ndx, now_fn, 0.07),
              "SPX": FakeIndexProvider("SPX", "SPXW", spx, now_fn, 0.05)}
     ps = PR.PairSession(SLUG, provs, (object() if write_ledger else None), write_ledger=write_ledger,
-                        log_dir=tmp_path / "log", state_dir=tmp_path / "state")
+                        log_dir=tmp_path / "log", state_dir=tmp_path / "state",
+                        controls_fn=(lambda slug: (controls(now_fn()) if controls else {})))
     res = ps.run_live(day=DAY, poll_seconds=10, until=until, now_fn=now_fn, sleep_fn=sleep_fn)
     return ps, res, provs
 
@@ -222,6 +224,41 @@ def test_a_restart_mid_trade_resumes_the_open_structure(tmp_path, strategy, ledg
     d = json.loads(st_path.read_text(encoding="utf-8"))
     assert d["finished"] is True                       # an orderly stop closes everything ...
     assert d["state"]["positions"] == []               # ... so nothing is carried
+
+
+def _utc(hh, mm):
+    """A New York wall time on DAY as the UTC-naive stamp the limits table stores (EDT: UTC-4)."""
+    return datetime.combine(DAY, dtime(hh, mm)) + timedelta(hours=4)
+
+
+def test_the_supervisor_keeps_the_pair_out_when_entries_are_off(tmp_path, strategy, ledger):
+    rows = {"sup_entries": {"value": 0, "at": _utc(9, 0), "reason": "a trend day"}}
+    ps, res, _ = _run(tmp_path, controls=lambda now: rows)
+    assert not ps.halted and not res.trades and not [f for f in res.fills if f["kind"] == "open"]
+    assert not [c for c in ledger if c[0] == "structure"]
+    st = json.loads((tmp_path / "state" / f"{SLUG}_{DAY.isoformat()}.json").read_text(encoding="utf-8"))
+    blocked = [d for d in st["state"]["decisions"] if str(d.get("done", "")).startswith("blocked: supervisor: entries off")]
+    assert blocked and st["state"]["sup_entries_off"] is True
+    # a control set on another day does not count: the rules are in charge again
+    old = {"sup_entries": {"value": 0, "at": _utc(9, 0) - timedelta(days=1), "reason": "yesterday"}}
+    _, res2, _ = _run(tmp_path / "next", controls=lambda now: old)
+    assert res2.trades
+
+
+def test_a_supervisor_close_flattens_the_open_structure_and_books_it(tmp_path, strategy, ledger):
+    asked = datetime.combine(DAY, dtime(11, 5))
+
+    def controls(now):                                            # the request is made at 11:05, with the 11:00 sell open
+        return {"sup_close": {"value": 1, "at": _utc(11, 5), "reason": "risk off"}} if now >= asked else {}
+    ps, res, _ = _run(tmp_path, controls=controls)
+    first = res.trades[0]
+    assert first["direction"] == "short" and first["entry_time"] < "11:05"
+    assert first["exit_reason"] == "supervisor close" and "11:05" <= first["exit_time"] <= "11:07"
+    rows = [c[1] for c in ledger if c[0] == "structure"]
+    closes = [r for r in rows if r["fill"]["kind"] == "close" and r["fill"]["m"] == [f for f in res.fills if f["kind"] == "close"][0]["m"]]
+    assert sorted(r["underlying"] for r in closes) == ["NDX", "SPX"] and all(r["position_id"] is not None for r in closes)
+    assert len(res.trades) >= 2                                   # entries stayed on: the 13:30 stretch is still traded
+    assert not ps.halted
 
 
 def test_blocked_day_does_nothing(tmp_path, strategy, ledger, monkeypatch):

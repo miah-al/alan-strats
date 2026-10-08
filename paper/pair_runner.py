@@ -16,6 +16,9 @@ A pair strategy declares itself in ``live_instrument()``: ``pair: True`` and ``l
   two spreads the way the trade is held at the broker.
 - State and heartbeat: the same files and shapes as the single-index runner (paper_state/<slug>_<day>.json,
   heartbeat_<slug>.json), so the service's runner list, the marks and a restart all work unchanged.
+- The supervisor (paper/supervisor.py; from 2026-10-08): its controls are read every poll, as the single-index runner
+  reads them, and handed to the engine's ``supervise(entries, adds, reason)`` (no new entries today) and
+  ``flatten(minute, closes, quote_fn, reason)`` (close the open structure now). They only take risk off.
 """
 from __future__ import annotations
 
@@ -29,6 +32,7 @@ from typing import Callable, Optional
 
 from strategy_api import registry as R
 from . import ledger as L
+from . import supervisor as SUP
 from .providers import Bar, LegQuote, now_et
 from .runner import RunResult, SESSION_OPEN, STATE_DIR, PaperSession
 
@@ -85,7 +89,8 @@ class PairSession:
 
     def __init__(self, slug: str, providers: dict, engine_db=None, *, write_ledger: bool = True,
                  log_dir: Optional[Path] = None, account_name: str = "Paper Account", params: Optional[dict] = None,
-                 state_dir: Optional[Path] = None, starting_cash: Optional[float] = None, notify: bool = False):
+                 state_dir: Optional[Path] = None, starting_cash: Optional[float] = None, notify: bool = False,
+                 controls_fn: Optional[Callable[[str], dict]] = None):
         self.slug = slug
         self.providers = dict(providers)                     # index -> provider
         self.db = engine_db
@@ -115,6 +120,12 @@ class PairSession:
         self._spot: dict[str, Optional[float]] = {i: None for i in self.indexes}
         self._last_close: dict[str, Optional[float]] = {i: None for i in self.indexes}
         self._now_fn: Callable[[], datetime] = now_et
+        # the supervisor's controls (paper/supervisor.py), read every poll; in a test, ``controls_fn(slug)``
+        self._controls_fn = controls_fn or (lambda slug: SUP.read_controls(self.db, slug))
+        self._sup_applied: tuple = (True, True)          # (entries, adds) last handed to the engine
+        self._sup_close_seen: Optional[datetime] = None  # the latest close request acted on (or older than the run)
+        self._sup_unsupported = False
+        self._sup_read_failures = 0
 
     # ── borrowed from the single-index runner (they only use slug, state_dir, db, account_id, notify) ──
     def _alert(self, text: str) -> None:
@@ -341,6 +352,55 @@ class PairSession:
         except OSError:
             pass
 
+    # ── the supervisor ────────────────────────────────────────────────────────
+    def _supervise(self, session, now: datetime, day: date) -> None:
+        """The supervisor's controls at this poll: entries on or off through the engine's ``supervise`` hook, and a new
+        close request through its ``flatten`` (the open structure at the mids now). They only take risk off, so a
+        failure to read them leaves the rules in charge."""
+        try:
+            c = SUP.effective(self._controls_fn(self.slug) or {}, day)
+            self._sup_read_failures = 0
+        except Exception as exc:  # noqa: BLE001
+            self._sup_read_failures += 1
+            if self._sup_read_failures in (1, 30):
+                logger.warning("supervisor controls unreadable (%d): %s", self._sup_read_failures, exc)
+            return
+        sup, flat = getattr(session, "supervise", None), getattr(session, "flatten", None)
+        want = (c.entries, c.adds)
+        close_new = c.close_at is not None and (self._sup_close_seen is None or c.close_at > self._sup_close_seen)
+        if (want != self._sup_applied or close_new) and (sup is None or flat is None):
+            if not self._sup_unsupported:
+                self._sup_unsupported = True
+                logger.warning("SUPERVISOR: %s's engine has no supervise/flatten hooks: the controls are ignored", self.slug)
+                self._alert(f"supervisor: {self.slug} cannot be supervised (no hooks); controls ignored")
+            self._sup_applied = want
+            if close_new:
+                self._sup_close_seen = c.close_at
+            return
+        if want != self._sup_applied:
+            sup(c.entries, c.adds, c.reason)
+            self._sup_applied = want
+            msg = f"supervisor: entries {'on' if c.entries else 'OFF'}" + (f" ({c.reason})" if c.reason else "")
+            logger.info("%s %s", f"{now:%H:%M:%S}", msg)
+            self._alert(msg)
+            self._write_new_fills(session, day)                  # a waiting entry it cancelled
+            self._save_state(session, day)
+        if close_new:
+            self._sup_close_seen = c.close_at
+            if not getattr(session, "positions", None) and getattr(session, "pending", None) is None:
+                logger.info("%s supervisor: close requested, nothing open", f"{now:%H:%M:%S}")
+                return
+            closes = {i: (self._last_close.get(i) or self._spot.get(i)) for i in self.indexes}
+            try:
+                n = flat(_minute_of(now) + 1, closes, self.quote_fn, "supervisor")
+            except Exception as exc:  # noqa: BLE001 — the rules keep managing whatever is still open
+                logger.exception("supervisor: flatten failed")
+                self._alert(f"supervisor: close FAILED ({exc}); the rules still manage the structure")
+                return
+            logger.info("%s supervisor: closed %d structure(s)%s", f"{now:%H:%M:%S}", n, f" ({c.reason})" if c.reason else "")
+            self._write_new_fills(session, day)
+            self._save_state(session, day)
+
     # ── the session ───────────────────────────────────────────────────────────
     def _gate(self, day: date) -> tuple[bool, str]:
         try:
@@ -408,6 +468,7 @@ class PairSession:
             self._heartbeat(day, now_fn(), session, f"blocked: {why}")
             return res
         start = now_fn()
+        self._sup_close_seen = start                    # a close requested before this run started is not this run's
         if start.time() > SESSION_OPEN:
             n = self._backfill(session, day, start.replace(second=0, microsecond=0))
             if n:
@@ -455,6 +516,8 @@ class PairSession:
                 except Exception:  # noqa: BLE001
                     pass
             self._heartbeat(day, now, session, marks=marks)
+            # the supervisor's controls first: they only take risk off
+            self._supervise(session, now, day)
             this_minute = now.replace(second=0, microsecond=0)
             if cur_minute is None:
                 cur_minute = this_minute

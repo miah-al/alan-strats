@@ -35,7 +35,7 @@ def test_the_lines_are_the_strategys():
     rng = np.random.default_rng(3)
     spx = 7800 * np.exp(np.cumsum(rng.normal(0, 0.0004, 390)))
     ndx = 31000 * np.exp(np.cumsum(rng.normal(0, 0.0004, 390)) + rng.normal(0, 0.00005, 390))
-    a = PC.ratio_series(list(ndx), list(spx), 15, 60, 3.0)
+    a = PC.ratio_series(list(ndx), list(spx), 15, 60, RatioParams().z_entry)
     b = signal_series(list(ndx), list(spx), RatioParams())
     for k in ("ratio", "ema", "upper", "lower", "z"):
         for x, y in zip(a[k], b[k]):
