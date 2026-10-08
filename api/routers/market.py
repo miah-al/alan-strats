@@ -183,3 +183,28 @@ def market_iv_term(ticker: str, source: Literal["auto", "db", "polygon"] = "auto
     from api.services import structure as S
     return cached(("iv-term", ticker.upper(), source, max_dte), IV_TERM_TTL,
                   lambda: S.iv_term(ticker, source, max_dte), cache_errors=_NO_DATA)
+
+
+@router.get("/market/ratio")
+def market_ratio(request: Request, a: str = Query(default="NDX"), b: str = Query(default="SPX"),
+                 ema: int = Query(default=15, ge=2, le=240), sd: int = Query(default=60, ge=5, le=390),
+                 z: float = Query(default=3.0, ge=0.5, le=10.0)):
+    """A / B through the session, minute by minute: the ratio, its EMA and the ±z lines (sd of the last ``sd`` one-minute
+    changes of the log ratio), and any paper pair runner's trades on the pair today (api/services/pair_charts.py)."""
+    from api.services import intraday as I
+    from api.services import pair_charts as PC
+    hub = getattr(request.app.state, "market", None)
+    agg = getattr(request.app.state, "minutes", None)
+    for t in (a, b):
+        if agg is not None:
+            agg.want(t.strip().upper())
+
+    def bars(sym: str) -> dict:
+        return cached(("intraday", sym.upper(), 390, 1), 15.0, lambda: I.intraday(sym, 390, 1, hub=hub, agg=agg),
+                      cache_errors=_NO_DATA)
+    try:
+        return PC.ratio(a, b, ema, sd, z, intraday_fn=bars)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc))
+    except (LookupError,) + _NO_DATA as exc:
+        raise HTTPException(404, str(exc))

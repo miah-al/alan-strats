@@ -78,3 +78,38 @@ def runner_log(strategy: str, request: Request, days: int = 30):
     if not 1 <= days <= 3660:
         raise HTTPException(422, "days must be between 1 and 3660")
     return request.app.state.gex_allocator.log(days)
+
+
+@router.get("/runner/{strategy}/combo-chart")
+def runner_combo_chart(strategy: str, request: Request, day: Optional[str] = None, k: Optional[str] = None):
+    """A pair strategy's structure as one price through the session (the spread-vs-spread chart), from its legs' 1-minute
+    candles; ``k`` = each vertical's long strike, comma separated (default: the open structure, else the day's last trade,
+    else the one it would open now). api/services/pair_charts.py."""
+    import datetime as _dt
+    from api.services import pair_charts as PC
+    try:
+        d = _dt.date.fromisoformat(day) if day else None
+        ks = [float(x) for x in k.split(",")] if k else None
+    except ValueError as exc:
+        raise HTTPException(422, f"bad day or strikes: {exc}")
+
+    def spots():
+        hub = getattr(request.app.state, "market", None)
+        out = {}
+        if hub is not None:
+            for s in ("NDX", "SPX"):
+                try:
+                    px = hub.price(s, wait=2.0)
+                    if px:
+                        out[s] = float(px)
+                except Exception:  # noqa: BLE001
+                    pass
+        return out
+    try:
+        return PC.combo(strategy, d, ks, spot_fn=spots)
+    except KeyError:
+        raise HTTPException(404, f"unknown strategy {strategy!r}")
+    except ValueError as exc:
+        raise HTTPException(422, str(exc))
+    except LookupError as exc:
+        raise HTTPException(404, str(exc))
