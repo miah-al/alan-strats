@@ -145,3 +145,12 @@ def test_the_routes(tmp_path, monkeypatch):
         assert r.json()["strikes"] == [31090.0, 7820.0]
         assert c.get("/api/runner/ndx_spx_ratio/combo-chart", params={"day": "x"}).status_code == 422
         assert c.get("/api/runner/nope_nope/combo-chart").status_code == 404
+
+
+def test_a_huge_plain_extra_is_dropped_from_the_job_result():
+    """A strategy's bar-by-bar replay (the Friend Clones': 9.9 MB) kept the app's Backtest tab from ever showing the
+    result; plain data over the cap is dropped and named, small data stays."""
+    from api.services import strategies as S
+    big = {"days": [{"frames": list(range(300_000))}]}
+    out, dropped = S._safe_extra({"replay": big, "cards": [{"label": "x", "value": "1"}], "note": "n"})
+    assert dropped == ["replay"] and out["cards"] == [{"label": "x", "value": "1"}] and out["note"] == "n"
