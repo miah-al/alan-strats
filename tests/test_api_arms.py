@@ -261,3 +261,28 @@ def test_the_db_store_round_trip():
             c.execute(text("DELETE FROM app.RunnerArm WHERE Strategy = :s"), {"s": name})
         if not had:
             uninstall_db_read_only_guard()
+
+
+def test_a_shadow_arm_runs_with_the_ledger_off(rig):
+    """2026-10-08: strategies still proving themselves run in shadow, the same session with --no-ledger."""
+    sched, runners, store, clock, events, procs = rig
+    seen = []
+    base = sched.launcher
+
+    def launcher(strategy, shadow=False):
+        seen.append(shadow)
+        return base(strategy)
+    sched.launcher = launcher
+    [row] = sched.arm("ndx_0dte_tasty", "weekdays", mode="shadow")
+    assert row["mode"] == "shadow" and "shadow" in events[-1]["detail"]
+    [ev] = sched.tick(ts("2026-09-25 09:30:05"))
+    assert ev["event"] == "started" and seen == [True] and ev["mode"] == "shadow"
+    runners.stop("ndx_0dte_tasty")
+    [row] = sched.arm("ndx_0dte_tasty", "weekdays")              # re-armed as paper: the ledger is back on
+    assert row["mode"] == "paper"
+    with pytest.raises(A.ArmError):
+        sched.arm("ndx_0dte_tasty", "weekdays", mode="live")
+    assert A.task_command("x", Path(r"D:\a"), shadow=True).endswith("-Strategy x -NoLedger")
+    assert not A.task_command("x", Path(r"D:\a")).endswith("-NoLedger")
+    assert " --no-ledger" in A.runner_command("x", Path(r"C:\l.log"), Path(r"C:\csv"), py="py", shadow=True)
+    assert " --no-ledger" not in A.runner_command("x", Path(r"C:\l.log"), Path(r"C:\csv"), py="py")

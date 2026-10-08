@@ -120,6 +120,10 @@ def _system_catalogue() -> list[dict]:
              "After this many live sessions a strategy with negative P&L per day is dropped (reviewed, not automatic)."),
         _lim("kill_day_loss_per_lot", "Kill rule: worst day per lot", "$", 3000, 500, 20000, "review",
              "A day worse than this per lot drops a strategy at once (reviewed, not automatic)."),
+        _lim("account_day_stop", "Account day stop ($, 0 = none)", "$", 1000, 0, 50000, "now",
+             "When the whole paper account is this far down on the day (closed today plus open marks, every strategy "
+             "and desk), every armed strategy's new entries go off for the rest of the day (the supervisor's control, "
+             "set by the service); open positions keep their own exits (api/services/day_stop.py)."),
     ]
 
 
@@ -373,6 +377,9 @@ def _usage_of(name: str, value, u: dict, usage: dict) -> tuple[Optional[float], 
     if name == "broker_day_cap":
         calls = usage.get(SYSTEM_SCOPE, {}).get("broker_calls")
         return (calls, grade(calls, v)) if calls is not None else (None, "ok")
+    if name == "account_day_stop":
+        acct = usage.get(SYSTEM_SCOPE, {}).get("day_pnl")
+        return (acct, grade(max(0.0, -acct), abs(v))) if acct is not None and v > 0 else (acct, "ok")
     pnl = u.get("day_pnl")
     if name == "day_stop" and pnl is not None:            # negative: -2,500
         loss = max(0.0, -pnl)
@@ -409,7 +416,8 @@ def paper_usage(hub=None, broker_calls: Optional[Callable[[], Optional[int]]] = 
                 ml = r.get("max_loss")
                 if ml is not None:
                     u["max_open_risk"] = max(u["max_open_risk"], abs(float(ml)))
-    out[SYSTEM_SCOPE] = {"broker_calls": (broker_calls or broker_calls_today)()}
+    out[SYSTEM_SCOPE] = {"broker_calls": (broker_calls or broker_calls_today)(),
+                         "day_pnl": round(sum(u["day_pnl"] for u in out.values()), 2)}   # the whole account
     return out
 
 

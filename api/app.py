@@ -124,6 +124,16 @@ def create_app():
     from api.services import limits as trade_limits
     limits_store = trade_limits.make_store()
     trade_limits.install(limits_store)
+    # the account-wide day stop (system limit account_day_stop): every armed strategy's entries off for the day
+    from api.services.day_stop import AccountDayStop
+
+    def _armed_strategies() -> list[str]:
+        try:
+            return sorted({a["strategy"] for a in arm_scheduler.arms() if (a.get("kind") or "runner") != "allocator"})
+        except Exception:
+            return []
+    day_stop = AccountDayStop(lambda: trade_limits.Limits(limits_store, strategies=_armed_strategies),
+                              lambda: trade_limits.paper_usage(hub=market_hub), publish=hub.publish)
 
     from api.redact import RedactingFilter, install_redaction, redact
     forwarder.addFilter(RedactingFilter())
@@ -147,6 +157,8 @@ def create_app():
         minutes.start()
         crypto_flush.start()
         brief.start()
+        if limits_store is not None:
+            day_stop.start()
         beat = asyncio.create_task(hub.heartbeat_forever())
         logger.info("alan_trader service %s (%s) up; strategies from %s",
                     build["version"], build["branch"], info.get("strategies_dir"))
@@ -165,6 +177,7 @@ def create_app():
             minutes.stop()
             crypto_flush.stop()
             brief.stop()
+            day_stop.stop()
             await market_hub.stop()
             if request_gate.installed() is market_hub.gate:
                 request_gate.install(None)
@@ -193,6 +206,7 @@ def create_app():
     app.state.crypto_flush = crypto_flush
     app.state.brief = brief
     app.state.limits_store = limits_store
+    app.state.day_stop = day_stop
     app.state.build = build
     app.state.bootstrap = info
     app.state.json_response = SafeJSONResponse

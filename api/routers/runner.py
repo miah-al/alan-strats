@@ -53,7 +53,8 @@ def runner_arm(strategy: str, request: Request, body: Optional[dict] = Body(defa
     from api.services.arms import ArmError
     b = body or {}
     try:
-        return request.app.state.arms.arm(strategy, b.get("schedule") or "weekdays", b.get("date"), b.get("variant"))
+        return request.app.state.arms.arm(strategy, b.get("schedule") or "weekdays", b.get("date"), b.get("variant"),
+                                          b.get("mode") or "paper")
     except ArmError as exc:
         raise HTTPException(422, str(exc))
 
