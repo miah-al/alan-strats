@@ -207,14 +207,14 @@ class MemoryArmStore:
         with self._lock:
             return [dict(r) for r in self._rows.values() if r["active"]]
 
-    def arm(self, strategy: str, variant: str, schedule: str, date: Optional[_dt.date]) -> dict:
+    def arm(self, strategy: str, variant: str, schedule: str, date: Optional[_dt.date], mode: str = "paper") -> dict:
         with self._lock:
             for r in self._rows.values():
                 if r["active"] and r["strategy"] == strategy and r["variant"] == variant:
-                    r.update(schedule=schedule, date=date, armed_at=_utcnow())
+                    r.update(schedule=schedule, date=date, mode=mode, armed_at=_utcnow())
                     return dict(r)
             r = {"id": self._next, "strategy": strategy, "variant": variant, "schedule": schedule, "date": date,
-                 "mode": "paper", "armed_at": _utcnow(), "last_run_date": None, "last_run_at": None,
+                 "mode": mode, "armed_at": _utcnow(), "last_run_date": None, "last_run_at": None,
                  "last_result": None, "run_pid": None, "run_created": None, "run_log": None, "active": True}
             self._rows[self._next] = r
             self._next += 1
@@ -277,18 +277,18 @@ class DbArmStore:
             rows = c.execute(text(self._SELECT + " WHERE Active = 1 ORDER BY Strategy, Variant")).fetchall()
         return [self._row(r) for r in rows]
 
-    def arm(self, strategy: str, variant: str, schedule: str, date: Optional[_dt.date]) -> dict:
+    def arm(self, strategy: str, variant: str, schedule: str, date: Optional[_dt.date], mode: str = "paper") -> dict:
         from sqlalchemy import text
         from api.services import appdb
         appdb.ensure("RunnerArm")
         with self._eng().begin() as c:
-            n = c.execute(text("UPDATE app.RunnerArm SET Schedule = :sch, ArmDate = :d, ArmedAt = SYSUTCDATETIME(), "
+            n = c.execute(text("UPDATE app.RunnerArm SET Schedule = :sch, ArmDate = :d, Mode = :m, ArmedAt = SYSUTCDATETIME(), "
                                "UpdatedAt = SYSUTCDATETIME() WHERE Strategy = :s AND Variant = :v AND Active = 1"),
-                          {"sch": schedule, "d": date, "s": strategy, "v": variant}).rowcount
+                          {"sch": schedule, "d": date, "m": mode, "s": strategy, "v": variant}).rowcount
             if not n:
                 c.execute(text("INSERT INTO app.RunnerArm (Strategy, Variant, Schedule, ArmDate, Mode) "
-                               "VALUES (:s, :v, :sch, :d, 'paper')"),
-                          {"s": strategy, "v": variant, "sch": schedule, "d": date})
+                               "VALUES (:s, :v, :sch, :d, :m)"),
+                          {"s": strategy, "v": variant, "sch": schedule, "d": date, "m": mode})
             r = c.execute(text(self._SELECT + " WHERE Strategy = :s AND Variant = :v AND Active = 1"),
                           {"s": strategy, "v": variant}).fetchone()
         return self._row(r)
@@ -335,6 +335,12 @@ def make_store():
     return DbArmStore()
 
 
+#: An arm's mode: "paper" books its fills in the paper ledger; "shadow" runs the same session with the ledger off
+#: (--no-ledger), so every decision, fill and quote is logged in its paper_log and state and nothing reaches the
+#: account (2026-10-08, the owner: shadow for the strategies still proving themselves).
+MODES = ("paper", "shadow")
+
+
 # ── launching the scheduled task's script ────────────────────────────────────
 
 def live_checkout() -> Path:
@@ -365,7 +371,7 @@ def limit_env() -> str:
     return f'set "ALAN_TRADER_BROKER_DAY_CAP={int(cap)}" & ' if cap else ""
 
 
-def task_command(strategy: str, checkout: Optional[Path] = None) -> str:
+def task_command(strategy: str, checkout: Optional[Path] = None, shadow: bool = False) -> str:
     """The scheduled task's own command line (register_paper_task.ps1's /TR), with the strategy's limits as -Params."""
     script = (checkout or live_checkout()) / "scripts" / "start_paper_runner.ps1"
     params = ";".join(f"{k}={v}" for k, v in limit_params(strategy).items())
@@ -374,12 +380,13 @@ def task_command(strategy: str, checkout: Optional[Path] = None) -> str:
     return (f'powershell -NoProfile -ExecutionPolicy Bypass -File "{script}" -Strategy {strategy}'
             + (f" -Poll {poll}" if poll else "")
             + (" -Stream" if getattr(spec, "stream", False) else "")
+            + (" -NoLedger" if shadow else "")
             + (f' -Params "{params}"' if params else ""))
 
 
-def wrapped_command(strategy: str, log: Path, checkout: Optional[Path] = None) -> str:
+def wrapped_command(strategy: str, log: Path, checkout: Optional[Path] = None, shadow: bool = False) -> str:
     """The task's command, its console output captured to ``log`` and its exit code to ``log``.exit."""
-    return (f'cmd.exe /d /v:on /s /c "{limit_env()}{task_command(strategy, checkout)} > "{log}" 2>&1 '
+    return (f'cmd.exe /d /v:on /s /c "{limit_env()}{task_command(strategy, checkout, shadow)} > "{log}" 2>&1 '
             f'& echo !ERRORLEVEL! > "{log}.exit""')
 
 
@@ -419,21 +426,22 @@ def runner_poll(strategy: str) -> int:
     return int(getattr(SPECS.get(strategy), "poll", 0) or 0) or RUNNER_POLL_S
 
 
-def runner_command(strategy: str, log: Path, csv_dir: Path, py: Optional[str] = None) -> str:
-    """The platform's paper runner for ``strategy`` from this checkout (live, ledger on), its console output
-    captured to ``log`` and its exit code to ``log``.exit."""
+def runner_command(strategy: str, log: Path, csv_dir: Path, py: Optional[str] = None, shadow: bool = False) -> str:
+    """The platform's paper runner for ``strategy`` from this checkout (live; the ledger on, or off in shadow), its
+    console output captured to ``log`` and its exit code to ``log``.exit."""
     inner = (f'"{py or python_exe()}" -m api.runner_launch --strategy {strategy} --poll {runner_poll(strategy)} '
-             f'--log-dir "{csv_dir}"' + "".join(f" --param {k}={v}" for k, v in limit_params(strategy).items()))
+             f'--log-dir "{csv_dir}"' + (" --no-ledger" if shadow else "")
+             + "".join(f" --param {k}={v}" for k, v in limit_params(strategy).items()))
     return f'cmd.exe /d /v:on /s /c "{limit_env()}{inner} > "{log}" 2>&1 & echo !ERRORLEVEL! > "{log}.exit""'
 
 
-def launch_runner(strategy: str, log_dir: Path) -> dict:
+def launch_runner(strategy: str, log_dir: Path, shadow: bool = False) -> dict:
     from api.bootstrap import WORKING_COPY
     log_dir.mkdir(parents=True, exist_ok=True)
     csv_dir = WORKING_COPY / "paper_state" / "runner_logs" / strategy / "live"
     csv_dir.mkdir(parents=True, exist_ok=True)
     log = log_dir / f"{strategy}_{_dt.datetime.now():%Y-%m-%d_%H%M%S}.log"
-    cmd = runner_command(strategy, log, csv_dir)
+    cmd = runner_command(strategy, log, csv_dir, shadow=shadow)
     pid, created = wmi_launch(cmd, str(WORKING_COPY))
     return {"pid": pid, "created": created, "log": str(log), "exit_file": f"{log}.exit", "cmdline": cmd,
             "task_command": cmd, "cwd": str(WORKING_COPY)}
@@ -457,17 +465,17 @@ def launch_later(strategy: str, at: str, day: Optional[_dt.date] = None, log_dir
     return {"pid": pid, "created": created, "log": str(log), "cmdline": cmd}
 
 
-def launch_task_script(strategy: str, log_dir: Path) -> dict:
+def launch_task_script(strategy: str, log_dir: Path, shadow: bool = False) -> dict:
     checkout = live_checkout()
     script = checkout / "scripts" / "start_paper_runner.ps1"
     if not script.is_file():
         raise RuntimeError(f"{script} is not there")
     log_dir.mkdir(parents=True, exist_ok=True)
     log = log_dir / f"{strategy}_{_dt.datetime.now():%Y-%m-%d_%H%M%S}.log"
-    cmd = wrapped_command(strategy, log, checkout)
+    cmd = wrapped_command(strategy, log, checkout, shadow)
     pid, created = wmi_launch(cmd, str(checkout))
     return {"pid": pid, "created": created, "log": str(log), "exit_file": f"{log}.exit", "cmdline": cmd,
-            "task_command": task_command(strategy, checkout), "cwd": str(checkout)}
+            "task_command": task_command(strategy, checkout, shadow), "cwd": str(checkout)}
 
 
 # ── the scheduler ─────────────────────────────────────────────────────────────
@@ -483,8 +491,8 @@ class ArmScheduler:
         self.publish = publish
         self.clock = clock or (lambda: pd.Timestamp.now(tz=NY))
         self.log_dir = WORKING_COPY / "paper_state" / "runner_logs" / "arm"
-        self.launcher = launcher or (lambda strategy: launch_task_script(strategy, self.log_dir))
-        self.runner_launcher = runner_launcher or (lambda strategy: launch_runner(strategy, self.log_dir))
+        self.launcher = launcher or (lambda strategy, shadow=False: launch_task_script(strategy, self.log_dir, shadow))
+        self.runner_launcher = runner_launcher or (lambda strategy, shadow=False: launch_runner(strategy, self.log_dir, shadow))
         self.allocator = allocator                      # gex_positioning's
         self.allocators = dict(allocators or {})        # other allocator-kind strategies -> their runner (run / status)
         self._stop = threading.Event()
@@ -527,7 +535,7 @@ class ArmScheduler:
     # ── events ────────────────────────────────────────────────────────────────
     def _event(self, event: str, arm: dict, detail: str = "", **extra) -> dict:
         ev = {"type": "arm", "event": event, "strategy": arm["strategy"], "variant": arm.get("variant") or None,
-              "schedule": arm.get("schedule"), "mode": "paper", "detail": detail,
+              "schedule": arm.get("schedule"), "mode": arm.get("mode") or "paper", "detail": detail,
               "at": self.clock().isoformat(timespec="seconds"), **extra}
         logger.info("arm %s%s: %s%s", arm["strategy"], f":{arm['variant']}" if arm.get("variant") else "", event,
                     f" — {detail}" if detail else "")
@@ -557,8 +565,11 @@ class ArmScheduler:
         return self.store
 
     def arm(self, strategy: str, schedule: str = "weekdays", date: Optional[str] = None,
-            variant: Optional[str] = None) -> list[dict]:
+            variant: Optional[str] = None, mode: str = "paper") -> list[dict]:
         store = self._need_store()
+        mode = (mode or "paper").strip().lower()
+        if mode not in MODES:
+            raise ArmError(f"mode must be one of {', '.join(MODES)}")
         spec = SPECS.get(strategy)
         if spec is None:
             raise ArmError(f"no scheduled paper run is defined for {strategy!r}; armable: {', '.join(SPECS)}")
@@ -586,9 +597,10 @@ class ArmScheduler:
             raise ArmError("date goes with schedule once")
         out = []
         for v in variants:
-            row = store.arm(strategy, v, schedule, day)
+            row = store.arm(strategy, v, schedule, day, mode)
             view = self._view(row, now)
-            self._event("armed", row, f"{schedule}{' ' + str(day) if day else ''}; next run {view['next_run']}")
+            shadow_note = " (shadow: books nothing)" if mode == "shadow" else ""
+            self._event("armed", row, f"{schedule}{' ' + str(day) if day else ''}{shadow_note}; next run {view['next_run']}")
             out.append(view)
         from api.serialize import to_jsonable
         return to_jsonable(out)
@@ -655,7 +667,7 @@ class ArmScheduler:
             running = c.proc.pid if c is not None else None
         nr = self.next_run(arm, now)
         return {"id": arm["id"], "strategy": arm["strategy"], "variant": arm["variant"] or None,
-                "schedule": arm["schedule"], "date": arm["date"], "mode": "paper", "active": True,
+                "schedule": arm["schedule"], "date": arm["date"], "mode": arm.get("mode") or "paper", "active": True,
                 "armed_at": _et(arm["armed_at"]), "next_run": nr,
                 "last_run": _et(arm["last_run_at"]) if arm["last_run_date"] is not None else None,
                 "last_run_date": arm["last_run_date"], "last_result": arm["last_result"],
@@ -752,7 +764,9 @@ class ArmScheduler:
             why = f"skipped: already running (external, {where})"
             self.store.record(arm["id"], why)
             return self._event("skipped", arm, why)
-        info = (self.runner_launcher if spec.kind == "runner" else self.launcher)(arm["strategy"])
+        launch = self.runner_launcher if spec.kind == "runner" else self.launcher
+        shadow = str(arm.get("mode") or "paper") == "shadow"           # a shadow run books nothing (--no-ledger)
+        info = launch(arm["strategy"], shadow=True) if shadow else launch(arm["strategy"])
         child = self.runners.adopt(arm["strategy"], info["pid"], info["created"], log=info["log"],
                                    cmdline=info.get("cmdline") or "", exit_file=info.get("exit_file"),
                                    kind="runner" if spec.kind == "runner" else "task_script",

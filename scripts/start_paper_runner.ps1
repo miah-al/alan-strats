@@ -9,12 +9,15 @@ param(
     [int]$Poll = 15,
     # stream the legs' quotes over DXLink instead of polling REST (the clone's resting orders, 2026-10-06)
     [switch]$Stream,
+    # shadow: the session runs with the ledger off (--no-ledger); its logs and state are kept, nothing is booked
+    [switch]$NoLedger,
     # "key=value;key2=value2": the limits the trader set for this strategy (the service's app.TradeLimit), as --param
     [string]$Params = ""
 )
 $extra = @()
 foreach ($kv in ($Params -split ';')) { if ($kv.Trim()) { $extra += '--param'; $extra += $kv.Trim() } }
 if ($Stream) { $extra += '--stream' }
+if ($NoLedger) { $extra += '--no-ledger' }
 $env:PYTHONIOENCODING = "utf-8"
 Set-Location "D:\Work\Project Dream\alan_trader"
 # keep the reference data current: yesterday's VXN close is the gate, the event calendar the skip list
