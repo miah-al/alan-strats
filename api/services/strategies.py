@@ -7,6 +7,8 @@ and the headless pipelines the Strategies page also uses
 """
 from __future__ import annotations
 
+import json
+
 import logging
 import threading
 from datetime import date
@@ -314,6 +316,9 @@ _TRADE_SKIP = {"winner", "free_capital"}
 _TRADE_FORMATS = {"pnl": "money", "credit": "price", "margin_reserved": "money"}
 _EXTRA_MAX_ROWS = 5000
 _EXTRA_MAX_POINTS = 20000
+#: plain data (lists, dicts) in a result's extra larger than this is dropped (and named in extra_dropped): the Friend
+#: Clones' bar-by-bar replay made a 9.9 MB extra and the app's Backtest tab never showed the result (2026-10-07)
+_EXTRA_MAX_JSON_BYTES = 2_000_000
 
 
 def validate_backtest_params(slug: str, overrides: dict) -> dict:
@@ -407,6 +412,9 @@ def _safe_extra(extra: dict) -> tuple[dict, list[str]]:
             else:
                 jv = to_jsonable(v, strict=True)
                 if jv is DROP:
+                    dropped.append(key)
+                    continue
+                if isinstance(jv, (list, dict)) and len(json.dumps(jv, default=str)) > _EXTRA_MAX_JSON_BYTES:
                     dropped.append(key)
                     continue
                 out[key] = jv
