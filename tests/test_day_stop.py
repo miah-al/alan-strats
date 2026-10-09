@@ -59,3 +59,37 @@ def test_the_limits_page_shows_the_account_day_against_the_stop():
     used, status = LM._usage_of("account_day_stop", 1000, usage["system"], usage)
     assert used == -900.0 and status == "near"
     assert AccountDayStop.account_day_pnl(usage) == -900.0
+
+
+def test_the_accounts_real_day_beats_the_since_entry_sum():
+    # the scopes' since-entry P&L says -1,200 (multi-day holdings), but the account is only -200 since the last close
+    store = LM.MemoryLimitStore()
+    lim = LM.Limits(store, strategies=lambda: ["spx_0dte_call13"], specs_for=lambda s: [], values_for=lambda s: {})
+    usage = {"sector_rotation": {"day_pnl": -700.0}, "btc_momentum": {"day_pnl": -500.0},
+             "system": {"broker_calls": 1, "day_pnl": -1200.0, "account_day": -200.0}}
+    ds = AccountDayStop(lambda: lim, lambda: usage)
+    assert AccountDayStop.account_day_pnl(usage) == -200.0
+    assert ds.tick(at(11, 0)) is None
+    usage["system"]["account_day"] = -1050.0
+    assert ds.tick(at(11, 5))["day_pnl"] == -1050.0
+    used, status = LM._usage_of("account_day_stop", 1000, usage["system"], usage)
+    assert used == -1050.0 and status != "ok"
+
+
+def test_account_day_change_is_equity_now_minus_the_last_close(monkeypatch):
+    from api.services import paper as P
+    calls = {"equity": 0}
+
+    def equity(a, b):
+        calls["equity"] += 1
+        return {"series": [{"name": "equity", "t": ["2026-10-08", "2026-10-09", "2026-10-12"],
+                            "v": [15979.0, 16095.0, 15800.0]}]}
+    monkeypatch.setattr(P, "equity", equity)
+    monkeypatch.setattr(P, "summary", lambda hub=None: {"equity": 15900.0})
+    LM._PRIOR_EQUITY.clear()
+    assert LM.account_day_change(today=dt.date(2026, 10, 12)) == -195.0      # 15,900 now vs Friday's 16,095
+    assert LM.account_day_change(today=dt.date(2026, 10, 12)) == -195.0
+    assert calls["equity"] == 1                                              # the last close is read once a day
+    monkeypatch.setattr(P, "summary", lambda hub=None: {"equity": None})
+    assert LM.account_day_change(today=dt.date(2026, 10, 12)) is None
+    LM._PRIOR_EQUITY.clear()
