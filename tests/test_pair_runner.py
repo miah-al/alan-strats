@@ -145,7 +145,7 @@ def ledger(monkeypatch):
     return calls
 
 
-def _run(tmp_path, start=dtime(9, 29, 50), until=PR.PAIR_UNTIL, write_ledger=True, controls=None):
+def _run(tmp_path, start=dtime(9, 29, 50), until=PR.PAIR_UNTIL, write_ledger=True, controls=None, params=None):
     """``controls(now)`` -> the supervisor's rows at that moment (paper/supervisor.py's shape); none by default."""
     ndx, spx = paths()
     t = [datetime.combine(DAY, start)]
@@ -157,7 +157,7 @@ def _run(tmp_path, start=dtime(9, 29, 50), until=PR.PAIR_UNTIL, write_ledger=Tru
              "SPX": FakeIndexProvider("SPX", "SPXW", spx, now_fn, 0.05)}
     ps = PR.PairSession(SLUG, provs, (object() if write_ledger else None), write_ledger=write_ledger,
                         log_dir=tmp_path / "log", state_dir=tmp_path / "state",
-                        controls_fn=(lambda slug: (controls(now_fn()) if controls else {})))
+                        controls_fn=(lambda slug: (controls(now_fn()) if controls else {})), params=params)
     res = ps.run_live(day=DAY, poll_seconds=10, until=until, now_fn=now_fn, sleep_fn=sleep_fn)
     return ps, res, provs
 
@@ -250,7 +250,9 @@ def test_a_supervisor_close_flattens_the_open_structure_and_books_it(tmp_path, s
 
     def controls(now):                                            # the request is made at 11:05, with the 11:00 sell open
         return {"sup_close": {"value": 1, "at": _utc(11, 5), "reason": "risk off"}} if now >= asked else {}
-    ps, res, _ = _run(tmp_path, controls=controls)
+    # the mechanics this test was written for (2026-10-08): enter when |z| crosses 3, hold 15. The live defaults since
+    # 2026-10-09 enter only after the stretch turns, so the 11:00 sell would not be open yet at 11:05.
+    ps, res, _ = _run(tmp_path, controls=controls, params={"entry_mode": "cross", "z_entry": 3.0, "hold_min": 15})
     first = res.trades[0]
     assert first["direction"] == "short" and first["entry_time"] < "11:05"
     assert first["exit_reason"] == "supervisor close" and "11:05" <= first["exit_time"] <= "11:07"

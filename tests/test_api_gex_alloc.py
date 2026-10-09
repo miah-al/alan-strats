@@ -28,6 +28,16 @@ NY = "America/New_York"
 D = _dt.date
 
 
+
+def _a_future_trading_day() -> str:
+    """A trading day at least a week ahead (an arm "once" refuses a date whose window has passed)."""
+    import datetime as _d
+    from api.services.arms import trading_day
+    d = _d.date.today() + _d.timedelta(days=7)
+    while not trading_day(d):
+        d += _d.timedelta(days=1)
+    return d.isoformat()
+
 def _vix_path(n=320, seed=7):
     """A VIX path that crosses every regime boundary, with some one- and two-day blips."""
     rng = np.random.default_rng(seed)
@@ -246,7 +256,7 @@ def test_the_log_endpoint(monkeypatch):
             j = c.get("/api/runner/gex_positioning/log?days=3").json()
             assert j["decisions"][0]["variant"] == "gex" and j["table"]["rows"][0]["target"] == 5
             assert c.get("/api/runner/ndx_0dte_tasty/log").status_code == 404
-            r = c.post("/api/runner/gex_positioning/arm", json={"schedule": "once", "date": "2026-10-01",
+            r = c.post("/api/runner/gex_positioning/arm", json={"schedule": "once", "date": _a_future_trading_day(),
                                                                  "variant": "both"})
             assert r.status_code == 200 and [x["variant"] for x in r.json()] == ["vix", "gex"]
             assert c.post("/api/runner/gex_positioning/arm", json={"variant": "spx"}).status_code == 422
