@@ -159,6 +159,10 @@ SPECS: dict[str, Spec] = {
     # the month's last trading day; other days it only repairs holdings that differ from the standing picks (2026-10-05)
     "sector_rotation": Spec("allocator", _dt.time(15, 50), _dt.time(16, 0), ("",),
                             "the sector rotation's month-end rebalance: the top 3 sector SPDRs on a $5,000 paper sleeve"),
+    # BTC shock momentum (api/services/momentum_alloc.py): IBIT bought after a 2-sigma up day, held 10 sessions,
+    # $4,000 a trade (2026-10-09)
+    "btc_momentum": Spec("allocator", _dt.time(15, 50), _dt.time(16, 0), ("",),
+                         "the BTC shock-momentum allocator: $4,000 of IBIT after a 2-sigma up day, sold 10 sessions later"),
 }
 RUNNER_POLL_S = 15
 

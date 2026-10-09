@@ -121,8 +121,9 @@ def plan(targets: dict, lots: list[dict], today: _dt.date, prices: dict, sleeve:
 # ── the live inputs (each replaceable in tests) ──────────────────────────────
 
 class LiveInputs:
-    def __init__(self, hub):
+    def __init__(self, hub, ledger: str = LEDGER):
         self.hub = hub
+        self.ledger = ledger                    # whose open lots ``lots`` returns (the BTC momentum allocator reuses this)
 
     def closes(self, symbols: tuple, until: _dt.date) -> pd.DataFrame:
         """Stored daily closes (mkt.PriceBar, topped up when behind) up to ``until``: rows = dates, columns = symbols."""
@@ -162,7 +163,7 @@ class LiveInputs:
         open_groups, _closed, _t = P.load()
         out = []
         for tgid, grp in (open_groups or {}).items():
-            if grp.empty or str(grp["StrategyName"].iloc[0]) != LEDGER:
+            if grp.empty or str(grp["StrategyName"].iloc[0]) != self.ledger:
                 continue
             g = grp[grp["SecurityType"].astype(str).str.lower() == "stock"]
             if g.empty:
