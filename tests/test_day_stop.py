@@ -93,3 +93,22 @@ def test_account_day_change_is_equity_now_minus_the_last_close(monkeypatch):
     monkeypatch.setattr(P, "summary", lambda hub=None: {"equity": None})
     assert LM.account_day_change(today=dt.date(2026, 10, 12)) is None
     LM._PRIOR_EQUITY.clear()
+
+
+def test_a_failed_read_of_the_last_close_is_not_retried_every_tick(monkeypatch):
+    from api.services import paper as P
+    calls = {"n": 0}
+
+    def broken(a, b):
+        calls["n"] += 1
+        raise RuntimeError("no network")
+    monkeypatch.setattr(P, "equity", broken)
+    monkeypatch.setattr(P, "summary", lambda hub=None: {"equity": 15900.0})
+    LM._PRIOR_EQUITY.clear()
+    LM._PRIOR_FAILED.clear()
+    d = dt.date(2026, 10, 12)
+    assert LM.account_day_change(today=d) is None and LM.account_day_change(today=d) is None
+    assert calls["n"] == 1                                                   # the second tick did not retry
+    LM._PRIOR_FAILED[d] -= LM.PRIOR_RETRY_S + 1                              # ten minutes later it tries again
+    assert LM.account_day_change(today=d) is None and calls["n"] == 2
+    LM._PRIOR_FAILED.clear()

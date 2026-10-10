@@ -424,6 +424,8 @@ def paper_usage(hub=None, broker_calls: Optional[Callable[[], Optional[int]]] = 
 
 
 _PRIOR_EQUITY: dict = {}                      # {date: the equity at the last close before it} (fixed for the day)
+_PRIOR_FAILED: dict = {}                      # {date: monotonic time of the last failed attempt}
+PRIOR_RETRY_S = 600.0                         # a failed read of the last close is retried at most every 10 minutes
 
 
 def account_day_change(hub=None, today: Optional[_dt.date] = None) -> Optional[float]:
@@ -436,6 +438,10 @@ def account_day_change(hub=None, today: Optional[_dt.date] = None) -> Optional[f
     today = today or _dt.date.today()
     try:
         if today not in _PRIOR_EQUITY:
+            failed = _PRIOR_FAILED.get(today)
+            if failed is not None and time.monotonic() - failed < PRIOR_RETRY_S:
+                return None                   # the equity series is slow (prices per holding): don't hammer it
+            _PRIOR_FAILED[today] = time.monotonic()
             e = P.equity((today - _dt.timedelta(days=14)).isoformat(), today.isoformat())
             ser = next((x for x in (e or {}).get("series", []) if x.get("name") == "equity"), None)
             prior = [float(v) for t, v in zip((ser or {}).get("t", []), (ser or {}).get("v", []))
@@ -444,6 +450,7 @@ def account_day_change(hub=None, today: Optional[_dt.date] = None) -> Optional[f
                 return None
             _PRIOR_EQUITY.clear()
             _PRIOR_EQUITY[today] = prior[-1]
+            _PRIOR_FAILED.pop(today, None)
         now = P.summary(hub).get("equity")
         return round(float(now) - float(_PRIOR_EQUITY[today]), 2) if now is not None else None
     except Exception as exc:  # noqa: BLE001 — the stop falls back to the scopes' sum
