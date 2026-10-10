@@ -36,6 +36,16 @@ TODAY = D(2026, 9, 25)                                   # a Friday
 
 # ── fixtures: crafted closes, fake sources ─────────────────────────────────────
 
+
+def _a_future_trading_day() -> str:
+    """A trading day at least a week ahead (an arm "once" refuses a date whose window has passed)."""
+    import datetime as _d
+    from api.services.arms import trading_day
+    d = _d.date.today() + _d.timedelta(days=7)
+    while not trading_day(d):
+        d += _d.timedelta(days=1)
+    return d.isoformat()
+
 def series(values, end: D = TODAY) -> pd.Series:
     """Closes on business days ending at ``end``."""
     days = pd.bdate_range(end=end, periods=len(values))
@@ -754,7 +764,7 @@ def test_the_endpoints():
             cf = c.get("/api/events/crypto-flush").json()
             assert cf["status"]["enabled"] is False and cf["signals"] == []
             # arming (memory store, scheduler off): the desk reflects it; nothing runs
-            r = c.post("/api/runner/oil_fade/arm", json={"schedule": "once", "date": "2026-10-01"})
+            r = c.post("/api/runner/oil_fade/arm", json={"schedule": "once", "date": _a_future_trading_day()})
             assert r.status_code == 200 and r.json()[0]["kind"] == "allocator" and r.json()[0]["status"]["playbook"] == "oil_fade"
             assert {p["id"]: p["armed"] for p in c.get("/api/events/desk").json()["playbooks"]}["oil_fade"] is True
             r = c.post("/api/runner/crypto_flush/arm", json={"schedule": "weekdays"})

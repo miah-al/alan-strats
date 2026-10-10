@@ -2,8 +2,8 @@
 api/services/day_stop.py — the account-wide day stop (2026-10-08, the owner's go after a −$4,240 day).
 
 The trader's system limit ``account_day_stop`` (the Limits page, System; $, 0 = none): when the paper account's day P&L
-— every strategy's and desk's positions closed today plus the open ones at their marks, as the Limits page counts it
-(``limits.paper_usage``) — is that far down, every armed strategy's new entries are turned off for the rest of the day
+— its equity now against its equity at the last close (``limits.account_day_change``; before 2026-10-12 it was every
+scope's P&L since entry, which made multi-day holdings look like today's) — is that far down, every armed strategy's new entries are turned off for the rest of the day
 through the supervisor's control (``sup_entries`` = 0, by "system"). The runners read it every poll; open positions
 keep their own exits. It fires once a day and only takes risk off: nothing here opens, adds or closes anything.
 """
@@ -39,6 +39,11 @@ class AccountDayStop:
     # ── the check ─────────────────────────────────────────────────────────────
     @staticmethod
     def account_day_pnl(usage: dict) -> float:
+        """The account's day: its equity change since the last close (``system.account_day``) when known, else every
+        scope's P&L summed (which counts multi-day positions' P&L since entry)."""
+        acct = ((usage or {}).get("system") or {}).get("account_day")
+        if acct is not None:
+            return float(acct)
         return float(sum(float((u or {}).get("day_pnl") or 0.0) for s, u in (usage or {}).items() if s != "system"))
 
     def tick(self, now: Optional[_dt.datetime] = None) -> Optional[dict]:
