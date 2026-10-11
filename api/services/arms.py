@@ -166,6 +166,11 @@ SPECS: dict[str, Spec] = {
     # the same rule on Solana (2026-10-11): $1,500 of BSOL after a 2-sigma up day, sold 10 sessions later
     "sol_momentum": Spec("allocator", _dt.time(15, 50), _dt.time(16, 0), ("",),
                          "the SOL shock-momentum allocator: $1,500 of BSOL after a 2-sigma up day, sold 10 sessions later"),
+    # the equity trend (api/services/trend_alloc.py): an $8,000 sleeve in SPYM while SPY is above its 10-month average,
+    # sized to 10% volatility, decided on the month's last trading day; it replaced the sector rotation (2026-10-11)
+    "equity_trend": Spec("allocator", _dt.time(15, 50), _dt.time(16, 0), ("",),
+                         "the equity trend's month-end decision: SPYM on an $8,000 paper sleeve while SPY is above its "
+                         "10-month average, sized to 10% volatility"),
     # the cash sleeve (api/services/cash_alloc.py): idle paper cash above a $9,000 reserve held in BOXX (T-bills), after
     # the 15:50 allocators have traded (2026-10-09)
     "cash_sleeve": Spec("allocator", _dt.time(15, 55), _dt.time(16, 0), ("",),
