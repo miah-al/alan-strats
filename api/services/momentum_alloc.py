@@ -1,5 +1,6 @@
 """
-api/services/momentum_alloc.py — the BTC shock-momentum paper allocator (btc_momentum; armed weekdays at 15:50 ET).
+api/services/momentum_alloc.py — the shock-momentum paper allocators, one instance per plugin: btc_momentum (IBIT,
+$4,000) and sol_momentum (BSOL, $1,500), each armed weekdays at 15:50 ET.
 
 The rule is the plugin's (strategies/btc_momentum/strategy.py: ``shock_z``, ``entry_signal``, ``target_shares``,
 ``exit_due``): on an IBIT up day of at least ``k`` sigma (the sd of its 20 prior daily log returns), buy ``notional``
@@ -52,10 +53,10 @@ def sessions_held(opened: _dt.date, today: _dt.date) -> int:
     return n
 
 
-def strategy():
-    """A fresh btc_momentum instance with its default parameters (from the plugin, read only)."""
+def strategy(slug: str = SLUG):
+    """A fresh instance of the momentum plugin ``slug`` with its default parameters (from the plugin, read only)."""
     from alan_trader.strategy_api import registry as R
-    return R.get_strategy(SLUG)
+    return R.get_strategy(slug)
 
 
 def _module(s):
@@ -64,13 +65,17 @@ def _module(s):
 
 class MomentumAllocator:
     def __init__(self, store, orders, hub=None, publish: Optional[Callable[[dict], None]] = None, inputs=None,
-                 clock: Optional[Callable[[], pd.Timestamp]] = None, strategy_factory: Optional[Callable] = None):
+                 clock: Optional[Callable[[], pd.Timestamp]] = None, strategy_factory: Optional[Callable] = None,
+                 slug: str = SLUG):
+        # one instance per momentum plugin: btc_momentum (IBIT) and, from 2026-10-11, sol_momentum (BSOL); each has its
+        # own decision rows (playbook = slug) and its own paper positions (StrategyName = slug)
+        self.slug = self.playbook = self.ledger = str(slug)
         self.store = store
         self.orders = orders
         self.publish = publish
-        self.inputs = inputs or RA.LiveInputs(hub, ledger=LEDGER)
+        self.inputs = inputs or RA.LiveInputs(hub, ledger=self.ledger)
         self.clock = clock or (lambda: pd.Timestamp.now(tz=NY))
-        self.strategy_factory = strategy_factory or strategy
+        self.strategy_factory = strategy_factory or (lambda: strategy(self.slug))
         self._lock = threading.Lock()
 
     def run(self, variant: str = "", now: Optional[pd.Timestamp] = None) -> dict:
@@ -79,25 +84,25 @@ class MomentumAllocator:
         now = now or self.clock()
         day = now.date()
         with self._lock:
-            prior = self.store.decided(PLAYBOOK, day)
+            prior = self.store.decided(self.playbook, day)
             if prior is not None:
-                return {"playbook": PLAYBOOK, "date": day, "status": "already_decided",
-                        "summary": f"{PLAYBOOK}: already decided today ({prior['status']})", "prior": prior}
-            row = {"playbook": PLAYBOOK, "date": day, "ledger_strategy": LEDGER, "action": None, "trade_group_id": None,
+                return {"playbook": self.playbook, "date": day, "status": "already_decided",
+                        "summary": f"{self.playbook}: already decided today ({prior['status']})", "prior": prior}
+            row = {"playbook": self.playbook, "date": day, "ledger_strategy": self.ledger, "action": None, "trade_group_id": None,
                    "verdict": None}
             try:
                 row.update(self._decide(day))
             except Exception as exc:  # noqa: BLE001 — a failed decision is logged, never half-done silently
-                logger.exception("btc momentum allocator failed")
+                logger.exception("%s allocator failed", self.slug)
                 row.update(status="failed", detail={"error": f"{type(exc).__name__}: {exc}"[:400]},
-                           summary=f"{PLAYBOOK}: failed — {type(exc).__name__}: {exc}"[:400])
+                           summary=f"{self.playbook}: failed — {type(exc).__name__}: {exc}"[:400])
             self.store.add_decision(row)
             self._emit(row)
             return row
 
     def _decide(self, day: _dt.date) -> dict:
         if not trading_day(day):
-            return {"status": "no_session", "summary": f"{PLAYBOOK}: {day} is not a trading day", "detail": {}}
+            return {"status": "no_session", "summary": f"{self.playbook}: {day} is not a trading day", "detail": {}}
         s = self.strategy_factory()
         mod = _module(s)
         sym = s.symbol
@@ -112,11 +117,11 @@ class MomentumAllocator:
             bad = [o for o in orders if o.get("status") != "filled"]
             return {"status": "closed" if not bad else "order_failed", "verdict": "exit", "action": "close",
                     "detail": detail,
-                    "summary": (f"{PLAYBOOK}: {s.hold} sessions held; " + "; ".join(o["text"] for o in orders))[:400]}
+                    "summary": (f"{self.playbook}: {s.hold} sessions held; " + "; ".join(o["text"] for o in orders))[:400]}
         if lots:
             n = max(h["sessions"] for h in held)
             return {"status": "held", "verdict": "hold", "detail": detail,
-                    "summary": f"{PLAYBOOK}: holding {sum(int(l['shares']) for l in lots)} {sym}, {n} of {s.hold} "
+                    "summary": f"{self.playbook}: holding {sum(int(l['shares']) for l in lots)} {sym}, {n} of {s.hold} "
                                f"sessions"}
         prev = previous_trading_day(day)
         hist = self.inputs.closes((sym,), prev)
@@ -126,10 +131,10 @@ class MomentumAllocator:
                       prev_session=str(prev))
         if price is None:
             return {"status": "no_quote", "verdict": "none", "detail": detail,
-                    "summary": f"{PLAYBOOK}: no {sym} price at 15:50; nothing bought"}
+                    "summary": f"{self.playbook}: no {sym} price at 15:50; nothing bought"}
         if not len(closes) or closes.index[-1].date() != prev:
             return {"status": "stale_closes", "verdict": "none", "detail": detail,
-                    "summary": f"{PLAYBOOK}: the stored {sym} closes end {detail['last_close_date']}, not {prev}; "
+                    "summary": f"{self.playbook}: the stored {sym} closes end {detail['last_close_date']}, not {prev}; "
                                f"nothing bought"}
         z, move, sigma = mod.shock_z(list(closes.values), float(price), s.window)
         detail.update(z=None if not math.isfinite(z) else round(z, 3), move=move, sigma=sigma,
@@ -137,23 +142,23 @@ class MomentumAllocator:
         if not mod.entry_signal(z, s.k):
             zt = f"{z:+.2f}" if math.isfinite(z) else "n/a"
             return {"status": "no_signal", "verdict": "none", "detail": detail,
-                    "summary": f"{PLAYBOOK}: {sym} {move * 100:+.2f}% = {zt} sigma (needs +{s.k:g}); nothing bought"}
+                    "summary": f"{self.playbook}: {sym} {move * 100:+.2f}% = {zt} sigma (needs +{s.k:g}); nothing bought"}
         q = mod.target_shares(float(price), s.notional)
         if q <= 0:
             return {"status": "no_quote", "verdict": "none", "detail": detail,
-                    "summary": f"{PLAYBOOK}: {sym} at {price} buys no whole share of ${s.notional:,.0f}"}
+                    "summary": f"{self.playbook}: {sym} at {price} buys no whole share of ${s.notional:,.0f}"}
         orders = self._buy(day, sym, q, z)
         detail["orders"] = orders
         o = orders[0]
         return {"status": "opened" if o.get("status") == "filled" else "order_failed", "verdict": "entry",
                 "action": "open", "trade_group_id": o.get("trade_group_id"), "detail": detail,
-                "summary": f"{PLAYBOOK}: {sym} {move * 100:+.2f}% = {z:+.2f} sigma; {o['text']}; out in {s.hold} sessions"}
+                "summary": f"{self.playbook}: {sym} {move * 100:+.2f}% = {z:+.2f} sigma; {o['text']}; out in {s.hold} sessions"}
 
     def _buy(self, day: _dt.date, sym: str, q: int, z: float) -> list[dict]:
         body = {"account": "paper", "underlying": sym, "order_type": "market", "tif": "day",
-                "legs": [{"type": "stock", "side": "buy", "quantity": int(q)}], "strategy": LEDGER,
-                "label": f"BTC momentum: {sym} after a {z:+.2f} sigma day",
-                "client_order_id": f"momentum-{day.isoformat()}-buy-{sym}"[:64]}
+                "legs": [{"type": "stock", "side": "buy", "quantity": int(q)}], "strategy": self.ledger,
+                "label": f"{self.slug}: {sym} after a {z:+.2f} sigma day",
+                "client_order_id": f"{self.slug}-{day.isoformat()}-buy-{sym}"[:64]}
         try:
             r = self.orders.place(body)
             return [{"side": "buy", "symbol": sym, "quantity": int(q), "order_id": r.get("order_id"),
@@ -170,7 +175,7 @@ class MomentumAllocator:
         for l in lots:
             try:
                 r = self.orders.close_position(l["trade_group_id"], {
-                    "order_type": "market", "client_order_id": f"momentum-{day.isoformat()}-close-{l['trade_group_id']}"[:64]})
+                    "order_type": "market", "client_order_id": f"{self.slug}-{day.isoformat()}-close-{l['trade_group_id']}"[:64]})
                 out.append({"side": "sell", "symbol": l["symbol"], "quantity": l["shares"],
                             "closes_trade_group_id": l["trade_group_id"], "order_id": r.get("order_id"),
                             "status": r.get("status"), "fill_price": r.get("fill_price"), "message": r.get("message"),
@@ -185,7 +190,7 @@ class MomentumAllocator:
 
     def _emit(self, row: dict) -> None:
         from api.serialize import to_jsonable
-        logger.info("btc momentum %s: %s", row["date"], row.get("summary"))
+        logger.info("%s %s: %s", self.slug, row["date"], row.get("summary"))
         if self.publish is not None:
             try:
                 self.publish(to_jsonable({"type": "momentum_alloc", **{k: v for k, v in row.items() if k != "detail"},
@@ -202,8 +207,8 @@ class MomentumAllocator:
             logger.debug("momentum lots unavailable: %s", exc)
         last = None
         if self.store is not None:
-            rec = self.store.decisions_since(self.clock().date() - _dt.timedelta(days=30), PLAYBOOK)
+            rec = self.store.decisions_since(self.clock().date() - _dt.timedelta(days=30), self.playbook)
             last = rec[0] if rec else None
-        return {"strategy": SLUG, "ledger_strategy": LEDGER,
+        return {"strategy": self.slug, "ledger_strategy": self.ledger,
                 "holdings": ({l["symbol"]: l["shares"] for l in lots} if lots is not None else None),
                 "last_decision": ({k: last.get(k) for k in ("date", "status", "verdict", "summary")} if last else None)}

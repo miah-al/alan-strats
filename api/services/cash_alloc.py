@@ -1,7 +1,7 @@
 """
 api/services/cash_alloc.py — the cash sleeve: idle paper cash earns the T-bill rate (cash_sleeve; armed weekdays at 15:55 ET).
 
-The paper account sits mostly in cash. Once a day, after the 15:50 allocators have traded, this sweep keeps ``RESERVE``
+The paper account sits mostly in cash. Once a day, after the 15:50 allocators have traded, this sweep keeps ``RESERVE`` ($9,000 from 2026-10-11)
 dollars of cash for the strategies and holds the rest in BOXX, a 1-3 month T-bill-like ETF that pays no distributions
 (its price rises at about the T-bill rate: +4.06% over the year to 2026-10-09, worst dip -0.11%). A distributing
 T-bill ETF (SGOV, BIL) would not work here: the paper ledger books no dividends, so their yield would never show.
@@ -32,7 +32,8 @@ NY = "America/New_York"
 PLAYBOOK = "cash_sleeve"               # its row in app.EventDeskLog
 LEDGER = "cash_sleeve"                 # the StrategyName its paper positions carry
 SYMBOL = "BOXX"
-RESERVE = 7500.0                       # cash kept for the strategies: btc_momentum $4,000, SPX 13:00 ~$900, the desks
+RESERVE = 9000.0                       # cash kept for the strategies: btc_momentum $4,000, sol_momentum $1,500 (from
+                                       # 2026-10-11), SPX 13:00 ~$900, the desks
 MIN_TRADE = 1000.0                     # no trade for a smaller difference
 MIN_HOLD_NIGHTS = 1
 

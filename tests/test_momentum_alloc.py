@@ -117,7 +117,7 @@ def test_a_quiet_day_buys_nothing_and_a_2_sigma_up_day_buys_4000_once():
     assert r["status"] == "opened" and r["verdict"] == "entry" and r["detail"]["z"] > 2.0
     sym, q, cid, strat = orders2.placed[0]
     assert (sym, q, strat) == ("IBIT", int(4000 // inp2.px), "btc_momentum")
-    assert cid == "momentum-2026-10-09-buy-IBIT"
+    assert cid == "btc_momentum-2026-10-09-buy-IBIT"
     again = alloc2.run(now=_at("2026-10-09", "15:55"))
     assert again["status"] == "already_decided" and len(orders2.placed) == 1
 
@@ -133,7 +133,7 @@ def test_the_lot_is_held_then_sold_after_10_sessions_and_the_exit_day_opens_noth
         assert r["status"] == "held" and not orders.closed
     day["d"] = _dt.date(2026, 10, 23)                                    # session 10: sold
     r = alloc.run(now=_at("2026-10-23"))
-    assert r["status"] == "closed" and r["verdict"] == "exit" and orders.closed == [("TG1", "momentum-2026-10-23-close-TG1")]
+    assert r["status"] == "closed" and r["verdict"] == "exit" and orders.closed == [("TG1", "btc_momentum-2026-10-23-close-TG1")]
     assert len(orders.placed) == 1                                       # nothing bought on the exit day
 
 
@@ -161,3 +161,31 @@ def test_a_weekend_is_no_session_and_status_reports_holdings():
     inp.held = [{"trade_group_id": "TG9", "symbol": "IBIT", "shares": 80, "opened": _dt.date(2026, 10, 5)}]
     st = alloc.status()
     assert st["holdings"] == {"IBIT": 80} and st["ledger_strategy"] == "btc_momentum"
+
+
+def test_a_second_coin_keeps_its_own_playbook_ledger_and_orders():
+    class SolRule(Rule):
+        symbol, notional = "BSOL", 1500.0
+
+    class SolInputs(Inputs):
+        def closes(self, symbols, until):
+            return pd.DataFrame({"BSOL": self.s[self.s.index <= pd.Timestamp(until)]})
+
+        def prices_now(self, symbols):
+            return {"BSOL": self.px}
+
+    rng = np.random.default_rng(5)
+    idx = pd.bdate_range(end="2026-10-08", periods=30)
+    inp = SolInputs(pd.Series(14.0 * np.exp(np.cumsum(rng.normal(0.0, 0.02, size=30))), index=idx))
+    day = {"d": _dt.date(2026, 10, 9)}
+    orders = Orders(inp, lambda: day["d"])
+    store = MemoryEventStore()
+    alloc = MA.MomentumAllocator(store, orders, inputs=inp, strategy_factory=SolRule, slug="sol_momentum")
+    inp.px = float(inp.s.iloc[-1]) * 1.15                                # +15% on a ~2% sigma
+    r = alloc.run(now=_at("2026-10-09"))
+    assert r["status"] == "opened" and r["playbook"] == "sol_momentum" and r["ledger_strategy"] == "sol_momentum"
+    sym, q, cid, strat = orders.placed[0]
+    assert (sym, q, strat, cid) == ("BSOL", int(1500 // inp.px), "sol_momentum", "sol_momentum-2026-10-09-buy-BSOL")
+    assert store.decided("sol_momentum", _dt.date(2026, 10, 9)) is not None
+    assert store.decided("btc_momentum", _dt.date(2026, 10, 9)) is None          # BTC's day is still undecided
+    assert alloc.status()["strategy"] == "sol_momentum"
