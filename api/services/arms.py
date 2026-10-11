@@ -27,6 +27,8 @@ holidays skipped) and records what happened in the arm's ``last_result``:
                     strategy is an overlay too): the same runner, time and window.
   spx_0dte_call13   the same runner at 12:50 ET with a 60 s poll (its spec's ``poll``): it sells one SPXW call spread
                     at 13:00 and holds it to the settlement, so one quote a minute is enough.
+  spx_0dte_event13  the same at 12:50 ET for the same trade on FOMC/CPI days only (its gate blocks the rest).
+  ndx_0dte_call14   the same at 13:50 ET for its NDX twin (one NDXP call spread at 14:00), armed in shadow.
   ndx_spx_ratio     the same launch at 09:25 ET with a 5 s poll; the runner script hands a pair strategy (two indexes) to
                     paper/pair_runner.py, which streams NDX, SPX and both chains and is flat by 15:45.
 
@@ -119,6 +121,17 @@ SPECS: dict[str, Spec] = {
     # a runner that is not up by 13:03 trades nothing, so a late start after 13:02 is pointless
     "spx_0dte_call13": Spec("runner", _dt.time(12, 50), _dt.time(13, 2), ("",),
                             "EXPERIMENTAL: a 10-wide SPXW call spread ~10 above SPX sold at 13:00, held to settlement",
+                            poll=60),
+    # the same trade again on FOMC/CPI days only (2026-10-11, the owner: "need a winner"; +1 lot), so those days carry two
+    # lots: its gate blocks every other day, so on most days the runner records "not an FOMC/CPI day" and stops
+    "spx_0dte_event13": Spec("runner", _dt.time(12, 50), _dt.time(13, 2), ("",),
+                             "SPX 13:00's call spread again on FOMC/CPI days only (+1 lot on its best days)",
+                             poll=60),
+    # its NDX twin (2026-10-11, the owner: "find me a ndx option spread strategy that can make money"; armed in SHADOW, the
+    # owner's choice): one NDXP call spread at 14:00 held to the settlement, its P&L logged at the bid and at the mid. Up
+    # at 13:50 with a 60 s poll; a runner that is not up by 14:03 trades nothing, so a late start after 14:02 is pointless
+    "ndx_0dte_call14": Spec("runner", _dt.time(13, 50), _dt.time(14, 2), ("",),
+                            "SHADOW: a 25-wide NDXP call spread ~50 above NDX sold at 14:00, held to settlement",
                             poll=60),
     # the owner's NDX/SPX ratio structure, faded when the ratio stretches (2026-10-07: "use AI to capture the reversion ...
     # we need this armed for tomorrow"): the pair runner (paper/pair_runner.py) streams both indexes and both chains, so a
