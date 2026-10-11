@@ -105,12 +105,14 @@ def create_app():
     from api.services.momentum_alloc import MomentumAllocator
     btc_momentum = MomentumAllocator(event_desk.store, order_book, hub=market_hub, publish=hub.publish)
     sol_momentum = MomentumAllocator(event_desk.store, order_book, hub=market_hub, publish=hub.publish, slug="sol_momentum")
+    from api.services.trend_alloc import TrendAllocator
+    equity_trend = TrendAllocator(event_desk.store, order_book, hub=market_hub, publish=hub.publish)
     from api.services.cash_alloc import CashSleeveAllocator
     cash_sleeve = CashSleeveAllocator(event_desk.store, order_book, hub=market_hub, publish=hub.publish)
     arm_scheduler = ArmScheduler(make_store(), runners, publish=hub.publish, allocator=gex_allocator,
                                  allocators={"oil_fade": oil_fade, "btc_dip": btc_dip, "event_signal_log": signal_log,
                                              "sector_rotation": sector_rotation, "btc_momentum": btc_momentum,
-                                             "sol_momentum": sol_momentum,
+                                             "sol_momentum": sol_momentum, "equity_trend": equity_trend,
                                              "cash_sleeve": cash_sleeve,
                                              "crypto_flush": crypto_flush})
     event_desk.armed = arm_scheduler.is_armed

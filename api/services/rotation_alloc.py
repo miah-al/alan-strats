@@ -121,16 +121,17 @@ def plan(targets: dict, lots: list[dict], today: _dt.date, prices: dict, sleeve:
 # ── the live inputs (each replaceable in tests) ──────────────────────────────
 
 class LiveInputs:
-    def __init__(self, hub, ledger: str = LEDGER):
+    def __init__(self, hub, ledger: str = LEDGER, history_days: int = HISTORY_DAYS):
         self.hub = hub
-        self.ledger = ledger                    # whose open lots ``lots`` returns (the BTC momentum allocator reuses this)
+        self.ledger = ledger                    # whose open lots ``lots`` returns (the momentum and trend allocators reuse this)
+        self.history_days = int(history_days)   # calendar days of stored closes ``closes`` reads
 
     def closes(self, symbols: tuple, until: _dt.date) -> pd.DataFrame:
         """Stored daily closes (mkt.PriceBar, topped up when behind) up to ``until``: rows = dates, columns = symbols."""
         from api.services.db import require_db
         from db.client import get_price_bars
         eng = require_db()
-        start = until - _dt.timedelta(days=HISTORY_DAYS)
+        start = until - _dt.timedelta(days=self.history_days)
         cols = {}
         for s in symbols:
             try:
