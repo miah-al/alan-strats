@@ -64,9 +64,9 @@ def test_the_plan():
     lots = [{"trade_group_id": "A", "shares": 20, "opened": _dt.date(2026, 10, 12)},
             {"trade_group_id": "B", "shares": 10, "opened": _dt.date(2026, 10, 13)},
             {"trade_group_id": "C", "shares": 5, "opened": d}]
-    assert CA.plan(11422.0, [], 118.5, d)["buy"] == 33                   # (11,422 - 7,500) / 118.5
-    assert CA.plan(8000.0, lots, 118.5, d) == {"buy": 0, "close": [], "notes": []}      # inside the band: hold
-    p = CA.plan(5000.0, lots, 118.5, d)                                  # short 2,500: newest held lot first (B), then A
+    assert CA.plan(11422.0, [], 118.5, d)["buy"] == 20                   # (11,422 - 9,000) / 118.5
+    assert CA.plan(9500.0, lots, 118.5, d) == {"buy": 0, "close": [], "notes": []}      # inside the band: hold
+    p = CA.plan(6500.0, lots, 118.5, d)                                  # short 2,500: newest held lot first (B), then A
     assert [l["trade_group_id"] for l in p["close"]] == ["B", "A"] and "1 lot(s)" in p["notes"][0]
 
 
@@ -74,15 +74,15 @@ def test_surplus_cash_buys_boxx_once_a_day():
     alloc, inp, orders, day, box = _setup(11422.0)
     r = alloc.run(now=_at("2026-10-12"))
     assert r["status"] == "swept" and r["verdict"] == "buy"
-    assert orders.placed == [("BOXX", 33, "cash_sleeve", "cash-2026-10-12-buy-BOXX")]
+    assert orders.placed == [("BOXX", 20, "cash_sleeve", "cash-2026-10-12-buy-BOXX")]
     assert alloc.run(now=_at("2026-10-12"))["status"] == "already_decided"
 
 
 def test_a_shortfall_sells_lots_and_small_gaps_hold():
-    alloc, inp, orders, day, box = _setup(7900.0)
+    alloc, inp, orders, day, box = _setup(9400.0)
     inp.held = [{"trade_group_id": "TG7", "symbol": "BOXX", "shares": 33, "opened": _dt.date(2026, 10, 5)}]
     assert alloc.run(now=_at("2026-10-12"))["status"] == "held" and not orders.placed and not orders.closed
-    box["cash"] = 3500.0
+    box["cash"] = 5000.0
     day["d"] = _dt.date(2026, 10, 13)
     r = alloc.run(now=_at("2026-10-13"))
     assert r["status"] == "swept" and r["verdict"] == "sell" and orders.closed == ["TG7"]
