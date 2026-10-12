@@ -374,6 +374,51 @@ def ratio_menu(ndx: float, spx: float) -> list[tuple[str, list[tuple[str, str, f
             ("ratio down", [("sell", "C", kc), ("buy", "C", kc + 25.0)], [("sell", "P", sp), ("buy", "P", sp - 5.0)])]
 
 
+#: the Friend Clone (ndx_0dte_friend_real) belongs to this desk from 2026-10-13 (the owner: "take over friend clone
+#: as well ... it belongs to your desk now"). It stays a SHADOW runner (books nothing; its own decisions lost even at
+#: the mid in three years of tests) and its calls are an input here: a "bull" call (a dip fade) is expressed, when my
+#: own read agrees, as an out-of-the-money put credit spread below support; a "bear" call as a call credit spread
+#: above resistance.
+CLONE_LOGS = Path(__file__).resolve().parents[1] / "paper_state" / "runner_logs" / "arm"
+CLONE_EVENT = re.compile(r"ALERT (\d\d:\d\d) (open|add|close) (bull|bear) ([\d.]+)/([\d.]+) @ ([\d.]+)(?: \(([^)]*)\))?")
+
+
+def clone_events(lines) -> list[dict]:
+    """The clone runner's trade events from its log lines (``ALERT hh:mm open|add|close bull|bear lo/hi @ px``)."""
+    out = []
+    for ln in lines:
+        m = CLONE_EVENT.search(ln)
+        if m:
+            out.append({"at": m.group(1), "action": m.group(2), "side": m.group(3), "k_lo": float(m.group(4)),
+                        "k_hi": float(m.group(5)), "px": float(m.group(6)), "why": (m.group(7) or "")[:60]})
+    return out
+
+
+def clone_line(day: date, now_hm: str, logs: Path | None = None) -> str:
+    """The clone's latest call today, for the snapshot: what it did, how fresh, and how the desk would express it."""
+    folder = logs or CLONE_LOGS
+    files = sorted(folder.glob(f"ndx_0dte_friend_real_{day.isoformat()}_*.log")) if folder.exists() else []
+    if not files:
+        return "clone (shadow): not running today"
+    try:
+        ev = clone_events(files[-1].read_text(encoding="utf-8", errors="replace").splitlines())
+    except OSError:
+        return "clone (shadow): log unreadable"
+    if not ev:
+        return "clone (shadow): no call yet today"
+    e = ev[-1]
+    opens = sum(1 for x in ev if x["action"] == "open")
+    h, m = map(int, e["at"].split(":")); nh, nm = map(int, now_hm.split(":"))
+    age = (nh * 60 + nm) - (h * 60 + m)
+    fresh = "FRESH" if 0 <= age <= 10 else f"{age} min ago"
+    hint = ""
+    if e["action"] in ("open", "add"):
+        hint = (" -> desk: if my read agrees, sell an OTM put credit spread below support" if e["side"] == "bull"
+                else " -> desk: if my read agrees, sell an OTM call credit spread above resistance")
+    return (f"clone (shadow): {e['at']} {e['action']} {e['side']} {e['k_lo']:.0f}/{e['k_hi']:.0f} @ {e['px']:.2f} "
+            f"[{fresh}; {opens} calls today]{hint}")
+
+
 #: how far a pair's short strike may sit in the money (index points) before ``pair`` refuses it
 ITM_TOLERANCE = {"NDX": 5.0, "SPX": 2.0}
 
@@ -480,6 +525,7 @@ def cmd_snapshot(force_news: bool = False) -> str:
     L.append(f"  VIX {m.get('vix')} ({(m.get('vix_chg') or 0):+.2f})  VXN {m.get('vxn')} ({(m.get('vxn_chg') or 0):+.2f})")
     rs = ratio_now()
     L.append("  " + ratio_line(rs))
+    L.append("  " + clone_line(day, hm(t)))
     lv = levels(spot)
     if lv:
         L.append("  levels: " + " | ".join(lv))

@@ -167,3 +167,25 @@ def test_a_pair_never_sells_an_in_the_money_strike(desk, capsys, monkeypatch):
     otm = [{"side": "sell", "cp": "P", "strike": 30625.0}, {"side": "buy", "cp": "P", "strike": 30600.0}]
     spx = [{"side": "sell", "cp": "C", "strike": 7800.0}, {"side": "buy", "cp": "C", "strike": 7805.0}]
     assert D.cmd_pair(otm, 1, spx, 2, "t", "e", "w") == 0
+
+
+def test_the_clone_is_a_signal_on_the_desk(tmp_path):
+    """The Friend Clone belongs to the desk from 2026-10-13: its shadow runner's calls show in the snapshot, with how
+    the premium-only desk would express them."""
+    lines = [
+        "2026-10-08 13:59:06,659 INFO ndx_0dte_friend_real.rt_switch: AI switch (on) bull entry 30575/30675 at 13:59: TAKE",
+        "2026-10-08 13:59:06,679 INFO paper.runner: ALERT 13:58 open bull 30575/30675 @ 67.00 (model | AI TAKE); day +0",
+        "2026-10-08 14:01:06,878 INFO paper.runner: ALERT 14:00 add bull 30575/30675 @ 56.70 (add); day +0",
+        "2026-10-08 14:02:07,270 INFO paper.runner: ALERT 14:01 close bull 30575/30675 @ 50.30 (cut); day -2,317",
+    ]
+    ev = D.clone_events(lines)
+    assert [(e["at"], e["action"], e["side"], e["k_lo"], e["px"]) for e in ev] == [
+        ("13:58", "open", "bull", 30575.0, 67.0), ("14:00", "add", "bull", 30575.0, 56.7), ("14:01", "close", "bull", 30575.0, 50.3)]
+    day = pd.Timestamp("2026-10-08").date()
+    assert D.clone_line(day, "14:05", tmp_path) == "clone (shadow): not running today"
+    (tmp_path / "ndx_0dte_friend_real_2026-10-08_104509.log").write_text("\n".join(lines[:2]), encoding="utf-8")
+    line = D.clone_line(day, "14:03", tmp_path)
+    assert "13:58 open bull 30575/30675 @ 67.00" in line and "FRESH" in line and "OTM put credit spread below support" in line
+    assert "35 min ago" in D.clone_line(day, "14:33", tmp_path)
+    (tmp_path / "ndx_0dte_friend_real_2026-10-08_104509.log").write_text("no calls", encoding="utf-8")
+    assert D.clone_line(day, "14:03", tmp_path) == "clone (shadow): no call yet today"
