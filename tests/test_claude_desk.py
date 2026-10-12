@@ -147,3 +147,23 @@ def test_half_a_pair_is_never_held(desk, capsys):
     desk["fills"]["SPX"] = "rejected"
     assert D.cmd_pair(NDX_UP, 1, SPX_UP, 2, "t", "e", "w") == 3
     assert desk["closed"] and "never hold half a pair" in desk["closed"][0]
+
+
+def test_a_pair_never_sells_an_in_the_money_strike(desk, capsys, monkeypatch):
+    """2026-10-12: the 30650/30625 put spread sold 22 points in the money lost $334 while NDX sat at 30,625; the
+    out-of-the-money 30625/30600 would have made about $317 by 15:24. Fit the rail with fewer SPX lots instead."""
+    assert "22 points in the money" in D.itm_short([{"side": "sell", "cp": "P", "strike": 30650.0},
+                                                   {"side": "buy", "cp": "P", "strike": 30625.0}], 30628.0, "NDX")
+    assert D.itm_short([{"side": "sell", "cp": "P", "strike": 30625.0}, {"side": "buy", "cp": "P", "strike": 30600.0}],
+                       30628.0, "NDX") is None                                    # 3 points out of the money
+    assert D.itm_short([{"side": "sell", "cp": "P", "strike": 30630.0}], 30628.0, "NDX") is None   # within 5: at the money
+    assert D.itm_short([{"side": "sell", "cp": "C", "strike": 7800.0}], 7799.5, "SPX") is None
+    assert "in the money" in D.itm_short([{"side": "sell", "cp": "C", "strike": 7795.0}], 7799.5, "SPX")
+    assert D.itm_short([{"side": "sell", "cp": "C", "strike": 7795.0}], None, "SPX") is None
+    monkeypatch.setattr(D, "quote", lambda t: {"last": 30628.0} if t == "NDX" else {"last": 7799.5})
+    itm = [{"side": "sell", "cp": "P", "strike": 30650.0}, {"side": "buy", "cp": "P", "strike": 30625.0}]
+    assert D.cmd_pair(itm, 1, SPX_UP, 2, "t", "e", "w") == 2
+    assert "points in the money" in capsys.readouterr().out and not [p for m, p, b in desk["sent"] if p == "/orders"]
+    otm = [{"side": "sell", "cp": "P", "strike": 30625.0}, {"side": "buy", "cp": "P", "strike": 30600.0}]
+    spx = [{"side": "sell", "cp": "C", "strike": 7800.0}, {"side": "buy", "cp": "C", "strike": 7805.0}]
+    assert D.cmd_pair(otm, 1, spx, 2, "t", "e", "w") == 0
