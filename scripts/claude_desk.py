@@ -374,6 +374,29 @@ def ratio_menu(ndx: float, spx: float) -> list[tuple[str, list[tuple[str, str, f
             ("ratio down", [("sell", "C", kc), ("buy", "C", kc + 25.0)], [("sell", "P", sp), ("buy", "P", sp - 5.0)])]
 
 
+#: how far a pair's short strike may sit in the money (index points) before ``pair`` refuses it
+ITM_TOLERANCE = {"NDX": 5.0, "SPX": 2.0}
+
+
+def itm_short(legs: list[dict], spot: float | None, under: str) -> str | None:
+    """Why a pair leg is refused: its short strike is in the money by more than ``ITM_TOLERANCE``. A short put spread
+    sold above the index (or a call spread below it) is worth more every minute the index sits between its strikes:
+    on 2026-10-12 the 30650/30625 put spread, sold 22 points in the money to fit the risk rail, lost $334 while NDX
+    sat at 30,625, where the out-of-the-money 30625/30600 would have made about $317 by 15:24. Fit the rail by
+    shrinking the SPX leg, never by moving the short strike into the money."""
+    if spot is None:
+        return None
+    tol = ITM_TOLERANCE.get(under, 0.0)
+    for l in legs:
+        if l["side"] != "sell":
+            continue
+        depth = (float(spot) - l["strike"]) if l["cp"] == "C" else (l["strike"] - float(spot))
+        if depth > tol:
+            return (f"{under} short {l['cp']}{l['strike']:.0f} is {depth:.0f} points in the money (index {float(spot):,.2f}); "
+                    f"a pair sells out-of-the-money spreads (fit the rail with fewer SPX lots instead)")
+    return None
+
+
 def premium_refusal(pv: dict, premium_only: bool) -> str | None:
     """Why an open is refused under the premium_only limit: the desk sells premium (condors, credit spreads) and buys
     no debit. Agreed with the owner on 2026-10-01, after three sessions of 0DTE debit direction calls lost (-$1.6k,
@@ -496,11 +519,16 @@ def cmd_snapshot(force_news: bool = False) -> str:
             for name, nspec, sspec in ratio_menu(float(rs["ndx"]), float(rs["spx"])):
                 try:
                     pn = preview([{"side": s, "cp": c, "strike": k} for s, c, k in nspec], 1, day, "NDX")
-                    ps = preview([{"side": s, "cp": c, "strike": k} for s, c, k in sspec], 2, day, "SPX")
+                    spx_lots = 2
+                    ps = preview([{"side": s, "cp": c, "strike": k} for s, c, k in sspec], spx_lots, day, "SPX")
                     tot = sum(abs(float(p.get("max_loss") or 0)) for p in (pn, ps))
+                    if tot > MAX_RISK:                   # over the rail: one SPX lot, never an in-the-money NDX strike
+                        spx_lots = 1
+                        ps = preview([{"side": s, "cp": c, "strike": k} for s, c, k in sspec], spx_lots, day, "SPX")
+                        tot = sum(abs(float(p.get("max_loss") or 0)) for p in (pn, ps))
                     L.append(f"    {name:<10} NDX {'/'.join(f'{c}{k:.0f}' for _, c, k in nspec)} x1 net {pn.get('net_mid')} "
-                             f"+ SPX {'/'.join(f'{c}{k:.0f}' for _, c, k in sspec)} x2 net {ps.get('net_mid')}: "
-                             f"max loss together {tot:,.0f}")
+                             f"+ SPX {'/'.join(f'{c}{k:.0f}' for _, c, k in sspec)} x{spx_lots} net {ps.get('net_mid')}: "
+                             f"max loss together {tot:,.0f}" + (" (over the rail)" if tot > MAX_RISK else ""))
                 except Exception as exc:  # noqa: BLE001
                     L.append(f"    {name}: no quote ({str(exc)[:80]})")
     last = st.get("last_news")
@@ -588,6 +616,10 @@ def cmd_pair(ndx_legs: list[dict], ndx_lots: int, spx_legs: list[dict], spx_lots
         why.append(f"{len(opened)} position(s) open: a pair needs a flat book")
     if realised + marked <= DAY_STOP:
         why.append("the day stop is hit")
+    for under, legs in (("NDX", ndx_legs), ("SPX", spx_legs)):
+        q = quote(under)
+        if (reason := itm_short(legs, q.get("last") or q.get("close"), under)) is not None:
+            why.append(reason)
     pvs = {"NDX": preview(ndx_legs, ndx_lots, day, "NDX"), "SPX": preview(spx_legs, spx_lots, day, "SPX")}
     total = 0.0
     for name, pv in pvs.items():
