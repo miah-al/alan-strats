@@ -20,6 +20,12 @@ Commands:
                                     flip / max pain), my book, candidate spreads, the rails; new posts and official releases
                                     every 10 minutes (or now, with --news); headlines are the news desk's (claude_news)
   open --leg buy:C:30250 --leg sell:C:30275 [--lots 1] --thesis ... --exit ... --wrong ...
+  pair --ndx sell:P:30650,buy:P:30625 [--ndx-lots 1] --spx sell:C:7835,buy:C:7840 [--spx-lots 2] --thesis ... --exit ...
+       --wrong ...                  the NDX/SPX ratio trade (2026-10-12, the owner: "take over ratio into your desk, get
+                                    in get out"): an NDXP spread and an SPXW spread opened together as ONE position.
+                                    Under premium_only both are credit spreads: the ratio up (NDX to catch up) is an
+                                    NDX put credit spread with an SPX call credit spread, the ratio down the mirror. Their
+                                    max losses together must fit the per-position rail; close / guard treat them as one
   trim --lots N --reason ...        take N lots off (an offsetting order: the paper book closes groups whole)
   close --reason ...                close every open claude_discretionary position at market (paper mid)
   note --text ...                   journal a decision (standing aside is a decision)
@@ -47,6 +53,7 @@ import pandas as pd
 BASE = "http://127.0.0.1:8765/api"
 SLUG = "claude_discretionary"
 UNDER, ROOT = "NDX", "NDXP"
+ROOTS = {"NDX": "NDXP", "SPX": "SPXW"}          # the PM-settled same-day roots; SPX only as a ratio pair's second leg
 # The rails. These are the fallbacks: the values in force are the trader's, in the service's database (app.TradeLimit,
 # set on the app's Limits page or PUT /api/limits/claude_discretionary/<name>), read before every command and on every
 # feed poll (apply_limits). The desk never changes them itself.
@@ -124,8 +131,8 @@ def journal(day: date, text: str) -> None:
         f.write(text.rstrip() + "\n\n")
 
 
-def occ(cp: str, strike: float, day: date) -> str:
-    return f"{ROOT}{day:%y%m%d}{cp}{int(round(strike * 1000)):08d}"
+def occ(cp: str, strike: float, day: date, root: str = ROOT) -> str:
+    return f"{root}{day:%y%m%d}{cp}{int(round(strike * 1000)):08d}"
 
 
 def rows(payload) -> list[dict]:
@@ -151,9 +158,12 @@ def day_pnl(day: date) -> tuple[float, float, list[dict]]:
     return realised, marked, opened
 
 
-def crossing_cost(legs: list[dict], spot: float) -> float:
+def crossing_cost(legs: list[dict], spot: float, under: str = UNDER) -> float:
     """Points per unit the live runners would pay to cross, on one side (the measured model: 1.2 when a vertical's
-    long leg is 25+ in the money, 0.1 nearer). Legs pair into verticals by right; an unpaired leg counts as near."""
+    long leg is 25+ in the money, 0.1 nearer). Legs pair into verticals by right; an unpaired leg counts as near.
+    SPXW verticals: 0.1 a vertical (live 5- and 10-wide quotes run about 0.15 wide)."""
+    if under == "SPX":
+        return 0.1 * max(1, len(legs) // 2)
     cost = 0.0
     for cp in ("C", "P"):
         longs = [l for l in legs if l["cp"] == cp and l["side"] == "buy"]
@@ -165,15 +175,16 @@ def crossing_cost(legs: list[dict], spot: float) -> float:
     return cost
 
 
-def order_body(legs: list[dict], lots: int, day: date, label: str) -> dict:
-    return {"account": "paper", "underlying": UNDER, "order_type": "market", "tif": "day", "strategy": SLUG,
+def order_body(legs: list[dict], lots: int, day: date, label: str, under: str = UNDER) -> dict:
+    root = ROOTS[under]
+    return {"account": "paper", "underlying": under, "order_type": "market", "tif": "day", "strategy": SLUG,
             "label": label[:200], "client_order_id": f"claude-{uuid.uuid4().hex[:12]}",
             "legs": [{"type": "call" if l["cp"] == "C" else "put", "strike": l["strike"], "expiry": day.isoformat(),
-                      "side": l["side"], "quantity": lots, "symbol": occ(l["cp"], l["strike"], day)} for l in legs]}
+                      "side": l["side"], "quantity": lots, "symbol": occ(l["cp"], l["strike"], day, root)} for l in legs]}
 
 
-def preview(legs: list[dict], lots: int, day: date) -> dict:
-    return api("POST", "/orders/preview", order_body(legs, lots, day, "preview"))
+def preview(legs: list[dict], lots: int, day: date, under: str = UNDER) -> dict:
+    return api("POST", "/orders/preview", order_body(legs, lots, day, "preview", under))
 
 
 def parse_leg(s: str) -> dict:
@@ -182,6 +193,11 @@ def parse_leg(s: str) -> dict:
     if side not in ("buy", "sell") or cp not in ("C", "P"):
         raise SystemExit(f"bad leg {s!r}: use buy|sell:C|P:strike")
     return {"side": side, "cp": cp, "strike": float(k)}
+
+
+def parse_legs(s: str) -> list[dict]:
+    """``sell:P:30650,buy:P:30625`` -> two legs (the pair command's per-index spreads)."""
+    return [parse_leg(x.strip()) for x in s.split(",") if x.strip()]
 
 
 # ── market ────────────────────────────────────────────────────────────────────
@@ -279,8 +295,83 @@ def spx_walls_in_ndx(g: dict, ndx_spot: float | None) -> str:
 
 
 def trades_today(st: dict) -> int:
-    """New positions opened today (a trim's offsetting group is not a trade)."""
-    return sum(1 for m in (st.get("positions") or {}).values() if not m.get("trim_of"))
+    """New positions opened today (a trim's offsetting group is not a trade; a ratio pair's SPX leg is part of its
+    NDX leg's trade)."""
+    return sum(1 for m in (st.get("positions") or {}).values() if not m.get("trim_of") and not m.get("pair_of"))
+
+
+def ratio_stats(ndx: float, spx: float, prev: float | None, opened: float | None, hist: pd.Series) -> dict:
+    """The NDX/SPX ratio now against the prior closes, the open and its recent history (``hist``: the ratio on the
+    intraday bars both indexes share, oldest first). Changes are in basis points of the ratio; z is the current ratio
+    against that history's mean and spread (log terms)."""
+    r = ndx / spx
+    out = {"ndx": ndx, "spx": spx, "ratio": r}
+    if prev:
+        out["day_bp"] = (r / prev - 1.0) * 1e4
+    if opened:
+        out["open_bp"] = (r / opened - 1.0) * 1e4
+    h = pd.to_numeric(hist, errors="coerce").dropna() if hist is not None else pd.Series(dtype=float)
+    if len(h) >= 20:
+        lg = h.map(math.log)
+        sd = float(lg.std(ddof=1))
+        out["z"] = (math.log(r) - float(lg.mean())) / sd if sd > 0 else None
+        out["hist_lo_bp"] = (float(h.min()) / r - 1.0) * 1e4
+        out["hist_hi_bp"] = (float(h.max()) / r - 1.0) * 1e4
+        out["hist_n"] = len(h)
+        out["hist_last"] = str(h.index[-1])[11:16] if hasattr(h.index[-1], "hour") else ""
+    return out
+
+
+def ratio_now(minutes: int = 120) -> dict:
+    """``ratio_stats`` from the live quotes and the service's intraday bars (the bars can lag: yfinance's SPX runs
+    about 15 minutes behind, so the history ends at the last minute both indexes have)."""
+    n, s = quote("NDX"), quote("SPX")
+    try:
+        nl, sl = float(n.get("last") or n.get("close")), float(s.get("last") or s.get("close"))
+    except (TypeError, ValueError):
+        return {}
+    prev = (float(n["prev_close"]) / float(s["prev_close"])) if n.get("prev_close") and s.get("prev_close") else None
+    opened = (float(n["open"]) / float(s["open"])) if n.get("open") and s.get("open") else None
+    hist = pd.Series(dtype=float)
+    try:
+        bars = {}
+        for t in ("NDX", "SPX"):
+            b = api("GET", f"/market/intraday/{t}?minutes={minutes}&interval=1")
+            bars[t] = pd.Series([float(x) if x is not None else float("nan") for x in (b.get("c") or [])],
+                                index=pd.to_datetime(b.get("t") or []))
+        both = pd.concat(bars, axis=1).dropna()
+        hist = both["NDX"] / both["SPX"]
+    except Exception:  # noqa: BLE001 - the live ratio stands without its history
+        pass
+    return ratio_stats(nl, sl, prev, opened, hist)
+
+
+def ratio_line(rs: dict) -> str:
+    if not rs:
+        return "ratio: no NDX/SPX quote"
+    parts = [f"ratio NDX/SPX {rs['ratio']:.4f} (NDX {rs['ndx']:,.0f} / SPX {rs['spx']:,.2f})"]
+    if rs.get("day_bp") is not None:
+        parts.append(f"day {rs['day_bp']:+.0f} bp")
+    if rs.get("open_bp") is not None:
+        parts.append(f"since open {rs['open_bp']:+.0f} bp")
+    if rs.get("z") is not None:
+        parts.append(f"z {rs['z']:+.1f} vs the last {rs['hist_n']} common bars (to {rs.get('hist_last')}; range "
+                     f"{rs['hist_lo_bp']:+.0f}..{rs['hist_hi_bp']:+.0f} bp from now)")
+    return " | ".join(parts)
+
+
+def ratio_menu(ndx: float, spx: float) -> list[tuple[str, list[tuple[str, str, float]], list[tuple[str, str, float]]]]:
+    """The two credit-spread pairs the premium-only desk can express the ratio with: (name, NDX legs, SPX legs).
+    'ratio up' bets NDX catches up with SPX: an NDX put credit spread (short at the first 25-pt strike below NDX, 25
+    wide) with an SPX call credit spread (short at the first 5-pt strike above SPX, 5 wide). 'ratio down' is the
+    mirror. The desk sizes them 1 NDX lot and 2 SPX lots, so the SPX side carries about 0.6 of the NDX side's
+    dollar move near the money: a ratio bet with a tilt to NDX's direction."""
+    kp = math.floor(ndx / 25.0) * 25.0
+    kc = math.ceil(ndx / 25.0) * 25.0
+    sc = math.ceil(spx / 5.0) * 5.0
+    sp = math.floor(spx / 5.0) * 5.0
+    return [("ratio up", [("sell", "P", kp), ("buy", "P", kp - 25.0)], [("sell", "C", sc), ("buy", "C", sc + 5.0)]),
+            ("ratio down", [("sell", "C", kc), ("buy", "C", kc + 25.0)], [("sell", "P", sp), ("buy", "P", sp - 5.0)])]
 
 
 def premium_refusal(pv: dict, premium_only: bool) -> str | None:
@@ -364,6 +455,8 @@ def cmd_snapshot(force_news: bool = False) -> str:
                  + (f" | O {m['open']:,.0f} H {m['high']:,.0f} L {m['low']:,.0f}" if m.get("high") else "")
                  + " | moves " + " ".join(f"{k} {m[k]:+.0f}" for k in ("m10", "m30", "m60") if m.get(k) is not None))
     L.append(f"  VIX {m.get('vix')} ({(m.get('vix_chg') or 0):+.2f})  VXN {m.get('vxn')} ({(m.get('vxn_chg') or 0):+.2f})")
+    rs = ratio_now()
+    L.append("  " + ratio_line(rs))
     lv = levels(spot)
     if lv:
         L.append("  levels: " + " | ".join(lv))
@@ -399,6 +492,17 @@ def cmd_snapshot(force_news: bool = False) -> str:
                          f"max profit {pv.get('max_profit')}")
             except Exception as exc:  # noqa: BLE001
                 L.append(f"    {name}: no quote ({str(exc)[:80]})")
+        if rs.get("ndx") and rs.get("spx"):
+            for name, nspec, sspec in ratio_menu(float(rs["ndx"]), float(rs["spx"])):
+                try:
+                    pn = preview([{"side": s, "cp": c, "strike": k} for s, c, k in nspec], 1, day, "NDX")
+                    ps = preview([{"side": s, "cp": c, "strike": k} for s, c, k in sspec], 2, day, "SPX")
+                    tot = sum(abs(float(p.get("max_loss") or 0)) for p in (pn, ps))
+                    L.append(f"    {name:<10} NDX {'/'.join(f'{c}{k:.0f}' for _, c, k in nspec)} x1 net {pn.get('net_mid')} "
+                             f"+ SPX {'/'.join(f'{c}{k:.0f}' for _, c, k in sspec)} x2 net {ps.get('net_mid')}: "
+                             f"max loss together {tot:,.0f}")
+                except Exception as exc:  # noqa: BLE001
+                    L.append(f"    {name}: no quote ({str(exc)[:80]})")
     last = st.get("last_news")
     if force_news or last is None or (datetime.now() - datetime.fromisoformat(last)).total_seconds() >= NEWS_EVERY_S:
         since = datetime.fromisoformat(last) if last else datetime.combine(day, datetime.min.time()) + timedelta(hours=6)
@@ -459,6 +563,87 @@ def cmd_open(legs: list[dict], lots: int, thesis: str, exit_plan: str, wrong: st
     return 0
 
 
+def cmd_pair(ndx_legs: list[dict], ndx_lots: int, spx_legs: list[dict], spx_lots: int, thesis: str, exit_plan: str,
+             wrong: str) -> int:
+    """The NDX/SPX ratio trade as ONE position: an NDXP spread and an SPXW spread, checked together against the rails
+    (their max losses summed against the per-position rail, one trade, the book must be flat) and opened together. If
+    the second order does not fill, the first is closed at once: the desk never holds half a pair."""
+    t = now_et(); day = t.date(); st = load_state(day)
+    why = []
+    if st.get("done"):
+        why.append("done for the day (the stop was hit)")
+    if not ENTRY_START <= hm(t) <= ENTRY_END:
+        why.append(f"entries only {ENTRY_START}-{ENTRY_END}")
+    for name, lots, legs in (("NDX", ndx_lots, ndx_legs), ("SPX", spx_lots, spx_legs)):
+        if not 1 <= lots <= MAX_LOTS:
+            why.append(f"{name} lots must be 1-{MAX_LOTS}")
+        if len(legs) != 2:
+            why.append(f"{name}: a pair leg is one vertical (2 legs)")
+    if not (thesis.strip() and exit_plan.strip() and wrong.strip()):
+        why.append("thesis, exit and what-proves-me-wrong are all required")
+    if trades_today(st) >= MAX_TRADES:
+        why.append(f"{trades_today(st)} trades opened today, the limit is {MAX_TRADES}")
+    realised, marked, opened = day_pnl(day)
+    if opened:
+        why.append(f"{len(opened)} position(s) open: a pair needs a flat book")
+    if realised + marked <= DAY_STOP:
+        why.append("the day stop is hit")
+    pvs = {"NDX": preview(ndx_legs, ndx_lots, day, "NDX"), "SPX": preview(spx_legs, spx_lots, day, "SPX")}
+    total = 0.0
+    for name, pv in pvs.items():
+        ml = pv.get("max_loss")
+        if not pv.get("ok") or pv.get("net_mid") is None:
+            why.append(f"{name}: no two-sided quote for every leg")
+        stale = sorted({str(l.get("source")) for l in pv.get("legs", []) if l.get("source") != "tastytrade"})
+        if stale:
+            why.append(f"{name} legs priced from {', '.join(stale)}, not the live tastytrade stream")
+        if (reason := premium_refusal(pv, PREMIUM_ONLY)) is not None:
+            why.append(f"{name}: {reason}")
+        if ml is None:
+            why.append(f"{name}: risk is not defined (no finite max loss)")
+        else:
+            total += abs(float(ml))
+    if total > MAX_RISK + 1e-6:
+        why.append(f"the pair's max loss {total:,.0f} (NDX {pvs['NDX'].get('max_loss')}, SPX {pvs['SPX'].get('max_loss')}) "
+                   f"is over ${MAX_RISK:,.0f}")
+    if why:
+        print("REFUSED: " + "; ".join(why)); return 2
+    rs = ratio_now()
+    dn = " ".join(f"{l['side']} {l['cp']}{l['strike']:.0f}" for l in ndx_legs)
+    ds = " ".join(f"{l['side']} {l['cp']}{l['strike']:.0f}" for l in spx_legs)
+    journal(day, f"## {hm(t)} OPEN PAIR NDX {dn} x{ndx_lots} + SPX {ds} x{spx_lots}\n- {ratio_line(rs)}\n"
+                 f"- NDX net mid {pvs['NDX']['net_mid']} ({pvs['NDX']['debit_credit']}), max loss {pvs['NDX'].get('max_loss')}; "
+                 f"SPX net mid {pvs['SPX']['net_mid']} ({pvs['SPX']['debit_credit']}), max loss {pvs['SPX'].get('max_loss')}; "
+                 f"together {total:,.0f}\n- thesis: {thesis}\n- exit: {exit_plan}\n- wrong if: {wrong}")
+    res_n = api("POST", "/orders", order_body(ndx_legs, ndx_lots, day, thesis, "NDX"))
+    tg_n = res_n.get("trade_group_id")
+    if res_n.get("status") != "filled" or not tg_n:
+        journal(day, f"- NDX leg not filled ({res_n.get('status')}); nothing opened")
+        print(f"NOT OPENED: the NDX leg came back {res_n.get('status')}"); return 3
+    st["positions"][str(tg_n)] = {"legs": ndx_legs, "lots": ndx_lots, "opened": hm(t), "spot": rs.get("ndx"),
+                                  "fill": res_n.get("fill_price"), "under": "NDX", "thesis": thesis,
+                                  "cost": crossing_cost(ndx_legs, float(rs.get("ndx") or 0), "NDX"),
+                                  "max_loss": pvs["NDX"].get("max_loss")}
+    save_state(day, st)
+    res_s = api("POST", "/orders", order_body(spx_legs, spx_lots, day, f"pair with {tg_n}: {thesis}", "SPX"))
+    tg_s = res_s.get("trade_group_id")
+    if res_s.get("status") != "filled" or not tg_s:
+        out = _close_all(day, f"the pair's SPX leg came back {res_s.get('status')}: never hold half a pair")
+        print(f"NOT OPENED: the SPX leg came back {res_s.get('status')}; the NDX leg was closed again\n" + "\n".join(out))
+        return 3
+    st = load_state(day)
+    st["positions"][str(tg_n)]["pair"] = str(tg_s)
+    st["positions"][str(tg_s)] = {"legs": spx_legs, "lots": spx_lots, "opened": hm(t), "spot": rs.get("spx"),
+                                  "fill": res_s.get("fill_price"), "under": "SPX", "pair_of": str(tg_n), "thesis": thesis,
+                                  "cost": crossing_cost(spx_legs, float(rs.get("spx") or 0), "SPX"),
+                                  "max_loss": pvs["SPX"].get("max_loss")}
+    save_state(day, st)
+    journal(day, f"- filled: NDX net {res_n.get('fill_price')} ({tg_n}); SPX net {res_s.get('fill_price')} ({tg_s})")
+    print(f"OPENED PAIR: NDX {dn} x{ndx_lots} at {res_n.get('fill_price')} ({tg_n}) + SPX {ds} x{spx_lots} at "
+          f"{res_s.get('fill_price')} ({tg_s}); max loss together {total:,.0f}")
+    return 0
+
+
 def _close_all(day: date, reason: str) -> list[str]:
     st = load_state(day); out = []
     for r in my_positions("open"):
@@ -485,6 +670,8 @@ def cmd_trim(lots: int, reason: str) -> int:
     if not longs or not reason.strip():
         print("REFUSED: nothing of mine open to trim, or no reason given"); return 2
     tg = str(longs[0]["trade_group_id"]); meta = st["positions"][tg]
+    if meta.get("pair") or meta.get("pair_of"):
+        print("REFUSED: a ratio pair is closed whole (close), never trimmed"); return 2
     held = int(meta.get("lots", 1)) - int(meta.get("trimmed", 0))
     if not 1 <= lots < held:
         print(f"REFUSED: can trim 1..{held - 1} of the {held} lots still on (close takes the rest)"); return 2
@@ -518,7 +705,7 @@ def live_open_pnl(day: date, st: dict, opened: list[dict]) -> float | None:
         meta = st["positions"].get(str(r.get("trade_group_id")))
         if not meta:
             return None
-        pv = preview(meta["legs"], int(meta["lots"]), day)
+        pv = preview(meta["legs"], int(meta["lots"]), day, meta.get("under", UNDER))
         net = pv.get("net_mid")
         strikes = [l["strike"] for l in meta["legs"]]
         width = (max(strikes) - min(strikes)) if len(set(strikes)) > 1 else None
@@ -593,6 +780,11 @@ def main(argv=None) -> int:
     o.add_argument("--leg", action="append", required=True); o.add_argument("--lots", type=int, default=1)
     o.add_argument("--thesis", required=True); o.add_argument("--exit", required=True, dest="exit_plan")
     o.add_argument("--wrong", required=True)
+    pr = sub.add_parser("pair")
+    pr.add_argument("--ndx", required=True); pr.add_argument("--ndx-lots", type=int, default=1)
+    pr.add_argument("--spx", required=True); pr.add_argument("--spx-lots", type=int, default=2)
+    pr.add_argument("--thesis", required=True); pr.add_argument("--exit", required=True, dest="exit_plan")
+    pr.add_argument("--wrong", required=True)
     c = sub.add_parser("close"); c.add_argument("--reason", required=True)
     n = sub.add_parser("note"); n.add_argument("--text", required=True)   # a decision not to trade is a decision too
     tr = sub.add_parser("trim"); tr.add_argument("--lots", type=int, default=1); tr.add_argument("--reason", required=True)
@@ -603,6 +795,8 @@ def main(argv=None) -> int:
         print(cmd_snapshot(a.news)); return 0
     if a.cmd == "open":
         return cmd_open([parse_leg(x) for x in a.leg], a.lots, a.thesis, a.exit_plan, a.wrong)
+    if a.cmd == "pair":
+        return cmd_pair(parse_legs(a.ndx), a.ndx_lots, parse_legs(a.spx), a.spx_lots, a.thesis, a.exit_plan, a.wrong)
     if a.cmd == "close":
         return cmd_close(a.reason)
     if a.cmd == "trim":
