@@ -91,6 +91,10 @@ def test_a_pair_is_one_trade_and_the_ratio_reads_in_basis_points():
     assert down == ("ratio down", [("sell", "C", 30725.0), ("buy", "C", 30750.0)], [("sell", "P", 7810.0), ("buy", "P", 7805.0)])
 
 
+def leg(symbol: str, bid: float, ask: float, source: str = "tastytrade") -> dict:
+    return {"symbol": symbol, "bid": bid, "ask": ask, "mid": round((bid + ask) / 2, 4), "source": source}
+
+
 @pytest.fixture
 def desk(monkeypatch, tmp_path):
     """The desk with the service stubbed: previews by underlying, orders recorded, a flat book, 13:30 ET."""
@@ -101,10 +105,11 @@ def desk(monkeypatch, tmp_path):
     monkeypatch.setattr(D, "ratio_now", lambda: {"ndx": 30700.0, "spx": 7812.0, "ratio": 3.93})
     monkeypatch.setattr(D, "PREMIUM_ONLY", True); monkeypatch.setattr(D, "MAX_RISK", 2500.0)
     monkeypatch.setattr(D, "MAX_TRADES", 3); monkeypatch.setattr(D, "MAX_LOTS", 2)
+    monkeypatch.setattr(D, "SETTLE_S", 0.0)
     pv = {"NDX": {"ok": True, "net_mid": -9.0, "debit_credit": "credit", "max_loss": -1600.0,
-                  "legs": [{"source": "tastytrade"}, {"source": "tastytrade"}]},
+                  "legs": [leg("NDXP261012P30700000", 20.0, 22.0), leg("NDXP261012P30675000", 11.0, 13.0)]},
           "SPX": {"ok": True, "net_mid": -2.0, "debit_credit": "credit", "max_loss": -600.0,
-                  "legs": [{"source": "tastytrade"}, {"source": "tastytrade"}]}}
+                  "legs": [leg("SPXW261012C07815000", 4.9, 5.0), leg("SPXW261012C07820000", 2.9, 3.0)]}}
     monkeypatch.setattr(D, "preview", lambda legs, lots, day, under="NDX": dict(pv[under]))
     sent, fills = [], {"NDX": "filled", "SPX": "filled"}
 
@@ -189,3 +194,67 @@ def test_the_clone_is_a_signal_on_the_desk(tmp_path):
     assert "35 min ago" in D.clone_line(day, "14:33", tmp_path)
     (tmp_path / "ndx_0dte_friend_real_2026-10-08_104509.log").write_text("no calls", encoding="utf-8")
     assert D.clone_line(day, "14:03", tmp_path) == "clone (shadow): no call yet today"
+
+
+# ── quotes an entry can trust (2026-10-13: a re-subscribed SPXW leg served a minutes-old quote first) ─────────────
+
+def test_quote_problems_catch_stale_and_one_sided_quotes():
+    v = [{"side": "sell", "cp": "C", "strike": 7790.0}, {"side": "buy", "cp": "C", "strike": 7795.0}]
+    good = {"net_mid": -2.5, "max_loss": -250.0, "max_profit": 250.0,
+            "legs": [leg("SPXW261013C07790000", 7.0, 7.1), leg("SPXW261013C07795000", 4.5, 4.6)]}
+    assert D.quote_problems(good, good, v, "SPX") == [] and D.shown_net(good, v) == "-2.5"
+    # the 11:28 menu: the long leg had no quote, so the 5-wide spread "paid" the short leg's whole 7.05
+    one_sided = {"net_mid": -7.05, "max_loss": 205.0, "max_profit": 705.0,
+                 "legs": [leg("SPXW261013C07790000", 7.0, 7.1), leg("SPXW261013C07795000", 0.0, 0.0)]}
+    why = " | ".join(D.quote_problems(one_sided, one_sided, v, "SPX"))
+    assert "no sane two-sided quote" in why and "not between 0 and 5" in why and "no loss" in why
+    assert D.shown_net(one_sided, v) == "-7.05 (quotes settling)"
+    # 11:30: the first preview served the 7770/7775 calls' old quotes, the next one 3 s later the live ones
+    k = [{"side": "sell", "cp": "C", "strike": 7770.0}, {"side": "buy", "cp": "C", "strike": 7775.0}]
+    stale = {"net_mid": -4.85, "max_loss": -15.0,
+             "legs": [leg("SPXW261013C07770000", 29.0, 29.3), leg("SPXW261013C07775000", 24.2, 24.4)]}
+    live = {"net_mid": -4.25, "max_loss": -75.0,
+            "legs": [leg("SPXW261013C07770000", 20.4, 20.5), leg("SPXW261013C07775000", 16.1, 16.3)]}
+    why = D.quote_problems(stale, live, k, "SPX")
+    assert len(why) == 2 and all("still settling" in w for w in why)
+    # an NDXP leg's mid wobbles a few points between polls with nothing wrong
+    n = [{"side": "sell", "cp": "P", "strike": 30400.0}, {"side": "buy", "cp": "P", "strike": 30375.0}]
+    a = {"net_mid": -9.0, "max_loss": -1600.0,
+         "legs": [leg("NDXP261013P30400000", 40.0, 46.0), leg("NDXP261013P30375000", 31.0, 37.0)]}
+    b = {"net_mid": -8.0, "max_loss": -1700.0,
+         "legs": [leg("NDXP261013P30400000", 42.0, 48.0), leg("NDXP261013P30375000", 34.0, 40.0)]}
+    assert D.quote_problems(a, b, n, "NDX") == []
+    assert D.vertical_width(n) == 25.0 and D.vertical_width(n + n) is None
+
+
+def test_an_entry_waits_for_settled_quotes(desk, capsys, monkeypatch):
+    """pair and open preview twice and refuse while a leg is still jumping or a vertical's net is impossible."""
+    calls = []
+    stale = {"ok": True, "net_mid": -2.0, "debit_credit": "credit", "max_loss": -600.0,
+             "legs": [leg("SPXW261012C07815000", 9.9, 10.0), leg("SPXW261012C07820000", 7.9, 8.0)]}
+
+    def preview(legs, lots, day, under="NDX"):
+        calls.append(under)
+        return dict(stale if under == "SPX" and calls.count("SPX") == 1 else desk["pv"][under])
+    monkeypatch.setattr(D, "preview", preview)
+    assert D.cmd_pair(NDX_UP, 1, SPX_UP, 2, "t", "e", "w") == 2
+    out = capsys.readouterr().out
+    assert "SPX: SPXW261012C07815000 quote still settling (9.95 -> 4.95" in out
+    assert not [p for m, p, b in desk["sent"] if p == "/orders"]
+    assert D.cmd_pair(NDX_UP, 1, SPX_UP, 2, "t", "e", "w") == 0                     # the retry sees live quotes twice
+    bad = {"ok": True, "net_mid": -26.0, "debit_credit": "credit", "max_loss": 100.0,
+           "legs": [leg("NDXP261012P30700000", 30.0, 32.0), leg("NDXP261012P30675000", 4.0, 6.0)]}
+    monkeypatch.setattr(D, "preview", lambda legs, lots, day, under="NDX": dict(bad))
+    assert D.cmd_open(NDX_UP, 1, "t", "e", "w") == 2
+    out = capsys.readouterr().out
+    assert "not between 0 and 25" in out and "no loss" in out
+
+
+def test_open_checks_single_spreads_too(desk, capsys, monkeypatch):
+    """The out-of-the-money rule applies to every desk order, not only pairs; clean quotes still open."""
+    monkeypatch.setattr(D, "quote", lambda t: {"last": 30628.0})
+    itm = [{"side": "sell", "cp": "P", "strike": 30650.0}, {"side": "buy", "cp": "P", "strike": 30625.0}]
+    assert D.cmd_open(itm, 1, "t", "e", "w") == 2 and "22 points in the money" in capsys.readouterr().out
+    otm = [{"side": "sell", "cp": "P", "strike": 30600.0}, {"side": "buy", "cp": "P", "strike": 30575.0}]
+    assert D.cmd_open(otm, 1, "t", "e", "w") == 0
+    assert [b["underlying"] for m, p, b in desk["sent"] if p == "/orders"] == ["NDX"]

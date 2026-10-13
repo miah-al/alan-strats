@@ -438,8 +438,58 @@ def itm_short(legs: list[dict], spot: float | None, under: str) -> str | None:
         depth = (float(spot) - l["strike"]) if l["cp"] == "C" else (l["strike"] - float(spot))
         if depth > tol:
             return (f"{under} short {l['cp']}{l['strike']:.0f} is {depth:.0f} points in the money (index {float(spot):,.2f}); "
-                    f"a pair sells out-of-the-money spreads (fit the rail with fewer SPX lots instead)")
+                    f"the desk sells out-of-the-money spreads (fit the rail with fewer lots instead)")
     return None
+
+
+#: A leg whose symbol was dropped and is wanted again can serve its last, minutes-old quote first, still marked
+#: tastytrade. On 2026-10-13 the SPXW 7770 call previewed 29.0/29.3, then 20.4/20.5 three seconds later, and the menu
+#: showed a 5-wide call spread at a 7.05 credit. An entry therefore previews twice, SETTLE_S apart, and is refused while
+#: any leg's mid moves more than LEG_JUMP points between the two (more than the index can move a leg in that time).
+SETTLE_S = 3.0
+LEG_JUMP = {"NDX": 5.0, "SPX": 1.0}
+
+
+def vertical_width(legs: list[dict]) -> float | None:
+    """The strike width of a plain two-leg vertical (one type, one leg bought and one sold), else None."""
+    if len(legs) != 2 or legs[0]["cp"] != legs[1]["cp"] or legs[0]["side"] == legs[1]["side"]:
+        return None
+    return abs(float(legs[0]["strike"]) - float(legs[1]["strike"]))
+
+
+def quote_problems(first: dict, second: dict, legs: list[dict], under: str) -> list[str]:
+    """Why the quotes behind an entry can't be trusted yet (empty when they can): a leg without a sane two-sided quote,
+    a leg whose mid jumped between the two previews (a stale quote just replaced by a live one), a vertical whose net
+    is not between 0 and its width, or a "max loss" that is no loss. Any of these makes a paper fill a fake one."""
+    why = []
+    jump = LEG_JUMP.get(under, 1.0)
+    before = {l.get("symbol"): l for l in first.get("legs") or []}
+    for l in second.get("legs") or []:
+        sym, bid, ask, mid = l.get("symbol"), l.get("bid"), l.get("ask"), l.get("mid")
+        if bid is None or ask is None or float(ask) <= 0 or float(bid) < 0 or float(ask) < float(bid):
+            why.append(f"{sym}: no sane two-sided quote ({bid}/{ask})")
+            continue
+        was = (before.get(sym) or {}).get("mid")
+        if was is not None and mid is not None and abs(float(mid) - float(was)) > jump:
+            why.append(f"{sym} quote still settling ({float(was):.2f} -> {float(mid):.2f} in {SETTLE_S:.0f} s): retry")
+    net, width = second.get("net_mid"), vertical_width(legs)
+    if net is not None and width is not None and not 0 < abs(float(net)) < width:
+        why.append(f"net {float(net):.2f} is not between 0 and {width:g} for a {width:g}-wide vertical "
+                   f"(a stale or missing leg quote)")
+    ml, mp = second.get("max_loss"), second.get("max_profit")
+    if ml is not None and float(ml) >= 0:
+        why.append(f"max loss {float(ml):,.0f} is no loss: the quotes are wrong")
+    if mp is not None and float(mp) <= 0:
+        why.append(f"max profit {float(mp):,.0f} is no profit: the quotes are wrong")
+    return why
+
+
+def shown_net(pv: dict, legs: list[dict]) -> str:
+    """A menu's net, flagged when it can't be right for a vertical (see ``quote_problems``)."""
+    net, width = pv.get("net_mid"), vertical_width(legs)
+    if net is not None and width is not None and not 0 < abs(float(net)) < width:
+        return f"{net} (quotes settling)"
+    return str(net)
 
 
 def premium_refusal(pv: dict, premium_only: bool) -> str | None:
@@ -557,23 +607,25 @@ def cmd_snapshot(force_news: bool = False) -> str:
             try:
                 pv = preview(legs, 1, day)
                 strikes = "/".join(f"{k:.0f}" for _, _, k in spec)
-                L.append(f"    {name:<9} {strikes:<23} net {pv.get('net_mid')} max loss {pv.get('max_loss')} "
+                L.append(f"    {name:<9} {strikes:<23} net {shown_net(pv, legs)} max loss {pv.get('max_loss')} "
                          f"max profit {pv.get('max_profit')}")
             except Exception as exc:  # noqa: BLE001
                 L.append(f"    {name}: no quote ({str(exc)[:80]})")
         if rs.get("ndx") and rs.get("spx"):
             for name, nspec, sspec in ratio_menu(float(rs["ndx"]), float(rs["spx"])):
                 try:
-                    pn = preview([{"side": s, "cp": c, "strike": k} for s, c, k in nspec], 1, day, "NDX")
+                    nlegs = [{"side": s, "cp": c, "strike": k} for s, c, k in nspec]
+                    slegs = [{"side": s, "cp": c, "strike": k} for s, c, k in sspec]
+                    pn = preview(nlegs, 1, day, "NDX")
                     spx_lots = 2
-                    ps = preview([{"side": s, "cp": c, "strike": k} for s, c, k in sspec], spx_lots, day, "SPX")
+                    ps = preview(slegs, spx_lots, day, "SPX")
                     tot = sum(abs(float(p.get("max_loss") or 0)) for p in (pn, ps))
                     if tot > MAX_RISK:                   # over the rail: one SPX lot, never an in-the-money NDX strike
                         spx_lots = 1
-                        ps = preview([{"side": s, "cp": c, "strike": k} for s, c, k in sspec], spx_lots, day, "SPX")
+                        ps = preview(slegs, spx_lots, day, "SPX")
                         tot = sum(abs(float(p.get("max_loss") or 0)) for p in (pn, ps))
-                    L.append(f"    {name:<10} NDX {'/'.join(f'{c}{k:.0f}' for _, c, k in nspec)} x1 net {pn.get('net_mid')} "
-                             f"+ SPX {'/'.join(f'{c}{k:.0f}' for _, c, k in sspec)} x{spx_lots} net {ps.get('net_mid')}: "
+                    L.append(f"    {name:<10} NDX {'/'.join(f'{c}{k:.0f}' for _, c, k in nspec)} x1 net {shown_net(pn, nlegs)} "
+                             f"+ SPX {'/'.join(f'{c}{k:.0f}' for _, c, k in sspec)} x{spx_lots} net {shown_net(ps, slegs)}: "
                              f"max loss together {tot:,.0f}" + (" (over the rail)" if tot > MAX_RISK else ""))
                 except Exception as exc:  # noqa: BLE001
                     L.append(f"    {name}: no quote ({str(exc)[:80]})")
@@ -607,6 +659,11 @@ def cmd_open(legs: list[dict], lots: int, thesis: str, exit_plan: str, wrong: st
         why.append(f"{len(opened)} position(s) open, the limit is {MAX_POSITIONS}")
     if realised + marked <= DAY_STOP:
         why.append("the day stop is hit")
+    q = quote(UNDER)
+    if (reason := itm_short(legs, q.get("last") or q.get("close"), UNDER)) is not None:
+        why.append(reason)
+    first = preview(legs, lots, day)
+    time.sleep(SETTLE_S)
     pv = preview(legs, lots, day)
     ml = pv.get("max_loss")
     if not pv.get("ok") or pv.get("net_mid") is None:
@@ -614,6 +671,7 @@ def cmd_open(legs: list[dict], lots: int, thesis: str, exit_plan: str, wrong: st
     stale = sorted({str(l.get("source")) for l in pv.get("legs", []) if l.get("source") != "tastytrade"})
     if stale:                                  # a fallback feed (yfinance, polygon) can be minutes old: a fill there is fake
         why.append(f"legs priced from {', '.join(stale)}, not the live tastytrade stream")
+    why += quote_problems(first, pv, legs, UNDER)
     if (reason := premium_refusal(pv, PREMIUM_ONLY)) is not None:
         why.append(reason)
     if ml is None:
@@ -666,12 +724,15 @@ def cmd_pair(ndx_legs: list[dict], ndx_lots: int, spx_legs: list[dict], spx_lots
         q = quote(under)
         if (reason := itm_short(legs, q.get("last") or q.get("close"), under)) is not None:
             why.append(reason)
+    first = {"NDX": preview(ndx_legs, ndx_lots, day, "NDX"), "SPX": preview(spx_legs, spx_lots, day, "SPX")}
+    time.sleep(SETTLE_S)
     pvs = {"NDX": preview(ndx_legs, ndx_lots, day, "NDX"), "SPX": preview(spx_legs, spx_lots, day, "SPX")}
     total = 0.0
     for name, pv in pvs.items():
         ml = pv.get("max_loss")
         if not pv.get("ok") or pv.get("net_mid") is None:
             why.append(f"{name}: no two-sided quote for every leg")
+        why += [f"{name}: {w}" for w in quote_problems(first[name], pv, ndx_legs if name == "NDX" else spx_legs, name)]
         stale = sorted({str(l.get("source")) for l in pv.get("legs", []) if l.get("source") != "tastytrade"})
         if stale:
             why.append(f"{name} legs priced from {', '.join(stale)}, not the live tastytrade stream")
