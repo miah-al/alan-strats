@@ -222,6 +222,11 @@ def market() -> dict:
             out["m30"] = c[-1] - c[-31] if len(c) > 30 else None
             out["m60"] = c[-1] - c[0]
             out["src"] = intr.get("vendor") or intr.get("source")
+        h = [float(x) for x in (intr.get("h") or []) if x is not None]
+        lo = [float(x) for x in (intr.get("l") or []) if x is not None]
+        for k, n in (("range10", 10), ("range30", 30)):           # the realised noise a stop must clear
+            if len(h) >= n and len(lo) >= n:
+                out[k] = max(h[-n:]) - min(lo[-n:])
     except Exception:
         pass
     return out
@@ -492,6 +497,169 @@ def shown_net(pv: dict, legs: list[dict]) -> str:
     return str(net)
 
 
+# ── the judgment gate (2026-10-13, the owner: "Improve judgement process") ─────────────────────────────────────────
+#: P(NDX touches a level S points away before 15:40), by entry time, by how wild the day already is (its range so far,
+#: cut at that time's terciles) and by S: 743 sessions of NDX minute bars, 2023-10 to 2026-09. On 2026-10-13 two
+#: short call spreads were stopped by ordinary squeezes: their stops sat where this table says half the days reach.
+STOP_TABLE_PATH = Path(__file__).resolve().parent / "data" / "ndx_stop_table.json"
+MAX_STOP_HIT = 0.25            # a stop touched more often than this sits inside the day's noise
+MIN_EDGE = 10.0                # $ a lot the stop-adjusted expectation must clear
+WILD_MIN_STOP = 150.0          # on a wild day a short-premium stop must be at least this far from the index
+KEEP = 0.8                     # the share of the credit kept when the stop is not touched (flat at 15:40, not expiry)
+_TABLE: dict | None = None
+
+
+def stop_table() -> dict:
+    global _TABLE
+    if _TABLE is None:
+        _TABLE = json.loads(STOP_TABLE_PATH.read_text(encoding="utf-8"))
+    return _TABLE
+
+
+def _minutes(hmn: str) -> int:
+    return int(hmn[:2]) * 60 + int(hmn[3:5])
+
+
+def table_cell(hmn: str) -> dict:
+    times = stop_table()["times"]
+    return times[min(times, key=lambda x: abs(_minutes(x) - _minutes(hmn)))]
+
+
+def wildness(hmn: str, range_day: float | None) -> str:
+    """calm / mid / wild: the day's range so far against that entry time's terciles over three years."""
+    if range_day is None:
+        return "mid"
+    q1, q2 = table_cell(hmn)["wild_cuts"]
+    return "calm" if range_day <= q1 else ("mid" if range_day <= q2 else "wild")
+
+
+def stop_hit_prob(hmn: str, side: str, dist: float, range_day: float | None) -> float:
+    """P(NDX touches a level ``dist`` points away before 15:40: ``side`` "up" for a call spread's stop, "down" for a
+    put spread's), interpolated in the table; nearer than its first row counts as that row."""
+    ps, s = table_cell(hmn)[side][wildness(hmn, range_day)], stop_table()["S"]
+    if dist <= s[0]:
+        return float(ps[0])
+    for (s0, p0), (s1, p1) in zip(zip(s, ps), zip(s[1:], ps[1:])):
+        if dist <= s1:
+            return float(p0 + (p1 - p0) * (dist - s0) / (s1 - s0))
+    return float(ps[-1])
+
+
+def safe_stop(hmn: str, side: str, range_day: float | None) -> float | None:
+    """The nearest stop distance the table puts at or under MAX_STOP_HIT."""
+    ps, s = table_cell(hmn)[side][wildness(hmn, range_day)], stop_table()["S"]
+    return next((float(d) for d, p in zip(s, ps) if p <= MAX_STOP_HIT), None)
+
+
+def _ncdf(x: float) -> float:
+    return 0.5 * (1.0 + math.erf(x / math.sqrt(2.0)))
+
+
+def bs_price(cp: str, s: float, k: float, t_years: float, iv: float) -> float:
+    if t_years <= 0 or iv <= 0:
+        return max(0.0, s - k) if cp == "C" else max(0.0, k - s)
+    sd = iv * math.sqrt(t_years)
+    d1 = (math.log(s / k) + 0.5 * sd * sd) / sd
+    d2 = d1 - sd
+    return s * _ncdf(d1) - k * _ncdf(d2) if cp == "C" else k * _ncdf(-d2) - s * _ncdf(-d1)
+
+
+def implied_vol(cp: str, price: float | None, s: float, k: float, t_years: float) -> float | None:
+    intrinsic = max(0.0, s - k) if cp == "C" else max(0.0, k - s)
+    if price is None or t_years <= 0 or float(price) <= intrinsic + 1e-6:
+        return None
+    lo, hi = 1e-4, 5.0
+    for _ in range(80):
+        mid = (lo + hi) / 2
+        lo, hi = (lo, mid) if bs_price(cp, s, k, t_years, mid) > float(price) else (mid, hi)
+    return (lo + hi) / 2
+
+
+def years_left(t: pd.Timestamp) -> float:
+    """Trading time to the 16:00 settlement, in 252-day years of 390-minute sessions."""
+    mins = max(1.0, ((t.normalize() + pd.Timedelta(hours=16)) - t).total_seconds() / 60.0)
+    return mins / (390.0 * 252.0)
+
+
+def leg_key(symbol: str) -> tuple[str, float]:
+    """("C", 30550.0) from an OCC symbol such as NDXP261013C30550000."""
+    return symbol[-9], int(symbol[-8:]) / 1000.0
+
+
+def close_cost_at(legs: list[dict], quotes: list[dict], spot: float, spot_then: float, t_years: float) -> float | None:
+    """What closing the structure would cost per unit (points) if the index stood at ``spot_then`` now: each leg
+    repriced at its own implied vol (sticky strike). Positive = paying to close, as a credit trade does."""
+    total = 0.0
+    for l, q in zip(legs, quotes):
+        iv = implied_vol(l["cp"], (q or {}).get("mid"), spot, float(l["strike"]), t_years)
+        if iv is None:
+            return None
+        px = bs_price(l["cp"], spot_then, float(l["strike"]), t_years, iv)
+        total += px if l["side"] == "sell" else -px
+    return total
+
+
+def judge_entry(legs: list[dict], pv: dict, stops: list[float], spot: float, t: pd.Timestamp,
+                range_day: float | None, lots: int) -> tuple[dict, list[str]]:
+    """The judgment gate for selling premium: each stop's chance of being touched (the table), what the structure would
+    cost to close there (repriced at its implied vols), and the stop-adjusted expectation
+    (1 - P) x the credit kept - sum(P x loss at that stop). Refused when a stop sits inside the noise, when a wild day
+    needs a wider stop, or when the expectation does not clear MIN_EDGE a lot. Debits pass through (premium_only rules
+    them). Returns the numbers and the reasons to refuse."""
+    net = pv.get("net_mid")
+    if net is None or float(net) >= 0:
+        return {}, []
+    credit = -float(net)
+    if not stops:
+        return {}, ["a credit trade needs --stop: the NDX level that proves it wrong (the gate prices it)"]
+    t_years, hmn = years_left(t), hm(t)
+    by_key = {leg_key(q["symbol"]): q for q in pv.get("legs") or [] if q.get("symbol")}
+    quotes = [by_key.get((l["cp"], float(l["strike"]))) for l in legs]
+    mult = 100.0 * lots
+    keep = KEEP * credit * mult
+    wild = wildness(hmn, range_day)
+    why: list[str] = []
+    rows, p_any, lost = [], 0.0, 0.0
+    for stop in stops:
+        side, dist = ("up" if stop > spot else "down"), abs(stop - spot)
+        p = stop_hit_prob(hmn, side, dist, range_day)
+        cost = close_cost_at(legs, quotes, spot, stop, t_years)
+        loss = None if cost is None else (cost - credit) * mult
+        rows.append({"stop": stop, "side": side, "dist": dist, "p_hit": p, "loss": loss})
+        p_any += p
+        if p > MAX_STOP_HIT:
+            why.append(f"the stop at {stop:,.0f} ({dist:.0f} pts {side}) is touched {p:.0%} of the time at {hmn} on a "
+                       f"{wild} day (max {MAX_STOP_HIT:.0%}): it sits inside the noise")
+        if wild == "wild" and dist < WILD_MIN_STOP:
+            why.append(f"a wild day (range {range_day:.0f}): a short-premium stop needs >= {WILD_MIN_STOP:.0f} pts, "
+                       f"the one at {stop:,.0f} is {dist:.0f}")
+        if loss is None:
+            why.append(f"could not price the structure at {stop:,.0f} (a leg has no implied vol)")
+        else:
+            lost += p * loss
+    p_any = min(1.0, p_any)
+    ev = None if any(r["loss"] is None for r in rows) else (1.0 - p_any) * keep - lost
+    if ev is not None and ev < MIN_EDGE * lots:
+        why.append(f"expected {ev:+.0f} after the stops: keep {keep:.0f} x {1 - p_any:.0%} vs "
+                   + ", ".join(f"lose {r['loss']:.0f} x {r['p_hit']:.0%}" for r in rows)
+                   + f" (needs >= +{MIN_EDGE * lots:.0f})")
+    return {"credit": credit, "wild": wild, "keep": keep, "p_any": p_any, "ev": ev, "stops": rows}, why
+
+
+def judge_line(t: pd.Timestamp, m: dict) -> str:
+    """The snapshot's numbers for judgment: the realised ranges, how wild the day is, and how far a stop must sit."""
+    rd = (m["high"] - m["low"]) if m.get("high") and m.get("low") else None
+    hmn = hm(t)
+    parts = [f"judge: {wildness(hmn, rd)} day" + (f" (range {rd:.0f})" if rd else "")]
+    rng = " ".join(f"{k} {m[k]:.0f}" for k in ("range10", "range30") if m.get(k) is not None)
+    if rng:
+        parts.append(rng)
+    up, dn = safe_stop(hmn, "up", rd), safe_stop(hmn, "down", rd)
+    parts.append(f"stops touched <= {MAX_STOP_HIT:.0%}: calls >= +{up:.0f}" if up else "no call stop under the cap")
+    parts.append(f"puts >= -{dn:.0f}" if dn else "no put stop under the cap")
+    return " | ".join(parts)
+
+
 def premium_refusal(pv: dict, premium_only: bool) -> str | None:
     """Why an open is refused under the premium_only limit: the desk sells premium (condors, credit spreads) and buys
     no debit. Agreed with the owner on 2026-10-01, after three sessions of 0DTE debit direction calls lost (-$1.6k,
@@ -580,6 +748,10 @@ def cmd_snapshot(force_news: bool = False) -> str:
     if lv:
         L.append("  levels: " + " | ".join(lv))
     L.append("  playbook: " + playbook(" | ".join(lv), t))
+    try:
+        L.append("  " + judge_line(t, m))
+    except Exception as exc:  # noqa: BLE001 - the snapshot must render without the table
+        L.append(f"  judge: unavailable ({str(exc)[:80]})")
     realised, marked, opened = day_pnl(day)
     L.append(f"  book: day {realised + marked:+,.0f} (realised {realised:+,.0f}, open {marked:+,.0f})"
              + (" | DONE for the day" if st.get("done") else ""))
@@ -639,7 +811,8 @@ def cmd_snapshot(force_news: bool = False) -> str:
     return "\n".join(L)
 
 
-def cmd_open(legs: list[dict], lots: int, thesis: str, exit_plan: str, wrong: str) -> int:
+def cmd_open(legs: list[dict], lots: int, thesis: str, exit_plan: str, wrong: str, stops: list[float] | None = None,
+             min_credit: float | None = None) -> int:
     t = now_et(); day = t.date(); st = load_state(day)
     why = []
     if st.get("done"):
@@ -678,13 +851,28 @@ def cmd_open(legs: list[dict], lots: int, thesis: str, exit_plan: str, wrong: st
         why.append("risk is not defined (no finite max loss)")
     elif abs(float(ml)) > MAX_RISK + 1e-6:
         why.append(f"max loss {abs(float(ml)):,.0f} is over ${MAX_RISK:,.0f}")
+    net = pv.get("net_mid")
+    if min_credit is not None and (net is None or -float(net) < min_credit):
+        why.append(f"credit {-(float(net)) if net is not None else 'none'} is under the planned {min_credit:.2f}: "
+                   f"the trade is not the one judged")
+    mk = market()
+    gate_spot = pv.get("spot") or mk.get("spot") or q.get("last")
+    rd = (mk["high"] - mk["low"]) if mk.get("high") and mk.get("low") else None
+    gate: dict = {}
+    if gate_spot:
+        gate, gwhy = judge_entry(legs, pv, list(stops or []), float(gate_spot), t, rd, lots)
+        why += gwhy
     if why:
         print("REFUSED: " + "; ".join(why)); return 2
-    spot = pv.get("spot") or market().get("spot")
+    if gate:
+        print(f"GATE ok: {gate['wild']} day; credit {gate['credit']:.2f}; " + ", ".join(
+            f"stop {r['stop']:,.0f} ({r['dist']:.0f} {r['side']}) touched {r['p_hit']:.0%}, loss there {r['loss']:+.0f}"
+            for r in gate["stops"]) + f"; expected {gate['ev']:+.0f}")
+    spot = pv.get("spot") or mk.get("spot")
     desc = " ".join(f"{l['side']} {l['cp']}{l['strike']:.0f}" for l in legs)
     journal(day, f"## {hm(t)} OPEN {desc} x{lots}\n- NDX {spot}; net mid {pv['net_mid']} ({pv['debit_credit']}), "
                  f"max loss {ml}, max profit {pv.get('max_profit')}\n- thesis: {thesis}\n- exit: {exit_plan}\n"
-                 f"- wrong if: {wrong}")
+                 f"- wrong if: {wrong}" + (f"\n- gate: {json.dumps(gate, default=str)}" if gate else ""))
     res = api("POST", "/orders", order_body(legs, lots, day, thesis))
     tg = res.get("trade_group_id")
     st["positions"][str(tg)] = {"legs": legs, "lots": lots, "opened": hm(t), "spot": spot, "fill": res.get("fill_price"),
@@ -886,6 +1074,32 @@ def cmd_summary(day: date | None = None) -> str:
     return "\n".join(L)
 
 
+JUDGMENTS = "judgments.csv"
+JUDGMENT_COLS = ["ts", "setup", "action", "why", "ndx", "range10", "range30", "range_day", "wild", "safe_up", "safe_down"]
+
+
+def cmd_judge(setup: str, action: str, why: str) -> int:
+    """Log a judgment, a pass as much as a trade, with the numbers it was made on, for the weekly review of which
+    calls were right (the owner, 2026-10-13: "Improve judgement process")."""
+    import csv
+    t, m = now_et(), market()
+    rd = (m["high"] - m["low"]) if m.get("high") and m.get("low") else None
+    row = {"ts": t.isoformat(timespec="seconds"), "setup": setup, "action": action, "why": why, "ndx": m.get("spot"),
+           "range10": m.get("range10"), "range30": m.get("range30"), "range_day": rd, "wild": wildness(hm(t), rd),
+           "safe_up": safe_stop(hm(t), "up", rd), "safe_down": safe_stop(hm(t), "down", rd)}
+    STATE_DIR.mkdir(parents=True, exist_ok=True)
+    path = STATE_DIR / JUDGMENTS
+    new = not path.exists()
+    with path.open("a", newline="", encoding="utf-8") as fh:
+        w = csv.DictWriter(fh, fieldnames=JUDGMENT_COLS)
+        if new:
+            w.writeheader()
+        w.writerow(row)
+    journal(t.date(), f"## {hm(t)} JUDGE {action.upper()} {setup}\n{why}")
+    print(f"judged: {action} {setup} at NDX {m.get('spot')} ({row['wild']} day)")
+    return 0
+
+
 def cmd_feed() -> int:
     last_snap = None
     while True:
@@ -919,6 +1133,13 @@ def main(argv=None) -> int:
     o.add_argument("--leg", action="append", required=True); o.add_argument("--lots", type=int, default=1)
     o.add_argument("--thesis", required=True); o.add_argument("--exit", required=True, dest="exit_plan")
     o.add_argument("--wrong", required=True)
+    o.add_argument("--stop", type=float, action="append", default=[],
+                   help="the NDX level that proves the trade wrong (twice for a condor); the gate prices it")
+    o.add_argument("--min-credit", type=float, default=None, help="refuse a fill under the credit judged")
+    jd = sub.add_parser("judge")                 # every decision, a pass as much as a trade, goes in the log
+    jd.add_argument("--setup", required=True)
+    jd.add_argument("--action", choices=["pass", "trade"], required=True)
+    jd.add_argument("--why", required=True)
     pr = sub.add_parser("pair")
     pr.add_argument("--ndx", required=True); pr.add_argument("--ndx-lots", type=int, default=1)
     pr.add_argument("--spx", required=True); pr.add_argument("--spx-lots", type=int, default=2)
@@ -933,7 +1154,9 @@ def main(argv=None) -> int:
     if a.cmd == "snapshot":
         print(cmd_snapshot(a.news)); return 0
     if a.cmd == "open":
-        return cmd_open([parse_leg(x) for x in a.leg], a.lots, a.thesis, a.exit_plan, a.wrong)
+        return cmd_open([parse_leg(x) for x in a.leg], a.lots, a.thesis, a.exit_plan, a.wrong, a.stop, a.min_credit)
+    if a.cmd == "judge":
+        return cmd_judge(a.setup, a.action, a.why)
     if a.cmd == "pair":
         return cmd_pair(parse_legs(a.ndx), a.ndx_lots, parse_legs(a.spx), a.spx_lots, a.thesis, a.exit_plan, a.wrong)
     if a.cmd == "close":
