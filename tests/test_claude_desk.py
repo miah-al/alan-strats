@@ -256,5 +256,81 @@ def test_open_checks_single_spreads_too(desk, capsys, monkeypatch):
     itm = [{"side": "sell", "cp": "P", "strike": 30650.0}, {"side": "buy", "cp": "P", "strike": 30625.0}]
     assert D.cmd_open(itm, 1, "t", "e", "w") == 2 and "22 points in the money" in capsys.readouterr().out
     otm = [{"side": "sell", "cp": "P", "strike": 30600.0}, {"side": "buy", "cp": "P", "strike": 30575.0}]
-    assert D.cmd_open(otm, 1, "t", "e", "w") == 0
+    monkeypatch.setattr(D, "preview", lambda legs, lots, day, under="NDX": pv_for(legs, [30.0, 21.0]))
+    assert D.cmd_open(otm, 1, "t", "e", "w", stops=[30450.0]) == 0           # a stop 178 below, priced by the gate
+    assert "GATE ok" in capsys.readouterr().out
     assert [b["underlying"] for m, p, b in desk["sent"] if p == "/orders"] == ["NDX"]
+
+
+# ── the judgment gate (2026-10-13, the owner: "Improve judgement process") ─────────────────────────────────────
+
+DAY13 = pd.Timestamp("2026-10-13").date()
+
+
+def pv_for(legs, mids, half=1.0, day=DAY13):
+    """A settled credit preview whose legs carry the order's own OCC symbols and the given mids."""
+    q = [leg(D.occ(l["cp"], l["strike"], day), m - half, m + half) for l, m in zip(legs, mids)]
+    net = sum((-m if l["side"] == "sell" else m) for l, m in zip(legs, mids))
+    return {"ok": True, "net_mid": round(net, 4), "debit_credit": "credit" if net < 0 else "debit",
+            "max_loss": -2000.0, "max_profit": abs(net) * 100, "legs": q}
+
+
+def test_the_stop_table_reads_like_the_study():
+    """743 sessions of NDX minutes: nearer stops and wilder days are touched more often; the safe distance widens."""
+    near, far = D.stop_hit_prob("13:30", "up", 40, 150.0), D.stop_hit_prob("13:30", "up", 100, 150.0)
+    assert 0 < far < near < 1
+    assert D.stop_hit_prob("13:30", "up", 65, 400.0) > D.stop_hit_prob("13:30", "up", 65, 120.0)    # wild vs calm
+    assert D.wildness("13:30", 120.0) == "calm" and D.wildness("13:30", 400.0) == "wild"
+    assert D.safe_stop("13:30", "up", 400.0) > D.safe_stop("13:30", "up", 120.0)
+    assert D.stop_hit_prob("13:30", "up", 5, 150.0) == D.stop_hit_prob("13:30", "up", 20, 150.0)    # nearer than the table
+
+
+def test_black_scholes_round_trip():
+    t = D.years_left(pd.Timestamp("2026-10-13 13:48", tz=NY))
+    px = D.bs_price("C", 30511.0, 30600.0, t, 0.18)
+    assert D.implied_vol("C", px, 30511.0, 30600.0, t) == pytest.approx(0.18, abs=1e-4)
+    assert D.implied_vol("C", 0.0, 30511.0, 30600.0, t) is None                      # nothing above intrinsic
+    assert D.leg_key("NDXP261013C30600000") == ("C", 30600.0)
+
+
+def test_the_gate_refuses_todays_second_trade():
+    """2026-10-13 13:48: the 30600/30625 call spread sold at 1.10 with NDX 30,511 on a 224-point day; its stop at
+    30,580 sat where a third of such days reach, for $88 kept against about $500 lost there."""
+    legs = [{"side": "sell", "cp": "C", "strike": 30600.0}, {"side": "buy", "cp": "C", "strike": 30625.0}]
+    t = pd.Timestamp("2026-10-13 13:48", tz=NY)
+    g, why = D.judge_entry(legs, pv_for(legs, [4.0, 2.9]), [30580.0], 30511.0, t, 224.0, 1)
+    assert why and g["ev"] < 0 and g["stops"][0]["loss"] > 300
+    # the mark stop it really ran on (3.5) sat about 30 points away: inside the noise outright
+    g2, why2 = D.judge_entry(legs, pv_for(legs, [4.0, 2.9]), [30540.0], 30511.0, t, 224.0, 1)
+    assert any("inside the noise" in w for w in why2)
+    assert D.judge_entry(legs, pv_for(legs, [4.0, 2.9]), [], 30511.0, t, 224.0, 1)[1][0].startswith("a credit trade needs")
+
+
+def test_the_gate_passes_a_wide_stop_on_a_calm_day():
+    legs = [{"side": "sell", "cp": "C", "strike": 30600.0}, {"side": "buy", "cp": "C", "strike": 30625.0}]
+    t = pd.Timestamp("2026-10-13 14:00", tz=NY)
+    g, why = D.judge_entry(legs, pv_for(legs, [3.6, 1.6]), [30700.0], 30500.0, t, 120.0, 1)
+    assert why == [] and g["wild"] == "calm" and g["ev"] > 10 and g["stops"][0]["p_hit"] < 0.1
+    # a wild day needs the wider stop even when the odds look fine
+    g, why = D.judge_entry(legs, pv_for(legs, [3.6, 1.6]), [30620.0], 30500.0, t, 420.0, 1)
+    assert any("wild day" in w for w in why)
+    # a debit is not the gate's business (premium_only refuses it)
+    assert D.judge_entry(legs, {"net_mid": 2.0, "legs": []}, [], 30500.0, t, 120.0, 1) == ({}, [])
+
+
+def test_open_needs_a_stop_and_the_planned_credit(desk, capsys, monkeypatch):
+    monkeypatch.setattr(D, "quote", lambda t: {"last": 30628.0})
+    otm = [{"side": "sell", "cp": "P", "strike": 30600.0}, {"side": "buy", "cp": "P", "strike": 30575.0}]
+    monkeypatch.setattr(D, "preview", lambda legs, lots, day, under="NDX": pv_for(legs, [30.0, 21.0]))
+    assert D.cmd_open(otm, 1, "t", "e", "w") == 2 and "needs --stop" in capsys.readouterr().out
+    assert D.cmd_open(otm, 1, "t", "e", "w", stops=[30450.0], min_credit=12.0) == 2
+    assert "under the planned 12.00" in capsys.readouterr().out
+    assert not [p for m, p, b in desk["sent"] if p == "/orders"]
+
+
+def test_judge_logs_a_pass(desk, monkeypatch):
+    monkeypatch.setattr(D, "market", lambda: {"spot": 30511.0, "high": 30596.0, "low": 30372.0, "range10": 30.0,
+                                             "range30": 55.0})
+    assert D.cmd_judge("failed bounce", "pass", "only a 14-point dip, not a lower high") == 0
+    rows = (desk["dir"] / D.JUDGMENTS).read_text(encoding="utf-8").splitlines()
+    assert rows[0].startswith("ts,setup,action") and "failed bounce,pass" in rows[1] and ",mid," in rows[1]
