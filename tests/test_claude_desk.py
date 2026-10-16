@@ -106,6 +106,7 @@ def desk(monkeypatch, tmp_path):
     monkeypatch.setattr(D, "PREMIUM_ONLY", True); monkeypatch.setattr(D, "MAX_RISK", 2500.0)
     monkeypatch.setattr(D, "MAX_TRADES", 3); monkeypatch.setattr(D, "MAX_LOTS", 2)
     monkeypatch.setattr(D, "SETTLE_S", 0.0)
+    monkeypatch.setattr(D, "ratio_range_today", lambda: 40.0)          # a mid ratio day at 13:30
     pv = {"NDX": {"ok": True, "net_mid": -9.0, "debit_credit": "credit", "max_loss": -1600.0,
                   "legs": [leg("NDXP261012P30700000", 20.0, 22.0), leg("NDXP261012P30675000", 11.0, 13.0)]},
           "SPX": {"ok": True, "net_mid": -2.0, "debit_credit": "credit", "max_loss": -600.0,
@@ -130,7 +131,8 @@ SPX_UP = [{"side": "sell", "cp": "C", "strike": 7815.0}, {"side": "buy", "cp": "
 
 
 def test_a_pair_opens_both_spreads_as_one_position(desk):
-    rc = D.cmd_pair(NDX_UP, 1, SPX_UP, 2, "ratio -60 bp, turning", "half the credit or 30 min", "ratio makes a new low")
+    rc = D.cmd_pair(NDX_UP, 1, SPX_UP, 2, "ratio -60 bp, turning", "half the credit or 30 min", "ratio makes a new low",
+                    stop_bp=40.0)
     assert rc == 0
     orders = [b for m, p, b in desk["sent"] if p == "/orders"]
     assert [o["underlying"] for o in orders] == ["NDX", "SPX"] and orders[1]["legs"][0]["symbol"].startswith("SPXW")
@@ -141,16 +143,16 @@ def test_a_pair_opens_both_spreads_as_one_position(desk):
 
 def test_a_pair_over_the_risk_rail_or_with_a_debit_is_refused(desk, capsys):
     desk["pv"]["SPX"]["max_loss"] = -1000.0                                     # 1,600 + 1,000 > 2,500
-    assert D.cmd_pair(NDX_UP, 1, SPX_UP, 2, "t", "e", "w") == 2
+    assert D.cmd_pair(NDX_UP, 1, SPX_UP, 2, "t", "e", "w", stop_bp=40.0) == 2
     assert "max loss 2,600" in capsys.readouterr().out and not [p for m, p, b in desk["sent"] if p == "/orders"]
     desk["pv"]["SPX"]["max_loss"] = -600.0
     desk["pv"]["NDX"]["debit_credit"] = "debit"
-    assert D.cmd_pair(NDX_UP, 1, SPX_UP, 2, "t", "e", "w") == 2 and "premium only" in capsys.readouterr().out
+    assert D.cmd_pair(NDX_UP, 1, SPX_UP, 2, "t", "e", "w", stop_bp=40.0) == 2 and "premium only" in capsys.readouterr().out
 
 
 def test_half_a_pair_is_never_held(desk, capsys):
     desk["fills"]["SPX"] = "rejected"
-    assert D.cmd_pair(NDX_UP, 1, SPX_UP, 2, "t", "e", "w") == 3
+    assert D.cmd_pair(NDX_UP, 1, SPX_UP, 2, "t", "e", "w", stop_bp=40.0) == 3
     assert desk["closed"] and "never hold half a pair" in desk["closed"][0]
 
 
@@ -167,11 +169,11 @@ def test_a_pair_never_sells_an_in_the_money_strike(desk, capsys, monkeypatch):
     assert D.itm_short([{"side": "sell", "cp": "C", "strike": 7795.0}], None, "SPX") is None
     monkeypatch.setattr(D, "quote", lambda t: {"last": 30628.0} if t == "NDX" else {"last": 7799.5})
     itm = [{"side": "sell", "cp": "P", "strike": 30650.0}, {"side": "buy", "cp": "P", "strike": 30625.0}]
-    assert D.cmd_pair(itm, 1, SPX_UP, 2, "t", "e", "w") == 2
+    assert D.cmd_pair(itm, 1, SPX_UP, 2, "t", "e", "w", stop_bp=40.0) == 2
     assert "points in the money" in capsys.readouterr().out and not [p for m, p, b in desk["sent"] if p == "/orders"]
     otm = [{"side": "sell", "cp": "P", "strike": 30625.0}, {"side": "buy", "cp": "P", "strike": 30600.0}]
     spx = [{"side": "sell", "cp": "C", "strike": 7800.0}, {"side": "buy", "cp": "C", "strike": 7805.0}]
-    assert D.cmd_pair(otm, 1, spx, 2, "t", "e", "w") == 0
+    assert D.cmd_pair(otm, 1, spx, 2, "t", "e", "w", stop_bp=40.0) == 0
 
 
 def test_the_clone_is_a_signal_on_the_desk(tmp_path):
@@ -237,11 +239,11 @@ def test_an_entry_waits_for_settled_quotes(desk, capsys, monkeypatch):
         calls.append(under)
         return dict(stale if under == "SPX" and calls.count("SPX") == 1 else desk["pv"][under])
     monkeypatch.setattr(D, "preview", preview)
-    assert D.cmd_pair(NDX_UP, 1, SPX_UP, 2, "t", "e", "w") == 2
+    assert D.cmd_pair(NDX_UP, 1, SPX_UP, 2, "t", "e", "w", stop_bp=40.0) == 2
     out = capsys.readouterr().out
     assert "SPX: SPXW261012C07815000 quote still settling (9.95 -> 4.95" in out
     assert not [p for m, p, b in desk["sent"] if p == "/orders"]
-    assert D.cmd_pair(NDX_UP, 1, SPX_UP, 2, "t", "e", "w") == 0                     # the retry sees live quotes twice
+    assert D.cmd_pair(NDX_UP, 1, SPX_UP, 2, "t", "e", "w", stop_bp=40.0) == 0                     # the retry sees live quotes twice
     bad = {"ok": True, "net_mid": -26.0, "debit_credit": "credit", "max_loss": 100.0,
            "legs": [leg("NDXP261012P30700000", 30.0, 32.0), leg("NDXP261012P30675000", 4.0, 6.0)]}
     monkeypatch.setattr(D, "preview", lambda legs, lots, day, under="NDX": dict(bad))
@@ -334,3 +336,28 @@ def test_judge_logs_a_pass(desk, monkeypatch):
     assert D.cmd_judge("failed bounce", "pass", "only a 14-point dip, not a lower high") == 0
     rows = (desk["dir"] / D.JUDGMENTS).read_text(encoding="utf-8").splitlines()
     assert rows[0].startswith("ts,setup,action") and "failed bounce,pass" in rows[1] and ",mid," in rows[1]
+
+
+# ── the ratio pair's gate (2026-10-15, the owner chose: the expert trades the ratio by judgment) ─────────────────
+
+def test_the_ratio_table_reads_like_the_study():
+    """499 sessions of NDX/SPX minutes: nearer ratio stops and wilder ratio days are touched more often."""
+    rt = D.ratio_table()
+    near, far = D.stop_hit_prob("11:00", "down", 10, 40.0, rt), D.stop_hit_prob("11:00", "down", 30, 40.0, rt)
+    assert 0 < far < near < 1
+    assert D.stop_hit_prob("11:00", "up", 20, 80.0, rt) > D.stop_hit_prob("11:00", "up", 20, 20.0, rt)
+    assert D.safe_stop("14:30", "up", 30.0, rt) < D.safe_stop("11:00", "up", 30.0, rt)      # later: tighter is fine
+    assert D.pair_bet(NDX_UP) == "up" and D.pair_bet([{"side": "sell", "cp": "C", "strike": 1.0}]) == "down"
+
+
+def test_a_pair_stop_must_clear_the_ratio_noise(desk, capsys):
+    """A 5 bp ratio stop at 13:30 is touched most days: refused. The pair's credit must reach the one judged."""
+    assert D.cmd_pair(NDX_UP, 1, SPX_UP, 2, "t", "e", "w", stop_bp=5.0) == 2
+    assert "sits inside the noise" in capsys.readouterr().out
+    assert D.cmd_pair(NDX_UP, 1, SPX_UP, 2, "t", "e", "w", stop_bp=40.0, min_credit_usd=2000.0) == 2
+    assert "under the planned $2,000" in capsys.readouterr().out             # 9.00 + 2 x 2.00 = $1,300 of credit
+    assert not [p for m, p, b in desk["sent"] if p == "/orders"]
+    assert D.cmd_pair(NDX_UP, 1, SPX_UP, 2, "t", "e", "w", stop_bp=40.0, min_credit_usd=1200.0) == 0
+    assert "GATE ok: ratio up" in capsys.readouterr().out
+    st = D.load_state(pd.Timestamp("2026-10-12").date())
+    assert st["positions"]["TG-NDX"]["stop_bp"] == 40.0 and st["positions"]["TG-NDX"]["bet"] == "up"

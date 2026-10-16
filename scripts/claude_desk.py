@@ -520,23 +520,26 @@ def _minutes(hmn: str) -> int:
     return int(hmn[:2]) * 60 + int(hmn[3:5])
 
 
-def table_cell(hmn: str) -> dict:
-    times = stop_table()["times"]
+def table_cell(hmn: str, table: dict | None = None) -> dict:
+    times = (table or stop_table())["times"]
     return times[min(times, key=lambda x: abs(_minutes(x) - _minutes(hmn)))]
 
 
-def wildness(hmn: str, range_day: float | None) -> str:
-    """calm / mid / wild: the day's range so far against that entry time's terciles over three years."""
+def wildness(hmn: str, range_day: float | None, table: dict | None = None) -> str:
+    """calm / mid / wild: the day's range so far against that entry time's terciles in the table's history (NDX
+    points for the NDX table, ratio bp for the ratio table)."""
     if range_day is None:
         return "mid"
-    q1, q2 = table_cell(hmn)["wild_cuts"]
+    q1, q2 = table_cell(hmn, table)["wild_cuts"]
     return "calm" if range_day <= q1 else ("mid" if range_day <= q2 else "wild")
 
 
-def stop_hit_prob(hmn: str, side: str, dist: float, range_day: float | None) -> float:
-    """P(NDX touches a level ``dist`` points away before 15:40: ``side`` "up" for a call spread's stop, "down" for a
-    put spread's), interpolated in the table; nearer than its first row counts as that row."""
-    ps, s = table_cell(hmn)[side][wildness(hmn, range_day)], stop_table()["S"]
+def stop_hit_prob(hmn: str, side: str, dist: float, range_day: float | None, table: dict | None = None) -> float:
+    """P(a level ``dist`` away is touched before 15:40: ``side`` "up" for a call spread's stop, "down" for a put
+    spread's; NDX points by default, ratio bp with the ratio table), interpolated in the table; nearer than its
+    first row counts as that row."""
+    tab = table or stop_table()
+    ps, s = table_cell(hmn, tab)[side][wildness(hmn, range_day, tab)], tab["S"]
     if dist <= s[0]:
         return float(ps[0])
     for (s0, p0), (s1, p1) in zip(zip(s, ps), zip(s[1:], ps[1:])):
@@ -545,10 +548,73 @@ def stop_hit_prob(hmn: str, side: str, dist: float, range_day: float | None) -> 
     return float(ps[-1])
 
 
-def safe_stop(hmn: str, side: str, range_day: float | None) -> float | None:
+def safe_stop(hmn: str, side: str, range_day: float | None, table: dict | None = None) -> float | None:
     """The nearest stop distance the table puts at or under MAX_STOP_HIT."""
-    ps, s = table_cell(hmn)[side][wildness(hmn, range_day)], stop_table()["S"]
+    tab = table or stop_table()
+    ps, s = table_cell(hmn, tab)[side][wildness(hmn, range_day, tab)], tab["S"]
     return next((float(d) for d, p in zip(s, ps) if p <= MAX_STOP_HIT), None)
+
+
+#: P(the NDX/SPX ratio, ln NDX - ln SPX, moves S bp before 15:40), by entry time, by how wild the ratio's day already
+#: is and by S: 499 sessions of NDX and SPX minute bars, 2024-10 to 2026-10 (scripts/data/ratio_stop_table.json). A
+#: pair's stop is a ratio move against it (2026-10-15, the owner: the expert trades the ratio by judgment).
+RATIO_TABLE_PATH = Path(__file__).resolve().parent / "data" / "ratio_stop_table.json"
+_RATIO_TABLE: dict | None = None
+
+
+def ratio_table() -> dict:
+    global _RATIO_TABLE
+    if _RATIO_TABLE is None:
+        _RATIO_TABLE = json.loads(RATIO_TABLE_PATH.read_text(encoding="utf-8"))
+    return _RATIO_TABLE
+
+
+def ratio_range_today() -> float | None:
+    """The ratio's range so far today in bp of ln NDX - ln SPX, from the service's intraday bars (SPX can lag)."""
+    try:
+        bars = {}
+        for t in ("NDX", "SPX"):
+            b = api("GET", f"/market/intraday/{t}?minutes=400&interval=1")
+            bars[t] = pd.Series([float(x) if x is not None else float("nan") for x in (b.get("c") or [])],
+                                index=pd.to_datetime(b.get("t") or []))
+        both = pd.concat(bars, axis=1).dropna()
+        both = both[both.index.date == both.index[-1].date()]
+        if len(both) < 10:
+            return None
+        r = (both["NDX"].map(math.log) - both["SPX"].map(math.log)) * 1e4
+        return float(r.max() - r.min())
+    except Exception:  # noqa: BLE001 - no range: the table's middle tercile
+        return None
+
+
+def pair_bet(ndx_legs: list[dict]) -> str | None:
+    """"up" when the pair bets the ratio rises (its NDX vertical sells puts), "down" when it sells NDX calls."""
+    shorts = [l for l in ndx_legs if l["side"] == "sell"]
+    return None if not shorts else ("up" if shorts[0]["cp"] == "P" else "down")
+
+
+def judge_pair(ndx_legs: list[dict], stop_bp: float | None, t: pd.Timestamp, range_bp: float | None,
+               credit_usd: float | None, min_credit_usd: float | None) -> tuple[dict, list[str]]:
+    """The judgment gate for a ratio pair: its stop is a ratio move against the bet (``stop_bp``), refused when the
+    ratio table says it is touched more than MAX_STOP_HIT of the time; and the pair's credit must reach the one judged.
+    A ratio stop does not pin either index's level, so there is no repricing at the stop (the NDX gate's expectation)."""
+    if stop_bp is None:
+        return {}, ["a pair needs --stop-bp: the ratio move against it (bp) that proves it wrong (the gate prices it)"]
+    bet = pair_bet(ndx_legs)
+    adverse = "down" if bet == "up" else "up"
+    hmn, tab = hm(t), ratio_table()
+    p = stop_hit_prob(hmn, adverse, float(stop_bp), range_bp, tab)
+    wild = wildness(hmn, range_bp, tab)
+    why = []
+    if p > MAX_STOP_HIT:
+        why.append(f"a ratio stop {stop_bp:.0f} bp {adverse} is touched {p:.0%} of the time at {hmn} on a {wild} ratio "
+                   f"day (max {MAX_STOP_HIT:.0%}): it sits inside the noise; the table's nearest safe stop is "
+                   f"{safe_stop(hmn, adverse, range_bp, tab) or 'none'} bp")
+    if min_credit_usd is not None and (credit_usd is None or credit_usd < min_credit_usd):
+        why.append(f"the pair's credit ${credit_usd or 0:,.0f} is under the planned ${min_credit_usd:,.0f}: "
+                   f"the trade is not the one judged")
+    return {"bet": bet, "stop_bp": float(stop_bp), "p_hit": p, "wild": wild, "range_bp": range_bp,
+            "credit_usd": credit_usd}, why
 
 
 def _ncdf(x: float) -> float:
@@ -657,6 +723,13 @@ def judge_line(t: pd.Timestamp, m: dict) -> str:
     up, dn = safe_stop(hmn, "up", rd), safe_stop(hmn, "down", rd)
     parts.append(f"stops touched <= {MAX_STOP_HIT:.0%}: calls >= +{up:.0f}" if up else "no call stop under the cap")
     parts.append(f"puts >= -{dn:.0f}" if dn else "no put stop under the cap")
+    rr = m.get("ratio_range")
+    if rr is not None or "ratio_range" in m:
+        rt = ratio_table()
+        ru, rd2 = safe_stop(hmn, "up", rr, rt), safe_stop(hmn, "down", rr, rt)
+        parts.append(f"ratio {wildness(hmn, rr, rt)} (range {rr:.0f} bp): pair stops >= {ru or '?'} bp up / "
+                     f"{rd2 or '?'} bp down" if rr is not None else
+                     f"ratio: pair stops >= {ru or '?'} bp up / {rd2 or '?'} bp down")
     return " | ".join(parts)
 
 
@@ -749,6 +822,7 @@ def cmd_snapshot(force_news: bool = False) -> str:
         L.append("  levels: " + " | ".join(lv))
     L.append("  playbook: " + playbook(" | ".join(lv), t))
     try:
+        m["ratio_range"] = ratio_range_today()
         L.append("  " + judge_line(t, m))
     except Exception as exc:  # noqa: BLE001 - the snapshot must render without the table
         L.append(f"  judge: unavailable ({str(exc)[:80]})")
@@ -884,7 +958,7 @@ def cmd_open(legs: list[dict], lots: int, thesis: str, exit_plan: str, wrong: st
 
 
 def cmd_pair(ndx_legs: list[dict], ndx_lots: int, spx_legs: list[dict], spx_lots: int, thesis: str, exit_plan: str,
-             wrong: str) -> int:
+             wrong: str, stop_bp: float | None = None, min_credit_usd: float | None = None) -> int:
     """The NDX/SPX ratio trade as ONE position: an NDXP spread and an SPXW spread, checked together against the rails
     (their max losses summed against the per-position rail, one trade, the book must be flat) and opened together. If
     the second order does not fill, the first is closed at once: the desk never holds half a pair."""
@@ -933,15 +1007,22 @@ def cmd_pair(ndx_legs: list[dict], ndx_lots: int, spx_legs: list[dict], spx_lots
     if total > MAX_RISK + 1e-6:
         why.append(f"the pair's max loss {total:,.0f} (NDX {pvs['NDX'].get('max_loss')}, SPX {pvs['SPX'].get('max_loss')}) "
                    f"is over ${MAX_RISK:,.0f}")
+    nets = [(pvs[n].get("net_mid"), lots) for n, lots in (("NDX", ndx_lots), ("SPX", spx_lots))]
+    credit_usd = None if any(v is None for v, _ in nets) else sum(-float(v) * lots * 100.0 for v, lots in nets)
+    gate, gwhy = judge_pair(ndx_legs, stop_bp, t, ratio_range_today(), credit_usd, min_credit_usd)
+    why += gwhy
     if why:
         print("REFUSED: " + "; ".join(why)); return 2
+    print(f"GATE ok: ratio {gate['bet']}, {gate['wild']} ratio day; stop {gate['stop_bp']:.0f} bp touched "
+          f"{gate['p_hit']:.0%}; credit ${gate['credit_usd'] or 0:,.0f}")
     rs = ratio_now()
     dn = " ".join(f"{l['side']} {l['cp']}{l['strike']:.0f}" for l in ndx_legs)
     ds = " ".join(f"{l['side']} {l['cp']}{l['strike']:.0f}" for l in spx_legs)
     journal(day, f"## {hm(t)} OPEN PAIR NDX {dn} x{ndx_lots} + SPX {ds} x{spx_lots}\n- {ratio_line(rs)}\n"
                  f"- NDX net mid {pvs['NDX']['net_mid']} ({pvs['NDX']['debit_credit']}), max loss {pvs['NDX'].get('max_loss')}; "
                  f"SPX net mid {pvs['SPX']['net_mid']} ({pvs['SPX']['debit_credit']}), max loss {pvs['SPX'].get('max_loss')}; "
-                 f"together {total:,.0f}\n- thesis: {thesis}\n- exit: {exit_plan}\n- wrong if: {wrong}")
+                 f"together {total:,.0f}\n- thesis: {thesis}\n- exit: {exit_plan}\n- wrong if: {wrong}\n"
+                 f"- gate: {json.dumps(gate, default=str)}")
     res_n = api("POST", "/orders", order_body(ndx_legs, ndx_lots, day, thesis, "NDX"))
     tg_n = res_n.get("trade_group_id")
     if res_n.get("status") != "filled" or not tg_n:
@@ -950,7 +1031,8 @@ def cmd_pair(ndx_legs: list[dict], ndx_lots: int, spx_legs: list[dict], spx_lots
     st["positions"][str(tg_n)] = {"legs": ndx_legs, "lots": ndx_lots, "opened": hm(t), "spot": rs.get("ndx"),
                                   "fill": res_n.get("fill_price"), "under": "NDX", "thesis": thesis,
                                   "cost": crossing_cost(ndx_legs, float(rs.get("ndx") or 0), "NDX"),
-                                  "max_loss": pvs["NDX"].get("max_loss")}
+                                  "max_loss": pvs["NDX"].get("max_loss"), "ratio": rs.get("ratio"),
+                                  "bet": gate.get("bet"), "stop_bp": gate.get("stop_bp")}
     save_state(day, st)
     res_s = api("POST", "/orders", order_body(spx_legs, spx_lots, day, f"pair with {tg_n}: {thesis}", "SPX"))
     tg_s = res_s.get("trade_group_id")
@@ -1145,6 +1227,9 @@ def main(argv=None) -> int:
     pr.add_argument("--spx", required=True); pr.add_argument("--spx-lots", type=int, default=2)
     pr.add_argument("--thesis", required=True); pr.add_argument("--exit", required=True, dest="exit_plan")
     pr.add_argument("--wrong", required=True)
+    pr.add_argument("--stop-bp", type=float, default=None,
+                    help="the ratio move against the pair (bp) that proves it wrong; the gate prices it")
+    pr.add_argument("--min-credit-usd", type=float, default=None, help="refuse the pair under the credit judged ($)")
     c = sub.add_parser("close"); c.add_argument("--reason", required=True)
     n = sub.add_parser("note"); n.add_argument("--text", required=True)   # a decision not to trade is a decision too
     tr = sub.add_parser("trim"); tr.add_argument("--lots", type=int, default=1); tr.add_argument("--reason", required=True)
@@ -1158,7 +1243,8 @@ def main(argv=None) -> int:
     if a.cmd == "judge":
         return cmd_judge(a.setup, a.action, a.why)
     if a.cmd == "pair":
-        return cmd_pair(parse_legs(a.ndx), a.ndx_lots, parse_legs(a.spx), a.spx_lots, a.thesis, a.exit_plan, a.wrong)
+        return cmd_pair(parse_legs(a.ndx), a.ndx_lots, parse_legs(a.spx), a.spx_lots, a.thesis, a.exit_plan, a.wrong,
+                        a.stop_bp, a.min_credit_usd)
     if a.cmd == "close":
         return cmd_close(a.reason)
     if a.cmd == "trim":
