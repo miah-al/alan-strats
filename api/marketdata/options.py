@@ -97,15 +97,13 @@ def _streamed_chain(hub: MarketDataHub, p, u: str, expiry: _dt.date, spot: Optio
             deadline = time.monotonic() + linger
             for s in syms:
                 hub.linger[s] = max(hub.linger.get(s, 0.0), deadline)
+    def filled() -> bool:
+        priced = sum(1 for s in syms if s in hub.quotes and hub.quotes[s].has_price)
+        greeks = sum(1 for s in syms if s in hub.quotes and hub.quotes[s].values.get("iv") is not None)
+        return priced >= 0.9 * len(syms) and greeks >= 0.9 * len(syms)
+
     try:
-        end = time.monotonic() + CHAIN_WAIT_S
-        with hub._cond:
-            while time.monotonic() < end:
-                priced = sum(1 for s in syms if s in hub.quotes and hub.quotes[s].has_price)
-                greeks = sum(1 for s in syms if s in hub.quotes and hub.quotes[s].values.get("iv") is not None)
-                if priced >= 0.9 * len(syms) and greeks >= 0.9 * len(syms):
-                    break
-                hub._cond.wait(timeout=0.2)
+        hub.wait_for(filled, CHAIN_WAIT_S)
         rows = []
         with hub._lock:
             for k, c, pt in picked:
