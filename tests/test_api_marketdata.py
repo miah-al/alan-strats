@@ -268,6 +268,29 @@ def test_one_upstream_subscription_per_symbol_and_release_on_last_watcher():
     _run(go())
 
 
+def test_wait_for_checks_on_its_own_clock_not_on_every_quote_update():
+    # a big chain's updates notify the hub's condition thousands of times a second; a scan per update under the
+    # lock starved the API at every GEX half hour (2026-10-16)
+    hub = MarketDataHub(Gate([]), [])
+    calls, stop = [], threading.Event()
+
+    def flood():
+        i = 0
+        while not stop.is_set():
+            hub.emit(f"SPXW{i % 500}", "fake", None, bid=1.0, ask=1.1)
+            i += 1
+
+    t = threading.Thread(target=flood, daemon=True)
+    t.start()
+    try:
+        assert hub.wait_for(lambda: bool(calls.append(1)), 0.6, poll=0.2) is False
+    finally:
+        stop.set()
+        t.join()
+    assert 2 <= len(calls) <= 5                       # one check per poll, not one per update
+    assert hub.wait_for(lambda: True, 5.0) is True
+
+
 def test_fallback_to_polling_and_back_when_the_streamer_reconnects():
     async def go():
         st, pl = FakeStream(), FakePoll()

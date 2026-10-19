@@ -37,6 +37,7 @@ SNAPSHOT_LINGER_S = 60.0
 MIN_POLL_INTERVAL_S = 15.0
 CLIENT_QUEUE_MAX = 5000
 TICK_S = 1.0
+WAIT_POLL_S = 0.25                  # wait_for checks this often (a scan of many symbols, not woken per update)
 
 
 @dataclass
@@ -362,6 +363,22 @@ class MarketDataHub:
                         f"no data yet from {self.route[s]}"
                     out.append(empty_quote(s, reason))
         return out
+
+    def wait_for(self, done: Callable[[], bool], timeout: float, poll: float = WAIT_POLL_S) -> bool:
+        """Wait up to ``timeout`` seconds for ``done()`` (called under the hub's lock), checking every ``poll``
+        seconds; True once it holds. For a wait over many symbols (a chain, a surface): not on the condition,
+        which every quote update notifies -- a 970-contract SPXW chain's updates woke each of the GEX
+        recorder's six chain threads thousands of times a second into a scan under the lock, and the API
+        timed out for minutes at every half hour (2026-10-16)."""
+        end = time.monotonic() + max(0.0, timeout)
+        while True:
+            with self._lock:
+                if done():
+                    return True
+            left = end - time.monotonic()
+            if left <= 0:
+                return False
+            time.sleep(min(poll, left))
 
     def quote(self, symbol: str, wait: float = 3.0) -> dict:
         return self.snapshot([symbol], wait)[0]
