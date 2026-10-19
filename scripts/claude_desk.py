@@ -537,7 +537,8 @@ def wildness(hmn: str, range_day: float | None, table: dict | None = None) -> st
 def stop_hit_prob(hmn: str, side: str, dist: float, range_day: float | None, table: dict | None = None) -> float:
     """P(a level ``dist`` away is touched before 15:40: ``side`` "up" for a call spread's stop, "down" for a put
     spread's; NDX points by default, ratio bp with the ratio table), interpolated in the table; nearer than its
-    first row counts as that row."""
+    first row counts as that row, and past its last row the tail carries on geometrically (a flat tail priced a
+    329-point stop like a 200-point one, 2026-10-19)."""
     tab = table or stop_table()
     ps, s = table_cell(hmn, tab)[side][wildness(hmn, range_day, tab)], tab["S"]
     if dist <= s[0]:
@@ -545,19 +546,14 @@ def stop_hit_prob(hmn: str, side: str, dist: float, range_day: float | None, tab
     for (s0, p0), (s1, p1) in zip(zip(s, ps), zip(s[1:], ps[1:])):
         if dist <= s1:
             return float(p0 + (p1 - p0) * (dist - s0) / (s1 - s0))
-    return float(ps[-1])
+    decay = min(0.9, ps[-1] / ps[-2]) if ps[-2] > 0 else 0.9
+    return float(ps[-1]) * decay ** ((dist - s[-1]) / (s[-1] - s[-2]))
 
 
 def finish_beyond_prob(hmn: str, side: str, dist: float, range_day: float | None) -> float:
     """P(NDX settles ``dist`` points or more beyond where it is now): half the chance that level is touched (the
-    reflection principle), with the table's tail carried on geometrically past its last row."""
-    tab = stop_table()
-    s = tab["S"]
-    if dist <= s[-1]:
-        return 0.5 * stop_hit_prob(hmn, side, dist, range_day)
-    ps = table_cell(hmn, tab)[side][wildness(hmn, range_day, tab)]
-    decay = min(0.9, ps[-1] / ps[-2]) if ps[-2] > 0 else 0.9
-    return 0.5 * float(ps[-1]) * decay ** ((dist - s[-1]) / (s[-1] - s[-2]))
+    reflection principle)."""
+    return 0.5 * stop_hit_prob(hmn, side, dist, range_day)
 
 
 def zone_outcomes(hmn: str, side: str, short_dist: float, width: float, stop_dist: float,
