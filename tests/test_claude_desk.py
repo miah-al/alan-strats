@@ -285,6 +285,9 @@ def test_the_stop_table_reads_like_the_study():
     assert D.wildness("13:30", 120.0) == "calm" and D.wildness("13:30", 400.0) == "wild"
     assert D.safe_stop("13:30", "up", 400.0) > D.safe_stop("13:30", "up", 120.0)
     assert D.stop_hit_prob("13:30", "up", 5, 150.0) == D.stop_hit_prob("13:30", "up", 20, 150.0)    # nearer than the table
+    # past the table's last row (200) the odds keep falling instead of repeating the 200-point row
+    p200, p300 = D.stop_hit_prob("11:30", "up", 200, 400.0), D.stop_hit_prob("11:30", "up", 300, 400.0)
+    assert 0 < p300 < p200
 
 
 def test_black_scholes_round_trip():
