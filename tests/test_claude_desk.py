@@ -320,6 +320,37 @@ def test_the_gate_passes_a_wide_stop_on_a_calm_day():
     assert D.judge_entry(legs, {"net_mid": 2.0, "legs": []}, [], 30500.0, t, 120.0, 1) == ({}, [])
 
 
+def test_a_settlement_beyond_is_half_the_touch_and_the_tail_keeps_falling():
+    p100 = D.stop_hit_prob("14:00", "up", 100, 400.0)
+    assert D.finish_beyond_prob("14:00", "up", 100, 400.0) == pytest.approx(p100 / 2)
+    assert 0 < D.finish_beyond_prob("14:00", "up", 400, 400.0) < D.finish_beyond_prob("14:00", "up", 200, 400.0)
+    assert D.zone_outcomes("14:00", "up", 100.0, 25.0, 80.0, 400.0) == []         # a stop inside the short strike
+
+
+def test_the_gate_counts_a_settlement_past_the_short_strike_that_never_touched_the_stop():
+    """2026-10-16 13:36, NDX 29,332 on a 595-point day, the stop at VWAP 29,533: the 29400/29425 call spread at 7.55
+    printed +$415 because it kept the credit whenever 29,533 held; a 29,400-29,533 settlement costs it (+$146)."""
+    legs = [{"side": "sell", "cp": "C", "strike": 29400.0}, {"side": "buy", "cp": "C", "strike": 29425.0}]
+    t = pd.Timestamp("2026-10-16 13:36", tz=NY)
+    g, _ = D.judge_entry(legs, pv_for(legs, [37.55, 30.0]), [29533.0], 29332.0, t, 595.0, 1)
+    old = (1 - g["p_any"]) * g["keep"] - g["p_any"] * g["stops"][0]["loss"]
+    assert 0.1 < g["p_zone"] < 0.2 and g["zone_value"] < 0 and 50 < g["ev"] < old - 200
+    # a stop inside the short strike leaves nothing between them
+    g2, _ = D.judge_entry(legs, pv_for(legs, [37.55, 30.0]), [29390.0], 29332.0, t, 595.0, 1)
+    assert g2["p_zone"] == 0
+
+
+def test_quote_prices_and_gates_each_candidate_without_an_order(desk, capsys, monkeypatch):
+    monkeypatch.setattr(D, "market", lambda: {"spot": 30650.0, "high": 30800.0, "low": 30600.0})
+    desk["pv"]["NDX"] = {"ok": True, "net_mid": -3.0, "legs": [leg("NDXP261012C30700000", 9.0, 11.0),
+                                                              leg("NDXP261012C30725000", 6.0, 8.0)]}
+    assert D.main(["quote", "--vertical", "C:30700:30725", "--stop", "30900", "--stop", "30500"]) == 0
+    out = capsys.readouterr().out
+    assert "credit mid 3.00, natural 1.00" in out and "stop 30,900 (250 up)" in out
+    assert "30,500" not in out                                                     # a put-side stop is not a call's
+    assert not [s for s in desk["sent"] if s[1] == "/orders"]
+
+
 def test_open_needs_a_stop_and_the_planned_credit(desk, capsys, monkeypatch):
     monkeypatch.setattr(D, "quote", lambda t: {"last": 30628.0})
     otm = [{"side": "sell", "cp": "P", "strike": 30600.0}, {"side": "buy", "cp": "P", "strike": 30575.0}]

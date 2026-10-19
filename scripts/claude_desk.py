@@ -548,6 +548,35 @@ def stop_hit_prob(hmn: str, side: str, dist: float, range_day: float | None, tab
     return float(ps[-1])
 
 
+def finish_beyond_prob(hmn: str, side: str, dist: float, range_day: float | None) -> float:
+    """P(NDX settles ``dist`` points or more beyond where it is now): half the chance that level is touched (the
+    reflection principle), with the table's tail carried on geometrically past its last row."""
+    tab = stop_table()
+    s = tab["S"]
+    if dist <= s[-1]:
+        return 0.5 * stop_hit_prob(hmn, side, dist, range_day)
+    ps = table_cell(hmn, tab)[side][wildness(hmn, range_day, tab)]
+    decay = min(0.9, ps[-1] / ps[-2]) if ps[-2] > 0 else 0.9
+    return 0.5 * float(ps[-1]) * decay ** ((dist - s[-1]) / (s[-1] - s[-2]))
+
+
+def zone_outcomes(hmn: str, side: str, short_dist: float, width: float, stop_dist: float,
+                  range_day: float | None, step: float = 5.0) -> list[tuple[float, float]]:
+    """[(probability, intrinsic)] of settling between a vertical's short strike and a stop beyond it without ever
+    touching the stop: a path that touched the stop and came back is the stop's (its mass is the reflection, the
+    settlements as far beyond the stop). Nothing when the stop sits inside the short strike."""
+    out, x = [], short_dist
+    while x < stop_dist - 1e-9:
+        hi = min(x + step, stop_dist)
+        mass = (finish_beyond_prob(hmn, side, x, range_day) - finish_beyond_prob(hmn, side, hi, range_day)
+                - (finish_beyond_prob(hmn, side, 2 * stop_dist - hi, range_day)
+                   - finish_beyond_prob(hmn, side, 2 * stop_dist - x, range_day)))
+        if mass > 0:
+            out.append((mass, min(max((x + hi) / 2 - short_dist, 0.0), width)))
+        x = hi
+    return out
+
+
 def safe_stop(hmn: str, side: str, range_day: float | None, table: dict | None = None) -> float | None:
     """The nearest stop distance the table puts at or under MAX_STOP_HIT."""
     tab = table or stop_table()
@@ -669,9 +698,12 @@ def judge_entry(legs: list[dict], pv: dict, stops: list[float], spot: float, t: 
                 range_day: float | None, lots: int) -> tuple[dict, list[str]]:
     """The judgment gate for selling premium: each stop's chance of being touched (the table), what the structure would
     cost to close there (repriced at its implied vols), and the stop-adjusted expectation
-    (1 - P) x the credit kept - sum(P x loss at that stop). Refused when a stop sits inside the noise, when a wild day
-    needs a wider stop, or when the expectation does not clear MIN_EDGE a lot. Debits pass through (premium_only rules
-    them). Returns the numbers and the reasons to refuse."""
+    (1 - P - Z) x the credit kept + sum(Z x (credit kept - intrinsic)) - sum(P x loss at that stop), where Z is a
+    settlement between a short strike and a stop beyond it that never touched the stop (zone_outcomes; without it a
+    stop past the short strike printed +$190 to +$760 on 2026-10-16 for spreads worth about nothing at the mid).
+    Refused when a stop sits inside the noise, when a wild day needs a wider stop, or when the expectation does not
+    clear MIN_EDGE a lot. Debits pass through (premium_only rules them). Returns the numbers and the reasons to
+    refuse."""
     net = pv.get("net_mid")
     if net is None or float(net) >= 0:
         return {}, []
@@ -685,13 +717,24 @@ def judge_entry(legs: list[dict], pv: dict, stops: list[float], spot: float, t: 
     keep = KEEP * credit * mult
     wild = wildness(hmn, range_day)
     why: list[str] = []
-    rows, p_any, lost = [], 0.0, 0.0
+    rows, p_any, lost, p_zone, zone_value = [], 0.0, 0.0, 0.0, 0.0
     for stop in stops:
         side, dist = ("up" if stop > spot else "down"), abs(stop - spot)
         p = stop_hit_prob(hmn, side, dist, range_day)
         cost = close_cost_at(legs, quotes, spot, stop, t_years)
         loss = None if cost is None else (cost - credit) * mult
-        rows.append({"stop": stop, "side": side, "dist": dist, "p_hit": p, "loss": loss})
+        cp = "C" if side == "up" else "P"
+        shorts = [float(l["strike"]) for l in legs if l["cp"] == cp and l["side"] == "sell"]
+        longs = [float(l["strike"]) for l in legs if l["cp"] == cp and l["side"] == "buy"]
+        z = 0.0
+        if shorts and longs:
+            short_dist = abs(min(shorts, key=lambda k: abs(k - spot)) - spot)
+            width = abs(min(longs, key=lambda k: abs(k - spot)) - min(shorts, key=lambda k: abs(k - spot)))
+            for mass, intrinsic in zone_outcomes(hmn, side, short_dist, width, dist, range_day):
+                z += mass
+                zone_value += mass * (KEEP * credit - intrinsic) * mult
+        p_zone += z
+        rows.append({"stop": stop, "side": side, "dist": dist, "p_hit": p, "loss": loss, "p_zone": z})
         p_any += p
         if p > MAX_STOP_HIT:
             why.append(f"the stop at {stop:,.0f} ({dist:.0f} pts {side}) is touched {p:.0%} of the time at {hmn} on a "
@@ -704,12 +747,16 @@ def judge_entry(legs: list[dict], pv: dict, stops: list[float], spot: float, t: 
         else:
             lost += p * loss
     p_any = min(1.0, p_any)
-    ev = None if any(r["loss"] is None for r in rows) else (1.0 - p_any) * keep - lost
+    p_zone = min(p_zone, 1.0 - p_any)
+    ev = None if any(r["loss"] is None for r in rows) else (1.0 - p_any - p_zone) * keep + zone_value - lost
     if ev is not None and ev < MIN_EDGE * lots:
-        why.append(f"expected {ev:+.0f} after the stops: keep {keep:.0f} x {1 - p_any:.0%} vs "
+        why.append(f"expected {ev:+.0f} after the stops: keep {keep:.0f} x {1 - p_any - p_zone:.0%} vs "
                    + ", ".join(f"lose {r['loss']:.0f} x {r['p_hit']:.0%}" for r in rows)
+                   + (f", settle between the short strike and the stop {p_zone:.0%} ({zone_value:+.0f})"
+                      if p_zone > 0 else "")
                    + f" (needs >= +{MIN_EDGE * lots:.0f})")
-    return {"credit": credit, "wild": wild, "keep": keep, "p_any": p_any, "ev": ev, "stops": rows}, why
+    return {"credit": credit, "wild": wild, "keep": keep, "p_any": p_any, "p_zone": p_zone, "zone_value": zone_value,
+            "ev": ev, "stops": rows}, why
 
 
 def judge_line(t: pd.Timestamp, m: dict) -> str:
@@ -941,7 +988,9 @@ def cmd_open(legs: list[dict], lots: int, thesis: str, exit_plan: str, wrong: st
     if gate:
         print(f"GATE ok: {gate['wild']} day; credit {gate['credit']:.2f}; " + ", ".join(
             f"stop {r['stop']:,.0f} ({r['dist']:.0f} {r['side']}) touched {r['p_hit']:.0%}, loss there {r['loss']:+.0f}"
-            for r in gate["stops"]) + f"; expected {gate['ev']:+.0f}")
+            for r in gate["stops"])
+            + (f"; settles past the short without the stop {gate['p_zone']:.0%}" if gate.get("p_zone") else "")
+            + f"; expected {gate['ev']:+.0f}")
     spot = pv.get("spot") or mk.get("spot")
     desc = " ".join(f"{l['side']} {l['cp']}{l['strike']:.0f}" for l in legs)
     journal(day, f"## {hm(t)} OPEN {desc} x{lots}\n- NDX {spot}; net mid {pv['net_mid']} ({pv['debit_credit']}), "
@@ -1182,6 +1231,54 @@ def cmd_judge(setup: str, action: str, why: str) -> int:
     return 0
 
 
+def parse_vertical(s: str) -> list[dict]:
+    """``C:29425:29450`` -> sell the 29425 call, buy the 29450 (a credit vertical: the first strike is the short)."""
+    cp, short, long_ = s.split(":")
+    cp = cp.upper()[0]
+    if cp not in ("C", "P"):
+        raise SystemExit(f"bad vertical {s!r}: use C|P:short:long")
+    return [{"side": "sell", "cp": cp, "strike": float(short)}, {"side": "buy", "cp": cp, "strike": float(long_)}]
+
+
+def cmd_quote(verticals: list[str], stops: list[float], lots: int = 1) -> int:
+    """Read-only: price candidate credit verticals (one preview each, no order) and run each through the gate at
+    every --stop on its side, for the expert's hand-off (2026-10-16: a scratch script did this by hand)."""
+    t = now_et(); day = t.date(); hmn = hm(t)
+    mk = market()
+    spot = mk.get("spot")
+    if not spot:
+        print("no NDX level"); return 2
+    rd = (mk["high"] - mk["low"]) if mk.get("high") and mk.get("low") else None
+    print(f"QUOTE {hmn} NDX {spot:,.2f} | {wildness(hmn, rd)} day" + (f" (range {rd:.0f})" if rd else "")
+          + f" | safe stops: calls +{safe_stop(hmn, 'up', rd) or 0:.0f}, puts -{safe_stop(hmn, 'down', rd) or 0:.0f}")
+    for v in verticals:
+        legs = parse_vertical(v)
+        cp, ks, kl = legs[0]["cp"], legs[0]["strike"], legs[1]["strike"]
+        pv = preview(legs, lots, day)
+        q = {leg_key(x["symbol"]): x for x in pv.get("legs") or [] if x.get("symbol")}
+        s, b = q.get((cp, ks)), q.get((cp, kl))
+        net = pv.get("net_mid")
+        mid = -float(net) if net is not None else None
+        nat = (float(s["bid"]) - float(b["ask"])) if s and b and s.get("bid") is not None and b.get("ask") is not None \
+            else None
+        out = f"{cp} {ks:.0f}/{kl:.0f} (short {ks - spot:+.0f}): credit mid " + (f"{mid:.2f}" if mid is not None else "n/a")
+        out += ", natural " + (f"{nat:.2f}" if nat is not None else "n/a")
+        if s and b:
+            out += f" | short {s.get('bid')}/{s.get('ask')}, long {b.get('bid')}/{b.get('ask')}"
+        print(out)
+        for stop in [x for x in stops if (x > spot) == (cp == "C")]:
+            g, why = judge_entry(legs, pv, [stop], float(spot), t, rd, lots)
+            if not g:
+                print(f"    stop {stop:,.0f}: no credit to judge"); continue
+            r = g["stops"][0]
+            print(f"    stop {stop:,.0f} ({r['dist']:.0f} {r['side']}): touched {r['p_hit']:.0%}, loss there "
+                  + (f"{r['loss']:+.0f}" if r["loss"] is not None else "n/a")
+                  + f"; settles past the short without it {g['p_zone']:.0%}; expected "
+                  + (f"{g['ev']:+.0f}" if g["ev"] is not None else "n/a")
+                  + (" | REFUSED: " + "; ".join(why) if why else " | passes"))
+    return 0
+
+
 def cmd_feed() -> int:
     last_snap = None
     while True:
@@ -1218,6 +1315,10 @@ def main(argv=None) -> int:
     o.add_argument("--stop", type=float, action="append", default=[],
                    help="the NDX level that proves the trade wrong (twice for a condor); the gate prices it")
     o.add_argument("--min-credit", type=float, default=None, help="refuse a fill under the credit judged")
+    qt = sub.add_parser("quote")                 # read-only: candidate verticals priced and gated, no order
+    qt.add_argument("--vertical", action="append", required=True, help="C|P:short:long, e.g. C:29425:29450")
+    qt.add_argument("--stop", type=float, action="append", default=[], help="an NDX stop level (repeat)")
+    qt.add_argument("--lots", type=int, default=1)
     jd = sub.add_parser("judge")                 # every decision, a pass as much as a trade, goes in the log
     jd.add_argument("--setup", required=True)
     jd.add_argument("--action", choices=["pass", "trade"], required=True)
@@ -1242,6 +1343,8 @@ def main(argv=None) -> int:
         return cmd_open([parse_leg(x) for x in a.leg], a.lots, a.thesis, a.exit_plan, a.wrong, a.stop, a.min_credit)
     if a.cmd == "judge":
         return cmd_judge(a.setup, a.action, a.why)
+    if a.cmd == "quote":
+        return cmd_quote(a.vertical, a.stop, a.lots)
     if a.cmd == "pair":
         return cmd_pair(parse_legs(a.ndx), a.ndx_lots, parse_legs(a.spx), a.spx_lots, a.thesis, a.exit_plan, a.wrong,
                         a.stop_bp, a.min_credit_usd)
