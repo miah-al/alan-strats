@@ -26,6 +26,13 @@ Commands:
                                     Under premium_only both are credit spreads: the ratio up (NDX to catch up) is an
                                     NDX put credit spread with an SPX call credit spread, the ratio down the mirror. Their
                                     max losses together must fit the per-position rail; close / guard treat them as one
+  open|pair ... --style clone|ratio the AI agent's own strategies (2026-10-20, the owner: "i want the AI Agent to trade
+                                    the clone strategy", "and also the ratio strategy", "all decisions on the fly by
+                                    AI", "the AI Agents are super experts"): the agent decides on the fly from the
+                                    news, the levels, the tape and the clone / ratio robots' calls (signals that book
+                                    nothing), and the stop-table gate, built for premium held to expiry, does not
+                                    second-guess it. Every hard rail still holds (lots, risk, positions, trades a day,
+                                    hours, the day stop, premium only, no in-the-money short, live two-sided quotes)
   trim --lots N --reason ...        take N lots off (an offsetting order: the paper book closes groups whole)
   close --reason ...                close every open claude_discretionary position at market (paper mid)
   note --text ...                   journal a decision (standing aside is a decision)
@@ -928,10 +935,17 @@ def cmd_snapshot(force_news: bool = False) -> str:
     return "\n".join(L)
 
 
+STYLES = ("clone", "ratio")
+
+
 def cmd_open(legs: list[dict], lots: int, thesis: str, exit_plan: str, wrong: str, stops: list[float] | None = None,
-             min_credit: float | None = None) -> int:
+             min_credit: float | None = None, style: str | None = None) -> int:
+    """``style`` "clone": the AI agent's own clone-strategy trade, decided on the fly: the rails hold, the stop-table
+    gate (built for premium held to expiry) does not apply."""
     t = now_et(); day = t.date(); st = load_state(day)
     why = []
+    if style is not None and style not in STYLES:
+        why.append(f"style must be one of {', '.join(STYLES)}")
     if st.get("done"):
         why.append("done for the day (the stop was hit)")
     if not ENTRY_START <= hm(t) <= ENTRY_END:
@@ -976,11 +990,13 @@ def cmd_open(legs: list[dict], lots: int, thesis: str, exit_plan: str, wrong: st
     gate_spot = pv.get("spot") or mk.get("spot") or q.get("last")
     rd = (mk["high"] - mk["low"]) if mk.get("high") and mk.get("low") else None
     gate: dict = {}
-    if gate_spot:
+    if gate_spot and style is None:
         gate, gwhy = judge_entry(legs, pv, list(stops or []), float(gate_spot), t, rd, lots)
         why += gwhy
     if why:
         print("REFUSED: " + "; ".join(why)); return 2
+    if style is not None:
+        print(f"STYLE {style}: the agent's own decision; the rails passed, the stop-table gate does not apply")
     if gate:
         print(f"GATE ok: {gate['wild']} day; credit {gate['credit']:.2f}; " + ", ".join(
             f"stop {r['stop']:,.0f} ({r['dist']:.0f} {r['side']}) touched {r['p_hit']:.0%}, loss there {r['loss']:+.0f}"
@@ -989,13 +1005,14 @@ def cmd_open(legs: list[dict], lots: int, thesis: str, exit_plan: str, wrong: st
             + f"; expected {gate['ev']:+.0f}")
     spot = pv.get("spot") or mk.get("spot")
     desc = " ".join(f"{l['side']} {l['cp']}{l['strike']:.0f}" for l in legs)
-    journal(day, f"## {hm(t)} OPEN {desc} x{lots}\n- NDX {spot}; net mid {pv['net_mid']} ({pv['debit_credit']}), "
-                 f"max loss {ml}, max profit {pv.get('max_profit')}\n- thesis: {thesis}\n- exit: {exit_plan}\n"
-                 f"- wrong if: {wrong}" + (f"\n- gate: {json.dumps(gate, default=str)}" if gate else ""))
+    journal(day, f"## {hm(t)} OPEN {desc} x{lots}" + (f" [{style}]" if style else "")
+            + f"\n- NDX {spot}; net mid {pv['net_mid']} ({pv['debit_credit']}), "
+              f"max loss {ml}, max profit {pv.get('max_profit')}\n- thesis: {thesis}\n- exit: {exit_plan}\n"
+              f"- wrong if: {wrong}" + (f"\n- gate: {json.dumps(gate, default=str)}" if gate else ""))
     res = api("POST", "/orders", order_body(legs, lots, day, thesis))
     tg = res.get("trade_group_id")
     st["positions"][str(tg)] = {"legs": legs, "lots": lots, "opened": hm(t), "spot": spot, "fill": res.get("fill_price"),
-                                "cost": crossing_cost(legs, float(spot or 0)), "thesis": thesis}
+                                "cost": crossing_cost(legs, float(spot or 0)), "thesis": thesis, "style": style}
     save_state(day, st)
     journal(day, f"- filled: status {res.get('status')}, net {res.get('fill_price')}, trade group {tg}")
     print(f"OPENED {desc} x{lots}: {res.get('status')} at {res.get('fill_price')} (trade group {tg}); max loss {ml}")
@@ -1003,12 +1020,17 @@ def cmd_open(legs: list[dict], lots: int, thesis: str, exit_plan: str, wrong: st
 
 
 def cmd_pair(ndx_legs: list[dict], ndx_lots: int, spx_legs: list[dict], spx_lots: int, thesis: str, exit_plan: str,
-             wrong: str, stop_bp: float | None = None, min_credit_usd: float | None = None) -> int:
+             wrong: str, stop_bp: float | None = None, min_credit_usd: float | None = None,
+             style: str | None = None) -> int:
     """The NDX/SPX ratio trade as ONE position: an NDXP spread and an SPXW spread, checked together against the rails
     (their max losses summed against the per-position rail, one trade, the book must be flat) and opened together. If
-    the second order does not fill, the first is closed at once: the desk never holds half a pair."""
+    the second order does not fill, the first is closed at once: the desk never holds half a pair. ``style`` "ratio":
+    the AI agent's own ratio-strategy trade, decided on the fly: the rails hold, the ratio stop table does not refuse
+    it and ``stop_bp`` is the agent's own (optional) mark."""
     t = now_et(); day = t.date(); st = load_state(day)
     why = []
+    if style is not None and style not in STYLES:
+        why.append(f"style must be one of {', '.join(STYLES)}")
     if st.get("done"):
         why.append("done for the day (the stop was hit)")
     if not ENTRY_START <= hm(t) <= ENTRY_END:
@@ -1054,12 +1076,22 @@ def cmd_pair(ndx_legs: list[dict], ndx_lots: int, spx_legs: list[dict], spx_lots
                    f"is over ${MAX_RISK:,.0f}")
     nets = [(pvs[n].get("net_mid"), lots) for n, lots in (("NDX", ndx_lots), ("SPX", spx_lots))]
     credit_usd = None if any(v is None for v, _ in nets) else sum(-float(v) * lots * 100.0 for v, lots in nets)
-    gate, gwhy = judge_pair(ndx_legs, stop_bp, t, ratio_range_today(), credit_usd, min_credit_usd)
-    why += gwhy
+    if style is None:
+        gate, gwhy = judge_pair(ndx_legs, stop_bp, t, ratio_range_today(), credit_usd, min_credit_usd)
+        why += gwhy
+    else:
+        gate = {"bet": pair_bet(ndx_legs), "stop_bp": stop_bp, "credit_usd": credit_usd, "style": style}
+        if min_credit_usd is not None and (credit_usd is None or credit_usd < min_credit_usd):
+            why.append(f"the pair's credit ${credit_usd or 0:,.0f} is under the planned ${min_credit_usd:,.0f}: "
+                       f"the trade is not the one judged")
     if why:
         print("REFUSED: " + "; ".join(why)); return 2
-    print(f"GATE ok: ratio {gate['bet']}, {gate['wild']} ratio day; stop {gate['stop_bp']:.0f} bp touched "
-          f"{gate['p_hit']:.0%}; credit ${gate['credit_usd'] or 0:,.0f}")
+    if style is not None:
+        print(f"STYLE {style}: the agent's own decision, ratio {gate['bet']}; the rails passed, the ratio stop table "
+              f"does not apply; credit ${credit_usd or 0:,.0f}")
+    else:
+        print(f"GATE ok: ratio {gate['bet']}, {gate['wild']} ratio day; stop {gate['stop_bp']:.0f} bp touched "
+              f"{gate['p_hit']:.0%}; credit ${gate['credit_usd'] or 0:,.0f}")
     rs = ratio_now()
     dn = " ".join(f"{l['side']} {l['cp']}{l['strike']:.0f}" for l in ndx_legs)
     ds = " ".join(f"{l['side']} {l['cp']}{l['strike']:.0f}" for l in spx_legs)
@@ -1311,6 +1343,8 @@ def main(argv=None) -> int:
     o.add_argument("--stop", type=float, action="append", default=[],
                    help="the NDX level that proves the trade wrong (twice for a condor); the gate prices it")
     o.add_argument("--min-credit", type=float, default=None, help="refuse a fill under the credit judged")
+    o.add_argument("--style", choices=STYLES, default=None,
+                   help="clone: the agent's own clone-strategy trade (the rails hold, the stop-table gate does not)")
     qt = sub.add_parser("quote")                 # read-only: candidate verticals priced and gated, no order
     qt.add_argument("--vertical", action="append", required=True, help="C|P:short:long, e.g. C:29425:29450")
     qt.add_argument("--stop", type=float, action="append", default=[], help="an NDX stop level (repeat)")
@@ -1327,6 +1361,8 @@ def main(argv=None) -> int:
     pr.add_argument("--stop-bp", type=float, default=None,
                     help="the ratio move against the pair (bp) that proves it wrong; the gate prices it")
     pr.add_argument("--min-credit-usd", type=float, default=None, help="refuse the pair under the credit judged ($)")
+    pr.add_argument("--style", choices=STYLES, default=None,
+                    help="ratio: the agent's own ratio-strategy trade (the rails hold, the ratio stop table does not)")
     c = sub.add_parser("close"); c.add_argument("--reason", required=True)
     n = sub.add_parser("note"); n.add_argument("--text", required=True)   # a decision not to trade is a decision too
     tr = sub.add_parser("trim"); tr.add_argument("--lots", type=int, default=1); tr.add_argument("--reason", required=True)
@@ -1336,14 +1372,15 @@ def main(argv=None) -> int:
     if a.cmd == "snapshot":
         print(cmd_snapshot(a.news)); return 0
     if a.cmd == "open":
-        return cmd_open([parse_leg(x) for x in a.leg], a.lots, a.thesis, a.exit_plan, a.wrong, a.stop, a.min_credit)
+        return cmd_open([parse_leg(x) for x in a.leg], a.lots, a.thesis, a.exit_plan, a.wrong, a.stop, a.min_credit,
+                        a.style)
     if a.cmd == "judge":
         return cmd_judge(a.setup, a.action, a.why)
     if a.cmd == "quote":
         return cmd_quote(a.vertical, a.stop, a.lots)
     if a.cmd == "pair":
         return cmd_pair(parse_legs(a.ndx), a.ndx_lots, parse_legs(a.spx), a.spx_lots, a.thesis, a.exit_plan, a.wrong,
-                        a.stop_bp, a.min_credit_usd)
+                        a.stop_bp, a.min_credit_usd, a.style)
     if a.cmd == "close":
         return cmd_close(a.reason)
     if a.cmd == "trim":

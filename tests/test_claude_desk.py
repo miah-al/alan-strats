@@ -395,3 +395,48 @@ def test_a_pair_stop_must_clear_the_ratio_noise(desk, capsys):
     assert "GATE ok: ratio up" in capsys.readouterr().out
     st = D.load_state(pd.Timestamp("2026-10-12").date())
     assert st["positions"]["TG-NDX"]["stop_bp"] == 40.0 and st["positions"]["TG-NDX"]["bet"] == "up"
+
+
+# ── the AI agent's own strategies (2026-10-20, the owner: "i want the AI Agent to trade the clone strategy", "and also
+# the ratio strategy", "all decisions on the fly by AI"): the stop tables do not second-guess it, the rails still hold ──
+
+def test_a_clone_style_open_skips_the_stop_gate_but_not_the_rails(desk, capsys, monkeypatch):
+    monkeypatch.setattr(D, "quote", lambda t: {"last": 30628.0})
+    near = [{"side": "sell", "cp": "P", "strike": 30625.0}, {"side": "buy", "cp": "P", "strike": 30600.0}]
+    monkeypatch.setattr(D, "preview", lambda legs, lots, day, under="NDX": pv_for(legs, [40.0, 30.0]))
+    assert D.cmd_open(near, 1, "t", "e", "w") == 2 and "needs --stop" in capsys.readouterr().out   # the premium gate
+    assert D.cmd_open(near, 1, "bull read: news + reclaim of VWAP", "out on a VWAP loss", "a lower low",
+                      style="clone") == 0
+    assert "STYLE clone" in capsys.readouterr().out
+    assert [b["underlying"] for m, p, b in desk["sent"] if p == "/orders"] == ["NDX"]
+    st = D.load_state(pd.Timestamp("2026-10-12").date())
+    assert [v["style"] for v in st["positions"].values()] == ["clone"]
+    # the rails still hold: an in-the-money short, a debit, a max loss over the rail, a bad style
+    itm = [{"side": "sell", "cp": "P", "strike": 30650.0}, {"side": "buy", "cp": "P", "strike": 30625.0}]
+    assert D.cmd_open(itm, 1, "t", "e", "w", style="clone") == 2 and "in the money" in capsys.readouterr().out
+    monkeypatch.setattr(D, "preview", lambda legs, lots, day, under="NDX": {**pv_for(legs, [40.0, 30.0]),
+                                                                            "debit_credit": "debit"})
+    monkeypatch.setattr(D, "day_pnl", lambda day: (0.0, 0.0, []))
+    assert D.cmd_open(near, 1, "t", "e", "w", style="clone") == 2 and "premium only" in capsys.readouterr().out
+    monkeypatch.setattr(D, "preview", lambda legs, lots, day, under="NDX": {**pv_for(legs, [40.0, 30.0]),
+                                                                            "max_loss": -3000.0})
+    assert D.cmd_open(near, 1, "t", "e", "w", style="clone") == 2 and "over $2,500" in capsys.readouterr().out
+    assert D.cmd_open(near, 1, "t", "e", "w", style="robot") == 2 and "style must be" in capsys.readouterr().out
+    assert len([p for m, p, b in desk["sent"] if p == "/orders"]) == 1
+
+
+def test_a_ratio_style_pair_skips_the_noise_table_but_not_the_rails(desk, capsys):
+    assert D.cmd_pair(NDX_UP, 1, SPX_UP, 2, "t", "e", "w", stop_bp=5.0) == 2               # the noise table refuses
+    assert "sits inside the noise" in capsys.readouterr().out
+    assert D.cmd_pair(NDX_UP, 1, SPX_UP, 2, "t", "e", "w", stop_bp=40.0, min_credit_usd=2000.0, style="ratio") == 2
+    assert "under the planned $2,000" in capsys.readouterr().out                              # its own credit plan holds
+    desk["pv"]["SPX"]["max_loss"] = -1000.0
+    assert D.cmd_pair(NDX_UP, 1, SPX_UP, 2, "t", "e", "w", style="ratio") == 2
+    assert "max loss 2,600" in capsys.readouterr().out                                        # the risk rail holds
+    desk["pv"]["SPX"]["max_loss"] = -600.0
+    assert not [p for m, p, b in desk["sent"] if p == "/orders"]
+    assert D.cmd_pair(NDX_UP, 1, SPX_UP, 2, "ratio overshoot turning on the news", "back to the 30-min mean",
+                      "a new ratio low", stop_bp=5.0, style="ratio") == 0                     # its own stop, no table
+    assert "STYLE ratio" in capsys.readouterr().out
+    st = D.load_state(pd.Timestamp("2026-10-12").date())
+    assert st["positions"]["TG-NDX"]["bet"] == "up" and st["positions"]["TG-NDX"]["stop_bp"] == 5.0
