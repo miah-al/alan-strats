@@ -342,6 +342,9 @@ def gex_spot(ticker: str, hub=None) -> Optional[float]:
 GEX_BAND = (0.015, 0.08, 90)
 GEX_MAX_EXPIRIES = 10
 GEX_MAX_DTE = 60
+#: expiries fetched at once: each wants up to 180 contracts and the streamer subscribes ~100 a second, so two at a
+#: time keep a GEX pass (six tickers every half hour) from queueing ahead of the desk's own chains for long
+GEX_WORKERS = 2
 
 
 def _gex_expiries(exps: list[tuple[_dt.date, int]]) -> list[tuple[_dt.date, int]]:
@@ -396,7 +399,7 @@ def _hub_chain(ticker: str, hub, spot: float, notes: list[str], scope: str = "al
         return ed, rows, src, n
 
     out = []
-    with ThreadPoolExecutor(max_workers=min(len(chosen), 6), thread_name_prefix="gex-chain") as pool:
+    with ThreadPoolExecutor(max_workers=min(len(chosen), GEX_WORKERS), thread_name_prefix="gex-chain") as pool:
         for (exp, dte), rows, src, n in pool.map(one, chosen):
             used.update(src)
             if not rows:

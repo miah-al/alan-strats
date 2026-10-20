@@ -151,8 +151,12 @@ def _streamed(hub, p, u: str, spot: float, max_dte: int, lo: float, hi: float) -
         for s in syms:
             hub.linger[s] = max(hub.linger.get(s, 0.0), deadline)
     hub.unwatch(owner, list(syms))
-    hub.wait_for(lambda: sum(1 for s in syms if s in hub.quotes and hub.quotes[s].values.get("iv") is not None)
-                 >= 0.9 * len(syms), STREAM_WAIT_S)
+    from api.marketdata.options import wait_filling
+
+    def with_iv() -> int:
+        return sum(1 for s in syms if s in hub.quotes and hub.quotes[s].values.get("iv") is not None)
+
+    wait_filling(hub, lambda: with_iv() >= 0.9 * len(syms), with_iv, stall=STREAM_WAIT_S)
     out = []
     with hub._lock:
         for s, (e, k, t) in syms.items():

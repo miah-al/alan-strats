@@ -291,6 +291,106 @@ def test_wait_for_checks_on_its_own_clock_not_on_every_quote_update():
     assert hub.wait_for(lambda: True, 5.0) is True
 
 
+def test_a_chain_still_filling_is_waited_for_and_a_stalled_one_is_not():
+    # the streamer subscribes ~100 option symbols a second, so a big chain fills over many seconds (2026-10-20)
+    from api.marketdata.options import wait_filling
+    hub = MarketDataHub(Gate([]), [])
+    n, stop = {"v": 0}, threading.Event()
+
+    def fill(upto, every):
+        for _ in range(upto):
+            if stop.wait(every):
+                return
+            with hub._lock:
+                n["v"] += 1
+
+    def run(upto, every, target, stall, cap):
+        n["v"] = 0
+        stop.clear()
+        t = threading.Thread(target=fill, args=(upto, every), daemon=True)
+        t.start()
+        t0 = time.monotonic()
+        try:
+            return wait_filling(hub, lambda: n["v"] >= target, lambda: n["v"], stall=stall, cap=cap), \
+                time.monotonic() - t0
+        finally:
+            stop.set()
+            t.join()
+
+    ok, took = run(10, 0.1, 10, stall=0.3, cap=5.0)    # fills over ~1 s, past one 0.3 s stall window
+    assert ok and took < 3.0
+    ok, took = run(5, 0.05, 10, stall=0.3, cap=5.0)    # stops at half: given up a stall after the last fill
+    assert not ok and took < 2.0
+    ok, took = run(1000, 0.05, 1000, stall=0.3, cap=0.6)   # still filling at the cap: given up at the cap
+    assert not ok and took < 2.0
+
+
+def test_streamer_sends_one_capped_chunk_at_a_time_oldest_first_and_drops_last(monkeypatch):
+    # a GEX pass wants up to ~1,800 contracts a ticker; sent at 250 symbols a second it cut the stream at most half
+    # hours (10:00 on 10/12, 10/13, 10/19, 10/20)
+    from api.marketdata.providers import tastytrade as T
+    monkeypatch.setattr(T, "SUB_PACE_S", 0.0)
+    p = T.TastytradeProvider(ProviderLimits(ProviderPolicy("tastytrade", per_min=600, per_day=100, burst=50)))
+    sent: list[tuple[str, str, list]] = []
+
+    class St:
+        async def subscribe(self, cls, syms):
+            sent.append(("+", cls.__name__, list(syms)))
+
+        async def unsubscribe(self, cls, syms):
+            sent.append(("-", cls.__name__, list(syms)))
+
+    gex = [f"SPY261120C{770000 + 1000 * i:08d}" for i in range(250)]
+    p.subscribe(gex)                                         # the big pass first ...
+    p.subscribe(["NDXP261020P29500000", "NDX"])              # ... then the desk's contract and its index
+    have: set[str] = set()
+    since: dict[str, float] = {}
+
+    async def step():
+        before = len(sent)
+        more = await p._step(St(), have, since)
+        return more, sent[before:]
+
+    async def go():
+        chunks = []
+        while True:
+            more, msgs = await step()
+            if not more:
+                assert msgs == []
+                return chunks
+            chunks.append(msgs)
+
+    chunks = asyncio.run(go())
+    assert T.SUB_CHUNK == 100 and len(chunks) == 3          # 252 symbols: 100 + 100 + 52, one chunk per step
+    for msgs in chunks:
+        assert {m[1] for m in msgs} == {"Quote", "Trade", "Summary", "Greeks"}
+        assert all(len(m[2]) <= T.SUB_CHUNK for m in msgs)
+    quotes = [s for msgs in chunks for m in msgs if m[1] == "Quote" for s in m[2]]
+    assert quotes[0] == "NDX"                                # the index before any option
+    assert quotes[-1] == SYM.to_streamer("NDXP261020P29500000")   # the newer request after the older pass
+    assert quotes[1:251] == [SYM.to_streamer(s) for s in gex]
+    assert have == set(gex) | {"NDX", "NDXP261020P29500000"}
+
+    p.unsubscribe(gex)                                       # dropped: nothing goes out inside the grace
+    more, msgs = asyncio.run(step())
+    assert not more and msgs == []
+    monkeypatch.setattr(T, "UNSUB_GRACE_S", 0.0)
+    more, msgs = asyncio.run(step())                         # past the grace: one chunk of drops
+    assert more and {m[0] for m in msgs} == {"-"} and all(len(m[2]) <= T.SUB_CHUNK for m in msgs)
+    p.subscribe(["QQQ"])                                     # a new request goes ahead of the drops left
+    more, msgs = asyncio.run(step())
+    assert more and [m[:2] for m in msgs] == [("+", "Quote"), ("+", "Trade"), ("+", "Summary")]
+    assert msgs[0][2] == ["QQQ"]
+    drops = 0
+    while True:                                              # then the drops left, a chunk a step
+        more, msgs = asyncio.run(step())
+        if not more:
+            break
+        drops += 1
+        assert {m[0] for m in msgs} == {"-"}
+    assert drops == 2 and have == {"NDX", "NDXP261020P29500000", "QQQ"}
+
+
 def test_fallback_to_polling_and_back_when_the_streamer_reconnects():
     async def go():
         st, pl = FakeStream(), FakePoll()

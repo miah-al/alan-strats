@@ -15,7 +15,7 @@ from __future__ import annotations
 import datetime as _dt
 import logging
 import time
-from typing import Optional
+from typing import Callable, Optional
 
 from api.marketdata import symbols as SYM
 from api.marketdata.cache import CHAIN_TTL, EXPIRATIONS_TTL, cached
@@ -30,6 +30,10 @@ SIDE_FIELDS = ["bid", "ask", "mid", "last", "iv", "delta", "gamma", "theta", "ve
 CHAIN_LINGER_S = 120.0
 #: a fresh subscription's quotes arrive within a second; its greeks a few seconds later
 CHAIN_WAIT_S = 8.0
+#: the streamer subscribes at most ~100 option symbols a second (providers/tastytrade.py SUB_CHUNK), so a big chain, or
+#: one queued behind another, fills over many seconds: a chain still filling is waited for up to this long in all, one
+#: that has not filled any further for CHAIN_WAIT_S is read as it is
+CHAIN_WAIT_MAX_S = 45.0
 
 
 class NoChain(LookupError):
@@ -97,13 +101,17 @@ def _streamed_chain(hub: MarketDataHub, p, u: str, expiry: _dt.date, spot: Optio
             deadline = time.monotonic() + linger
             for s in syms:
                 hub.linger[s] = max(hub.linger.get(s, 0.0), deadline)
-    def filled() -> bool:
+    def counts() -> tuple[int, int]:
         priced = sum(1 for s in syms if s in hub.quotes and hub.quotes[s].has_price)
         greeks = sum(1 for s in syms if s in hub.quotes and hub.quotes[s].values.get("iv") is not None)
+        return priced, greeks
+
+    def filled() -> bool:
+        priced, greeks = counts()
         return priced >= 0.9 * len(syms) and greeks >= 0.9 * len(syms)
 
     try:
-        hub.wait_for(filled, CHAIN_WAIT_S)
+        wait_filling(hub, filled, lambda: sum(counts()))
         rows = []
         with hub._lock:
             for k, c, pt in picked:
@@ -119,6 +127,27 @@ def _streamed_chain(hub: MarketDataHub, p, u: str, expiry: _dt.date, spot: Optio
     finally:
         hub.unwatch(owner, syms)
     return {"rows": rows, "source": p.name}
+
+
+def wait_filling(hub: MarketDataHub, filled: Callable[[], bool], progress: Callable[[], int],
+                 stall: Optional[float] = None, cap: Optional[float] = None) -> bool:
+    """Wait until ``filled()``; while it is not, go on waiting as long as ``progress()`` (a count, read under the
+    hub's lock) rose within the last ``stall`` seconds (CHAIN_WAIT_S), and at most ``cap`` (CHAIN_WAIT_MAX_S) in all."""
+    stall = CHAIN_WAIT_S if stall is None else stall
+    end = time.monotonic() + (CHAIN_WAIT_MAX_S if cap is None else cap)
+    with hub._lock:
+        last = progress()
+    while True:
+        left = end - time.monotonic()
+        if left <= 0:
+            return False
+        if hub.wait_for(filled, min(stall, left)):
+            return True
+        with hub._lock:
+            now = progress()
+        if now <= last:
+            return False
+        last = now
 
 
 def _band(strikes: list[float], spot: Optional[float], band: tuple[float, float, int]) -> set:
