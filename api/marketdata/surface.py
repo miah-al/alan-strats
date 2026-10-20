@@ -31,7 +31,7 @@ MIN_POINTS = 3
 SNAPSHOT_TTL = 120.0
 MAX_IV = 5.0                 # 500%: anything above is a bad print, not a smile
 STREAM_STRIKES = 25
-STREAM_WAIT_S = 8.0
+STREAM_WAIT_S = 20.0         # no further fill for this long: read it as it is (options.CHAIN_WAIT_S: the capped rate)
 
 
 class NoSurface(LookupError):

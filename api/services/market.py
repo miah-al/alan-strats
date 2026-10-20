@@ -342,8 +342,9 @@ def gex_spot(ticker: str, hub=None) -> Optional[float]:
 GEX_BAND = (0.015, 0.08, 90)
 GEX_MAX_EXPIRIES = 10
 GEX_MAX_DTE = 60
-#: expiries fetched at once: each wants up to 180 contracts and the streamer subscribes ~100 a second, so two at a
-#: time keep a GEX pass (six tickers every half hour) from queueing ahead of the desk's own chains for long
+#: expiries fetched at once: each wants up to 180 contracts and the streamer subscribes at a capped rate (providers/
+#: tastytrade.py SUB_BUDGET, ~25 a second), so two at a time keep a GEX pass (six tickers every half hour) from queueing
+#: more than ~360 contracts (~15 s) ahead of the desk's own chains
 GEX_WORKERS = 2
 
 

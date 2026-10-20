@@ -28,12 +28,12 @@ logger = logging.getLogger("alan_trader.api.marketdata.options")
 SIDE_FIELDS = ["bid", "ask", "mid", "last", "iv", "delta", "gamma", "theta", "vega", "oi", "volume", "symbol"]
 #: how long a chain's streamed contracts stay subscribed after the last request for them
 CHAIN_LINGER_S = 120.0
-#: a fresh subscription's quotes arrive within a second; its greeks a few seconds later
-CHAIN_WAIT_S = 8.0
-#: the streamer subscribes at most ~100 option symbols a second (providers/tastytrade.py SUB_CHUNK), so a big chain, or
-#: one queued behind another, fills over many seconds: a chain still filling is waited for up to this long in all, one
-#: that has not filled any further for CHAIN_WAIT_S is read as it is
-CHAIN_WAIT_MAX_S = 45.0
+#: a fresh subscription's quotes arrive within a second, its greeks a few seconds later; but the streamer subscribes at a
+#: capped rate (providers/tastytrade.py SUB_BUDGET, ~25 symbols a second after a 500 burst), so a chain queued behind
+#: another (a GEX pass keeps up to ~360 contracts ahead, ~15 s) may see no progress for a while: one that has not filled
+#: any further for CHAIN_WAIT_S is read as it is, one still filling is waited for up to CHAIN_WAIT_MAX_S in all
+CHAIN_WAIT_S = 20.0
+CHAIN_WAIT_MAX_S = 60.0
 
 
 class NoChain(LookupError):

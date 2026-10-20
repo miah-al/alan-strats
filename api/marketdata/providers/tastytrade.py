@@ -25,6 +25,7 @@ import os
 import threading
 import time
 import traceback
+from collections import deque
 from datetime import date
 from pathlib import Path
 from typing import Optional
@@ -63,15 +64,28 @@ LOCK_RETRY_S = 60.0
 # streaming costs nothing; the churn is what gets the stream cut), and subscription messages are paced.
 UNSUB_GRACE_S = 600.0
 SUB_PACE_S = 0.25
-# The pace alone still let big chains through at up to 250 symbols a second, and from 2026-10-12 to 10-20 the stream was
-# cut at most GEX half hours (10:00 on four of those days) and at the desk's first snapshot of the day: a GEX chain is up
-# to ~1,800 contracts a ticker (10 expiries x 90 strikes x call/put), several tickers a minute. On 10/20 the 10:30 pass
-# survived at ~140 symbols a second and the 10:00 one tripped at ~180. So one message carries at most 100 symbols: with a
-# message every SUB_PACE_S (four per chunk of options), at most 100 option symbols a second. The loop sends one chunk at a
-# time, the oldest request first (underlyings before options), and drops only when nothing waits to be added: a new
-# request waits behind older adds (api/services/market.py GEX_WORKERS keeps a GEX pass's to two expiries, ~360
-# contracts), never behind a backlog of drops.
-SUB_CHUNK = 100
+# The pace alone still let big chains through at up to 250 symbols a second. From 2026-10-12 to 10-20 the stream was cut
+# at most GEX half hours (10:00 on four of those days) and at the desk's first snapshot of the day: a GEX chain is up to
+# ~1,800 contracts a ticker (10 expiries x 90 strikes x call/put). The rule is not published: tastytrade-api-js #72
+# (June 2026) trips it with 3,000 strikes where 20,000 used to stream, and kEchiCZ/GEX #1214 trips it on 6,878 symbols
+# sent 0.25 s apart. A per-second cap alone did not hold: on 10/20 a pass sent at ~70 symbols a second still tripped
+# after ~5,000 symbols in 97 s (~3,100 a minute). So subscriptions (adds and drops) spend a token bucket: up to SUB_BURST
+# symbols at once, refilled at ``sub_budget`` per SUB_WINDOW_S, so no minute carries more than SUB_BURST + sub_budget.
+# A cut halves the refill (not below SUB_BUDGET_MIN) and empties the bucket; each clean SUB_RECOVER_S earns a quarter
+# back (not above SUB_BUDGET); and each cut logs what was sent in the last 10 / 60 / 300 s, so the real limit shows in
+# the logs. The loop sends one chunk a step, the oldest request first (underlyings before options), and drops only when
+# nothing waits to be added: a new request waits behind older adds (api/services/market.py GEX_WORKERS keeps a GEX
+# pass's to two expiries, ~360 contracts, ~15 s at the refill), never behind a backlog of drops. A message carries up to
+# SUB_CHUNK symbols (fewer, fuller messages, in case the limit counts messages); a step sends what the bucket affords,
+# but not fewer than SUB_MIN_SEND unless that is all that waits.
+SUB_CHUNK = 250
+SUB_WINDOW_S = 60.0
+SUB_BUDGET = 1500
+SUB_BURST = 500
+SUB_MIN_SEND = 50
+SUB_BUDGET_MIN = 500
+SUB_RECOVER_S = 3600.0
+SUB_BLOCKED_WAIT_S = 0.5
 
 
 class StreamerLock:
@@ -201,6 +215,15 @@ class TastytradeProvider(Provider):
         self._thread: Optional[threading.Thread] = None
         self._stop = threading.Event()
         self._want: dict[str, float] = {}                 # symbol -> when it was first wanted (the send order)
+        self._clock = time.monotonic
+        self.sub_budget = SUB_BUDGET                       # the bucket's refill, symbols per SUB_WINDOW_S
+        self._tokens = float(SUB_BURST)
+        self._tok_at = self._clock()
+        self._budget_at = self._tok_at                     # the last cut or recovery
+        self._sent: deque[tuple[float, int]] = deque()     # (clock, symbols) sent in the last 300 s
+        self._sent_lock = threading.Lock()                 # the status API reads it from another thread
+        self.rate_cuts = 0
+        self._have_n = 0
         self._lock = threading.Lock()
         self._wake: Optional[asyncio.Event] = None
         self._session = None
@@ -379,6 +402,8 @@ class TastytradeProvider(Provider):
                 self._stop.set()
                 return delay
             self.limits.fail(f"streamer: {msg[:200]}")
+            if "subscription rate" in msg.lower():
+                self._rate_cut()
             # The first few failures with their traceback, redacted: the cause, not just its wrapper.
             self._traced = getattr(self, "_traced", 0) + 1
             if self._traced <= 3:
@@ -424,6 +449,9 @@ class TastytradeProvider(Provider):
                         self.limits.note(f"streaming; REST paused: {exc.reason}")
                 if more:
                     continue                                      # the next chunk at once (the sends are paced)
+                if more is None:                                  # the window's budget is spent: wait for it to roll
+                    await asyncio.sleep(SUB_BLOCKED_WAIT_S)
+                    continue
                 self._wake.clear()
                 try:
                     await asyncio.wait_for(self._wake.wait(), timeout=1.0)
@@ -433,31 +461,71 @@ class TastytradeProvider(Provider):
             for t in pumps:
                 t.cancel()
 
-    async def _step(self, st, have: set[str], unwanted_since: dict[str, float]) -> bool:
+    async def _step(self, st, have: set[str], unwanted_since: dict[str, float]) -> Optional[bool]:
         """Send one chunk of the difference between what the hub wants and what is subscribed: adds in
         ``wanted_order``; drops (past their grace) only when no add waits. True when it sent one (look again at
-        once), False when there was nothing to send."""
+        once), None when one waits but the bucket cannot afford it yet, False when there was nothing to send."""
         order = self.wanted_order()
         want = set(order)
-        now = time.monotonic()
+        now = self._clock()
+        self._recover(now)
         for s in have - want:                                     # dropped from the wanted set: start its grace clock
             unwanted_since.setdefault(s, now)
         for s in list(unwanted_since):
             if s in want or s not in have:
                 unwanted_since.pop(s, None)
         add = [s for s in order if s not in have]
+        rem = [] if add else sorted(s for s, t in unwanted_since.items() if now - t >= UNSUB_GRACE_S)
+        part = (add or rem)[:SUB_CHUNK]
+        if not part:
+            return False
+        n = self._afford(len(part), now)
+        if not n:
+            return None
+        part = part[:n]
+        self._tokens -= n
+        with self._sent_lock:
+            self._sent.append((now, n))
+            while now - self._sent[0][0] >= 300.0:
+                self._sent.popleft()
+        await self._sub(st, part, bool(add))
         if add:
-            part = add[:SUB_CHUNK]
-            await self._sub(st, part, True)
             have.update(part)
-            return True
-        rem = sorted(s for s, t in unwanted_since.items() if now - t >= UNSUB_GRACE_S)
-        if rem:
-            part = rem[:SUB_CHUNK]
-            await self._sub(st, part, False)
+        else:
             have.difference_update(part)
-            return True
-        return False
+        self._have_n = len(have)
+        return True
+
+    def _afford(self, want: int, now: float) -> int:
+        """How many of ``want`` symbols the bucket lets out now (0: wait for the refill)."""
+        self._tokens = min(float(SUB_BURST), self._tokens + (now - self._tok_at) * self.sub_budget / SUB_WINDOW_S)
+        self._tok_at = now
+        n = min(want, int(self._tokens))
+        return n if n >= min(want, SUB_MIN_SEND) else 0
+
+    def sent_within(self, seconds: float, now: Optional[float] = None) -> int:
+        """Symbols subscribed or dropped in the last ``seconds`` (at most the last 300)."""
+        now = self._clock() if now is None else now
+        with self._sent_lock:
+            return sum(n for t, n in self._sent if now - t < seconds)
+
+    def _recover(self, now: float) -> None:
+        if self.sub_budget < SUB_BUDGET and now - self._budget_at >= SUB_RECOVER_S:
+            self.sub_budget = min(SUB_BUDGET, int(self.sub_budget * 1.25))
+            self._budget_at = now
+            logger.info("tastytrade: subscription budget back to %d symbols / %.0f s", self.sub_budget, SUB_WINDOW_S)
+
+    def _rate_cut(self) -> None:
+        """DXLink cut the stream for its subscription rate: log what was sent, halve the refill, empty the bucket."""
+        now = self._clock()
+        sent = {s: self.sent_within(s, now) for s in (10, 60, 300)}
+        self.rate_cuts += 1
+        old, self.sub_budget = self.sub_budget, max(SUB_BUDGET_MIN, self.sub_budget // 2)
+        self._budget_at = now
+        self._tokens, self._tok_at = 0.0, now
+        logger.warning("tastytrade: subscription rate cut #%d: sent %d symbols in 10 s, %d in 60 s, %d in 300 s, "
+                       "%d subscribed; budget %d -> %d symbols / %.0f s", self.rate_cuts, sent[10], sent[60],
+                       sent[300], self._have_n, old, self.sub_budget, SUB_WINDOW_S)
 
     async def _sub(self, st, syms: list[str], add: bool) -> None:
         from tastytrade.dxfeed import Greeks, Quote, Summary, Trade
@@ -568,6 +636,7 @@ class TastytradeProvider(Provider):
 
     def status_detail(self) -> dict:
         return {"connected": self.connected, "connects": self.connects, "events": self.events,
-                "subscriptions": len(self.wanted()),
+                "subscriptions": len(self.wanted()), "sub_budget": self.sub_budget,
+                "sent_60s": self.sent_within(SUB_WINDOW_S), "rate_cuts": self.rate_cuts,
                 "broker_calls_today": self.budget.calls_today if self.budget else None,
                 "broker_budget_remaining": self.budget.remaining() if self.budget else None}

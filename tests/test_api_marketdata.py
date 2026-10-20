@@ -330,6 +330,8 @@ def test_streamer_sends_one_capped_chunk_at_a_time_oldest_first_and_drops_last(m
     # hours (10:00 on 10/12, 10/13, 10/19, 10/20)
     from api.marketdata.providers import tastytrade as T
     monkeypatch.setattr(T, "SUB_PACE_S", 0.0)
+    monkeypatch.setattr(T, "SUB_CHUNK", 100)
+    monkeypatch.setattr(T, "SUB_BURST", 10 ** 6)                # the order only: the bucket has its own test
     p = T.TastytradeProvider(ProviderLimits(ProviderPolicy("tastytrade", per_min=600, per_day=100, burst=50)))
     sent: list[tuple[str, str, list]] = []
 
@@ -361,7 +363,7 @@ def test_streamer_sends_one_capped_chunk_at_a_time_oldest_first_and_drops_last(m
             chunks.append(msgs)
 
     chunks = asyncio.run(go())
-    assert T.SUB_CHUNK == 100 and len(chunks) == 3          # 252 symbols: 100 + 100 + 52, one chunk per step
+    assert len(chunks) == 3                                  # 252 symbols: 100 + 100 + 52, one chunk per step
     for msgs in chunks:
         assert {m[1] for m in msgs} == {"Quote", "Trade", "Summary", "Greeks"}
         assert all(len(m[2]) <= T.SUB_CHUNK for m in msgs)
@@ -389,6 +391,63 @@ def test_streamer_sends_one_capped_chunk_at_a_time_oldest_first_and_drops_last(m
         drops += 1
         assert {m[0] for m in msgs} == {"-"}
     assert drops == 2 and have == {"NDX", "NDXP261020P29500000", "QQQ"}
+
+
+def test_streamer_spends_a_token_bucket_and_halves_it_after_a_rate_cut(monkeypatch, caplog):
+    # the rule is unpublished and a per-second cap still tripped (10/20 16:11, ~5,000 symbols in 97 s): no minute may
+    # carry more than SUB_BURST + sub_budget, a cut halves the refill, a clean hour earns a quarter back
+    from api.marketdata.providers import tastytrade as T
+    monkeypatch.setattr(T, "SUB_PACE_S", 0.0)
+    monkeypatch.setattr(T, "SUB_CHUNK", 100)
+    monkeypatch.setattr(T, "SUB_BURST", 300)
+    monkeypatch.setattr(T, "SUB_MIN_SEND", 50)
+    monkeypatch.setattr(T, "SUB_BUDGET", 600)                   # 10 symbols a second
+    monkeypatch.setattr(T, "SUB_BUDGET_MIN", 200)
+    clock = {"t": 1000.0}
+    p = T.TastytradeProvider(ProviderLimits(ProviderPolicy("tastytrade", per_min=600, per_day=100, burst=50)))
+    p._clock = lambda: clock["t"]
+    p._tok_at = p._budget_at = clock["t"]
+    sizes: list[int] = []
+
+    class St:
+        async def subscribe(self, cls, syms):
+            if cls.__name__ == "Quote":
+                sizes.append(len(syms))
+
+        async def unsubscribe(self, cls, syms):
+            pass
+
+    p.subscribe([f"SPY261120C{700000 + 1000 * i:08d}" for i in range(1000)])
+    have: set[str] = set()
+
+    def step():
+        return asyncio.run(p._step(St(), have, {}))
+
+    assert [step(), step(), step(), step()] == [True, True, True, None]   # the 300 burst, then wait
+    assert sizes == [100, 100, 100] and p.sent_within(60) == 300
+    clock["t"] += 3.0                                                     # 30 tokens: under the 50 minimum
+    assert step() is None
+    clock["t"] += 3.0                                                     # 60: send what the bucket affords
+    assert step() is True and sizes[-1] == 60
+    clock["t"] += 60.0                                                    # a minute: 600 back, capped at the 300 burst
+    assert step() is True and step() is True and step() is True and step() is None
+    assert sizes[-3:] == [100, 100, 100] and p.sent_within(60) == 300 and p.sent_within(300) == 660
+
+    with caplog.at_level("WARNING", logger="alan_trader.api.marketdata.tastytrade"):
+        p._rate_cut()                                                     # DXLink cut us: halve, empty, log
+    assert p.sub_budget == 300 and p.rate_cuts == 1 and step() is None
+    assert "sent 300 symbols in 10 s, 300 in 60 s, 660 in 300 s" in caplog.text
+    p._rate_cut()
+    p._rate_cut()
+    assert p.sub_budget == 200                                            # not below SUB_BUDGET_MIN
+    assert p.status_detail()["sub_budget"] == 200 and p.status_detail()["rate_cuts"] == 3
+    clock["t"] += T.SUB_RECOVER_S                                         # a clean hour: a quarter back
+    step()
+    assert p.sub_budget == 250
+    for _ in range(10):
+        clock["t"] += T.SUB_RECOVER_S
+        step()
+    assert p.sub_budget == 600                                            # never above SUB_BUDGET
 
 
 def test_fallback_to_polling_and_back_when_the_streamer_reconnects():
