@@ -56,7 +56,6 @@ RECONNECT_START_S = 30.0
 RECONNECT_MAX_S = 900.0
 CHAIN_TTL_S = 4 * 3600.0          # a nested chain changes with new listings (daily): one REST call per underlying per 4 h
 LOCK_RETRY_S = 60.0
-SUB_CHUNK = 250
 # DXLink closes the stream with "Your subscription rate is too high" when symbols come and go too fast. On 2026-09-29 it
 # did so every 1-2 minutes (44 reconnects in 80 minutes): previews, marks and charts watch a symbol for a minute, and
 # every add and drop was sent at once (four messages each: Quote, Trade, Summary, Greeks). After each reconnect the whole
@@ -64,6 +63,15 @@ SUB_CHUNK = 250
 # streaming costs nothing; the churn is what gets the stream cut), and subscription messages are paced.
 UNSUB_GRACE_S = 600.0
 SUB_PACE_S = 0.25
+# The pace alone still let big chains through at up to 250 symbols a second, and from 2026-10-12 to 10-20 the stream was
+# cut at most GEX half hours (10:00 on four of those days) and at the desk's first snapshot of the day: a GEX chain is up
+# to ~1,800 contracts a ticker (10 expiries x 90 strikes x call/put), several tickers a minute. On 10/20 the 10:30 pass
+# survived at ~140 symbols a second and the 10:00 one tripped at ~180. So one message carries at most 100 symbols: with a
+# message every SUB_PACE_S (four per chunk of options), at most 100 option symbols a second. The loop sends one chunk at a
+# time, the oldest request first (underlyings before options), and drops only when nothing waits to be added: a new
+# request waits behind older adds (api/services/market.py GEX_WORKERS keeps a GEX pass's to two expiries, ~360
+# contracts), never behind a backlog of drops.
+SUB_CHUNK = 100
 
 
 class StreamerLock:
@@ -192,7 +200,7 @@ class TastytradeProvider(Provider):
         self._loop: Optional[asyncio.AbstractEventLoop] = None
         self._thread: Optional[threading.Thread] = None
         self._stop = threading.Event()
-        self._want: set[str] = set()
+        self._want: dict[str, float] = {}                 # symbol -> when it was first wanted (the send order)
         self._lock = threading.Lock()
         self._wake: Optional[asyncio.Event] = None
         self._session = None
@@ -257,18 +265,28 @@ class TastytradeProvider(Provider):
         return self.connected and self.available()
 
     def subscribe(self, symbols: list[str]) -> None:
+        now = time.monotonic()
         with self._lock:
-            self._want.update(symbols)
+            for s in symbols:
+                self._want.setdefault(s, now)
         self._poke()
 
     def unsubscribe(self, symbols: list[str]) -> None:
         with self._lock:
-            self._want.difference_update(symbols)
+            for s in symbols:
+                self._want.pop(s, None)
         self._poke()
 
     def wanted(self) -> set[str]:
         with self._lock:
             return set(self._want)
+
+    def wanted_order(self) -> list[str]:
+        """What the hub wants, in the order to subscribe it: underlyings and stocks before options, each oldest
+        request first."""
+        with self._lock:
+            items = list(self._want.items())
+        return [s for s, _ in sorted(items, key=lambda kv: (SYM.is_option(kv[0]), kv[1]))]
 
     def _poke(self) -> None:
         loop = self._loop
@@ -398,26 +416,14 @@ class TastytradeProvider(Provider):
                     if t.done():                                  # a listener died: the connection is gone
                         exc = t.exception()
                         raise exc if exc else ConnectionError("streamer listener ended")
-                want = self.wanted()
-                now = time.monotonic()
-                for s in have - want:                             # dropped from the wanted set: start its grace clock
-                    unwanted_since.setdefault(s, now)
-                for s in list(unwanted_since):
-                    if s in want or s not in have:
-                        unwanted_since.pop(s, None)
-                add = sorted(want - have)
-                rem = sorted(s for s in have - want if now - unwanted_since.get(s, now) >= UNSUB_GRACE_S)
-                if add:
-                    await self._sub(st, add, True)
-                    have.update(add)
-                if rem:
-                    await self._sub(st, rem, False)
-                    have.difference_update(rem)
+                more = await self._step(st, have, unwanted_since)
                 if time.time() > self._session.session_expiration - 120:
                     try:
                         await self._refresh()                     # keep REST usable for chains
                     except ProviderUnavailable as exc:
                         self.limits.note(f"streaming; REST paused: {exc.reason}")
+                if more:
+                    continue                                      # the next chunk at once (the sends are paced)
                 self._wake.clear()
                 try:
                     await asyncio.wait_for(self._wake.wait(), timeout=1.0)
@@ -426,6 +432,32 @@ class TastytradeProvider(Provider):
         finally:
             for t in pumps:
                 t.cancel()
+
+    async def _step(self, st, have: set[str], unwanted_since: dict[str, float]) -> bool:
+        """Send one chunk of the difference between what the hub wants and what is subscribed: adds in
+        ``wanted_order``; drops (past their grace) only when no add waits. True when it sent one (look again at
+        once), False when there was nothing to send."""
+        order = self.wanted_order()
+        want = set(order)
+        now = time.monotonic()
+        for s in have - want:                                     # dropped from the wanted set: start its grace clock
+            unwanted_since.setdefault(s, now)
+        for s in list(unwanted_since):
+            if s in want or s not in have:
+                unwanted_since.pop(s, None)
+        add = [s for s in order if s not in have]
+        if add:
+            part = add[:SUB_CHUNK]
+            await self._sub(st, part, True)
+            have.update(part)
+            return True
+        rem = sorted(s for s, t in unwanted_since.items() if now - t >= UNSUB_GRACE_S)
+        if rem:
+            part = rem[:SUB_CHUNK]
+            await self._sub(st, part, False)
+            have.difference_update(part)
+            return True
+        return False
 
     async def _sub(self, st, syms: list[str], add: bool) -> None:
         from tastytrade.dxfeed import Greeks, Quote, Summary, Trade
