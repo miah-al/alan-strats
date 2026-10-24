@@ -6,6 +6,10 @@ The trader's system limit ``account_day_stop`` (the Limits page, System; $, 0 = 
 scope's P&L since entry, which made multi-day holdings look like today's) — is that far down, every armed strategy's new entries are turned off for the rest of the day
 through the supervisor's control (``sup_entries`` = 0, by "system"). The runners read it every poll; open positions
 keep their own exits. It fires once a day and only takes risk off: nothing here opens, adds or closes anything.
+
+From 2026-10-23 (the owner: "Ignore held-to-expiry marks") the open marks of positions held to the cash settlement
+(strategies whose metadata says ``holds_to_settlement``) are left out until they settle (``limits.stop_day``): on
+10/20 a 6-lot afternoon call spread's paper swing alone tripped the stop at 13:55 and blocked every entry after it.
 """
 from __future__ import annotations
 
@@ -39,12 +43,15 @@ class AccountDayStop:
     # ── the check ─────────────────────────────────────────────────────────────
     @staticmethod
     def account_day_pnl(usage: dict) -> float:
-        """The account's day: its equity change since the last close (``system.account_day``) when known, else every
-        scope's P&L summed (which counts multi-day positions' P&L since entry)."""
-        acct = ((usage or {}).get("system") or {}).get("account_day")
+        """The account's day as the stop counts it: its equity change since the last close (``system.account_day``)
+        when known, else every scope's P&L summed (which counts multi-day positions' P&L since entry), less the open
+        marks of positions held to the cash settlement (``system.settle_marks``)."""
+        sysu = (usage or {}).get("system") or {}
+        held = float(sysu.get("settle_marks") or 0.0)
+        acct = sysu.get("account_day")
         if acct is not None:
-            return float(acct)
-        return float(sum(float((u or {}).get("day_pnl") or 0.0) for s, u in (usage or {}).items() if s != "system"))
+            return float(acct) - held
+        return float(sum(float((u or {}).get("day_pnl") or 0.0) for s, u in (usage or {}).items() if s != "system")) - held
 
     def tick(self, now: Optional[_dt.datetime] = None) -> Optional[dict]:
         """Fire when the account's day P&L is at or below -limit during the session; returns what it did, else None."""

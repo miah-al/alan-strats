@@ -112,3 +112,43 @@ def test_a_failed_read_of_the_last_close_is_not_retried_every_tick(monkeypatch):
     LM._PRIOR_FAILED[d] -= LM.PRIOR_RETRY_S + 1                              # ten minutes later it tries again
     assert LM.account_day_change(today=d) is None and calls["n"] == 2
     LM._PRIOR_FAILED.clear()
+
+
+def test_the_marks_of_positions_held_to_settlement_wait_for_the_settlement():
+    """10/20: a 6-lot SPX 13:00 spread marked on paper alone tripped the stop at 13:55 and blocked every entry. From
+    10/23 (the owner: "Ignore held-to-expiry marks") those marks wait for the settlement; real losses still count."""
+    store = LM.MemoryLimitStore()
+    lim = LM.Limits(store, strategies=lambda: ["claude_discretionary", "spx_0dte_call13"], specs_for=lambda s: [],
+                    values_for=lambda s: {})
+    usage = {"spx_0dte_call13": {"day_pnl": -1100.0, "open_pnl": -1100.0}, "claude_discretionary": {"day_pnl": -300.0},
+             "system": {"account_day": -1400.0, "settle_marks": -1100.0}}
+    ds = AccountDayStop(lambda: lim, lambda: usage)
+    assert AccountDayStop.account_day_pnl(usage) == -300.0
+    assert ds.tick(at(13, 55)) is None                                 # the held spread's paper swing: no stop
+    usage["claude_discretionary"]["day_pnl"] = -1000.0                # a real loss on the desk
+    usage["system"]["account_day"] = -2100.0
+    out = ds.tick(at(14, 5))
+    assert out and out["day_pnl"] == -1000.0
+    used, status = LM._usage_of("account_day_stop", 1000, usage["system"], usage)
+    assert used == -1000.0 and status == "hit"                         # the Limits page shows what the stop counts
+
+
+def test_usage_totals_the_open_marks_of_the_strategies_that_hold_to_settlement(monkeypatch):
+    from api.services import paper as P
+    today = dt.date.today().isoformat()
+    rows = {"open": [{"strategy": "spx_0dte_call13", "pnl": -600.0, "max_loss": -5400.0},
+                     {"strategy": "claude_discretionary", "pnl": -200.0, "max_loss": -1400.0}],
+            "closed": [{"strategy": "claude_discretionary", "pnl": -100.0, "closed": today}]}
+    monkeypatch.setattr(P, "positions", lambda status, hub=None: {"rows": rows[status]})
+    monkeypatch.setattr(LM, "settlement_scopes", lambda: {"spx_0dte_call13"})
+    monkeypatch.setattr(LM, "account_day_change", lambda hub=None: -900.0)
+    u = LM.paper_usage(broker_calls=lambda: 3)
+    assert u["spx_0dte_call13"]["open_pnl"] == -600.0 and u["claude_discretionary"]["open_pnl"] == -200.0
+    assert u["system"]["settle_marks"] == -600.0 and LM.stop_day(u["system"]) == -300.0
+    assert LM.stop_day({"day_pnl": -50.0}) == -50.0 and LM.stop_day({}) is None
+
+
+def test_the_settlement_scopes_come_from_the_strategies_own_metadata(monkeypatch):
+    from alan_trader.strategy_api import registry
+    monkeypatch.setattr(registry, "STRATEGY_METADATA", {"a": {"holds_to_settlement": True}, "b": {}, "c": None})
+    assert LM.settlement_scopes() == {"a"}
