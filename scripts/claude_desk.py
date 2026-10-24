@@ -9,7 +9,8 @@ Rails (agreed 2026-09-28; since 2026-09-29 the trader's, in the service's databa
 GET/PUT /api/limits/claude_discretionary, read before every command and every feed poll; the values below are the
 defaults):
   - NDXP same-day options, defined risk only (preview's max loss must be finite), at most 4 legs;
-  - at most 2 lots, at most $2,500 at risk per position, one position at a time;
+  - at most 2 lots, at most $2,500 at risk per position, at most ``max_positions`` positions at once (2 from
+    2026-10-26, the owner on 10/23: "2 positions, $2,500 each"; a ratio pair is one position);
   - new entries 09:45-15:30 ET only;
   - day stop: at -$2,500 (realised + marked) everything is closed and the desk is done for the day (``guard``);
   - anything still open at 15:55 is closed (``guard``): nothing is left to settle unattended.
@@ -33,8 +34,10 @@ Commands:
                                     nothing), and the stop-table gate, built for premium held to expiry, does not
                                     second-guess it. Every hard rail still holds (lots, risk, positions, trades a day,
                                     hours, the day stop, premium only, no in-the-money short, live two-sided quotes)
-  trim --lots N --reason ...        take N lots off (an offsetting order: the paper book closes groups whole)
-  close --reason ...                close every open claude_discretionary position at market (paper mid)
+  trim --lots N --reason ... [--tg TG]   take N lots off (an offsetting order: the paper book closes groups whole);
+                                    with two positions open, --tg names which
+  close --reason ... [--tg TG]      close one position (--tg: its trade group, with its pair leg and trims) or, without
+                                    --tg, every open claude_discretionary position, at market (paper mid)
   note --text ...                   journal a decision (standing aside is a decision)
   guard                             enforce the day stop and the 15:55 flat; prints what it did
   feed                              for the Monitor tool: guard every 30 s, a snapshot every 2 minutes 09:45-15:45,
@@ -64,7 +67,7 @@ ROOTS = {"NDX": "NDXP", "SPX": "SPXW"}          # the PM-settled same-day roots;
 # The rails. These are the fallbacks: the values in force are the trader's, in the service's database (app.TradeLimit,
 # set on the app's Limits page or PUT /api/limits/claude_discretionary/<name>), read before every command and on every
 # feed poll (apply_limits). The desk never changes them itself.
-MAX_LOTS, MAX_RISK, DAY_STOP, MAX_POSITIONS = 2, 2500.0, -2500.0, 1
+MAX_LOTS, MAX_RISK, DAY_STOP, MAX_POSITIONS = 2, 2500.0, -2500.0, 2
 MAX_TRADES = 3                                  # new positions per day (a trim or a close is not one)
 PREMIUM_ONLY = True                             # sell premium only: a debit structure is refused (agreed 2026-10-01)
 ENTRY_START, ENTRY_END, FLAT_AT, FEED_END = "09:45", "15:30", "15:55", "16:00"
@@ -310,6 +313,27 @@ def trades_today(st: dict) -> int:
     """New positions opened today (a trim's offsetting group is not a trade; a ratio pair's SPX leg is part of its
     NDX leg's trade)."""
     return sum(1 for m in (st.get("positions") or {}).values() if not m.get("trim_of") and not m.get("pair_of"))
+
+
+def n_positions(opened: list[dict], st: dict) -> int:
+    """Open positions, not trade groups: a ratio pair's SPX leg and a trim's offsetting group belong to their parent."""
+    meta = st.get("positions") or {}
+    return sum(1 for r in opened
+               if not (meta.get(str(r.get("trade_group_id"))) or {}).get("pair_of")
+               and not (meta.get(str(r.get("trade_group_id"))) or {}).get("trim_of"))
+
+
+def linked_groups(tg: str, st: dict) -> set[str]:
+    """``tg``'s whole position: its parent, the parent's ratio-pair leg and every trim of either."""
+    meta = st.get("positions") or {}
+    m = meta.get(str(tg)) or {}
+    base = str(m.get("pair_of") or m.get("trim_of") or tg)
+    out = {base}
+    if (meta.get(base) or {}).get("pair"):
+        out.add(str(meta[base]["pair"]))
+    out |= {g for g, x in meta.items() if str(x.get("pair_of") or "") == base}
+    out |= {g for g, x in meta.items() if str(x.get("trim_of") or "") in out}
+    return out
 
 
 def ratio_stats(ndx: float, spx: float, prev: float | None, opened: float | None, hist: pd.Series) -> dict:
@@ -883,7 +907,8 @@ def cmd_snapshot(force_news: bool = False) -> str:
         L.append(f"    open {r.get('structure')} x{r.get('contracts')} entry {r.get('entry_net')} mark {r.get('mark')} "
                  f"pnl {r.get('pnl')} max loss {r.get('max_loss')} ({r.get('trade_group_id')})")
     used = trades_today(st)
-    ok = (not st.get("done")) and len(opened) < MAX_POSITIONS and used < MAX_TRADES and ENTRY_START <= hm(t) <= ENTRY_END
+    ok = (not st.get("done")) and n_positions(opened, st) < MAX_POSITIONS and used < MAX_TRADES \
+        and ENTRY_START <= hm(t) <= ENTRY_END
     L.append(f"  entries {'OPEN' if ok else 'closed'} (rails: <= {MAX_LOTS} lots, <= ${MAX_RISK:,.0f} at risk, "
              f"<= {MAX_POSITIONS} position(s), <= {MAX_TRADES} trades a day ({used} used), {ENTRY_START}-{ENTRY_END}, "
              f"stop {DAY_STOP:+,.0f}, flat {FLAT_AT}" + (", PREMIUM ONLY: no debits" if PREMIUM_ONLY else "") + ")")
@@ -959,8 +984,8 @@ def cmd_open(legs: list[dict], lots: int, thesis: str, exit_plan: str, wrong: st
     if trades_today(st) >= MAX_TRADES:
         why.append(f"{trades_today(st)} trades opened today, the limit is {MAX_TRADES} (standing aside is a position)")
     realised, marked, opened = day_pnl(day)
-    if len(opened) >= MAX_POSITIONS:
-        why.append(f"{len(opened)} position(s) open, the limit is {MAX_POSITIONS}")
+    if (n := n_positions(opened, st)) >= MAX_POSITIONS:
+        why.append(f"{n} position(s) open, the limit is {MAX_POSITIONS}")
     if realised + marked <= DAY_STOP:
         why.append("the day stop is hit")
     q = quote(UNDER)
@@ -1045,8 +1070,8 @@ def cmd_pair(ndx_legs: list[dict], ndx_lots: int, spx_legs: list[dict], spx_lots
     if trades_today(st) >= MAX_TRADES:
         why.append(f"{trades_today(st)} trades opened today, the limit is {MAX_TRADES}")
     realised, marked, opened = day_pnl(day)
-    if opened:
-        why.append(f"{len(opened)} position(s) open: a pair needs a flat book")
+    if (n := n_positions(opened, st)) >= MAX_POSITIONS:
+        why.append(f"{n} position(s) open, the limit is {MAX_POSITIONS} (a pair is one position)")
     if realised + marked <= DAY_STOP:
         why.append("the day stop is hit")
     for under, legs in (("NDX", ndx_legs), ("SPX", spx_legs)):
@@ -1130,10 +1155,14 @@ def cmd_pair(ndx_legs: list[dict], ndx_lots: int, spx_legs: list[dict], spx_lots
     return 0
 
 
-def _close_all(day: date, reason: str) -> list[str]:
+def _close_all(day: date, reason: str, only: str | None = None) -> list[str]:
+    """Close every open position, or only ``only``'s whole position (its pair leg and trims with it)."""
     st = load_state(day); out = []
+    keep = linked_groups(only, st) if only else None
     for r in my_positions("open"):
         tg = r["trade_group_id"]
+        if keep is not None and str(tg) not in keep:
+            continue
         res = api("POST", f"/paper/positions/{tg}/close", {"order_type": "market"})
         meta = st["positions"].get(str(tg), {})
         out.append(f"CLOSED {r.get('structure')} x{r.get('contracts')} ({tg}): {res.get('status')} at {res.get('fill_price')}"
@@ -1146,15 +1175,23 @@ def _close_all(day: date, reason: str) -> list[str]:
     return out
 
 
-def cmd_trim(lots: int, reason: str) -> int:
-    """Take part of the open position off: the paper book closes a trade group whole, so a trim is an offsetting
+def cmd_trim(lots: int, reason: str, tg: str | None = None) -> int:
+    """Take part of an open position off: the paper book closes a trade group whole, so a trim is an offsetting
     order for ``lots`` units (the open legs with their sides reversed). The ledger then holds two groups that net to
-    the smaller position; ``close`` later closes both, and the day's P&L sums them."""
+    the smaller position; ``close`` later closes both, and the day's P&L sums them. With two positions open, ``tg``
+    names which one."""
     t = now_et(); day = t.date(); st = load_state(day)
     opened = my_positions("open")
-    longs = [r for r in opened if str(r.get("trade_group_id")) in st["positions"]]
+    longs = [r for r in opened if str(r.get("trade_group_id")) in st["positions"]
+             and not st["positions"][str(r.get("trade_group_id"))].get("trim_of")
+             and not st["positions"][str(r.get("trade_group_id"))].get("pair_of")]
+    if tg is not None:
+        longs = [r for r in longs if str(r.get("trade_group_id")) == str(tg)]
     if not longs or not reason.strip():
-        print("REFUSED: nothing of mine open to trim, or no reason given"); return 2
+        print("REFUSED: nothing of mine open to trim" + (f" as {tg}" if tg else "") + ", or no reason given"); return 2
+    if len(longs) > 1:
+        print("REFUSED: " + ", ".join(str(r.get("trade_group_id")) for r in longs) + " are open: name one with --tg")
+        return 2
     tg = str(longs[0]["trade_group_id"]); meta = st["positions"][tg]
     if meta.get("pair") or meta.get("pair_of"):
         print("REFUSED: a ratio pair is closed whole (close), never trimmed"); return 2
@@ -1173,11 +1210,11 @@ def cmd_trim(lots: int, reason: str) -> int:
     return 0
 
 
-def cmd_close(reason: str) -> int:
+def cmd_close(reason: str, tg: str | None = None) -> int:
     if not reason.strip():
         print("REFUSED: a reason is required"); return 2
-    lines = _close_all(now_et().date(), reason)
-    print("\n".join(lines) if lines else "nothing open")
+    lines = _close_all(now_et().date(), reason, only=tg)
+    print("\n".join(lines) if lines else ("nothing open" + (f" as {tg}" if tg else "")))
     return 0
 
 
@@ -1364,8 +1401,10 @@ def main(argv=None) -> int:
     pr.add_argument("--style", choices=STYLES, default=None,
                     help="ratio: the agent's own ratio-strategy trade (the rails hold, the ratio stop table does not)")
     c = sub.add_parser("close"); c.add_argument("--reason", required=True)
+    c.add_argument("--tg", default=None, help="close only this position (its trade group; pair leg and trims with it)")
     n = sub.add_parser("note"); n.add_argument("--text", required=True)   # a decision not to trade is a decision too
     tr = sub.add_parser("trim"); tr.add_argument("--lots", type=int, default=1); tr.add_argument("--reason", required=True)
+    tr.add_argument("--tg", default=None, help="which position, when two are open")
     sub.add_parser("guard"); sub.add_parser("feed"); sub.add_parser("summary")
     a = ap.parse_args(argv)
     apply_limits()
@@ -1382,9 +1421,9 @@ def main(argv=None) -> int:
         return cmd_pair(parse_legs(a.ndx), a.ndx_lots, parse_legs(a.spx), a.spx_lots, a.thesis, a.exit_plan, a.wrong,
                         a.stop_bp, a.min_credit_usd, a.style)
     if a.cmd == "close":
-        return cmd_close(a.reason)
+        return cmd_close(a.reason, a.tg)
     if a.cmd == "trim":
-        return cmd_trim(a.lots, a.reason)
+        return cmd_trim(a.lots, a.reason, a.tg)
     if a.cmd == "note":
         t = now_et(); journal(t.date(), f"## {hm(t)} NOTE\n{a.text}"); print("noted"); return 0
     if a.cmd == "guard":

@@ -378,8 +378,7 @@ def _usage_of(name: str, value, u: dict, usage: dict) -> tuple[Optional[float], 
         calls = usage.get(SYSTEM_SCOPE, {}).get("broker_calls")
         return (calls, grade(calls, v)) if calls is not None else (None, "ok")
     if name == "account_day_stop":
-        sysu = usage.get(SYSTEM_SCOPE, {})
-        acct = sysu.get("account_day") if sysu.get("account_day") is not None else sysu.get("day_pnl")
+        acct = stop_day(usage.get(SYSTEM_SCOPE, {}))
         return (acct, grade(max(0.0, -acct), abs(v))) if acct is not None and v > 0 else (acct, "ok")
     pnl = u.get("day_pnl")
     if name == "day_stop" and pnl is not None:            # negative: -2,500
@@ -398,8 +397,31 @@ def _usage_of(name: str, value, u: dict, usage: dict) -> tuple[Optional[float], 
 
 # ── usage from the paper book ────────────────────────────────────────────────
 
+def settlement_scopes() -> set[str]:
+    """The strategies that hold every position to the cash settlement (their metadata's ``holds_to_settlement``): the
+    account day stop leaves their open marks out until they settle (2026-10-23, the owner: "Ignore held-to-expiry
+    marks", after a 6-lot afternoon call spread's paper swing tripped the stop on 10/20 and blocked every entry)."""
+    try:
+        from alan_trader.strategy_api import registry
+        return {str(s) for s, m in (registry.STRATEGY_METADATA or {}).items() if (m or {}).get("holds_to_settlement")}
+    except Exception:  # noqa: BLE001 — no registry: nothing is left out
+        logger.debug("limits: no strategy registry for the settlement scopes", exc_info=True)
+        return set()
+
+
+def stop_day(sysu: dict) -> Optional[float]:
+    """The account's day as the account day stop counts it: the equity change since the last close (else the scopes
+    summed), less the open marks of the positions held to the cash settlement (``settle_marks``). Realised P&L, theirs
+    included once they settle, still counts."""
+    acct = sysu.get("account_day") if sysu.get("account_day") is not None else sysu.get("day_pnl")
+    if acct is None:
+        return None
+    return round(float(acct) - float(sysu.get("settle_marks") or 0.0), 2)
+
+
 def paper_usage(hub=None, broker_calls: Optional[Callable[[], Optional[int]]] = None) -> dict:
-    """{scope: {day_pnl, open_positions, max_open_risk}, "system": {broker_calls}} for today, from the paper book."""
+    """{scope: {day_pnl, open_positions, max_open_risk, open_pnl}, "system": {broker_calls, day_pnl, account_day,
+    settle_marks}} for today, from the paper book."""
     from api.services import paper as P
     today = _dt.date.today().isoformat()
     out: dict[str, dict] = {}
@@ -410,16 +432,19 @@ def paper_usage(hub=None, broker_calls: Optional[Callable[[], Optional[int]]] = 
                 continue
             if status == "closed" and str(r.get("closed") or "")[:10] != today:
                 continue
-            u = out.setdefault(s, {"day_pnl": 0.0, "open_positions": 0, "max_open_risk": 0.0})
+            u = out.setdefault(s, {"day_pnl": 0.0, "open_positions": 0, "max_open_risk": 0.0, "open_pnl": 0.0})
             u["day_pnl"] += float(r.get("pnl") or 0.0)
             if status == "open":
                 u["open_positions"] += 1
+                u["open_pnl"] += float(r.get("pnl") or 0.0)
                 ml = r.get("max_loss")
                 if ml is not None:
                     u["max_open_risk"] = max(u["max_open_risk"], abs(float(ml)))
+    held = settlement_scopes()
     out[SYSTEM_SCOPE] = {"broker_calls": (broker_calls or broker_calls_today)(),
                          "day_pnl": round(sum(u["day_pnl"] for u in out.values()), 2),   # the scopes summed (since entry)
-                         "account_day": account_day_change(hub)}                          # the account's real day
+                         "account_day": account_day_change(hub),                          # the account's real day
+                         "settle_marks": round(sum(u["open_pnl"] for s, u in out.items() if s in held), 2)}
     return out
 
 

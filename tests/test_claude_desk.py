@@ -440,3 +440,69 @@ def test_a_ratio_style_pair_skips_the_noise_table_but_not_the_rails(desk, capsys
     assert "STYLE ratio" in capsys.readouterr().out
     st = D.load_state(pd.Timestamp("2026-10-12").date())
     assert st["positions"]["TG-NDX"]["bet"] == "up" and st["positions"]["TG-NDX"]["stop_bp"] == 5.0
+
+
+# ── two positions at once (2026-10-23, the owner: "2 positions, $2,500 each") ────────────────────────────────────────
+
+def test_the_rail_counts_positions_not_trade_groups():
+    """A ratio pair's SPX leg and a trim's offsetting group belong to their parent: five groups, two positions."""
+    st = {"positions": {"N": {"pair": "S"}, "S": {"pair_of": "N"}, "T": {"trim_of": "N"}, "C": {}, "U": {"trim_of": "C"}}}
+    opened = [{"trade_group_id": g} for g in ("N", "S", "T", "C", "U")]
+    assert D.n_positions(opened, st) == 2 and D.n_positions([], st) == 0
+    assert D.linked_groups("S", st) == {"N", "S", "T"} and D.linked_groups("N", st) == {"N", "S", "T"}
+    assert D.linked_groups("U", st) == {"C", "U"} and D.linked_groups("X", st) == {"X"}
+
+
+def test_a_pair_opens_beside_one_position_but_not_beside_two(desk, capsys, monkeypatch):
+    """10/22: four clone calls passed only because a premium trade held the single slot. With two slots a ratio pair
+    (one position) opens beside it; a third position is refused."""
+    day = pd.Timestamp("2026-10-12").date()
+    D.save_state(day, {"done": False, "positions": {"TG-HELD": {"lots": 1, "legs": []}}, "closed": []})
+    held = {"trade_group_id": "TG-HELD", "pnl": 50.0}
+    monkeypatch.setattr(D, "MAX_POSITIONS", 2)
+    monkeypatch.setattr(D, "day_pnl", lambda d: (0.0, 50.0, [held]))
+    assert D.cmd_pair(NDX_UP, 1, SPX_UP, 2, "t", "e", "w", stop_bp=40.0, style="ratio") == 0
+    capsys.readouterr()
+    both = [held, {"trade_group_id": "TG-NDX"}, {"trade_group_id": "TG-SPX"}]
+    monkeypatch.setattr(D, "day_pnl", lambda d: (0.0, 50.0, both))
+    assert D.cmd_pair(NDX_UP, 1, SPX_UP, 2, "t", "e", "w", stop_bp=40.0, style="ratio") == 2
+    assert "2 position(s) open, the limit is 2" in capsys.readouterr().out
+    monkeypatch.setattr(D, "MAX_POSITIONS", 1)                                   # the old rail still works as before
+    monkeypatch.setattr(D, "day_pnl", lambda d: (0.0, 50.0, [held]))
+    assert D.cmd_pair(NDX_UP, 1, SPX_UP, 2, "t", "e", "w", stop_bp=40.0, style="ratio") == 2
+
+
+def _book(monkeypatch, tmp_path, groups: dict):
+    monkeypatch.setattr(D, "STATE_DIR", tmp_path)
+    monkeypatch.setattr(D, "journal", lambda day, text: None)
+    monkeypatch.setattr(D, "now_et", lambda: pd.Timestamp("2026-10-26 13:40", tz=NY))
+    day = pd.Timestamp("2026-10-26").date()
+    D.save_state(day, {"done": False, "positions": groups, "closed": [], "last_news": None})
+    monkeypatch.setattr(D, "my_positions", lambda status="open": [
+        {"trade_group_id": g, "structure": g, "contracts": 1, "pnl": 0.0} for g in groups])
+    sent = []
+
+    def api(method, path, body=None, timeout=20.0):
+        sent.append(path)
+        return {"status": "filled", "fill_price": 1.0, "trade_group_id": "TG-TRIM"}
+    monkeypatch.setattr(D, "api", api)
+    return day, sent
+
+
+def test_close_can_name_one_position_and_takes_its_pair_leg_with_it(monkeypatch, tmp_path):
+    day, sent = _book(monkeypatch, tmp_path, {"P": {"lots": 1}, "N": {"lots": 1, "pair": "S"},
+                                              "S": {"lots": 2, "pair_of": "N"}})
+    out = D._close_all(day, "the ratio read is done", only="S")
+    assert sorted(sent) == ["/paper/positions/N/close", "/paper/positions/S/close"] and len(out) == 2
+    sent.clear()
+    assert len(D._close_all(day, "flat at 15:55")) == 3 and len(sent) == 3          # unnamed: everything, as the guard
+
+
+def test_trim_needs_a_name_when_two_positions_are_open(monkeypatch, tmp_path, capsys):
+    legs = [{"side": "sell", "cp": "C", "strike": 29100.0}, {"side": "buy", "cp": "C", "strike": 29125.0}]
+    day, sent = _book(monkeypatch, tmp_path, {"A": {"lots": 2, "legs": legs}, "B": {"lots": 2, "legs": legs}})
+    assert D.cmd_trim(1, "half off", None) == 2 and "name one with --tg" in capsys.readouterr().out
+    assert not sent
+    assert D.cmd_trim(1, "half off", "B") == 0 and sent == ["/orders"]
+    st = D.load_state(day)
+    assert st["positions"]["TG-TRIM"]["trim_of"] == "B" and st["positions"]["B"]["trimmed"] == 1
