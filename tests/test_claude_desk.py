@@ -107,6 +107,9 @@ def desk(monkeypatch, tmp_path):
     monkeypatch.setattr(D, "MAX_TRADES", 3); monkeypatch.setattr(D, "MAX_LOTS", 2)
     monkeypatch.setattr(D, "SETTLE_S", 0.0)
     monkeypatch.setattr(D, "ratio_range_today", lambda: 40.0)          # a mid ratio day at 13:30
+    # live spot and at-the-money straddle per index: NDX_UP's short put 30700 sits 100 below (room 75), SPX_UP's short
+    # call 7815 sits 15 above (room 10), so the agent's styles pass the far rule
+    monkeypatch.setattr(D, "live_straddle", lambda under, day: {"NDX": (30800.0, 50.0), "SPX": (7800.0, 10.0)}[under])
     pv = {"NDX": {"ok": True, "net_mid": -9.0, "debit_credit": "credit", "max_loss": -1600.0,
                   "legs": [leg("NDXP261012P30700000", 20.0, 22.0), leg("NDXP261012P30675000", 11.0, 13.0)]},
           "SPX": {"ok": True, "net_mid": -2.0, "debit_credit": "credit", "max_loss": -600.0,
@@ -174,28 +177,6 @@ def test_a_pair_never_sells_an_in_the_money_strike(desk, capsys, monkeypatch):
     otm = [{"side": "sell", "cp": "P", "strike": 30625.0}, {"side": "buy", "cp": "P", "strike": 30600.0}]
     spx = [{"side": "sell", "cp": "C", "strike": 7800.0}, {"side": "buy", "cp": "C", "strike": 7805.0}]
     assert D.cmd_pair(otm, 1, spx, 2, "t", "e", "w", stop_bp=40.0) == 0
-
-
-def test_the_clone_is_a_signal_on_the_desk(tmp_path):
-    """The Friend Clone belongs to the desk from 2026-10-13: its shadow runner's calls show in the snapshot, with how
-    the premium-only desk would express them."""
-    lines = [
-        "2026-10-08 13:59:06,659 INFO ndx_0dte_friend_real.rt_switch: AI switch (on) bull entry 30575/30675 at 13:59: TAKE",
-        "2026-10-08 13:59:06,679 INFO paper.runner: ALERT 13:58 open bull 30575/30675 @ 67.00 (model | AI TAKE); day +0",
-        "2026-10-08 14:01:06,878 INFO paper.runner: ALERT 14:00 add bull 30575/30675 @ 56.70 (add); day +0",
-        "2026-10-08 14:02:07,270 INFO paper.runner: ALERT 14:01 close bull 30575/30675 @ 50.30 (cut); day -2,317",
-    ]
-    ev = D.clone_events(lines)
-    assert [(e["at"], e["action"], e["side"], e["k_lo"], e["px"]) for e in ev] == [
-        ("13:58", "open", "bull", 30575.0, 67.0), ("14:00", "add", "bull", 30575.0, 56.7), ("14:01", "close", "bull", 30575.0, 50.3)]
-    day = pd.Timestamp("2026-10-08").date()
-    assert D.clone_line(day, "14:05", tmp_path) == "clone (shadow): not running today"
-    (tmp_path / "ndx_0dte_friend_real_2026-10-08_104509.log").write_text("\n".join(lines[:2]), encoding="utf-8")
-    line = D.clone_line(day, "14:03", tmp_path)
-    assert "13:58 open bull 30575/30675 @ 67.00" in line and "FRESH" in line and "OTM put credit spread below support" in line
-    assert "35 min ago" in D.clone_line(day, "14:33", tmp_path)
-    (tmp_path / "ndx_0dte_friend_real_2026-10-08_104509.log").write_text("no calls", encoding="utf-8")
-    assert D.clone_line(day, "14:03", tmp_path) == "clone (shadow): no call yet today"
 
 
 # ── quotes an entry can trust (2026-10-13: a re-subscribed SPXW leg served a minutes-old quote first) ─────────────
@@ -400,28 +381,36 @@ def test_a_pair_stop_must_clear_the_ratio_noise(desk, capsys):
 # ── the AI agent's own strategies (2026-10-20, the owner: "i want the AI Agent to trade the clone strategy", "and also
 # the ratio strategy", "all decisions on the fly by AI"): the stop tables do not second-guess it, the rails still hold ──
 
-def test_a_clone_style_open_skips_the_stop_gate_but_not_the_rails(desk, capsys, monkeypatch):
+def test_a_clone_trade_sits_far_and_skips_the_stop_gate_but_not_the_rails(desk, capsys, monkeypatch):
+    """From 2026-10-26 the clone is agent-only (its robot is deleted): the agent's read picks the side and the short
+    must sit at least max(75, 1.2 x straddle) below NDX for puts; a near-the-money spread is refused."""
     monkeypatch.setattr(D, "quote", lambda t: {"last": 30628.0})
-    near = [{"side": "sell", "cp": "P", "strike": 30625.0}, {"side": "buy", "cp": "P", "strike": 30600.0}]
+    monkeypatch.setattr(D, "live_straddle", lambda under, day: (30628.0, 60.0))          # put room max(75, 72) = 75
     monkeypatch.setattr(D, "preview", lambda legs, lots, day, under="NDX": pv_for(legs, [40.0, 30.0]))
-    assert D.cmd_open(near, 1, "t", "e", "w") == 2 and "needs --stop" in capsys.readouterr().out   # the premium gate
-    assert D.cmd_open(near, 1, "bull read: news + reclaim of VWAP", "out on a VWAP loss", "a lower low",
+    near = [{"side": "sell", "cp": "P", "strike": 30625.0}, {"side": "buy", "cp": "P", "strike": 30600.0}]
+    assert D.cmd_open(near, 1, "t", "e", "w", style="clone") == 2
+    out = capsys.readouterr().out
+    assert "inside the far room 75" in out and "nearest allowed strike is 30550" in out
+    far = [{"side": "sell", "cp": "P", "strike": 30550.0}, {"side": "buy", "cp": "P", "strike": 30525.0}]
+    assert D.cmd_open(far, 1, "t", "e", "w") == 2 and "needs --stop" in capsys.readouterr().out    # NDX premium: the gate
+    assert D.cmd_open(far, 1, "bull read: news + reclaim of VWAP", "held to the close", "a lower low",
                       style="clone") == 0
     assert "STYLE clone" in capsys.readouterr().out
     assert [b["underlying"] for m, p, b in desk["sent"] if p == "/orders"] == ["NDX"]
     st = D.load_state(pd.Timestamp("2026-10-12").date())
     assert [v["style"] for v in st["positions"].values()] == ["clone"]
-    # the rails still hold: an in-the-money short, a debit, a max loss over the rail, a bad style
+    # the rails still hold: an in-the-money short, a debit, a max loss over the rail, a bad style, a condor's 4 legs
     itm = [{"side": "sell", "cp": "P", "strike": 30650.0}, {"side": "buy", "cp": "P", "strike": 30625.0}]
     assert D.cmd_open(itm, 1, "t", "e", "w", style="clone") == 2 and "in the money" in capsys.readouterr().out
     monkeypatch.setattr(D, "preview", lambda legs, lots, day, under="NDX": {**pv_for(legs, [40.0, 30.0]),
                                                                             "debit_credit": "debit"})
     monkeypatch.setattr(D, "day_pnl", lambda day: (0.0, 0.0, []))
-    assert D.cmd_open(near, 1, "t", "e", "w", style="clone") == 2 and "premium only" in capsys.readouterr().out
+    assert D.cmd_open(far, 1, "t", "e", "w", style="clone") == 2 and "premium only" in capsys.readouterr().out
     monkeypatch.setattr(D, "preview", lambda legs, lots, day, under="NDX": {**pv_for(legs, [40.0, 30.0]),
                                                                             "max_loss": -3000.0})
-    assert D.cmd_open(near, 1, "t", "e", "w", style="clone") == 2 and "over $2,500" in capsys.readouterr().out
-    assert D.cmd_open(near, 1, "t", "e", "w", style="robot") == 2 and "style must be" in capsys.readouterr().out
+    assert D.cmd_open(far, 1, "t", "e", "w", style="clone") == 2 and "over $2,500" in capsys.readouterr().out
+    assert D.cmd_open(far, 1, "t", "e", "w", style="robot") == 2 and "style must be" in capsys.readouterr().out
+    assert D.cmd_open(far + far, 1, "t", "e", "w", style="clone") == 2 and "one far vertical" in capsys.readouterr().out
     assert len([p for m, p, b in desk["sent"] if p == "/orders"]) == 1
 
 
@@ -553,6 +542,7 @@ def test_the_agent_opens_the_spx_condor_inside_its_window(desk, capsys, monkeypa
     pv = {"ok": True, "net_mid": -2.8, "debit_credit": "credit", "max_loss": -1720.0, "max_profit": 280.0,
           "legs": [leg(D.occ(l["cp"], l["strike"], day, "SPXW"), 1.0, 1.1) for l in CONDOR]}
     monkeypatch.setattr(D, "preview", lambda legs, lots, d, under="NDX": dict(pv) if under == "SPX" else {})
+    monkeypatch.setattr(D, "live_straddle", lambda under, d: (7639.19, 11.0))           # rooms 10 above / 20 below
     assert D.cmd_open(CONDOR, 1, "13:00 condor", "hold to the 15:55 flat", "SPX through a short", style="condor",
                       under="SPX") == 0
     assert "STYLE condor" in capsys.readouterr().out
@@ -562,12 +552,49 @@ def test_the_agent_opens_the_spx_condor_inside_its_window(desk, capsys, monkeypa
     assert meta["style"] == "condor" and meta["under"] == "SPX"
 
 
-def test_spx_on_the_desk_is_the_condor_only_and_only_around_13h(desk, capsys, monkeypatch):
+def test_spx_on_the_desk_is_the_clone_or_the_condor_and_the_condor_only_around_13h(desk, capsys, monkeypatch):
     assert D.cmd_open(CONDOR, 1, "t", "e", "w", under="SPX") == 2
-    assert "13:00 iron condor only" in capsys.readouterr().out
+    assert "the clone (--style clone) or the 13:00 iron condor" in capsys.readouterr().out
     assert D.cmd_open(CONDOR[:2], 1, "t", "e", "w", style="condor", under="NDX") == 2
     assert "--under SPX" in capsys.readouterr().out
     monkeypatch.setattr(D, "now_et", lambda: pd.Timestamp("2026-10-12 14:05", tz=NY))
     assert D.cmd_open(CONDOR, 1, "t", "e", "w", style="condor", under="SPX") == 2
     assert "12:58-13:30 only" in capsys.readouterr().out
     assert not [p for m, p, b in desk["sent"] if p == "/orders"]
+
+
+# ── the agent-only clone and ratio, far premium held to the close (2026-10-25: "Rebuild as agent-only") ────────────
+
+def test_far_strikes_scale_with_each_index_straddle():
+    spx = D.far_strikes("SPX", 6560.0, 29.0)                   # 2026-04-02: rooms 23.2 / 34.8
+    assert (spx["C"]["short"], spx["C"]["long"]) == (6585.0, 6595.0)
+    assert (spx["P"]["short"], spx["P"]["long"]) == (6525.0, 6505.0)
+    calm = D.far_strikes("NDX", 28957.53, 40.0)                # the floors: 40 above, 75 below; 25-point grid and width
+    assert (calm["C"]["short"], calm["C"]["long"]) == (29000.0, 29025.0)
+    assert (calm["P"]["short"], calm["P"]["long"]) == (28875.0, 28850.0)
+
+
+def test_the_far_rule_refuses_a_near_short_and_names_the_nearest_allowed():
+    near = [{"side": "sell", "cp": "C", "strike": 6570.0}, {"side": "buy", "cp": "C", "strike": 6580.0}]
+    why = D.far_problem(near, "SPX", 6560.0, 29.0)
+    assert "inside the far room 23" in why and "nearest allowed strike is 6585" in why
+    ok = [{"side": "sell", "cp": "C", "strike": 6585.0}, {"side": "buy", "cp": "C", "strike": 6595.0}]
+    assert D.far_problem(ok, "SPX", 6560.0, 29.0) is None
+    assert D.far_problem(near, "SPX", 6560.0, None).startswith("no live SPX straddle")
+
+
+def test_the_far_menu_prices_both_indexes_and_the_ratio_pairs(monkeypatch, capsys):
+    monkeypatch.setattr(D, "now_et", lambda: pd.Timestamp("2026-10-26 12:45", tz=NY))
+    monkeypatch.setattr(D, "MAX_RISK", 2500.0)
+    monkeypatch.setattr(D, "MAX_LOTS", 2)
+    monkeypatch.setattr(D, "live_straddle", lambda under, day: {"SPX": (6560.0, 29.0), "NDX": (24000.0, 120.0)}[under])
+
+    def preview(legs, lots, d, under="NDX"):
+        return {"ok": True, "net_mid": -1.5, "max_loss": -850.0 if under == "SPX" else -2200.0, "legs": []}
+    monkeypatch.setattr(D, "preview", preview)
+    assert D.cmd_far() == 0
+    out = capsys.readouterr().out
+    assert "SPX 6,560.00 | straddle 29.00" in out and "sell C6585 / buy C6595" in out and "sell P6525 / buy P6505" in out
+    assert "NDX 24,000.00 | straddle 120.00" in out and "sell C24100 / buy C24125" in out
+    assert "sell P23850 / buy P23825" in out
+    assert "ratio up (NDX puts + SPX calls): 1 NDX lot (max loss 2,200) + 0 SPX lot(s)" in out

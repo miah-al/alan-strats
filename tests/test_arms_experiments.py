@@ -13,13 +13,12 @@ def test_the_experiments_poll_every_60_seconds_and_the_rest_keep_the_default():
         spec = A.SPECS[slug]
         assert spec.kind == "script" and spec.poll == 60
         assert f"-Strategy {slug} -Poll 60" in A.task_command(slug, co)
-    # the clone streams its quotes and looks every 2 s from 2026-10-06 (test_stream_quotes.py)
-    assert A.SPECS["ndx_0dte_friend_real"].poll == 2 and A.SPECS["ndx_0dte_friend_real"].stream
     assert "-Poll" not in A.task_command("ndx_0dte_friend", co)
     assert A.SPECS["ndx_0dte_friend"].poll == 0
     assert A.SPECS["ndx_0dte_always_bull"].at.strftime("%H:%M") == "09:45"
     assert A.SPECS["ndx_0dte_calm_theta"].until.strftime("%H:%M") == "15:30"
-    assert A.SPECS["ndx_0dte_friend_real"].at.strftime("%H:%M") == "10:45"
+    # the clone and ratio robots were deleted on 2026-10-25: the desk's AI agent trades both strategies itself
+    assert "ndx_0dte_friend_real" not in A.SPECS and "ndx_spx_ratio" not in A.SPECS
 
 
 def test_the_spx_13_00_call_spread_runs_the_platform_runner_at_12_50_with_a_60_second_poll():
