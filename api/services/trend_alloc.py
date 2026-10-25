@@ -1,5 +1,7 @@
 """
-api/services/trend_alloc.py — the equity-trend paper allocator (equity_trend; armed weekdays at 15:50 ET).
+api/services/trend_alloc.py — the month-end trend paper allocators (equity_trend, gold_trend; armed weekdays at
+15:50 ET). One class serves both by ``slug`` (2026-10-25, gold_trend added: the owner, "Yes, build and arm it"); each
+strategy's rule, sleeve and tickers are its plugin's.
 
 The rule is the plugin's (strategies/equity_trend/strategy.py: ``decide``, ``target_shares``): on the month's last
 trading day, SPY's 15:50 price against the average of its last 10 month-end closes decides in or out, and the weight is
@@ -31,7 +33,7 @@ from api.services import rotation_alloc as RA
 logger = logging.getLogger("alan_trader.api.trend_alloc")
 
 NY = "America/New_York"
-SLUG = PLAYBOOK = LEDGER = "equity_trend"
+SLUG = PLAYBOOK = LEDGER = "equity_trend"     # the default slug; TrendAllocator(slug=...) serves any trend sleeve
 HISTORY_DAYS = 420                      # calendar days of stored closes: 10 month-ends + 21 sessions, with margin
 MIN_HOLD_NIGHTS = 1
 
@@ -52,10 +54,10 @@ def last_month_end_before(d: _dt.date) -> _dt.date:
     return RA.last_month_end_before(d)
 
 
-def strategy():
-    """A fresh equity_trend instance with its default parameters (from the plugin, read only)."""
+def strategy(slug: str = SLUG):
+    """A fresh instance of the trend strategy ``slug`` with its default parameters (from the plugin, read only)."""
     from alan_trader.strategy_api import registry as R
-    return R.get_strategy(SLUG)
+    return R.get_strategy(slug)
 
 
 def _module(s):
@@ -64,13 +66,15 @@ def _module(s):
 
 class TrendAllocator:
     def __init__(self, store, orders, hub=None, publish: Optional[Callable[[dict], None]] = None, inputs=None,
-                 clock: Optional[Callable[[], pd.Timestamp]] = None, strategy_factory: Optional[Callable] = None):
+                 clock: Optional[Callable[[], pd.Timestamp]] = None, strategy_factory: Optional[Callable] = None,
+                 slug: str = SLUG):
+        self.slug = self.playbook = self.ledger = slug
         self.store = store
         self.orders = orders
         self.publish = publish
-        self.inputs = inputs or RA.LiveInputs(hub, ledger=LEDGER, history_days=HISTORY_DAYS)
+        self.inputs = inputs or RA.LiveInputs(hub, ledger=self.ledger, history_days=HISTORY_DAYS)
         self.clock = clock or (lambda: pd.Timestamp.now(tz=NY))
-        self.strategy_factory = strategy_factory or strategy
+        self.strategy_factory = strategy_factory or (lambda: strategy(slug))
         self._lock = threading.Lock()
 
     def run(self, variant: str = "", now: Optional[pd.Timestamp] = None) -> dict:
@@ -79,25 +83,25 @@ class TrendAllocator:
         now = now or self.clock()
         day = now.date()
         with self._lock:
-            prior = self.store.decided(PLAYBOOK, day)
+            prior = self.store.decided(self.playbook, day)
             if prior is not None:
-                return {"playbook": PLAYBOOK, "date": day, "status": "already_decided",
-                        "summary": f"{PLAYBOOK}: already decided today ({prior['status']})", "prior": prior}
-            row = {"playbook": PLAYBOOK, "date": day, "ledger_strategy": LEDGER, "action": None, "trade_group_id": None,
+                return {"playbook": self.playbook, "date": day, "status": "already_decided",
+                        "summary": f"{self.playbook}: already decided today ({prior['status']})", "prior": prior}
+            row = {"playbook": self.playbook, "date": day, "ledger_strategy": self.ledger, "action": None, "trade_group_id": None,
                    "verdict": None}
             try:
                 row.update(self._decide(day))
             except Exception as exc:  # noqa: BLE001 — a failed decision is logged, never half-done silently
-                logger.exception("equity trend allocator failed")
+                logger.exception("%s allocator failed", self.slug)
                 row.update(status="failed", detail={"error": f"{type(exc).__name__}: {exc}"[:400]},
-                           summary=f"{PLAYBOOK}: failed — {type(exc).__name__}: {exc}"[:400])
+                           summary=f"{self.playbook}: failed — {type(exc).__name__}: {exc}"[:400])
             self.store.add_decision(row)
             self._emit(row)
             return row
 
     def _decide(self, day: _dt.date) -> dict:
         if not trading_day(day):
-            return {"status": "no_session", "summary": f"{PLAYBOOK}: {day} is not a trading day", "detail": {}}
+            return {"status": "no_session", "summary": f"{self.playbook}: {day} is not a trading day", "detail": {}}
         s = self.strategy_factory()
         mod = _module(s)
         sig, hold = s.signal, s.holding
@@ -114,10 +118,10 @@ class TrendAllocator:
         if month_end:
             if prices.get(sig) is None:
                 return {"status": "no_quote", "verdict": "none", "detail": detail,
-                        "summary": f"{PLAYBOOK}: no {sig} price at 15:50 on the month-end; nothing traded"}
+                        "summary": f"{self.playbook}: no {sig} price at 15:50 on the month-end; nothing traded"}
             if not len(closes) or closes.index[-1].date() != prev:
                 return {"status": "stale_closes", "verdict": "none", "detail": detail,
-                        "summary": f"{PLAYBOOK}: the stored {sig} closes end {detail['last_close_date']}, not {prev}; "
+                        "summary": f"{self.playbook}: the stored {sig} closes end {detail['last_close_date']}, not {prev}; "
                                    f"nothing traded"}
             d = mod.decide(closes, float(prices[sig]), s.sma_months, s.vol_days, s.target_vol, day=pd.Timestamp(day))
             basis = f"the {day} month-end decision at 15:50"
@@ -128,19 +132,20 @@ class TrendAllocator:
         detail.update(decision=d, basis=basis)
         if d.get("w") is None:
             return {"status": "no_history", "verdict": "none", "detail": detail,
-                    "summary": f"{PLAYBOOK}: not enough {sig} history for {basis}; nothing traded"}
+                    "summary": f"{self.playbook}: not enough {sig} history for {basis}; nothing traded"}
         px = prices.get(hold)
         if px is None:
             return {"status": "no_quote", "verdict": "none", "detail": detail,
-                    "summary": f"{PLAYBOOK}: no {hold} price; nothing traded ({basis}: w {d['w']:.2f})"}
+                    "summary": f"{self.playbook}: no {hold} price; nothing traded ({basis}: w {d['w']:.2f})"}
         target = mod.target_shares(d["w"], s.sleeve, float(px))
         detail["target_shares"] = target
         state = "in" if d["in"] else "out"
-        head = (f"{PLAYBOOK}: SPY {d['price']:.2f} vs its 10-month average {d['sma']:.2f} -> {state}, sigma "
-                f"{d['sigma'] * 100:.1f}% -> w {d['w']:.2f} ({basis}); target {target} {hold}, held {held}")
+        head = (f"{self.playbook}: {sig} {d['price']:.2f} vs its {s.sma_months}-month average {d['sma']:.2f} -> "
+                f"{state}, sigma {d['sigma'] * 100:.1f}% -> w {d['w']:.2f} ({basis}); target {target} {hold}, "
+                f"held {held}")
         if abs(target - held) * float(px) < float(s.band) * float(s.sleeve):
             return {"status": "held", "verdict": "hold", "detail": detail, "summary": head[:400]}
-        orders = self._trade(day, hold, lots, held, target)
+        orders = self._trade(day, hold, lots, held, target, s)
         detail["orders"] = orders
         bad = [o for o in orders if o.get("status") != "filled"]
         return {"status": "rebalanced" if not bad else "order_failed", "verdict": "month_end" if month_end else "catch_up",
@@ -148,9 +153,9 @@ class TrendAllocator:
                 "trade_group_id": next((o.get("trade_group_id") for o in orders if o.get("trade_group_id")), None),
                 "detail": detail, "summary": (head + "; " + "; ".join(o["text"] for o in orders))[:400]}
 
-    def _trade(self, day: _dt.date, hold: str, lots: list[dict], held: int, target: int) -> list[dict]:
+    def _trade(self, day: _dt.date, hold: str, lots: list[dict], held: int, target: int, s=None) -> list[dict]:
         out, after = [], held
-        tag = f"{SLUG}-{day.isoformat()}"
+        tag = f"{self.slug}-{day.isoformat()}"
         if target < held:                       # close whole lots, newest first, then buy back below the target
             for l in sorted((l for l in lots if (day - l["opened"]).days >= MIN_HOLD_NIGHTS),
                             key=lambda l: (l["opened"], str(l["trade_group_id"])), reverse=True):
@@ -170,8 +175,8 @@ class TrendAllocator:
         buy = target - after
         if buy > 0:
             body = {"account": "paper", "underlying": hold, "order_type": "market", "tif": "day",
-                    "legs": [{"type": "stock", "side": "buy", "quantity": int(buy)}], "strategy": LEDGER,
-                    "label": f"Equity trend: {hold}", "client_order_id": f"{tag}-buy-{hold}"[:64]}
+                    "legs": [{"type": "stock", "side": "buy", "quantity": int(buy)}], "strategy": self.ledger,
+                    "label": f"{getattr(s, 'display_name', self.slug)}: {hold}", "client_order_id": f"{tag}-buy-{hold}"[:64]}
             try:
                 r = self.orders.place(body)
                 out.append({"side": "buy", "symbol": hold, "quantity": int(buy), "order_id": r.get("order_id"),
@@ -186,7 +191,7 @@ class TrendAllocator:
 
     def _emit(self, row: dict) -> None:
         from api.serialize import to_jsonable
-        logger.info("equity trend %s: %s", row["date"], row.get("summary"))
+        logger.info("%s %s: %s", self.slug, row["date"], row.get("summary"))
         if self.publish is not None:
             try:
                 self.publish(to_jsonable({"type": "trend_alloc", **{k: v for k, v in row.items() if k != "detail"},
@@ -202,8 +207,8 @@ class TrendAllocator:
             logger.debug("trend lots unavailable: %s", exc)
         last = None
         if self.store is not None:
-            rec = self.store.decisions_since(self.clock().date() - _dt.timedelta(days=40), PLAYBOOK)
+            rec = self.store.decisions_since(self.clock().date() - _dt.timedelta(days=40), self.playbook)
             last = rec[0] if rec else None
-        return {"strategy": SLUG, "ledger_strategy": LEDGER,
+        return {"strategy": self.slug, "ledger_strategy": self.ledger,
                 "holdings": ({l["symbol"]: l["shares"] for l in lots} if lots is not None else None),
                 "last_decision": ({k: last.get(k) for k in ("date", "status", "verdict", "summary")} if last else None)}
