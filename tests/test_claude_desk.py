@@ -506,3 +506,68 @@ def test_trim_needs_a_name_when_two_positions_are_open(monkeypatch, tmp_path, ca
     assert D.cmd_trim(1, "half off", "B") == 0 and sent == ["/orders"]
     st = D.load_state(day)
     assert st["positions"]["TG-TRIM"]["trim_of"] == "B" and st["positions"]["B"]["trimmed"] == 1
+
+
+# ── the SPX 13:00 iron condor (2026-10-25, the owner: "Its goes to the desk", "An agent runs it") ───────────────────
+
+CONDOR = [{"side": "sell", "cp": "C", "strike": 7650.0}, {"side": "buy", "cp": "C", "strike": 7660.0},
+          {"side": "sell", "cp": "P", "strike": 7615.0}, {"side": "buy", "cp": "P", "strike": 7595.0}]
+
+
+def test_condor_strikes_scale_with_the_13h_straddle():
+    calm = D.condor_strikes(7639.19, 11.0)                     # rooms 10 / 20: the floors
+    assert calm["call"] == (7650.0, 7660.0) and calm["put"] == (7615.0, 7595.0)
+    wild = D.condor_strikes(6560.0, 29.0)                      # 2026-04-02: rooms 23.2 / 34.8
+    assert wild["call"] == (6585.0, 6595.0) and wild["put"] == (6525.0, 6505.0)
+    assert wild["call_room"] == pytest.approx(23.2) and wild["put_room"] == pytest.approx(34.8)
+
+
+def test_month_end_is_the_months_last_business_day():
+    d = lambda s: pd.Timestamp(s).date()
+    assert D.month_end(d("2026-10-30")) and not D.month_end(d("2026-10-29"))      # Oct 31 is a Saturday
+    assert D.month_end(d("2026-04-30")) and not D.month_end(d("2026-05-01"))
+
+
+def test_the_condor_menu_prices_both_sides_from_the_live_straddle(monkeypatch, capsys):
+    monkeypatch.setattr(D, "now_et", lambda: pd.Timestamp("2026-04-02 13:00", tz=NY))
+    monkeypatch.setattr(D, "quote", lambda t: {"last": 6560.0})
+    monkeypatch.setattr(D, "MAX_RISK", 2500.0)
+
+    def preview(legs, lots, d, under="NDX"):
+        if all(l["side"] == "buy" for l in legs):              # the straddle: 11.90 + 17.10
+            return {"legs": [{"symbol": "c", "mid": 11.9}, {"symbol": "p", "mid": 17.1}]}
+        syms = [D.occ(l["cp"], l["strike"], d, "SPXW") for l in legs]
+        return {"ok": True, "net_mid": -1.49 if len(legs) == 2 else -2.6,
+                "max_loss": -851.0 if len(legs) == 2 else -1740.0,
+                "legs": [{"symbol": s, "bid": 1.0, "ask": 1.2, "mid": 1.1} for s in syms]}
+    monkeypatch.setattr(D, "preview", preview)
+    monkeypatch.setattr(D, "api", lambda *a, **k: {})
+    assert D.cmd_condor() == 0
+    out = capsys.readouterr().out
+    assert "straddle 29.00 at 6560" in out and "sell C6585 / buy C6595" in out and "sell P6525 / buy P6505" in out
+    assert "fits 1 lot(s)" in out and "--leg sell:C:6585" in out and "--leg buy:P:6505" in out
+
+
+def test_the_agent_opens_the_spx_condor_inside_its_window(desk, capsys, monkeypatch):
+    day = pd.Timestamp("2026-10-12").date()
+    pv = {"ok": True, "net_mid": -2.8, "debit_credit": "credit", "max_loss": -1720.0, "max_profit": 280.0,
+          "legs": [leg(D.occ(l["cp"], l["strike"], day, "SPXW"), 1.0, 1.1) for l in CONDOR]}
+    monkeypatch.setattr(D, "preview", lambda legs, lots, d, under="NDX": dict(pv) if under == "SPX" else {})
+    assert D.cmd_open(CONDOR, 1, "13:00 condor", "hold to the 15:55 flat", "SPX through a short", style="condor",
+                      under="SPX") == 0
+    assert "STYLE condor" in capsys.readouterr().out
+    order = [b for m, p, b in desk["sent"] if p == "/orders"][-1]
+    assert order["underlying"] == "SPX" and all(l["symbol"].startswith("SPXW") for l in order["legs"])
+    meta = D.load_state(day)["positions"]["TG-SPX"]
+    assert meta["style"] == "condor" and meta["under"] == "SPX"
+
+
+def test_spx_on_the_desk_is_the_condor_only_and_only_around_13h(desk, capsys, monkeypatch):
+    assert D.cmd_open(CONDOR, 1, "t", "e", "w", under="SPX") == 2
+    assert "13:00 iron condor only" in capsys.readouterr().out
+    assert D.cmd_open(CONDOR[:2], 1, "t", "e", "w", style="condor", under="NDX") == 2
+    assert "--under SPX" in capsys.readouterr().out
+    monkeypatch.setattr(D, "now_et", lambda: pd.Timestamp("2026-10-12 14:05", tz=NY))
+    assert D.cmd_open(CONDOR, 1, "t", "e", "w", style="condor", under="SPX") == 2
+    assert "12:58-13:30 only" in capsys.readouterr().out
+    assert not [p for m, p, b in desk["sent"] if p == "/orders"]

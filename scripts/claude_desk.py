@@ -34,6 +34,11 @@ Commands:
                                     nothing), and the stop-table gate, built for premium held to expiry, does not
                                     second-guess it. Every hard rail still holds (lots, risk, positions, trades a day,
                                     hours, the day stop, premium only, no in-the-money short, live two-sided quotes)
+  condor                            read-only: the SPX 13:00 iron condor menu (2026-10-25, the owner: "Need a AI
+                                    assisted iron condor strategy", "Its goes to the desk", "An agent runs it"): the
+                                    live 13:00 straddle, the call side by the SPX 13:00 v2 rule and the far put side,
+                                    both scaled to the straddle, their mid and natural credits, max loss, month-end
+  open ... --under SPX --style condor   the agent's SPX iron condor (or one side), 12:58-13:30, every rail holds
   trim --lots N --reason ... [--tg TG]   take N lots off (an offsetting order: the paper book closes groups whole);
                                     with two positions open, --tg names which
   close --reason ... [--tg TG]      close one position (--tg: its trade group, with its pair leg and trims) or, without
@@ -915,6 +920,8 @@ def cmd_snapshot(force_news: bool = False) -> str:
     if PREMIUM_ONLY:
         L.append("  mode: premium only - on a range day sell a condor or credit spread outside the range once it is set; "
                  "on a trend day stand aside")
+    if "12:45" <= hm(t) <= CONDOR_END:
+        L.append(f"  condor: the SPX 13:00 iron condor is due ({CONDOR_START}-{CONDOR_END}): run `condor` for the menu")
     if spot and ok:
         atm = round(spot / 25.0) * 25.0
         if PREMIUM_ONLY:
@@ -960,17 +967,112 @@ def cmd_snapshot(force_news: bool = False) -> str:
     return "\n".join(L)
 
 
-STYLES = ("clone", "ratio")
+STYLES = ("clone", "ratio", "condor")
+
+# The SPX 13:00 iron condor (the owner, 2026-10-25: a full condor the agent runs on top of the SPX 13:00 robot). The
+# study (real SPXW prints, 2024-10 -> 2026-10, settings chosen walk-forward): the call side by the SPX 13:00 v2 rule
+# and puts far out, both scaled to the 13:00 at-the-money straddle (the market's own afternoon move), held to the close:
+# +$8.5k / +$9.2k a lot out of sample; the put side alone is weak (+$0.7k in its last year), so the agent judges it.
+CONDOR_START, CONDOR_END = "12:58", "13:30"
+CONDOR_CALL = (10.0, 0.8, 10.0)          # room max(10, 0.8 x straddle) above SPX, 10 wide
+CONDOR_PUT = (20.0, 1.2, 20.0)           # room max(20, 1.2 x straddle) below SPX, 20 wide
+
+
+def condor_strikes(spot: float, straddle: float) -> dict:
+    """The condor's strikes: the short call at the first 5-pt strike at least max(10, 0.8 x straddle) above SPX, 10
+    wide; the short put at the first 5-pt strike at least max(20, 1.2 x straddle) below, 20 wide."""
+    (cm, ck, cw), (pm, pk, pw) = CONDOR_CALL, CONDOR_PUT
+    croom, proom = max(cm, ck * straddle), max(pm, pk * straddle)
+    cs, ps = math.ceil((spot + croom) / 5.0) * 5.0, math.floor((spot - proom) / 5.0) * 5.0
+    return {"call_room": croom, "put_room": proom, "call": (cs, cs + cw), "put": (ps, ps - pw)}
+
+
+def month_end(day: date) -> bool:
+    """The month's last trading day (holidays aside): SPX rallied into the close on 59% of them (26% on other days),
+    so the condor sells no calls then."""
+    return (pd.Timestamp(day) + pd.offsets.BDay(1)).month != day.month
+
+
+def natural_credit(legs: list[dict], pv: dict, day: date, under: str) -> float | None:
+    """What selling ``legs`` at the touch takes in (each short at its bid, each long at its ask); None without quotes."""
+    q = {l.get("symbol"): l for l in pv.get("legs") or []}
+    total = 0.0
+    for l in legs:
+        x = q.get(occ(l["cp"], l["strike"], day, ROOTS[under])) or {}
+        if x.get("bid") is None or x.get("ask") is None:
+            return None
+        total += float(x["bid"]) if l["side"] == "sell" else -float(x["ask"])
+    return total
+
+
+def cmd_condor() -> int:
+    """Read-only: the SPX 13:00 iron condor menu. No order goes anywhere."""
+    t = now_et(); day = t.date()
+    q = quote("SPX")
+    spot = q.get("last") or q.get("close")
+    if not spot:
+        print("CONDOR: no SPX quote"); return 2
+    spot = float(spot)
+    katm = round(spot / 5.0) * 5.0
+    sv = preview([{"side": "buy", "cp": "C", "strike": katm}, {"side": "buy", "cp": "P", "strike": katm}], 1, day, "SPX")
+    mids = [l.get("mid") for l in sv.get("legs") or []]
+    if len(mids) != 2 or any(m is None for m in mids):
+        print(f"CONDOR: no live straddle quote at {katm:.0f}"); return 2
+    straddle = float(mids[0]) + float(mids[1])
+    k = condor_strikes(spot, straddle)
+    (cs, cl), (ps, pl) = k["call"], k["put"]
+    sides = {"calls": [{"side": "sell", "cp": "C", "strike": cs}, {"side": "buy", "cp": "C", "strike": cl}],
+             "puts": [{"side": "sell", "cp": "P", "strike": ps}, {"side": "buy", "cp": "P", "strike": pl}]}
+    me = month_end(day)
+    L = [f"CONDOR {hm(t)}: SPX {spot:,.2f} | 13:00 straddle {straddle:.2f} at {katm:.0f} (the market's afternoon move) | "
+         f"entries {CONDOR_START}-{CONDOR_END}" + (" | MONTH-END: no calls (SPX rallies into the close)" if me else "")]
+    for name, legs in sides.items():
+        pv = preview(legs, 1, day, "SPX")
+        nat = natural_credit(legs, pv, day, "SPX")
+        room = k["call_room"] if name == "calls" else k["put_room"]
+        L.append(f"  {name}: sell {legs[0]['cp']}{legs[0]['strike']:.0f} / buy {legs[1]['cp']}{legs[1]['strike']:.0f} "
+                 f"(room {room:.1f}): credit mid {-float(pv.get('net_mid') or 0):.2f}"
+                 + (f", natural {nat:.2f}" if nat is not None else "") + f", max loss {pv.get('max_loss')}")
+    full = preview(sides["calls"] + sides["puts"], 1, day, "SPX")
+    ml = abs(float(full.get("max_loss") or 0)) or None
+    L.append(f"  condor x1: credit mid {-float(full.get('net_mid') or 0):.2f}, max loss {ml}"
+             + (f", the ${MAX_RISK:,.0f} rail fits {int(MAX_RISK // ml)} lot(s)" if ml else ""))
+    try:
+        intr = api("GET", "/market/intraday/SPX?minutes=240&interval=1")
+        c = [float(x) for x in (intr.get("c") or []) if x is not None]
+        if len(c) > 60:
+            L.append(f"  SPX today: {c[-1] - c[0]:+.1f} over the last {len(c)} min, {c[-1] - c[-61]:+.1f} over the last 60, "
+                     f"range {max(c) - min(c):.1f}")
+    except Exception:  # noqa: BLE001 - the menu stands without the tape
+        pass
+    legs_arg = " ".join(f"--leg {l['side']}:{l['cp']}:{l['strike']:.0f}"
+                        for l in (sides["puts"] if me else sides["calls"] + sides["puts"]))
+    L.append(f"  rule: {'the put side only (month-end)' if me else 'the full condor'}, held to the 15:55 flat: "
+             f"open --under SPX --style condor {legs_arg} --lots 1 --min-credit <the credit you judged> ...")
+    print("\n".join(L))
+    return 0
 
 
 def cmd_open(legs: list[dict], lots: int, thesis: str, exit_plan: str, wrong: str, stops: list[float] | None = None,
-             min_credit: float | None = None, style: str | None = None) -> int:
+             min_credit: float | None = None, style: str | None = None, under: str = UNDER) -> int:
     """``style`` "clone": the AI agent's own clone-strategy trade, decided on the fly: the rails hold, the stop-table
-    gate (built for premium held to expiry) does not apply."""
+    gate (built for premium held to expiry) does not apply. ``style`` "condor" with ``under`` "SPX": the agent's SPX
+    13:00 iron condor (or one of its sides), inside CONDOR_START-CONDOR_END."""
     t = now_et(); day = t.date(); st = load_state(day)
     why = []
     if style is not None and style not in STYLES:
         why.append(f"style must be one of {', '.join(STYLES)}")
+    if under not in ROOTS:
+        why.append(f"under must be one of {', '.join(sorted(ROOTS))}")
+    if under == "SPX" and style != "condor":
+        why.append("SPX on the desk is the 13:00 iron condor only (--style condor); the ratio pair has its own command")
+    if style == "condor":
+        if under != "SPX":
+            why.append("the condor style is the SPX 13:00 iron condor: --under SPX")
+        if not CONDOR_START <= hm(t) <= CONDOR_END:
+            why.append(f"the condor enters {CONDOR_START}-{CONDOR_END} only (the study's 13:00 entry)")
+        if len(legs) not in (2, 4):
+            why.append("a condor is 4 legs (or one side: 2)")
     if st.get("done"):
         why.append("done for the day (the stop was hit)")
     if not ENTRY_START <= hm(t) <= ENTRY_END:
@@ -988,19 +1090,20 @@ def cmd_open(legs: list[dict], lots: int, thesis: str, exit_plan: str, wrong: st
         why.append(f"{n} position(s) open, the limit is {MAX_POSITIONS}")
     if realised + marked <= DAY_STOP:
         why.append("the day stop is hit")
-    q = quote(UNDER)
-    if (reason := itm_short(legs, q.get("last") or q.get("close"), UNDER)) is not None:
+    under = under if under in ROOTS else UNDER
+    q = quote(under)
+    if (reason := itm_short(legs, q.get("last") or q.get("close"), under)) is not None:
         why.append(reason)
-    first = preview(legs, lots, day)
+    first = preview(legs, lots, day, under)
     time.sleep(SETTLE_S)
-    pv = preview(legs, lots, day)
+    pv = preview(legs, lots, day, under)
     ml = pv.get("max_loss")
     if not pv.get("ok") or pv.get("net_mid") is None:
         why.append("no two-sided quote for every leg")
     stale = sorted({str(l.get("source")) for l in pv.get("legs", []) if l.get("source") != "tastytrade"})
     if stale:                                  # a fallback feed (yfinance, polygon) can be minutes old: a fill there is fake
         why.append(f"legs priced from {', '.join(stale)}, not the live tastytrade stream")
-    why += quote_problems(first, pv, legs, UNDER)
+    why += quote_problems(first, pv, legs, under)
     if (reason := premium_refusal(pv, PREMIUM_ONLY)) is not None:
         why.append(reason)
     if ml is None:
@@ -1028,16 +1131,17 @@ def cmd_open(legs: list[dict], lots: int, thesis: str, exit_plan: str, wrong: st
             for r in gate["stops"])
             + (f"; settles past the short without the stop {gate['p_zone']:.0%}" if gate.get("p_zone") else "")
             + f"; expected {gate['ev']:+.0f}")
-    spot = pv.get("spot") or mk.get("spot")
+    spot = pv.get("spot") or (mk.get("spot") if under == UNDER else (q.get("last") or q.get("close")))
     desc = " ".join(f"{l['side']} {l['cp']}{l['strike']:.0f}" for l in legs)
     journal(day, f"## {hm(t)} OPEN {desc} x{lots}" + (f" [{style}]" if style else "")
-            + f"\n- NDX {spot}; net mid {pv['net_mid']} ({pv['debit_credit']}), "
+            + f"\n- {under} {spot}; net mid {pv['net_mid']} ({pv['debit_credit']}), "
               f"max loss {ml}, max profit {pv.get('max_profit')}\n- thesis: {thesis}\n- exit: {exit_plan}\n"
               f"- wrong if: {wrong}" + (f"\n- gate: {json.dumps(gate, default=str)}" if gate else ""))
-    res = api("POST", "/orders", order_body(legs, lots, day, thesis))
+    res = api("POST", "/orders", order_body(legs, lots, day, thesis, under))
     tg = res.get("trade_group_id")
     st["positions"][str(tg)] = {"legs": legs, "lots": lots, "opened": hm(t), "spot": spot, "fill": res.get("fill_price"),
-                                "cost": crossing_cost(legs, float(spot or 0)), "thesis": thesis, "style": style}
+                                "cost": crossing_cost(legs, float(spot or 0), under), "thesis": thesis, "style": style,
+                                "under": under}
     save_state(day, st)
     journal(day, f"- filled: status {res.get('status')}, net {res.get('fill_price')}, trade group {tg}")
     print(f"OPENED {desc} x{lots}: {res.get('status')} at {res.get('fill_price')} (trade group {tg}); max loss {ml}")
@@ -1381,7 +1485,10 @@ def main(argv=None) -> int:
                    help="the NDX level that proves the trade wrong (twice for a condor); the gate prices it")
     o.add_argument("--min-credit", type=float, default=None, help="refuse a fill under the credit judged")
     o.add_argument("--style", choices=STYLES, default=None,
-                   help="clone: the agent's own clone-strategy trade (the rails hold, the stop-table gate does not)")
+                   help="clone: the agent's own clone-strategy trade (the rails hold, the stop-table gate does not); "
+                        "condor: the SPX 13:00 iron condor (with --under SPX)")
+    o.add_argument("--under", choices=sorted(ROOTS), default=UNDER, help="SPX: the 13:00 iron condor only")
+    sub.add_parser("condor")                     # read-only: the SPX 13:00 iron condor menu, no order
     qt = sub.add_parser("quote")                 # read-only: candidate verticals priced and gated, no order
     qt.add_argument("--vertical", action="append", required=True, help="C|P:short:long, e.g. C:29425:29450")
     qt.add_argument("--stop", type=float, action="append", default=[], help="an NDX stop level (repeat)")
@@ -1412,7 +1519,9 @@ def main(argv=None) -> int:
         print(cmd_snapshot(a.news)); return 0
     if a.cmd == "open":
         return cmd_open([parse_leg(x) for x in a.leg], a.lots, a.thesis, a.exit_plan, a.wrong, a.stop, a.min_credit,
-                        a.style)
+                        a.style, a.under)
+    if a.cmd == "condor":
+        return cmd_condor()
     if a.cmd == "judge":
         return cmd_judge(a.setup, a.action, a.why)
     if a.cmd == "quote":
