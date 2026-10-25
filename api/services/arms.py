@@ -170,6 +170,11 @@ SPECS: dict[str, Spec] = {
     "equity_trend": Spec("allocator", _dt.time(15, 50), _dt.time(16, 0), ("",),
                          "the equity trend's month-end decision: SPYM on an $8,000 paper sleeve while SPY is above its "
                          "10-month average, sized to 10% volatility"),
+    # the gold trend (api/services/trend_alloc.py, slug gold_trend; 2026-10-25, the owner: "Yes, build and arm it"): a
+    # $5,000 sleeve in GLD while GLD is above its 6-month average, else cash, decided on the month's last trading day
+    "gold_trend": Spec("allocator", _dt.time(15, 50), _dt.time(16, 0), ("",),
+                       "the gold trend's month-end decision: GLD on a $5,000 paper sleeve while GLD is above its "
+                       "6-month average, else cash"),
     # the cash sleeve (api/services/cash_alloc.py): idle paper cash above a $9,000 reserve held in BOXX (T-bills), after
     # the 15:50 allocators have traded (2026-10-09)
     "cash_sleeve": Spec("allocator", _dt.time(15, 55), _dt.time(16, 0), ("",),

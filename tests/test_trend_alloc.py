@@ -152,3 +152,46 @@ def test_a_downtrend_never_buys_and_a_weekend_is_no_session():
     r = alloc.run(now=_at("2026-10-12"))
     assert r["status"] == "held" and r["detail"]["target_shares"] == 0 and not orders.placed
     assert alloc.run(now=_at("2026-10-10"))["status"] == "no_session"
+
+
+def test_the_same_allocator_serves_the_gold_sleeve_by_slug(monkeypatch):
+    """2026-10-25 (the owner: "Yes, build and arm it"): one TrendAllocator class serves gold_trend by slug; the
+    decisions, the ledger strategy, the order tags and the label are gold_trend's, the rule and sleeve its plugin's."""
+    import types
+    rng = np.random.default_rng(3)
+    idx = pd.bdate_range(end="2026-10-09", periods=320)
+    s = pd.Series(300.0 * np.exp(np.cumsum(rng.normal(0.0015, 0.006, size=len(idx)))), index=idx)     # an uptrend
+    placed = []
+
+    class GInputs:
+        def closes(self, symbols, until):
+            return pd.DataFrame({"GLD": s[s.index <= pd.Timestamp(until)]})
+
+        def prices_now(self, symbols):
+            return {k: float(s.iloc[-1]) for k in symbols}
+
+        def lots(self):
+            return []
+
+    class GOrders:
+        def place(self, body):
+            placed.append(body)
+            return {"status": "filled", "trade_group_id": "TG1", "fill_price": float(s.iloc[-1])}
+
+    class GoldRule:
+        signal = holding = "GLD"
+        sma_months, vol_days, target_vol, sleeve, band = 6, 21, 0.0, 5000.0, 0.05
+        display_name = "Gold Trend (GLD)"
+
+    monkeypatch.setattr(TA, "_module", lambda st: types.SimpleNamespace(       # the plugin's rule: the whole sleeve when in
+        decide=lambda c, p=None, sm=6, vd=21, tv=0.0, day=None: decide(c, p, sm, vd, 99.0, day),
+        target_shares=target_shares))
+    alloc = TA.TrendAllocator(MemoryEventStore(), GOrders(), inputs=GInputs(), strategy_factory=GoldRule, slug="gold_trend")
+    r = alloc.run(now=_at("2026-10-12"))
+    assert r["playbook"] == "gold_trend" and r["ledger_strategy"] == "gold_trend" and r["status"] == "rebalanced"
+    assert "GLD" in r["summary"] and "6-month average" in r["summary"]
+    b = placed[0]
+    assert b["underlying"] == "GLD" and b["strategy"] == "gold_trend" and b["label"] == "Gold Trend (GLD): GLD"
+    assert b["legs"][0]["quantity"] == target_shares(1.0, 5000.0, float(s.iloc[-1]))
+    assert b["client_order_id"].startswith("gold_trend-2026-10-12-buy")
+    assert alloc.status()["strategy"] == "gold_trend"
