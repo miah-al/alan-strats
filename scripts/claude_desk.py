@@ -1073,13 +1073,16 @@ def cmd_far() -> int:
     L = [f"FAR {hm(t)}: each short at least max(minimum, k x the live at-the-money straddle) from spot, held to the close, "
          f"no stop. A bull read sells the puts, a bear read the calls"]
     sides: dict = {}
+    live: dict = {}
     for under in ("SPX", "NDX"):
         spot, sd = live_straddle(under, day)
         if spot is None or sd is None:
             L.append(f"  {under}: no live straddle")
             continue
+        live[under] = (spot, sd)
         k = far_strikes(under, spot, sd)
-        L.append(f"  {under} {spot:,.2f} | straddle {sd:.2f}")
+        L.append(f"  {under} {spot:,.2f} | straddle {sd:.2f}" + (
+            "  (NDX: the ratio pair's leg only; NDX clone trades lose at NDXP's cost)" if under == "NDX" else ""))
         for cp, read in (("C", "bear read: sell calls"), ("P", "bull read: sell puts")):
             x = k[cp]
             legs = [{"side": "sell", "cp": cp, "strike": x["short"]}, {"side": "buy", "cp": cp, "strike": x["long"]}]
@@ -1096,8 +1099,21 @@ def cmd_far() -> int:
             mlb = abs(float(sides[b].get("max_loss") or 0))
             fit = min(MAX_LOTS, int((MAX_RISK - mla) // mlb)) if mlb and mla < MAX_RISK else 0
             L.append(f"  {name}: 1 NDX lot (max loss {mla:,.0f}) + {fit} SPX lot(s) fit the ${MAX_RISK:,.0f} rail")
-    L.append("  open --style clone --under SPX|NDX --leg sell:<side>:<short> --leg buy:<side>:<long> ... | "
-             "pair --style ratio --ndx ... --spx ...")
+    if "SPX" in live:                               # the baselines' best side read: fade the session average
+        try:
+            intr = api("GET", "/market/intraday/SPX?minutes=420&interval=1")
+            c = [float(x) for x in (intr.get("c") or []) if x is not None]
+            if c:
+                spot, sd = live["SPX"]
+                avg = sum(c) / len(c)
+                gap = (spot - avg) / sd
+                L.append(f"  SPX vs its session average {avg:,.2f}: {gap:+.2f} straddles -> "
+                         + ("0.5+ below it: the research's side switch favours the PUT spread (red days V-rally through "
+                            "far calls)" if gap <= -0.5 else "the CALL spread (the measured edge) is the default side"))
+        except Exception:  # noqa: BLE001 - the menu stands without the tape
+            pass
+    L.append("  open --style clone --under SPX --leg sell:<side>:<short> --leg buy:<side>:<long> ... | "
+             "pair --style ratio --ndx ... --spx ... (fade a stretch only; following one lost ~$160 a pair)")
     print("\n".join(L))
     return 0
 
@@ -1118,6 +1134,9 @@ def cmd_open(legs: list[dict], lots: int, thesis: str, exit_plan: str, wrong: st
                    "pair has its own command")
     if style == "clone" and len(legs) != 2:
         why.append("a clone trade is one far vertical (2 legs)")
+    if style == "clone" and under != "SPX":
+        why.append("the clone trades SPX only: NDX far premium lost at NDXP's ~2-point cost in 91-97% of 336 settings "
+                   "(the 2026-10-25 baselines); express an NDX read on SPX")
     if style == "condor":
         if under != "SPX":
             why.append("the condor style is the SPX 13:00 iron condor: --under SPX")
