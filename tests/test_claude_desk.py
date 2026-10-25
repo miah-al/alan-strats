@@ -381,36 +381,37 @@ def test_a_pair_stop_must_clear_the_ratio_noise(desk, capsys):
 # ── the AI agent's own strategies (2026-10-20, the owner: "i want the AI Agent to trade the clone strategy", "and also
 # the ratio strategy", "all decisions on the fly by AI"): the stop tables do not second-guess it, the rails still hold ──
 
-def test_a_clone_trade_sits_far_and_skips_the_stop_gate_but_not_the_rails(desk, capsys, monkeypatch):
-    """From 2026-10-26 the clone is agent-only (its robot is deleted): the agent's read picks the side and the short
-    must sit at least max(75, 1.2 x straddle) below NDX for puts; a near-the-money spread is refused."""
-    monkeypatch.setattr(D, "quote", lambda t: {"last": 30628.0})
-    monkeypatch.setattr(D, "live_straddle", lambda under, day: (30628.0, 60.0))          # put room max(75, 72) = 75
-    monkeypatch.setattr(D, "preview", lambda legs, lots, day, under="NDX": pv_for(legs, [40.0, 30.0]))
-    near = [{"side": "sell", "cp": "P", "strike": 30625.0}, {"side": "buy", "cp": "P", "strike": 30600.0}]
-    assert D.cmd_open(near, 1, "t", "e", "w", style="clone") == 2
+def test_a_clone_trade_sits_far_on_spx_and_skips_the_stop_gate_but_not_the_rails(desk, capsys, monkeypatch):
+    """From 2026-10-26 the clone is agent-only (its robot is deleted): the agent's read picks the side, the trade is
+    SPX only (NDX far premium lost at NDXP's cost in the 10/25 baselines) and the short must sit at least
+    max(20, 1.2 x straddle) below SPX for puts; a near-the-money spread is refused."""
+    monkeypatch.setattr(D, "quote", lambda t: {"last": 30628.0 if t == "NDX" else 6560.0})
+    monkeypatch.setattr(D, "live_straddle", lambda under, day: (30628.0, 60.0) if under == "NDX" else (6560.0, 29.0))
+    monkeypatch.setattr(D, "preview", lambda legs, lots, day, under="NDX": pv_for(legs, [4.0, 3.0]))
+    ndx = [{"side": "sell", "cp": "P", "strike": 30550.0}, {"side": "buy", "cp": "P", "strike": 30525.0}]
+    assert D.cmd_open(ndx, 1, "t", "e", "w", style="clone") == 2 and "SPX only" in capsys.readouterr().out
+    near = [{"side": "sell", "cp": "P", "strike": 6550.0}, {"side": "buy", "cp": "P", "strike": 6530.0}]
+    assert D.cmd_open(near, 1, "t", "e", "w", style="clone", under="SPX") == 2
     out = capsys.readouterr().out
-    assert "inside the far room 75" in out and "nearest allowed strike is 30550" in out
-    far = [{"side": "sell", "cp": "P", "strike": 30550.0}, {"side": "buy", "cp": "P", "strike": 30525.0}]
-    assert D.cmd_open(far, 1, "t", "e", "w") == 2 and "needs --stop" in capsys.readouterr().out    # NDX premium: the gate
-    assert D.cmd_open(far, 1, "bull read: news + reclaim of VWAP", "held to the close", "a lower low",
-                      style="clone") == 0
+    assert "inside the far room 35" in out and "nearest allowed strike is 6525" in out
+    far = [{"side": "sell", "cp": "P", "strike": 6525.0}, {"side": "buy", "cp": "P", "strike": 6505.0}]
+    assert D.cmd_open(far, 1, "bull read: SPX holding its session average", "held to the close", "a lower low",
+                      style="clone", under="SPX") == 0
     assert "STYLE clone" in capsys.readouterr().out
-    assert [b["underlying"] for m, p, b in desk["sent"] if p == "/orders"] == ["NDX"]
+    assert [b["underlying"] for m, p, b in desk["sent"] if p == "/orders"] == ["SPX"]
     st = D.load_state(pd.Timestamp("2026-10-12").date())
-    assert [v["style"] for v in st["positions"].values()] == ["clone"]
-    # the rails still hold: an in-the-money short, a debit, a max loss over the rail, a bad style, a condor's 4 legs
-    itm = [{"side": "sell", "cp": "P", "strike": 30650.0}, {"side": "buy", "cp": "P", "strike": 30625.0}]
-    assert D.cmd_open(itm, 1, "t", "e", "w", style="clone") == 2 and "in the money" in capsys.readouterr().out
-    monkeypatch.setattr(D, "preview", lambda legs, lots, day, under="NDX": {**pv_for(legs, [40.0, 30.0]),
+    assert [(v["style"], v["under"]) for v in st["positions"].values()] == [("clone", "SPX")]
+    # the rails still hold: a debit, a max loss over the rail, a bad style, a condor's 4 legs
+    monkeypatch.setattr(D, "preview", lambda legs, lots, day, under="NDX": {**pv_for(legs, [4.0, 3.0]),
                                                                             "debit_credit": "debit"})
     monkeypatch.setattr(D, "day_pnl", lambda day: (0.0, 0.0, []))
-    assert D.cmd_open(far, 1, "t", "e", "w", style="clone") == 2 and "premium only" in capsys.readouterr().out
-    monkeypatch.setattr(D, "preview", lambda legs, lots, day, under="NDX": {**pv_for(legs, [40.0, 30.0]),
+    assert D.cmd_open(far, 1, "t", "e", "w", style="clone", under="SPX") == 2 and "premium only" in capsys.readouterr().out
+    monkeypatch.setattr(D, "preview", lambda legs, lots, day, under="NDX": {**pv_for(legs, [4.0, 3.0]),
                                                                             "max_loss": -3000.0})
-    assert D.cmd_open(far, 1, "t", "e", "w", style="clone") == 2 and "over $2,500" in capsys.readouterr().out
-    assert D.cmd_open(far, 1, "t", "e", "w", style="robot") == 2 and "style must be" in capsys.readouterr().out
-    assert D.cmd_open(far + far, 1, "t", "e", "w", style="clone") == 2 and "one far vertical" in capsys.readouterr().out
+    assert D.cmd_open(far, 1, "t", "e", "w", style="clone", under="SPX") == 2 and "over $2,500" in capsys.readouterr().out
+    assert D.cmd_open(far, 1, "t", "e", "w", style="robot", under="SPX") == 2 and "style must be" in capsys.readouterr().out
+    assert D.cmd_open(far + far, 1, "t", "e", "w", style="clone", under="SPX") == 2
+    assert "one far vertical" in capsys.readouterr().out
     assert len([p for m, p, b in desk["sent"] if p == "/orders"]) == 1
 
 
@@ -592,8 +593,11 @@ def test_the_far_menu_prices_both_indexes_and_the_ratio_pairs(monkeypatch, capsy
     def preview(legs, lots, d, under="NDX"):
         return {"ok": True, "net_mid": -1.5, "max_loss": -850.0 if under == "SPX" else -2200.0, "legs": []}
     monkeypatch.setattr(D, "preview", preview)
+    monkeypatch.setattr(D, "api", lambda *a, **k: {"c": [6600.0] * 200})          # SPX's session average 6,600
     assert D.cmd_far() == 0
     out = capsys.readouterr().out
+    assert "SPX vs its session average 6,600.00: -1.38 straddles" in out and "favours the PUT spread" in out
+    assert "NDX clone trades lose at NDXP's cost" in out
     assert "SPX 6,560.00 | straddle 29.00" in out and "sell C6585 / buy C6595" in out and "sell P6525 / buy P6505" in out
     assert "NDX 24,000.00 | straddle 120.00" in out and "sell C24100 / buy C24125" in out
     assert "sell P23850 / buy P23825" in out
