@@ -92,8 +92,19 @@ def test_option_symbols():
     assert PC.option_streamer_symbol("SPXW", DAY, "P", 7812.5) == ".SPXW261007P7812.5"
 
 
+def _need_pair_strategy():
+    """The combo chart prices a PAIR strategy's structure; the one that used it, ndx_spx_ratio, was deleted on
+    2026-10-25 (the desk's AI agent trades the ratio itself), so these tests skip until a pair strategy is installed."""
+    try:
+        from alan_trader.strategy_api import registry as R
+        R.get_strategy("ndx_spx_ratio")
+    except Exception as exc:  # noqa: BLE001
+        pytest.skip(f"no pair strategy installed: {exc}")
+
+
 def test_combo_is_the_structure_as_one_price(tmp_path, monkeypatch):
     """The owner's 10/07 combo from injected candles: 1 x 31120/31220C + 4 x 7825/7800P = 30 + 4 x 20 = 110 at 14:44."""
+    _need_pair_strategy()
     _state(tmp_path, monkeypatch, [])
     t = [dt.datetime(2026, 10, 7, 14, 44), dt.datetime(2026, 10, 7, 15, 1)]
     candles = {".NDXP261007C31120": [(t[0], 80.0), (t[1], 70.0)], ".NDXP261007C31220": [(t[0], 50.0), (t[1], 42.0)],
@@ -106,6 +117,7 @@ def test_combo_is_the_structure_as_one_price(tmp_path, monkeypatch):
 
 
 def test_combo_defaults_to_the_days_last_trade_and_marks_it(tmp_path, monkeypatch):
+    _need_pair_strategy()
     _state(tmp_path, monkeypatch, [FILL_OPEN, FILL_CLOSE])
     seen = {}
 
@@ -119,6 +131,7 @@ def test_combo_defaults_to_the_days_last_trade_and_marks_it(tmp_path, monkeypatc
 
 
 def test_combo_says_which_leg_has_not_printed(tmp_path, monkeypatch):
+    _need_pair_strategy()
     _state(tmp_path, monkeypatch, [])
     with pytest.raises(LookupError, match="SPXW261007P7800"):
         PC.combo("ndx_spx_ratio", DAY, [31120.0, 7825.0],
@@ -140,11 +153,12 @@ def test_the_routes(tmp_path, monkeypatch):
         j = r.json()
         assert len(j["ratio"]) == 30 and j["params"] == {"ema": 15, "sd": 60, "z": 3.0} and len(j["trades"]) == 2
         assert c.get("/api/market/ratio", params={"a": "NDX", "b": "NDX"}).status_code == 422
+        assert c.get("/api/runner/nope_nope/combo-chart").status_code == 404
+        _need_pair_strategy()
         r = c.get("/api/runner/ndx_spx_ratio/combo-chart", params={"day": DAY.isoformat()})
         assert r.status_code == 200, r.text
         assert r.json()["strikes"] == [31090.0, 7820.0]
         assert c.get("/api/runner/ndx_spx_ratio/combo-chart", params={"day": "x"}).status_code == 422
-        assert c.get("/api/runner/nope_nope/combo-chart").status_code == 404
 
 
 def test_a_huge_plain_extra_is_dropped_from_the_job_result():

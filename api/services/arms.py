@@ -29,8 +29,8 @@ holidays skipped) and records what happened in the arm's ``last_result``:
                     at 13:00 and holds it to the settlement, so one quote a minute is enough.
   spx_0dte_event13  the same at 12:50 ET for the same trade on FOMC/CPI days only (its gate blocks the rest).
   ndx_0dte_call14   the same at 13:50 ET for its NDX twin (one NDXP call spread at 14:00), armed in shadow.
-  ndx_spx_ratio     the same launch at 09:25 ET with a 5 s poll; the runner script hands a pair strategy (two indexes) to
-                    paper/pair_runner.py, which streams NDX, SPX and both chains and is flat by 15:45.
+  (a pair strategy, two indexes at once, is handed by the runner script to paper/pair_runner.py; the one that used it,
+  ndx_spx_ratio, was deleted with the clone on 2026-10-25: the desk's AI agent trades both strategies itself.)
 
 Rules: if a runner for the strategy is already running anywhere (the service's own or external: another
 process, the scheduled task, a fresh heartbeat), the day is "skipped: already running (...)". A service that
@@ -102,13 +102,6 @@ SPECS: dict[str, Spec] = {
     "ndx_0dte_calm_theta": Spec("script", _dt.time(9, 50), _dt.time(15, 30), ("",),
                                 "EXPERIMENTAL: Friend's fade on calm days only (realised/VXN <= 0.45), 25-wide, settle",
                                 poll=60),
-    # the friend's decisions learned from his real orders (2026-10-05, the owner: "replicate friend"); his window is
-    # 11:00-15:55, so it starts at 10:45 (the 30-minute lookback comes from the candle backfill)
-    # from 2026-10-06 (the owner: "Fix the execution"): its quotes stream (-Stream) and it looks every 2 s, so its resting orders
-    # fill the moment the price touches them, as the friend's limits do; REST only as the stream's fallback
-    "ndx_0dte_friend_real": Spec("script", _dt.time(10, 45), _dt.time(15, 30), ("",),
-                                 "EXPERIMENTAL: the friend's decisions, his resting orders on streamed quotes, fills at the mid",
-                                 poll=2, stream=True),
     "gex_positioning": Spec("allocator", _dt.time(15, 50), _dt.time(16, 0), ("vix", "gex"),
                             "the service's GEX paper allocator on the whole paper account"),
     "ndx_gamma_walls": Spec("runner", _dt.time(9, 25), _dt.time(15, 0), ("",),
@@ -133,13 +126,6 @@ SPECS: dict[str, Spec] = {
     "ndx_0dte_call14": Spec("runner", _dt.time(13, 50), _dt.time(14, 2), ("",),
                             "SHADOW: a 25-wide NDXP call spread ~50 above NDX sold at 14:00, held to settlement",
                             poll=60),
-    # the owner's NDX/SPX ratio structure, faded when the ratio stretches (2026-10-07: "use AI to capture the reversion ...
-    # we need this armed for tomorrow"): the pair runner (paper/pair_runner.py) streams both indexes and both chains, so a
-    # 5 s poll costs no REST budget. Its first decision is the 10:00 bar on an hour of history from 09:30 (a late start
-    # backfills it from the candle feed); entries stop at 15:25 and it is flat by 15:45, so a start after 15:20 is pointless
-    "ndx_spx_ratio": Spec("runner", _dt.time(9, 25), _dt.time(15, 20), ("",),
-                          "EXPERIMENTAL: fade NDX/SPX stretches with 1 NDXP 100-wide call spread vs 4 SPXW 25-wide put "
-                          "spreads, at the mid, 15-minute holds", poll=5),
     # the rally fade (the resting-order trial, once ndx_0dte_maker; branch maker-runner 8741f3a): entries 11:00-15:30,
     # its 30-minute lookback backfilled from the broker's candle feed, so it starts at 10:25: polling from the open
     # would spend the shared broker budget on an hour it cannot trade

@@ -27,13 +27,15 @@ Commands:
                                     Under premium_only both are credit spreads: the ratio up (NDX to catch up) is an
                                     NDX put credit spread with an SPX call credit spread, the ratio down the mirror. Their
                                     max losses together must fit the per-position rail; close / guard treat them as one
-  open|pair ... --style clone|ratio the AI agent's own strategies (2026-10-20, the owner: "i want the AI Agent to trade
-                                    the clone strategy", "and also the ratio strategy", "all decisions on the fly by
-                                    AI", "the AI Agents are super experts"): the agent decides on the fly from the
-                                    news, the levels, the tape and the clone / ratio robots' calls (signals that book
-                                    nothing), and the stop-table gate, built for premium held to expiry, does not
-                                    second-guess it. Every hard rail still holds (lots, risk, positions, trades a day,
-                                    hours, the day stop, premium only, no in-the-money short, live two-sided quotes)
+  open|pair ... --style clone|ratio the AI agent's own strategies, agent-only from 2026-10-26 (the owner: "Rebuild as
+                                    agent-only", "Delete the robots", "We need to make money"): the agent's own read
+                                    picks the side (clone: a Friend-style directional read; ratio: the NDX/SPX ratio
+                                    line), and every short sits FAR, at least max(minimum, k x the index's live
+                                    straddle) from spot, held to the close (the `far` menu prints the strikes; open and
+                                    pair refuse nearer shorts). The stop-table gate does not apply. Every hard rail
+                                    still holds (lots, risk, positions, trades a day, hours, the day stop, premium only,
+                                    no in-the-money short, live two-sided quotes)
+  far                               read-only: the far premium menu for clone and ratio trades on SPX and NDX
   condor                            read-only: the SPX 13:00 iron condor menu (2026-10-25, the owner: "Need a AI
                                     assisted iron condor strategy", "Its goes to the desk", "An agent runs it"): the
                                     live 13:00 straddle, the call side by the SPX 13:00 v2 rule and the far put side,
@@ -415,49 +417,60 @@ def ratio_menu(ndx: float, spx: float) -> list[tuple[str, list[tuple[str, str, f
             ("ratio down", [("sell", "C", kc), ("buy", "C", kc + 25.0)], [("sell", "P", sp), ("buy", "P", sp - 5.0)])]
 
 
-#: the Friend Clone (ndx_0dte_friend_real) belongs to this desk from 2026-10-13 (the owner: "take over friend clone
-#: as well ... it belongs to your desk now"). It stays a SHADOW runner (books nothing; its own decisions lost even at
-#: the mid in three years of tests) and its calls are an input here: a "bull" call (a dip fade) is expressed, when my
-#: own read agrees, as an out-of-the-money put credit spread below support; a "bear" call as a call credit spread
-#: above resistance.
-CLONE_LOGS = Path(__file__).resolve().parents[1] / "paper_state" / "runner_logs" / "arm"
-CLONE_EVENT = re.compile(r"ALERT (\d\d:\d\d) (open|add|close) (bull|bear) ([\d.]+)/([\d.]+) @ ([\d.]+)(?: \(([^)]*)\))?")
+#: The agent's clone and ratio strategies, rebuilt agent-only on 2026-10-25 (the owner: "Rebuild as agent-only",
+#: "Delete the robots", "Find edge", "We need to make money"). Their robots are gone: the clone's decisions lost at
+#: fair prices in three years of tests (Friend's money was his fills) and no intraday ratio rule beat its costs. What
+#: the SPX 13:00 studies measured is premium held to the close FAR from spot: every short at least max(minimum, k x the
+#: index's live at-the-money straddle, the market's own afternoon move), with no stop (every stop tested lost money).
+#: The agent's read only picks the side: a bull read sells the far put spread, a bear read the far call spread.
+FAR = {"SPX": {"C": (10.0, 0.8, 10.0), "P": (20.0, 1.2, 20.0)},       # (minimum room, x straddle, width)
+       "NDX": {"C": (40.0, 0.8, 25.0), "P": (75.0, 1.2, 25.0)}}     # 25 wide: a 50-wide NDX loses ~$4k a lot
+GRID = {"SPX": 5.0, "NDX": 25.0}
+FAR_TOL = 0.5                                     # x the strike grid: the index moves between the menu and the order
 
 
-def clone_events(lines) -> list[dict]:
-    """The clone runner's trade events from its log lines (``ALERT hh:mm open|add|close bull|bear lo/hi @ px``)."""
-    out = []
-    for ln in lines:
-        m = CLONE_EVENT.search(ln)
-        if m:
-            out.append({"at": m.group(1), "action": m.group(2), "side": m.group(3), "k_lo": float(m.group(4)),
-                        "k_hi": float(m.group(5)), "px": float(m.group(6)), "why": (m.group(7) or "")[:60]})
+def far_strikes(under: str, spot: float, straddle: float) -> dict:
+    """The far call and put verticals on ``under``: each short at the first grid strike at least max(minimum, k x
+    straddle) from ``spot``."""
+    g, out = GRID[under], {}
+    for cp, (m, k, w) in FAR[under].items():
+        room = max(m, k * straddle)
+        short = math.ceil((spot + room) / g) * g if cp == "C" else math.floor((spot - room) / g) * g
+        out[cp] = {"room": room, "short": short, "long": short + w if cp == "C" else short - w, "width": w}
     return out
 
 
-def clone_line(day: date, now_hm: str, logs: Path | None = None) -> str:
-    """The clone's latest call today, for the snapshot: what it did, how fresh, and how the desk would express it."""
-    folder = logs or CLONE_LOGS
-    files = sorted(folder.glob(f"ndx_0dte_friend_real_{day.isoformat()}_*.log")) if folder.exists() else []
-    if not files:
-        return "clone (shadow): not running today"
-    try:
-        ev = clone_events(files[-1].read_text(encoding="utf-8", errors="replace").splitlines())
-    except OSError:
-        return "clone (shadow): log unreadable"
-    if not ev:
-        return "clone (shadow): no call yet today"
-    e = ev[-1]
-    opens = sum(1 for x in ev if x["action"] == "open")
-    h, m = map(int, e["at"].split(":")); nh, nm = map(int, now_hm.split(":"))
-    age = (nh * 60 + nm) - (h * 60 + m)
-    fresh = "FRESH" if 0 <= age <= 10 else f"{age} min ago"
-    hint = ""
-    if e["action"] in ("open", "add"):
-        hint = (" -> desk: if my read agrees, sell an OTM put credit spread below support" if e["side"] == "bull"
-                else " -> desk: if my read agrees, sell an OTM call credit spread above resistance")
-    return (f"clone (shadow): {e['at']} {e['action']} {e['side']} {e['k_lo']:.0f}/{e['k_hi']:.0f} @ {e['px']:.2f} "
-            f"[{fresh}; {opens} calls today]{hint}")
+def live_straddle(under: str, day: date) -> tuple[float | None, float | None]:
+    """(spot, the at-the-money straddle's mid) on ``under`` from the live quotes; (spot, None) without them."""
+    q = quote(under)
+    spot = q.get("last") or q.get("close")
+    if not spot:
+        return None, None
+    spot = float(spot)
+    katm = round(spot / GRID[under]) * GRID[under]
+    sv = preview([{"side": "buy", "cp": "C", "strike": katm}, {"side": "buy", "cp": "P", "strike": katm}], 1, day, under)
+    mids = [l.get("mid") for l in sv.get("legs") or []]
+    if len(mids) != 2 or any(m is None for m in mids):
+        return spot, None
+    return spot, float(mids[0]) + float(mids[1])
+
+
+def far_problem(legs: list[dict], under: str, spot: float | None, straddle: float | None) -> str | None:
+    """Why ``legs`` break the far rule (a short nearer to spot than max(minimum, k x straddle)), else None."""
+    if spot is None or straddle is None:
+        return f"no live {under} straddle to scale the strikes by: retry"
+    g = GRID[under]
+    for l in legs:
+        if l["side"] != "sell":
+            continue
+        m, k, _ = FAR[under][l["cp"]]
+        room = max(m, k * straddle)
+        dist = (l["strike"] - spot) if l["cp"] == "C" else (spot - l["strike"])
+        if dist < room - FAR_TOL * g:
+            need = math.ceil((spot + room) / g) * g if l["cp"] == "C" else math.floor((spot - room) / g) * g
+            return (f"{under} short {l['cp']}{l['strike']:.0f} is {dist:.0f} from spot, inside the far room {room:.0f} "
+                    f"(max({m:g}, {k:g} x straddle {straddle:.1f})): the nearest allowed strike is {need:.0f}")
+    return None
 
 
 #: how far a pair's short strike may sit in the money (index points) before ``pair`` refuses it
@@ -895,7 +908,8 @@ def cmd_snapshot(force_news: bool = False) -> str:
     L.append(f"  VIX {m.get('vix')} ({(m.get('vix_chg') or 0):+.2f})  VXN {m.get('vxn')} ({(m.get('vxn_chg') or 0):+.2f})")
     rs = ratio_now()
     L.append("  " + ratio_line(rs))
-    L.append("  " + clone_line(day, hm(t)))
+    L.append("  agent strategies: clone (your read -> the far spread on the other side), ratio (the ratio line -> a far "
+             "pair), both held to the close: run `far`; the SPX iron condor at 13:00: run `condor`")
     lv = levels(spot)
     if lv:
         L.append("  levels: " + " | ".join(lv))
@@ -1053,6 +1067,41 @@ def cmd_condor() -> int:
     return 0
 
 
+def cmd_far() -> int:
+    """Read-only: the far premium menu for the agent's clone and ratio trades on SPX and NDX. No order goes anywhere."""
+    t = now_et(); day = t.date()
+    L = [f"FAR {hm(t)}: each short at least max(minimum, k x the live at-the-money straddle) from spot, held to the close, "
+         f"no stop. A bull read sells the puts, a bear read the calls"]
+    sides: dict = {}
+    for under in ("SPX", "NDX"):
+        spot, sd = live_straddle(under, day)
+        if spot is None or sd is None:
+            L.append(f"  {under}: no live straddle")
+            continue
+        k = far_strikes(under, spot, sd)
+        L.append(f"  {under} {spot:,.2f} | straddle {sd:.2f}")
+        for cp, read in (("C", "bear read: sell calls"), ("P", "bull read: sell puts")):
+            x = k[cp]
+            legs = [{"side": "sell", "cp": cp, "strike": x["short"]}, {"side": "buy", "cp": cp, "strike": x["long"]}]
+            pv = preview(legs, 1, day, under)
+            nat = natural_credit(legs, pv, day, under)
+            sides[(under, cp)] = pv
+            L.append(f"    {read}: sell {cp}{x['short']:.0f} / buy {cp}{x['long']:.0f} (room {x['room']:.0f}): credit mid "
+                     f"{-float(pv.get('net_mid') or 0):.2f}" + (f", natural {nat:.2f}" if nat is not None else "")
+                     + f", max loss {pv.get('max_loss')}")
+    for name, a, b in (("ratio up (NDX puts + SPX calls)", ("NDX", "P"), ("SPX", "C")),
+                       ("ratio down (NDX calls + SPX puts)", ("NDX", "C"), ("SPX", "P"))):
+        if a in sides and b in sides:
+            mla = abs(float(sides[a].get("max_loss") or 0))
+            mlb = abs(float(sides[b].get("max_loss") or 0))
+            fit = min(MAX_LOTS, int((MAX_RISK - mla) // mlb)) if mlb and mla < MAX_RISK else 0
+            L.append(f"  {name}: 1 NDX lot (max loss {mla:,.0f}) + {fit} SPX lot(s) fit the ${MAX_RISK:,.0f} rail")
+    L.append("  open --style clone --under SPX|NDX --leg sell:<side>:<short> --leg buy:<side>:<long> ... | "
+             "pair --style ratio --ndx ... --spx ...")
+    print("\n".join(L))
+    return 0
+
+
 def cmd_open(legs: list[dict], lots: int, thesis: str, exit_plan: str, wrong: str, stops: list[float] | None = None,
              min_credit: float | None = None, style: str | None = None, under: str = UNDER) -> int:
     """``style`` "clone": the AI agent's own clone-strategy trade, decided on the fly: the rails hold, the stop-table
@@ -1064,8 +1113,11 @@ def cmd_open(legs: list[dict], lots: int, thesis: str, exit_plan: str, wrong: st
         why.append(f"style must be one of {', '.join(STYLES)}")
     if under not in ROOTS:
         why.append(f"under must be one of {', '.join(sorted(ROOTS))}")
-    if under == "SPX" and style != "condor":
-        why.append("SPX on the desk is the 13:00 iron condor only (--style condor); the ratio pair has its own command")
+    if under == "SPX" and style not in ("condor", "clone"):
+        why.append("SPX on the desk is the clone (--style clone) or the 13:00 iron condor (--style condor); the ratio "
+                   "pair has its own command")
+    if style == "clone" and len(legs) != 2:
+        why.append("a clone trade is one far vertical (2 legs)")
     if style == "condor":
         if under != "SPX":
             why.append("the condor style is the SPX 13:00 iron condor: --under SPX")
@@ -1094,6 +1146,10 @@ def cmd_open(legs: list[dict], lots: int, thesis: str, exit_plan: str, wrong: st
     q = quote(under)
     if (reason := itm_short(legs, q.get("last") or q.get("close"), under)) is not None:
         why.append(reason)
+    if style in ("clone", "condor"):                  # the agent's premium sits far: max(minimum, k x straddle) away
+        fspot, fsd = live_straddle(under, day)
+        if (reason := far_problem(legs, under, fspot, fsd)) is not None:
+            why.append(reason)
     first = preview(legs, lots, day, under)
     time.sleep(SETTLE_S)
     pv = preview(legs, lots, day, under)
@@ -1152,10 +1208,10 @@ def cmd_pair(ndx_legs: list[dict], ndx_lots: int, spx_legs: list[dict], spx_lots
              wrong: str, stop_bp: float | None = None, min_credit_usd: float | None = None,
              style: str | None = None) -> int:
     """The NDX/SPX ratio trade as ONE position: an NDXP spread and an SPXW spread, checked together against the rails
-    (their max losses summed against the per-position rail, one trade, the book must be flat) and opened together. If
-    the second order does not fill, the first is closed at once: the desk never holds half a pair. ``style`` "ratio":
-    the AI agent's own ratio-strategy trade, decided on the fly: the rails hold, the ratio stop table does not refuse
-    it and ``stop_bp`` is the agent's own (optional) mark."""
+    (their max losses summed against the per-position rail, one trade, one position) and opened together. If the
+    second order does not fill, the first is closed at once: the desk never holds half a pair. ``style`` "ratio": the
+    AI agent's own ratio-strategy trade (agent-only from 2026-10-26): both legs must sit far (``far_problem``), held to
+    the close; the rails hold, the ratio stop table does not refuse it and ``stop_bp`` is the agent's own mark."""
     t = now_et(); day = t.date(); st = load_state(day)
     why = []
     if style is not None and style not in STYLES:
@@ -1182,6 +1238,10 @@ def cmd_pair(ndx_legs: list[dict], ndx_lots: int, spx_legs: list[dict], spx_lots
         q = quote(under)
         if (reason := itm_short(legs, q.get("last") or q.get("close"), under)) is not None:
             why.append(reason)
+        if style == "ratio":
+            fspot, fsd = live_straddle(under, day)
+            if (reason := far_problem(legs, under, fspot, fsd)) is not None:
+                why.append(reason)
     first = {"NDX": preview(ndx_legs, ndx_lots, day, "NDX"), "SPX": preview(spx_legs, spx_lots, day, "SPX")}
     time.sleep(SETTLE_S)
     pvs = {"NDX": preview(ndx_legs, ndx_lots, day, "NDX"), "SPX": preview(spx_legs, spx_lots, day, "SPX")}
@@ -1489,6 +1549,7 @@ def main(argv=None) -> int:
                         "condor: the SPX 13:00 iron condor (with --under SPX)")
     o.add_argument("--under", choices=sorted(ROOTS), default=UNDER, help="SPX: the 13:00 iron condor only")
     sub.add_parser("condor")                     # read-only: the SPX 13:00 iron condor menu, no order
+    sub.add_parser("far")                        # read-only: the far premium menu for clone and ratio trades
     qt = sub.add_parser("quote")                 # read-only: candidate verticals priced and gated, no order
     qt.add_argument("--vertical", action="append", required=True, help="C|P:short:long, e.g. C:29425:29450")
     qt.add_argument("--stop", type=float, action="append", default=[], help="an NDX stop level (repeat)")
@@ -1522,6 +1583,8 @@ def main(argv=None) -> int:
                         a.style, a.under)
     if a.cmd == "condor":
         return cmd_condor()
+    if a.cmd == "far":
+        return cmd_far()
     if a.cmd == "judge":
         return cmd_judge(a.setup, a.action, a.why)
     if a.cmd == "quote":

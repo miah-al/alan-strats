@@ -207,11 +207,9 @@ def test_without_stream_nothing_changes(sdk):
     assert sdk["fetches"] == 2
 
 
-def test_the_clone_arms_with_a_2_second_poll_on_the_stream_and_no_one_else_streams():
+def test_no_armed_script_streams_since_the_clone_was_deleted():
+    """The clone (deleted 2026-10-25) was the one script that streamed its quotes; no spec asks for the stream now."""
     from pathlib import Path
     from api.services import arms as A
-    cmd = A.task_command("ndx_0dte_friend_real", Path("D:/checkout"))
-    assert "-Strategy ndx_0dte_friend_real -Poll 2 -Stream" in cmd
     for slug, spec in A.SPECS.items():
-        if slug != "ndx_0dte_friend_real":
-            assert not spec.stream and "-Stream" not in (A.task_command(slug, Path("D:/c")) if spec.kind == "script" else "")
+        assert not spec.stream and "-Stream" not in (A.task_command(slug, Path("D:/c")) if spec.kind == "script" else "")
