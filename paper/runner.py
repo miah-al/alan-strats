@@ -203,6 +203,15 @@ class PaperSession:
 
     # ── multi-leg structures and the synthetic hedge (new code paths; the vertical's are untouched) ──
     @staticmethod
+    def _book_open(session) -> bool:
+        """A synthetic futures book with units on (a strategy whose trade is the book itself, nq_vol_breakout, keeps
+        ``positions`` empty): the supervisor's close and the forced settlement must see it."""
+        try:
+            return abs(float(getattr(getattr(session, "hedge", None), "units", 0.0) or 0.0)) > 1e-9
+        except (TypeError, ValueError):
+            return False
+
+    @staticmethod
     def _symbols_for(prov, kind: str, k_low: float, k_high: float) -> list:
         """Every leg symbol of a structure or a vertical (the provider's own naming)."""
         if is_structure(kind) and hasattr(prov, "structure_symbols"):
@@ -443,7 +452,8 @@ class PaperSession:
         if self.halted:
             return False
         try:
-            session.on_bar(minute, bar.close, quote_fn, is_last=is_last, high=bar.high, low=bar.low)
+            extra = {"open": bar.open} if getattr(session, "wants_open", False) else {}   # an engine that sets levels from it
+            session.on_bar(minute, bar.close, quote_fn, is_last=is_last, high=bar.high, low=bar.low, **extra)
         except Exception as exc:
             self.halted = f"engine error at {bar.ts:%H:%M}: {exc}"
             logger.exception("engine error; halting the session")
@@ -512,7 +522,7 @@ class PaperSession:
             self._alert(msg)
         if close_new:
             self._sup_close_seen = c.close_at
-            if not session.positions and getattr(session, "pending", None) is None:
+            if not session.positions and getattr(session, "pending", None) is None and not self._book_open(session):
                 logger.info("%s supervisor: close requested, nothing open", f"{now:%H:%M:%S}")
                 return True
             S = float(spot) if spot is not None else (float(session.closes[-1]) if session.closes else 0.0)
@@ -672,10 +682,11 @@ class PaperSession:
     def _force_settlement(self, session, day: date, quote_fn, expiry: date, symbols_fn, why: str) -> None:
         """The session is over but positions are still open (a missed final bar, a halt): settle
         them now at the last known spot so the ledger and the state never carry a unit overnight."""
-        if not session.positions:
+        if not session.positions and not self._book_open(session):
             return
         S = float(session.closes[-1]) if session.closes else 0.0
-        logger.warning("%d position(s) still open at session end (%s); settling at the last spot %.2f", len(session.positions), why, S)
+        logger.warning("%d position(s)%s still open at session end (%s); settling at the last spot %.2f", len(session.positions),
+                       " and a synthetic book" if self._book_open(session) else "", why, S)
         try:
             session.on_bar(SESSION_CLOSE_MIN, S, quote_fn, is_last=True)
         except Exception as exc:
@@ -852,12 +863,19 @@ class PaperSession:
                             start_now.strftime("%H:%M"), len(back), back[0].ts.strftime("%H:%M"), len(session.closes))
                 session.closes.clear()
                 self._day_bars.clear()
+                rows = []
                 for i, b in enumerate(back):
                     m = _minute_of(b.ts) + 1
                     self._day_bars.append(b)
                     self._log_bar(day, b, "broker candles", fresh=(i == 0))
-                    session.closes.append(float(b.close))        # history only: no decisions on backfilled bars
-                    session.last_minute = m
+                    rows.append((m, float(b.open), float(b.high), float(b.low), float(b.close)))
+                on_backfill = getattr(session, "on_backfill", None)
+                if on_backfill is not None:                  # an engine that wants the whole bars (its open, its range)
+                    on_backfill(rows)
+                else:
+                    for m, _o, _h, _l, c in rows:
+                        session.closes.append(c)             # history only: no decisions on backfilled bars
+                        session.last_minute = m
 
         def live_quote(kind, k_low, k_high):
             nonlocal quotes

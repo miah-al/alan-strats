@@ -29,6 +29,8 @@ holidays skipped) and records what happened in the arm's ``last_result``:
                     at 13:00 and holds it to the settlement, so one quote a minute is enough.
   spx_0dte_event13  the same at 12:50 ET for the same trade on FOMC/CPI days only (its gate blocks the rest).
   ndx_0dte_call14   the same at 13:50 ET for its NDX twin (one NDXP call spread at 14:00), armed in shadow.
+  nq_vol_breakout   the same at 09:25 ET: Williams' volatility breakout as one SYNTHETIC micro Nasdaq future (no options),
+                    flat at 15:49.
   (a pair strategy, two indexes at once, is handed by the runner script to paper/pair_runner.py; the one that used it,
   ndx_spx_ratio, was deleted with the clone on 2026-10-25: the desk's AI agent trades both strategies itself.)
 
@@ -126,6 +128,14 @@ SPECS: dict[str, Spec] = {
     "ndx_0dte_call14": Spec("runner", _dt.time(13, 50), _dt.time(14, 2), ("",),
                             "SHADOW: a 25-wide NDXP call spread ~50 above NDX sold at 14:00, held to settlement",
                             poll=60),
+    # Larry Williams' volatility breakout on Nasdaq futures (2026-10-26, the owner: "Arm the winner"): one SYNTHETIC micro
+    # future (MNQ, priced at the NDX level, never a real order) at today's open +/- half the prior session's range, the
+    # other level its stop, flat at 15:49, before the 15:50 sleeves and the 15:55 cash sleeve read the account's cash (the
+    # synthetic book is booked at its notional). Up at 09:25 so the runner sees the open; a late start until 15:30
+    # backfills the day's bars from the broker's candles (the first sets the levels; a breakout it missed is no trade)
+    "nq_vol_breakout": Spec("runner", _dt.time(9, 25), _dt.time(15, 30), ("",),
+                            "Williams' volatility breakout: 1 synthetic MNQ at the open +/- half yesterday's range, "
+                            "the other level the stop, flat 15:49"),
     # the rally fade (the resting-order trial, once ndx_0dte_maker; branch maker-runner 8741f3a): entries 11:00-15:30,
     # its 30-minute lookback backfilled from the broker's candle feed, so it starts at 10:25: polling from the open
     # would spend the shared broker budget on an hour it cannot trade
