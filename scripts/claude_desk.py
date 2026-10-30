@@ -49,7 +49,7 @@ Commands:
   guard                             enforce the day stop and the 15:55 flat; prints what it did
   feed                              for the Monitor tool: guard every 30 s, a snapshot every 2 minutes 09:45-15:45,
                                     the day's summary after 15:55
-  summary                           the day's trades and P&L (paper, and after the measured crossing cost)
+  summary                           the day's trades and paper P&L (fills at the fill rule, fees paid)
 """
 from __future__ import annotations
 
@@ -178,7 +178,9 @@ def day_pnl(day: date) -> tuple[float, float, list[dict]]:
 def crossing_cost(legs: list[dict], spot: float, under: str = UNDER) -> float:
     """Points per unit the live runners would pay to cross, on one side (the measured model: 1.2 when a vertical's
     long leg is 25+ in the money, 0.1 nearer). Legs pair into verticals by right; an unpaired leg counts as near.
-    SPXW verticals: 0.1 a vertical (live 5- and 10-wide quotes run about 0.15 wide)."""
+    SPXW verticals: 0.1 a vertical (live 5- and 10-wide quotes run about 0.15 wide). Kept in the state for the
+    record only: since 2026-10-30 the paper order book fills NDX / SPX orders at the measured fill rule and charges
+    the fees (paper/fill_rule.py), so the booked P&L already pays to cross and the summary no longer subtracts this."""
     if under == "SPX":
         return 0.1 * max(1, len(legs) // 2)
     cost = 0.0
@@ -1440,14 +1442,10 @@ def cmd_guard() -> list[str]:
 
 
 def cmd_summary(day: date | None = None) -> str:
-    day = day or now_et().date(); st = load_state(day)
+    day = day or now_et().date()
     closed = [r for r in my_positions("closed") if str(r.get("closed") or "")[:10] == day.isoformat()]
     realised = sum(float(r.get("pnl") or 0) for r in closed)
-    costed = realised
-    for r in closed:
-        meta = st["positions"].get(str(r.get("trade_group_id")), {})
-        costed -= 2 * float(meta.get("cost", 0.1)) * 100 * float(meta.get("lots", r.get("contracts") or 1))
-    L = [f"SUMMARY {day}: {len(closed)} trades, paper P&L {realised:+,.0f}, after the measured crossing cost {costed:+,.0f}"]
+    L = [f"SUMMARY {day}: {len(closed)} trades, paper P&L {realised:+,.0f} (fills at the fill rule, fees paid)"]
     for r in closed:
         L.append(f"  {r.get('structure')} x{r.get('contracts')} {r.get('opened')}->{r.get('closed')} pnl {r.get('pnl')}")
     return "\n".join(L)

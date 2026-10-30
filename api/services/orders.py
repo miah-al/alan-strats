@@ -7,10 +7,13 @@ An order is ``{"account": "paper", "underlying", "legs": [{"type": call|put|stoc
 greatest common divisor — positive for a debit, negative for a credit. ``account: live`` is refused:
 live trading is not armed, and nothing here talks to a broker's order API.
 
-Fills are paper fills against the market-data hub's current quotes, each leg at its mid: a market
-order fills at once; a limit order fills when it is marketable at mid (net mid <= limit price, in the
-debit-positive convention) and otherwise works — the hub re-checks it on every quote for its legs and
-every 15 s, and a ``day`` order still working at the close is cancelled. A fill becomes one trade group
+Fills are paper fills against the market-data hub's current quotes. An NDX or SPX option order fills at the
+fill rule (paper/fill_rule.py, the fills research of 2026-10-30): each vertical at its mid less max(0.5, a quarter
+of its half-width) on NDXP, less 0.05 on SPXW, never through its bid / ask, and pays tastytrade's fees per
+contract; anything else fills each leg at its mid. A market order fills at once; a limit order fills when its fill
+price is marketable (net fill <= limit price, in the debit-positive convention) and otherwise works — the hub
+re-checks it on every quote for its legs and every 15 s, and a ``day`` order still working at the close is
+cancelled. A fill becomes one trade group
 in the paper ledger the Paper views and the runner use (``engine.positions.insert_paper_legs``; a close
 is ``insert_closing_transactions``), each row booking its own cash in Amount, commission included, so
 the group's P&L is the cash it moved. The order itself — as sent, status, fills, the trade group it
@@ -33,6 +36,7 @@ import pandas as pd
 from api.marketdata import symbols as SYM
 from api.serialize import table_from_rows, to_jsonable
 from api.services.db import require_db
+from paper import fill_rule as FR
 
 logger = logging.getLogger("alan_trader.api.orders")
 
@@ -230,6 +234,28 @@ def net_price(order: Order, quotes: list[dict]) -> Optional[float]:
     return round(total, 4)
 
 
+def rule_prices(order: Order, quotes: list[dict]) -> Optional[tuple[list[float], float]]:
+    """The fill rule's price for each leg and the net per unit (debit positive) for an NDX or SPX option order
+    (paper/fill_rule.py); None for any other order, or while a leg has no two-sided quote."""
+    index = FR.index_of(order.underlying)
+    if index is None or not all(l.is_option for l in order.legs):
+        return None
+    legs = []
+    for l, r, q in zip(order.legs, order.ratios, quotes):
+        b, a = q.get("bid"), q.get("ask")
+        if b is None or a is None or float(a) < float(b) or float(a) <= 0:
+            return None
+        legs.append(FR.RuleLeg(type=l.type, side=l.side, ratio=int(r), strike=float(l.strike), expiry=l.expiry,
+                               bid=float(b), ask=float(a)))
+    prices, net_fill, _ = FR.leg_prices(index, legs)
+    return prices, net_fill
+
+
+def _fee(order: Order, l: Leg, opening: bool) -> Optional[float]:
+    """The leg's fee per contract under its index's schedule, or None (the platform's flat commission)."""
+    return FR.fee_per_contract(FR.index_of(order.underlying), opening) if l.is_option else None
+
+
 def _mult(l: Leg) -> float:
     return 100.0 if l.is_option else 1.0
 
@@ -300,19 +326,26 @@ def preview(hub, body: dict) -> dict:
     if not market_open_now():
         warnings.append("market closed: a paper fill now uses the last quotes")
     net = net_price(order, quotes)
+    rule = rule_prices(order, quotes) if net is not None else None
+    fill = rule[1] if rule is not None else net
+    at = "the fill price" if rule is not None else "mid"
     econ = economics(order, quotes, spot) if net is not None else {"max_profit": None, "max_loss": None, "breakevens": []}
-    if net is not None and order.limit_price is not None:
-        gap = order.limit_price - net
+    if fill is not None and order.limit_price is not None:
+        gap = order.limit_price - fill
         if gap < 0:
-            warnings.append(f"limit {order.limit_price:+.2f} is not marketable at mid {net:+.2f}: the order will work")
-        elif abs(net) > 0 and gap > 0.2 * abs(net) + 0.05:
-            warnings.append(f"limit {order.limit_price:+.2f} is well through mid {net:+.2f}: paper fills at mid")
+            warnings.append(f"limit {order.limit_price:+.2f} is not marketable at {at} {fill:+.2f}: the order will work")
+        elif abs(fill) > 0 and gap > 0.2 * abs(fill) + 0.05:
+            warnings.append(f"limit {order.limit_price:+.2f} is well through {at} {fill:+.2f}: paper fills at {at}")
     bp, bp_notes = buying_power(order, quotes, spot, econ) if net is not None else (None, [])
     warnings += bp_notes
     mult = max((_mult(l) for l in order.legs), default=1.0)
     return to_jsonable({
         "ok": net is not None, "underlying": order.underlying, "spot": spot, "legs": quotes,
         "net_mid": net, "debit_credit": (None if net is None else ("debit" if net > 0 else "credit")),
+        # what a paper order fills at now (the fill rule on NDX / SPX options, else the mid) and its fees to open
+        "net_fill": fill, "fill_rule": (FR.RULE_TEXT[FR.index_of(order.underlying)] if rule is not None else "the mid"),
+        "fees_to_open": (round(sum((_fee(order, l, True) or COMMISSION_PER_LEG) * l.quantity for l in order.legs), 2)
+                         if rule is not None else None),
         "max_profit": econ["max_profit"], "max_loss": econ["max_loss"], "breakevens": econ["breakevens"],
         "buying_power_effect": bp, "warnings": warnings,
         "units": order.units, "ratios": order.ratios,
@@ -525,6 +558,9 @@ class OrderBook:
         """Fill if marketable (market: always, when every leg is priced), else work or reject."""
         quotes = quote_legs(self.hub, order, wait=3.0 if first else 0.0)
         net = net_price(order, quotes)
+        rule = rule_prices(order, quotes) if net is not None else None
+        prices = rule[0] if rule is not None else None
+        fill = rule[1] if rule is not None else net
         missing = [q["symbol"] for q in quotes if q.get("mid") is None]
         if order.order_type == "market":
             if net is None:
@@ -532,11 +568,11 @@ class OrderBook:
                     return self._fill(order_id, order, quotes, net)
                 self._update(order_id, Status=REJECTED, Message=f"no quote to fill against for {', '.join(missing)}")
                 return self._get(order_id)
-            return self._fill(order_id, order, quotes, net)
-        if net is not None and net <= float(order.limit_price) + 1e-9:
-            return self._fill(order_id, order, quotes, net)
-        msg = (f"working: net mid {net:+.2f} vs limit {order.limit_price:+.2f}" if net is not None
-               else f"working: waiting for quotes on {', '.join(missing)}")
+            return self._fill(order_id, order, quotes, fill, prices)
+        if fill is not None and fill <= float(order.limit_price) + 1e-9:
+            return self._fill(order_id, order, quotes, fill, prices)
+        msg = (f"working: net {'fill' if rule is not None else 'mid'} {fill:+.2f} vs limit {order.limit_price:+.2f}"
+               if fill is not None else f"working: waiting for quotes on {', '.join(missing)}")
         if first:
             self._update(order_id, Status=WORKING, Message=msg)
             o = self._get(order_id)
@@ -548,10 +584,17 @@ class OrderBook:
         today = _dt.date.today()
         return all(l.is_option and l.expiry is not None and l.expiry < today for l in order.legs)
 
-    def _fill(self, order_id: int, order: Order, quotes: list[dict], net: Optional[float]) -> dict:
+    def _fill(self, order_id: int, order: Order, quotes: list[dict], net: Optional[float],
+              prices: Optional[list[float]] = None) -> dict:
+        """Book the order: each leg at the fill rule's price when ``prices`` is given (an NDX / SPX option order),
+        else at its mid. A rule fill keeps the leg's quote beside its price."""
         now = _dt.datetime.now().astimezone().isoformat(timespec="seconds")
-        fills = [{"symbol": q["symbol"], "side": l.side, "quantity": l.quantity, "price": q.get("mid"), "time": now}
-                 for l, q in zip(order.legs, quotes)]
+        fills = [{"symbol": q["symbol"], "side": l.side, "quantity": l.quantity,
+                  "price": (prices[i] if prices is not None else q.get("mid")), "time": now}
+                 for i, (l, q) in enumerate(zip(order.legs, quotes))]
+        if prices is not None:
+            for f, q in zip(fills, quotes):
+                f.update(bid=q.get("bid"), ask=q.get("ask"), mid=q.get("mid"))
         if order.closes:
             tgid, err = self._write_close(order_id, order, fills)
         else:
@@ -561,7 +604,9 @@ class OrderBook:
             self._untrack(order_id)
             return self._get(order_id)
         self._update(order_id, Status=FILLED, FillsJson=json.dumps(fills), FillPrice=net, TradeGroupId=tgid,
-                     Message=("filled at the quotes' mids" + (f", net {net:+.2f}" if net is not None else "")
+                     Message=((f"filled at the fill rule ({FR.RULE_TEXT[FR.index_of(order.underlying)]})"
+                               if prices is not None else "filled at the quotes' mids")
+                              + (f", net {net:+.2f}" if net is not None else "")
                               + ("; stock at its last trade" if any(not l.is_option and q.get("bid") is None
                                                                         for l, q in zip(order.legs, quotes)) else "")
                               + (" (closing)" if order.closes else "")),
@@ -580,7 +625,8 @@ class OrderBook:
                          "option_type": l.type if l.is_option else None, "strike": l.strike,
                          "expiry": l.expiry.isoformat() if l.expiry else None,
                          "direction": "Buy" if l.side == "buy" else "Sell", "quantity": l.quantity,
-                         "price": f["price"], "leg_type": f"{l.side.title()}{l.type.title()}"[:12]})
+                         "price": f["price"], "leg_type": f"{l.side.title()}{l.type.title()}"[:12],
+                         "fee_per_contract": _fee(order, l, True)})
         # the ledger note must never say "close": the Paper views read it to find closing rows
         err = insert_paper_legs(require_db(), self.account_id(), order.underlying, legs, order.strategy, tgid,
                                 source="Order", notes=f"paper order #{order_id} (service)",
@@ -593,9 +639,10 @@ class OrderBook:
         grp = P.open_group(order.closes)
         if grp is None:
             return order.closes, f"trade group {order.closes} is no longer open"
-        prices = {}
+        prices, fees = {}, {}
         for l, f in zip(order.legs, fills):
             prices[l.ledger_symbol or l.symbol] = f["price"]
+            fees[l.ledger_symbol or l.symbol] = _fee(order, l, False)
         today = _dt.date.today()
         expired = grp[pd.to_datetime(grp["Expiration"], errors="coerce").dt.date.apply(
             lambda d: d is not None and not pd.isna(d) and d < today)] if "Expiration" in grp.columns else grp.iloc[0:0]
@@ -609,7 +656,8 @@ class OrderBook:
                 return order.closes, err
         if not live.empty:
             err = insert_closing_transactions(
-                require_db(), self.account_id(), live, {s: {"price": p} for s, p in prices.items() if p is not None},
+                require_db(), self.account_id(), live,
+                {s: {"price": p, "fee_per_contract": fees.get(s)} for s, p in prices.items() if p is not None},
                 book_amount=True, notes=f"CLOSE of {order.closes} by paper order #{order_id} (service)")
             if err:
                 return order.closes, err
