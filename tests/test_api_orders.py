@@ -342,3 +342,44 @@ def test_orders_end_to_end_on_a_throwaway_account(client, test_account):
     assert tuple(real_after) == tuple(real_before)
     hub.providers.remove(fb)
     hub.by_name.pop(fb.name, None)
+
+
+@needs_db
+def test_an_index_order_fills_at_the_fill_rule_and_pays_its_fees(client, test_account, monkeypatch):
+    """The fill rule's path end to end (paper/fill_rule.py): the made-up underlying is priced as NDX, so the 100/105
+    vertical gives up max(0.5, a quarter of its half-width) each way and every contract pays NDX's fee."""
+    from paper import fill_rule as FR
+    monkeypatch.setitem(FR.INDEX, UND, "NDX")
+    hub = client.app.state.market
+    fb = Quotes()
+    hub.add_provider(fb, first=True)
+    exp = _dt.date.today() + _dt.timedelta(days=30)
+    c100 = SYM.make_option(UND, exp, "C", 100).occ
+    c105 = SYM.make_option(UND, exp, "C", 105).occ
+    fb.set(UND, 101.9, 102.1)
+    fb.set(c100, 2.0, 4.0)
+    fb.set(c105, 0.0, 2.0)
+    body = _vertical(order_type="market", limit_price=None, client_order_id=f"t-{uuid.uuid4().hex}",
+                     legs=[{"type": "call", "strike": 100, "expiry": exp.isoformat(), "side": "buy", "quantity": 2},
+                           {"type": "call", "strike": 105, "expiry": exp.isoformat(), "side": "sell", "quantity": 2}])
+    pv = client.post("/api/orders/preview", json=body).json()
+    assert pv["net_mid"] == pytest.approx(2.0) and pv["net_fill"] == pytest.approx(2.5)
+    assert pv["fees_to_open"] == pytest.approx(4 * 1.385)
+    r = client.post("/api/orders", json=body).json()
+    assert r["status"] == "filled" and r["fill_price"] == pytest.approx(2.5), r
+    assert [f["price"] for f in r["fills"]] == [pytest.approx(3.25), pytest.approx(0.75)]
+    assert "fill rule" in r["message"]
+    tg = r["trade_group_id"]
+    rows = _sql("SELECT t.Amount FROM portfolio.[Transaction] t WHERE t.TradeGroupId = :g AND t.AccountId = :a "
+                "ORDER BY t.TransactionId", {"g": tg, "a": test_account})
+    assert [float(x[0]) for x in rows] == [pytest.approx(-650 - 2.77), pytest.approx(150 - 2.77)]
+    # closing gives up the same and pays the closing fee ($0.385 a contract)
+    fb.set(c100, 3.0, 5.0)
+    fb.set(c105, 1.0, 3.0)
+    cl = client.post(f"/api/paper/positions/{tg}/close", json={"order_type": "market"}).json()
+    assert cl["status"] == "filled" and cl["fill_price"] == pytest.approx(-1.5), cl
+    closed = client.get("/api/paper/positions?status=closed").json()
+    row = next(p for p in closed["rows"] if p["trade_group_id"] == tg)
+    assert row["pnl"] == pytest.approx(-500 + 300 - 4 * 1.385 - 4 * 0.385)
+    hub.providers.remove(fb)
+    hub.by_name.pop(fb.name, None)

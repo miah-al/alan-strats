@@ -437,7 +437,8 @@ def insert_closing_transactions(
 ) -> str | None:
     """
     Insert closing (reverse) transactions for every leg in open_grp.
-    Uses live option mid-price from live_opt per leg; falls back to fallback_price.
+    Uses live option mid-price from live_opt per leg; falls back to fallback_price. A live_opt entry's
+    ``fee_per_contract`` (paper/fill_rule.py: an NDX / SPX option) replaces the flat commission.
     ``book_amount`` also books each row's net cash in Amount (SELL +, BUY -, commission
     off), the convention the paper runner uses, so the group's P&L is the cash it moved.
     Returns None on success, error string on failure.
@@ -455,12 +456,14 @@ def insert_closing_transactions(
                 orig_tgid = str(row.get("TradeGroupId", ""))
                 leg_price = (live_opt.get(symbol) or {}).get("price") or fallback_price or float(row.get("TransactionPrice", 0) or 0)
                 qty = float(row.get("Quantity", 0) or 0)
+                fee = (live_opt.get(symbol) or {}).get("fee_per_contract")
+                comm = round(float(fee) * abs(qty), 4) if fee is not None else _COMMISSION
                 amount = None
                 if book_amount:
                     st = str(row.get("SecurityType") or "").lower()
                     mult = float(row.get("Multiplier") or (100 if st == "option" else 1))
                     amount = round((1.0 if close_dir == "SELL" else -1.0) * abs(qty) * float(leg_price) * mult
-                                   - _COMMISSION, 2)
+                                   - comm, 2)
                 conn.execute(text("""
                     INSERT INTO portfolio.[Transaction]
                         (BusinessDate, AccountId, TradeGroupId, StrategyName, SecurityId,
@@ -479,7 +482,7 @@ def insert_closing_transactions(
                     "dir":     close_dir,
                     "qty":     qty,
                     "price":   leg_price,
-                    "comm":    _COMMISSION,
+                    "comm":    comm,
                     "legtype": row.get("LegType", ""),
                     "src":     "Close",
                     "notes":   (notes or f"CLOSE of {orig_tgid[:36]}")[:500],
@@ -623,7 +626,8 @@ def insert_paper_legs(
 
     Each leg: ``symbol`` (compact OCC for options, the ticker for stock), ``security_type``
     (``option`` | ``stock``), ``option_type`` (``call`` | ``put``), ``strike``, ``expiry``,
-    ``direction`` (``Buy`` | ``Sell``), ``quantity``, ``price`` and ``leg_type``. Options carry a
+    ``direction`` (``Buy`` | ``Sell``), ``quantity``, ``price``, ``leg_type`` and optionally ``fee_per_contract``
+    (paper/fill_rule.py: an NDX / SPX option's fee, in place of the flat ``commission``). Options carry a
     100 multiplier, stock 1. ``book_amount`` also writes each row's net cash to Amount (SELL +,
     BUY -, commission off) — the paper runner's convention, so a group's P&L is the cash it moved.
     Returns None on success, error string on failure."""
@@ -654,10 +658,12 @@ def insert_paper_legs(
                         "e": str(leg.get("expiry")) if st == "option" else None, "m": mult}).fetchone()
                     sec_id = row[0]
                 qty, px = float(leg["quantity"]), float(leg.get("price") or 0)
+                fee = leg.get("fee_per_contract")
+                comm = round(float(fee) * abs(qty), 4) if fee is not None else commission
                 amount = None
                 if book_amount:
                     sign = 1.0 if str(leg["direction"]).upper().startswith("S") else -1.0
-                    amount = round(sign * abs(qty) * px * mult - commission, 2)
+                    amount = round(sign * abs(qty) * px * mult - comm, 2)
                 conn.execute(text("""
                     INSERT INTO portfolio.[Transaction]
                         (BusinessDate, AccountId, TradeGroupId, StrategyName,
@@ -674,7 +680,7 @@ def insert_paper_legs(
                     "dir":    leg["direction"],
                     "qty":    qty,
                     "px":     px,
-                    "comm":   commission,
+                    "comm":   comm,
                     "lt":     leg.get("leg_type") or "",
                     "src":    source,
                     "notes":  (notes or "")[:500],

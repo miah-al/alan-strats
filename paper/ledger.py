@@ -112,7 +112,11 @@ def record_fill(engine, account_id: int, slug: str, underlying: str, expiry: dat
     notes = json.dumps({"spread_px": px, "kind": kind, "reason": fill["reason"], "minute": fill["m"], "lots": lots,
                         "k_low": fill["kl"], "k_high": fill["kh"], "direction": fill["direction"], **(extra or {})}, default=str)[:500]
     opening = kind in ("open", "add")
-    comm = 2 * lots * COMMISSION_PER_LEG if opening else 0.0
+    # the commission the engine charged (its cash less the premium), so the columns agree with the cash; a strategy on
+    # tastytrade's index fees (paper/fill_rule.py) pays more than the flat COMMISSION_PER_LEG
+    paid = (-float(fill["cash"]) - px * MULT * lots) if opening and fill.get("cash") is not None else None
+    leg_comm = (round(paid / 2.0, 4) if paid is not None and paid >= 0 else COMMISSION_PER_LEG * lots) if opening else 0.0
+    comm = 2 * leg_comm
     with engine.begin() as conn:
         sid = _security_id(conn, underlying)
         if kind == "open":
@@ -135,7 +139,7 @@ def record_fill(engine, account_id: int, slug: str, underlying: str, expiry: dat
                                            ContractType, FillPrice, Commission, FillDate, LegOrder)
                 VALUES (:p, :u, :os, 'option', :a, :n, :k, :e, :cp, :fp, :c, :d, :lo)"""),
                 {"p": position_id, "u": underlying, "os": sym[:30], "a": action, "n": lots, "k": k, "e": expiry, "cp": cp, "fp": fpx,
-                 "c": (COMMISSION_PER_LEG * lots if opening else 0.0), "d": day, "lo": min(255, n_legs + i + 1)})
+                 "c": leg_comm, "d": day, "lo": min(255, n_legs + i + 1)})
         # One transaction per leg, in the layout the Paper Trading page groups (TradeGroupId = the
         # unit's PositionId). Each leg carries its own price (see _leg_prices); the net cash stays
         # whole on the long leg, because the page sums Amount to get cash and that total is the one
@@ -151,7 +155,7 @@ def record_fill(engine, account_id: int, slug: str, underlying: str, expiry: dat
                                                      LegType, Source)
                 VALUES (:aid, :sid, :p, :d, :a, :q, :px, :amt, :c, :s, :n, :d, :tg, :dir, :px, :lt, :src)"""),
                 {"aid": account_id, "sid": psid, "p": position_id, "d": day, "a": ("BUY" if opening else "SELL"), "q": lots, "px": fpx,
-                 "amt": (float(fill["cash"]) if i == 0 else 0.0), "c": (COMMISSION_PER_LEG * lots if opening else 0.0), "s": slug, "n": page_notes,
+                 "amt": (float(fill["cash"]) if i == 0 else 0.0), "c": leg_comm, "s": slug, "n": page_notes,
                  "tg": tgid, "dir": (("Buy" if action.startswith("B") else "Sell")), "lt": ("LongLeg" if i == 0 else "ShortLeg"), "src": src})
         if kind == "add":
             row = conn.execute(text("SELECT Quantity, AvgEntryPrice, Commission FROM portfolio.Position WHERE PositionId = :p"), {"p": position_id}).fetchone()

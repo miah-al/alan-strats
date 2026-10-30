@@ -229,10 +229,12 @@ Order: `{"account": "paper", "underlying": "SPY", "legs": [{"type": "call|put|st
 "strategy": "manual|<slug>", "label": "…", "client_order_id": "<uuid>"}` (`limit_price` is the net per-unit price:
 positive = debit, negative = credit).
 ### `POST /api/orders/preview` → `{"ok", "legs": [{"symbol", "side", "quantity", "bid", "ask", "mid"}], "net_mid",
-"debit_credit": "debit|credit", "max_profit", "max_loss", "breakevens": [...], "buying_power_effect", "warnings": [...]}`
+"net_fill", "fill_rule", "fees_to_open", "debit_credit": "debit|credit", "max_profit", "max_loss", "breakevens": [...],
+"buying_power_effect", "warnings": [...]}`
 ### `POST /api/orders` → `{"order_id", "status": "filled|working|rejected|cancelled", "fills": [{"symbol", "side",
-"quantity", "price", "time"}], "trade_group_id", "message"}` — a paper order fills against current quotes (limit orders
-only when marketable at mid, otherwise `working` and re-checked by the hub); fills are written to the paper ledger the
+"quantity", "price", "time"}], "trade_group_id", "message"}` — a paper order fills against current quotes at the fill
+rule below (limit orders only when marketable at their fill price, otherwise `working` and re-checked by the hub); a
+rule fill also carries each leg's `bid`, `ask` and `mid`; fills are written to the paper ledger the
 Paper views and the runner use. `client_order_id` makes the call idempotent.
 ### `GET /api/orders?status=working|filled|all` → Table · `DELETE /api/orders/{id}` → cancel a working order
 ### `POST /api/paper/positions/{trade_group_id}/close` body `{"order_type", "limit_price"}` → order result
@@ -287,8 +289,15 @@ clarifications of what the service does where the spec leaves room.
   Polygon's plan here carries no bid/ask for options (last, IV, greeks, OI, volume only).
 - A request refused by the request gate (a provider over budget / backing off) is a **503** with `Retry-After`.
 - **Orders.** `limit_price` and the preview's `net_mid` are per *unit*: the legs' quantities divided by their greatest
-  common divisor (a 2-lot vertical is 2 units of a 1:1 spread). Paper fills are at each leg's **mid** (a stock with no
-  bid/ask: its last trade); a limit order fills when `net_mid <= limit_price` (debit-positive), at the mid. The preview
+  common divisor (a 2-lot vertical is 2 units of a 1:1 spread). **Paper fills** (2026-10-30, the fills research;
+  `paper/fill_rule.py`): an NDX or SPX option order fills vertical by vertical at its mid less max(0.5, a quarter of
+  the vertical's half-width) on NDXP and less 0.05 on SPXW, never through the vertical's bid / ask, with each
+  vertical's mid first kept inside 0 to its strike width; its contracts pair by right and expiry, nearest strikes
+  first, and an unpaired contract gives up the same on its own. Those contracts pay tastytrade's fees, per contract
+  to open / to close: SPXW $1.725 / $0.725, NDXP $1.385 / $0.385 (a cash settlement costs nothing). Anything else
+  fills each leg at its **mid** (a stock with no bid/ask: its last trade) for the flat $1 a leg. A limit order fills
+  when `net_fill <= limit_price` (debit-positive), at the fill price; `net_fill` is the preview's price for it now,
+  `fill_rule` the rule in words, `fees_to_open` the dollars it would pay (null off the rule). The preview
   adds `underlying`, `spot`, `units`, `ratios`, `net_total` (dollars), `order_type`, `limit_price`, and per leg `last`,
   `source`; `max_loss` is negative dollars (null = unbounded), `max_profit` null = unbounded, `buying_power_effect` is
   the defined risk or, for undefined risk, a Reg-T style estimate (a warning says so). `ok` is false when a leg has no
