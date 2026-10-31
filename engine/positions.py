@@ -14,13 +14,6 @@ import pandas as pd
 _INITIAL_CASH = 100_000.0
 _COMMISSION   = 1.0   # per trade
 
-# Strategies eligible for ETF paper trading (signal returns spy_weight / tlt_weight)
-_ELIGIBLE_STRATEGIES: dict[str, str] = {
-    "rates_spy_rotation":         "TLT / SPY Rotation",
-    "rates_spy_rotation_options": "TLT / SPY Rotation (Options)",
-    "gex_positioning":            "Dealer Gamma Exposure",
-}
-
 
 # ── DB helpers ────────────────────────────────────────────────────────────────
 
@@ -53,7 +46,7 @@ def load_transactions(engine, account_id: int = 1) -> pd.DataFrame:
     Returns a DataFrame with columns:
       TransactionId, BusinessDate, TradeGroupId, StrategyName, SecurityId,
       Symbol, Underlying, SecurityType, OptionType, Strike, Expiration, Multiplier,
-      Direction, Quantity, TransactionPrice, Commission, LegType, Source, Notes
+      Direction, Quantity, TransactionPrice, Commission, Amount, LegType, Source, Notes
     """
     from sqlalchemy import text
     try:
@@ -76,6 +69,7 @@ def load_transactions(engine, account_id: int = 1) -> pd.DataFrame:
                     t.Quantity,
                     t.TransactionPrice,
                     t.Commission,
+                    t.Amount,
                     t.LegType,
                     t.Source,
                     t.Notes,
@@ -176,6 +170,11 @@ def get_closed_trade_groups(txns_df: pd.DataFrame) -> list[dict]:
         net_entry = _signed_cost(opening)
         net_exit  = _signed_cost(closing)
         pnl       = net_entry + net_exit
+        # the paper runner books each leg's net cash (price, commission and fees) in Amount: when every
+        # leg carries it, that sum is the trade's P&L to the cent; price arithmetic alone is gross of costs
+        amt = pd.to_numeric(group.get("Amount", pd.Series(dtype=float)), errors="coerce") if "Amount" in group.columns else pd.Series(dtype=float)
+        if len(amt) == len(group) and len(group) and amt.notna().all():
+            pnl = float(amt.sum())
 
         rows.append({
             "TradeGroupId": tgid,
@@ -214,6 +213,11 @@ def fetch_stock_price(api_key: str, symbol: str, max_wait: float | None = 3.0) -
     api_key / max_wait kept for signature compatibility with the option path."""
     try:
         from data.stock_data import yf_stock_price
+        try:                                   # index underlyings (NDX, SPX, VIX, ...) live under a caret on yfinance
+            from db.sync import YF_INDEX_SYMBOLS
+            symbol = YF_INDEX_SYMBOLS.get(str(symbol).upper(), symbol)
+        except Exception:
+            pass
         return yf_stock_price(symbol)
     except Exception:
         return None
@@ -326,7 +330,14 @@ def compute_position_alerts(
 
     if min_dte is not None:
         is_spread = any(x in sl for x in ("condor", "spread", "strangle", "butterfly"))
-        if min_dte <= 0:
+        # cash-settled index options (NDX, SPX, XSP, RUT, VIX): no assignment, and a same-day expiry is
+        # the design of a 0DTE strategy, not an emergency
+        _cash_idx = ("NDX", "NDXP", "SPX", "SPXW", "XSP", "RUT", "RUTW", "VIX", "VIXW")
+        _syms = [str(x).upper() for x in list(grp.get("Underlying", pd.Series(dtype=str)).dropna()) + list(grp.get("Symbol", pd.Series(dtype=str)).dropna())]
+        cash_settled = any(s == c or s.startswith(c) for s in _syms for c in _cash_idx)
+        if min_dte <= 0 and cash_settled:
+            alerts.append({"level": "warning", "msg": f"Expires at today's close ({min_dte} DTE); cash-settled index option, no assignment. Settles at intrinsic if held."})
+        elif min_dte <= 0:
             if is_spread:
                 alerts.append({"level": "error",
                                "msg": f"EXPIRED ({min_dte} DTE) — close now to avoid messy expiry fills. No assignment risk (defined-risk spread)."})
@@ -419,15 +430,22 @@ def insert_closing_transactions(
     open_grp: pd.DataFrame,
     live_opt: dict,
     fallback_price: float = 0.0,
+    *,
+    book_amount: bool = False,
+    notes: str | None = None,
+    business_date=None,
 ) -> str | None:
     """
     Insert closing (reverse) transactions for every leg in open_grp.
-    Uses live option mid-price from live_opt per leg; falls back to fallback_price.
+    Uses live option mid-price from live_opt per leg; falls back to fallback_price. A live_opt entry's
+    ``fee_per_contract`` (paper/fill_rule.py: an NDX / SPX option) replaces the flat commission.
+    ``book_amount`` also books each row's net cash in Amount (SELL +, BUY -, commission
+    off), the convention the paper runner uses, so the group's P&L is the cash it moved.
     Returns None on success, error string on failure.
     """
     from sqlalchemy import text
 
-    today = datetime.date.today()
+    today = business_date or datetime.date.today()
 
     try:
         with engine.begin() as conn:
@@ -437,15 +455,24 @@ def insert_closing_transactions(
                 symbol    = str(row.get("Symbol", ""))
                 orig_tgid = str(row.get("TradeGroupId", ""))
                 leg_price = (live_opt.get(symbol) or {}).get("price") or fallback_price or float(row.get("TransactionPrice", 0) or 0)
+                qty = float(row.get("Quantity", 0) or 0)
+                fee = (live_opt.get(symbol) or {}).get("fee_per_contract")
+                comm = round(float(fee) * abs(qty), 4) if fee is not None else _COMMISSION
+                amount = None
+                if book_amount:
+                    st = str(row.get("SecurityType") or "").lower()
+                    mult = float(row.get("Multiplier") or (100 if st == "option" else 1))
+                    amount = round((1.0 if close_dir == "SELL" else -1.0) * abs(qty) * float(leg_price) * mult
+                                   - comm, 2)
                 conn.execute(text("""
                     INSERT INTO portfolio.[Transaction]
                         (BusinessDate, AccountId, TradeGroupId, StrategyName, SecurityId,
                          Direction, Quantity, TransactionPrice, Commission,
-                         LegType, Source, Notes)
+                         LegType, Source, Notes, Amount)
                     VALUES
                         (:bdate, :aid, :tgid, :strat, :secid,
                          :dir, :qty, :price, :comm,
-                         :legtype, :src, :notes)
+                         :legtype, :src, :notes, :amount)
                 """), {
                     "bdate":   today,
                     "aid":     account_id,
@@ -453,12 +480,13 @@ def insert_closing_transactions(
                     "strat":   row.get("StrategyName", ""),
                     "secid":   int(row["SecurityId"]),
                     "dir":     close_dir,
-                    "qty":     float(row.get("Quantity", 0) or 0),
+                    "qty":     qty,
                     "price":   leg_price,
-                    "comm":    _COMMISSION,
+                    "comm":    comm,
                     "legtype": row.get("LegType", ""),
                     "src":     "Close",
-                    "notes":   f"CLOSE of {orig_tgid[:36]}",
+                    "notes":   (notes or f"CLOSE of {orig_tgid[:36]}")[:500],
+                    "amount":  amount,
                 })
         return None
     except Exception as e:
@@ -579,23 +607,107 @@ def insert_equity_paper_trade(
         return str(e)
 
 
+def insert_paper_legs(
+    engine,
+    account_id: int,
+    underlying: str,
+    legs: list[dict],
+    strategy_name: str,
+    trade_group_id: str,
+    *,
+    source: str = "Screener",
+    notes: str = "",
+    business_date=None,
+    commission: float = _COMMISSION,
+    book_amount: bool = False,
+) -> str | None:
+    """Insert one trade group of legs into portfolio.[Transaction] (creating the
+    portfolio.Security rows it needs), all in one transaction.
+
+    Each leg: ``symbol`` (compact OCC for options, the ticker for stock), ``security_type``
+    (``option`` | ``stock``), ``option_type`` (``call`` | ``put``), ``strike``, ``expiry``,
+    ``direction`` (``Buy`` | ``Sell``), ``quantity``, ``price``, ``leg_type`` and optionally ``fee_per_contract``
+    (paper/fill_rule.py: an NDX / SPX option's fee, in place of the flat ``commission``). Options carry a
+    100 multiplier, stock 1. ``book_amount`` also writes each row's net cash to Amount (SELL +,
+    BUY -, commission off) — the paper runner's convention, so a group's P&L is the cash it moved.
+    Returns None on success, error string on failure."""
+    from sqlalchemy import text
+
+    today = business_date or datetime.date.today()
+    try:
+        with engine.begin() as conn:
+            for leg in legs:
+                st = "stock" if str(leg.get("security_type", "option")).lower() == "stock" else "option"
+                sym = str(leg["symbol"])
+                mult = 1 if st == "stock" else 100
+                row = conn.execute(text(
+                    "SELECT SecurityId FROM portfolio.Security "
+                    "WHERE Symbol = :s AND SecurityType = :st"
+                ), {"s": sym, "st": st}).fetchone()
+                if row:
+                    sec_id = row[0]
+                else:
+                    row = conn.execute(text(
+                        "INSERT INTO portfolio.Security "
+                        "(Symbol, Underlying, SecurityType, OptionType, Strike, Expiration, Multiplier) "
+                        "OUTPUT INSERTED.SecurityId "
+                        "VALUES (:s, :u, :st, :ot, :k, :e, :m)"
+                    ), {"s": sym, "u": underlying, "st": st,
+                        "ot": leg.get("option_type") if st == "option" else None,
+                        "k": leg.get("strike") if st == "option" else None,
+                        "e": str(leg.get("expiry")) if st == "option" else None, "m": mult}).fetchone()
+                    sec_id = row[0]
+                qty, px = float(leg["quantity"]), float(leg.get("price") or 0)
+                fee = leg.get("fee_per_contract")
+                comm = round(float(fee) * abs(qty), 4) if fee is not None else commission
+                amount = None
+                if book_amount:
+                    sign = 1.0 if str(leg["direction"]).upper().startswith("S") else -1.0
+                    amount = round(sign * abs(qty) * px * mult - comm, 2)
+                conn.execute(text("""
+                    INSERT INTO portfolio.[Transaction]
+                        (BusinessDate, AccountId, TradeGroupId, StrategyName,
+                         SecurityId, Direction, Quantity, TransactionPrice,
+                         Commission, LegType, Source, Notes, Amount)
+                    VALUES (:d, :aid, :tg, :strat, :sid, :dir, :qty, :px,
+                            :comm, :lt, :src, :notes, :amount)
+                """), {
+                    "d":      today,
+                    "aid":    account_id,
+                    "tg":     trade_group_id,
+                    "strat":  strategy_name,
+                    "sid":    int(sec_id),
+                    "dir":    leg["direction"],
+                    "qty":    qty,
+                    "px":     px,
+                    "comm":   comm,
+                    "lt":     leg.get("leg_type") or "",
+                    "src":    source,
+                    "notes":  (notes or "")[:500],
+                    "amount": amount,
+                })
+        return None
+    except Exception as e:
+        return str(e)
+
+
 def insert_open_ic_trade(
     engine,
     account_id: int,
     ticker: str,
     chain: dict,
-    strategy_name: str = "iron_condor_rules",
+    strategy_name: str,
     contracts: int = 1,
 ) -> str | None:
     """
     Insert a 4-leg Iron Condor opening trade into portfolio.[Transaction].
+    `strategy_name` labels the transaction group with the strategy that
+    produced it (the caller decides; the platform has no default).
     Creates Security records if they don't exist.
     Returns None on success, error string on failure.
     """
     import uuid
-    from sqlalchemy import text
 
-    today  = datetime.date.today()
     tgid   = f"IRON-{ticker}-{uuid.uuid4().hex[:8].upper()}"
     exp    = str(chain["best_exp"])                  # "2026-05-15"
     exp_db = exp.replace("-", "")[2:]                # "260515"
@@ -611,51 +723,13 @@ def insert_open_ic_trade(
         cp = "C" if opt_type == "call" else "P"
         return f"{ticker}{exp_db}{cp}{int(strike * 1000):08d}"
 
-    try:
-        with engine.begin() as conn:
-            for strike, opt_type, direction, mid, leg_type in legs:
-                sym = _opt_symbol(strike, opt_type)
-
-                # Find or insert Security
-                row = conn.execute(text(
-                    "SELECT SecurityId FROM portfolio.Security "
-                    "WHERE Symbol = :s AND SecurityType = 'option'"
-                ), {"s": sym}).fetchone()
-
-                if row:
-                    sec_id = row[0]
-                else:
-                    row = conn.execute(text(
-                        "INSERT INTO portfolio.Security "
-                        "(Symbol, Underlying, SecurityType, OptionType, Strike, Expiration, Multiplier) "
-                        "OUTPUT INSERTED.SecurityId "
-                        "VALUES (:s, :u, 'option', :ot, :k, :e, 100)"
-                    ), {"s": sym, "u": ticker, "ot": opt_type, "k": strike, "e": exp}).fetchone()
-                    sec_id = row[0]
-
-                conn.execute(text("""
-                    INSERT INTO portfolio.[Transaction]
-                        (BusinessDate, AccountId, TradeGroupId, StrategyName,
-                         SecurityId, Direction, Quantity, TransactionPrice,
-                         Commission, LegType, Source, Notes)
-                    VALUES (:d, :aid, :tg, :strat, :sid, :dir, :qty, :px,
-                            :comm, :lt, 'Screener', :notes)
-                """), {
-                    "d":     today,
-                    "aid":   account_id,
-                    "tg":    tgid,
-                    "strat": strategy_name,
-                    "sid":   int(sec_id),
-                    "dir":   direction,
-                    "qty":   float(contracts),
-                    "px":    float(mid or 0),
-                    "comm":  _COMMISSION,
-                    "lt":    leg_type,
-                    "notes": f"IC {ticker} {exp} opened from Screener",
-                })
-        return None
-    except Exception as e:
-        return str(e)
+    return insert_paper_legs(
+        engine, account_id, ticker,
+        [{"symbol": _opt_symbol(strike, opt_type), "security_type": "option", "option_type": opt_type,
+          "strike": strike, "expiry": exp, "direction": direction, "quantity": contracts,
+          "price": float(mid or 0), "leg_type": leg_type}
+         for strike, opt_type, direction, mid, leg_type in legs],
+        strategy_name, tgid, source="Screener", notes=f"IC {ticker} {exp} opened from Screener")
 
 
 def insert_generic_paper_trade(

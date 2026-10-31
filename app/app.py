@@ -48,6 +48,13 @@ app = Dash(
 server = app.server  # WSGI entry point for production
 
 # ── Layout ────────────────────────────────────────────────────────────────────
+# `data-bs-theme="dark"` puts Bootstrap 5.3 itself into dark mode. Without it
+# every dbc component falls back to its LIGHT tokens regardless of our own CSS:
+# ~20 dbc.Alert panels on the Strategies page rendered as cream/pink cards
+# (including the Performance tab's "Read with care" warning, whose entire job is
+# to stop a bad trade), and dbc.Modal's `.btn-close` painted a black SVG on a
+# #161d2e header at 1.25:1 — an effectively invisible close button. This also
+# recolours form controls, accordions and tables natively.
 app.layout = html.Div(
     [
         dcc.Location(id="url", refresh=False),
@@ -73,6 +80,7 @@ app.layout = html.Div(
         ),
     ],
     style={"backgroundColor": T.BG_BASE, "fontFamily": "'Inter', sans-serif"},
+    **{"data-bs-theme": "dark"},
 )
 
 # ── Pre-import all page modules so callbacks register at startup ──────────────
@@ -106,6 +114,9 @@ def render_page(pathname: str):
         if pathname == "/tools":
             from app.pages.tools import layout
             return layout()
+        if pathname == "/scope":
+            from app.pages.scope import layout
+            return layout()
         if pathname == "/models":
             from app.pages.models import layout
             return layout()
@@ -138,5 +149,6 @@ if __name__ == "__main__":
     # manual restart. Set RELOAD=0 to disable if the watcher is noisy.
     import os as _os
     _reload = _os.environ.get("RELOAD", "1") != "0"
-    app.run(debug=True, host="0.0.0.0", port=8051, threaded=True,
+    _debug = _reload or _os.environ.get("DASH_DEBUG", "0") == "1"   # RELOAD=0 = a quiet, production-like run without the dev-tools bar
+    app.run(debug=_debug, host="0.0.0.0", port=8051, threaded=True,
             use_reloader=_reload)

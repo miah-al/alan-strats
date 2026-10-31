@@ -32,8 +32,6 @@ from app.pages.tools.data import (
 
 logger = logging.getLogger(__name__)
 
-_GUIDE_DIR = Path(__file__).parent.parent.parent / "guide_articles"
-
 
 @callback(
     Output("tools-tab-content", "children"),
@@ -411,8 +409,9 @@ def _render_guide(slug):
     if not slug:
         return html.Div("Select an article above.",
                         style={"color": T.TEXT_MUTED, "fontSize": "13px"})
-    md_path = _GUIDE_DIR / f"{slug}.md"
-    if not md_path.exists():
+    from app.guides import find_guide, chart_module
+    md_path = find_guide(slug)
+    if md_path is None:
         return html.Div(f"Article not found: {slug}",
                         style={"color": T.DANGER, "fontSize": "13px"})
     content = md_path.read_text(encoding="utf-8")
@@ -423,31 +422,9 @@ def _render_guide(slug):
         style={"color": T.TEXT_PRIMARY, "fontSize": "14px", "lineHeight": "1.75"},
     )
 
-    # ── Per-article interactive charts ────────────────────────────────────────
-    _GUIDE_CHART_MODULES = {
-        "vol_arbitrage":         "app.guide_charts.vol_arbitrage_charts",
-        "iron_condor":           "app.guide_charts.iron_condor_charts",
-        "iron_condor_weekly":    "app.guide_charts.iron_condor_charts",
-        "iron_condor_rules":     "app.guide_charts.iron_condor_charts",
-        "bull_put_spread":       "app.guide_charts.bull_put_spread_charts",
-        "bear_call_spread":      "app.guide_charts.bull_put_spread_charts",
-        "earnings_iv_crush":     "app.guide_charts.earnings_iv_crush_charts",
-        "earnings_vol_crush":    "app.guide_charts.earnings_iv_crush_charts",
-        "earnings_straddle":     "app.guide_charts.earnings_iv_crush_charts",
-        "pairs_spy_qqq":         "app.guide_charts.pairs_spy_qqq_charts",
-        "pairs_spy_iwm":         "app.guide_charts.pairs_spy_qqq_charts",
-        "pairs_spy_dia":         "app.guide_charts.pairs_spy_qqq_charts",
-        "stat_arb_etf_basket":   "app.guide_charts.stat_arb_etf_basket_charts",
-        "vix_mean_reversion":    "app.guide_charts.vix_mean_reversion_charts",
-        "vix_spike_fade":        "app.guide_charts.vix_mean_reversion_charts",
-        "momentum_factor":       "app.guide_charts.momentum_factor_charts",
-        "momentum_12_1":         "app.guide_charts.momentum_factor_charts",
-        "momentum_cross_sector": "app.guide_charts.momentum_factor_charts",
-        "hmm_regime":            "app.guide_charts.hmm_regime_charts",
-    }
-
+    # ── Per-article interactive charts (platform map + plugin maps) ───────────
     extra: list = []
-    module_path = _GUIDE_CHART_MODULES.get(slug)
+    module_path = chart_module(slug)
     if module_path:
         try:
             import importlib
@@ -1065,7 +1042,7 @@ def _render_strategy_detail(slug: str):
     if not slug:
         return html.Div()
     try:
-        from strategies.registry import STRATEGY_METADATA
+        from alan_trader.strategy_api.registry import STRATEGY_METADATA
     except ImportError:
         return dbc.Alert("Registry unavailable.", color="warning")
 

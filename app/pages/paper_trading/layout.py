@@ -49,7 +49,7 @@ def layout() -> html.Div:
     return html.Div([
         C.page_header(
             "Paper Trading",
-            "Your portfolio — positions are opened from the Strategy screens; review and close them here.",
+            "Paper positions: the automated runner opens and closes them (Strategies → Paper tab); review them here.",
             actions=[
                 dbc.Button(
                     "Refresh", id="pt-refresh-btn", size="sm", outline=True,
@@ -81,8 +81,8 @@ def layout() -> html.Div:
             ]),
             dbc.Tab(label="Transactions", tab_id="txns", children=[
                 html.Div(style={"height": "12px"}),
-                # Delete controls
-                dbc.Row([
+                # Delete controls: destructive, so they live behind a collapsed danger zone
+                dbc.Accordion([dbc.AccordionItem([dbc.Row([
                     dbc.Col(dbc.Card(dbc.CardBody([
                         html.Div("Delete by date", style={"color": T.TEXT_SEC, "fontSize": "11px",
                                                            "fontWeight": "600", "marginBottom": "8px"}),
@@ -111,6 +111,7 @@ def layout() -> html.Div:
                     ]), style={**T.STYLE_CARD, "padding": "12px"}), width=4),
                 ], className="g-2", style={"marginBottom": "12px"}),
                 html.Div(id="pt-delete-status-msg", style={"marginBottom": "8px"}),
+                ], title="Danger zone: delete transactions")], start_collapsed=True, flush=True, style={"marginBottom": "12px"}),
                 # Cash record form
                 dbc.Card(dbc.CardBody([
                     html.Div("Record Cash Movement", style={
@@ -286,9 +287,9 @@ def layout() -> html.Div:
             ),
             dbc.ModalBody([
                 dbc.Alert(
-                    "Each leg closes at its current live mark (options via the chain, "
-                    "stocks via Yahoo). Any leg without a live quote falls back to its "
-                    "entry price.",
+                    "Each leg closes at the paper session's own live quote where it has one; "
+                    "any leg it does not quote falls back to its entry price. A position a live "
+                    "paper session holds can only be closed by that session.",
                     color="info",
                     style={"fontSize": "12px", "marginBottom": "12px"},
                 ),
@@ -323,6 +324,10 @@ def layout() -> html.Div:
         dcc.Store(id="pt-delete-action",    data=""),   # "date:{d}", "today", "all"
         dcc.Store(id="pt-delete-status",    data=""),
 
-        dcc.Interval(id="pt-refresh", interval=60_000, n_intervals=0),
+        # The timer is off: the page refreshes when the Refresh button is pressed, and nowhere else.
+        # The component itself stays, because other callbacks bump its n_intervals to force a redraw
+        # after they change something (deleting trades, for instance) -- disabling it stops the clock
+        # without breaking any of them.
+        dcc.Interval(id="pt-refresh", interval=60_000, n_intervals=0, disabled=True),
         dcc.Location(id="pt-url", refresh=False),
     ], style=D.PAGE)

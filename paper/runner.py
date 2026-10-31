@@ -1,0 +1,1024 @@
+"""The paper-trading loop.
+
+Every minute of the session the runner: builds the underlying's 1-minute bar, asks the strategy's
+session engine to act on it (``on_bar``) with a quote function that answers from the provider,
+writes any new fills to the portfolio ledger and to a CSV paper log in the strategy folder, and
+saves the engine state so a restart resumes where it left off.
+
+Two clocks: ``run_replay`` walks a stored session as fast as it can (tests, dry runs, the
+reconciliation replay); ``run_live`` follows the wall clock with a real-time provider. Live, an
+engine that declares ``on_poll`` also sees every poll's quotes between bar closes (resting orders
+checked every 15 seconds); one without it behaves exactly as before.
+Strategy logic never lives here: the engine and the gate come from the plugin
+(strategy_api.live).
+"""
+from __future__ import annotations
+
+import csv
+import json
+import logging
+import os
+import time
+from dataclasses import dataclass, field
+from datetime import date, datetime, time as dtime, timedelta
+from pathlib import Path
+from typing import Callable, Optional
+
+import pandas as pd
+
+from strategy_api.live import Quote, is_structure
+from strategy_api import registry as R
+from .providers import (PARITY_TAG, SETTLE_FIRST_READ, ReplayProvider, TastytradeProvider, Bar, now_et, parity_leg_mid,
+                        parity_put_quote)
+from . import ledger as L
+from . import supervisor as SUP
+
+logger = logging.getLogger("paper.runner")
+
+SESSION_OPEN = dtime(9, 30)
+SESSION_CLOSE_MIN = 16 * 60
+MAX_FILLS_PER_SESSION = 60          # runaway guard: more fills than this in a day means bad data, not trading
+VXN_MAX_AGE_DAYS = 4                # the gate's VXN close must be at most this many days old
+FETCH_BACKOFF_MAX_S = 300          # a failing quote feed is polled less and less often, never faster than this cap
+FETCH_FAILURES_TO_HALT = 12        # ~25 minutes of backoff-spaced failures: stop asking, alert, keep the state
+MIN_POLL_S = 10                    # the broker's API is never polled faster than this, whatever the flag says
+QUOTE_SILENCE_ALERT_MIN = 5         # alert when no quote fetch has succeeded for this long during the session
+SETTLE_STEADY_S = 30                # the settlement level: two readings after the close this far apart that agree
+SETTLE_READ_EVERY_S = 10
+SETTLE_DEADLINE = dtime(16, 5)      # no steady reading by then: the latest one, else the last bar's close (alerted)
+STATE_DIR = Path(os.path.dirname(os.path.dirname(__file__))) / "paper_state"
+LOG_COLS = ["ts", "minute", "event", "ndx", "k_low", "k_high", "kind", "direction", "bid", "ask", "last", "age",
+            "limit", "fill", "lots", "cash", "reason", "tgid", "long_symbol", "short_symbol", "note",
+            "spread", "long_bid", "long_ask", "long_age", "short_bid", "short_ask", "short_age",   # quoted width and the legs behind it
+            # multi-leg structures and the synthetic hedge (strategy_api.live): the structure, every leg's symbol,
+            # the engine's delta and IV at the event, the hedge book after it and its running P&L
+            "struct", "symbols", "units", "delta", "iv", "hedge_units", "hedge_pnl", "synthetic",
+            "ndx_at_fill", "filled_at"]      # a fill's index level from the poll that priced it, and that poll's time
+
+
+def _minute_of(ts: datetime) -> int:
+    return ts.hour * 60 + ts.minute
+
+
+def settlement_spot(prov, fallback: float, now_fn: Callable[[], datetime] = now_et,
+                    sleep_fn: Callable[[float], None] = time.sleep) -> tuple[float, str]:
+    """The level a day's PM-settled index options settle on: the index's official close, not the last poll before
+    16:00. On 2026-10-05 the 15:59 bar closed at 31,058.25 while NDX's official close was 31,076.44 (published by
+    16:00:14), and a 31025/31075 put spread was settled at 16.75 instead of 0: -593 booked for -5,618 real.
+
+    A replay provider that recorded the post-close level (``settle_close``) answers at once. A live provider is read
+    (``index_last``) from SETTLE_FIRST_READ until two readings SETTLE_STEADY_S apart agree; at SETTLE_DEADLINE the
+    latest reading stands, and with none at all the last bar's close. Returns (level, where it came from)."""
+    recorded = getattr(prov, "settle_close", None)
+    if recorded is not None:
+        return float(recorded), "the recorded close"
+    read = getattr(prov, "index_last", None)
+    if read is None:
+        return float(fallback), "the last bar"
+    seen: Optional[tuple[float, datetime]] = None
+    while True:
+        now = now_fn()
+        if now.time() >= SETTLE_FIRST_READ:
+            try:
+                px = read()
+            except Exception as exc:
+                logger.warning("settlement read failed: %s", exc)
+                px = None
+            if px is not None:
+                if seen is not None and abs(px - seen[0]) < 0.005:
+                    if (now - seen[1]).total_seconds() >= SETTLE_STEADY_S:
+                        return float(px), "the official close"
+                else:
+                    seen = (float(px), now)
+        if now.time() >= SETTLE_DEADLINE:
+            if seen is not None:
+                return seen[0], "the index level at the deadline (never steady)"
+            return float(fallback), "the last bar (no index reading after the close)"
+        sleep_fn(SETTLE_READ_EVERY_S)
+
+
+@dataclass
+class RunResult:
+    day: date
+    slug: str
+    provider: str
+    blocked: bool
+    reason: str
+    trades: list = field(default_factory=list)
+    fills: list = field(default_factory=list)
+    day_pnl: float = 0.0
+    bars: int = 0
+    n_fills_written: int = 0
+    log_path: Optional[str] = None
+    state_path: Optional[str] = None
+
+
+class PaperSession:
+    """Runs one strategy for one session against one provider."""
+
+    def __init__(self, slug: str, provider, engine_db=None, *, write_ledger: bool = True, log_dir: Optional[Path] = None,
+                 account_name: str = "Paper Account", params: Optional[dict] = None, state_dir: Optional[Path] = None, starting_cash: Optional[float] = None,
+                 notify: bool = False, controls_fn: Optional[Callable[[str], dict]] = None):
+        self.slug = slug
+        self.provider = provider
+        self.db = engine_db
+        self.write_ledger = write_ledger and engine_db is not None
+        self.strategy = R.get_strategy(slug)
+        if params:
+            self.strategy = type(self.strategy)(**{**self.strategy.get_params(), **params})
+        inst = self.strategy.live_instrument() or {}
+        self.underlying = str(inst.get("underlying", getattr(provider, "underlying", "NDX"))).upper()
+        self.account_id = L.ensure_paper_account(engine_db, account_name, starting_cash=starting_cash) if self.write_ledger else None
+        folder = self._strategy_folder(slug)
+        self.log_dir = Path(log_dir) if log_dir else (folder / "paper_log" if folder else STATE_DIR / "paper_log")
+        self.log_dir.mkdir(parents=True, exist_ok=True)
+        self.state_dir = Path(state_dir) if state_dir else STATE_DIR
+        self.state_dir.mkdir(parents=True, exist_ok=True)
+        self._tgids: dict[tuple, list[str]] = {}
+        self._hedge_pid: Optional[int] = None          # the ledger position of the day's synthetic hedge book, while open
+        self._written = 0
+        self._last_quote: dict = {}
+        self._day_bars: list = []
+        self._poll_spot: Optional[tuple] = None          # (poll time, index level) of the latest live poll
+        self._features_logged = False
+        self.notify = bool(notify)
+        self.halted: Optional[str] = None
+        # the supervisor's controls (paper/supervisor.py), read every poll; in a test, ``controls_fn(slug)``
+        self._controls_fn = controls_fn or (lambda slug: SUP.read_controls(self.db, slug))
+        self._sup_applied: tuple = (True, True)          # (entries, adds) last handed to the engine
+        self._sup_close_seen: Optional[datetime] = None  # the latest close request acted on (or older than the run)
+        self._sup_unsupported = False
+        self._sup_read_failures = 0
+
+    # ── helpers ───────────────────────────────────────────────────────────────
+    @staticmethod
+    def _strategy_folder(slug: str) -> Optional[Path]:
+        """The strategy's own folder in the plugin (where guide.md lives)."""
+        try:
+            g = R.find_guide(slug)
+            if g:
+                return Path(g).parent
+            t = R.tests_dir_for(slug)
+            if t:
+                return Path(t).parent
+        except Exception:
+            pass
+        return None
+
+    def _state_path(self, day: date) -> Path:
+        return self.state_dir / f"{self.slug}_{day.isoformat()}.json"
+
+    def _log_path(self, day: date) -> Path:
+        return self.log_dir / f"{day.isoformat()}.csv"
+
+    def _log(self, day: date, row: dict) -> None:
+        p = self._log_path(day)
+        new = not p.exists()
+        if not new:                                             # an older column set in the file: rewrite it on the current one
+            with p.open("r", newline="", encoding="utf-8") as f:
+                r = csv.DictReader(f); old_cols = r.fieldnames or []; old_rows = list(r) if old_cols != LOG_COLS else []
+            if old_cols != LOG_COLS:
+                with p.open("w", newline="", encoding="utf-8") as f:
+                    w = csv.DictWriter(f, fieldnames=LOG_COLS); w.writeheader()
+                    for o in old_rows:
+                        w.writerow({k: o.get(k, "") for k in LOG_COLS})
+        with p.open("a", newline="", encoding="utf-8") as f:
+            w = csv.DictWriter(f, fieldnames=LOG_COLS)
+            if new:
+                w.writeheader()
+            w.writerow({k: row.get(k, "") for k in LOG_COLS})
+
+    def _unit_key(self, fill: dict) -> tuple:
+        return (fill["direction"], fill["kl"], fill["kh"])
+
+    def _position_id(self, fill: dict) -> Optional[int]:
+        """The ledger PositionId of the unit a fill belongs to (units keyed by direction and strikes,
+        oldest first when two share strikes). ``open`` has none yet; the ledger returns it."""
+        stack = self._tgids.setdefault(self._unit_key(fill), [])
+        if fill["kind"] == "open":
+            return None
+        if fill["kind"] == "close":
+            return stack.pop(0) if stack else None
+        return stack[-1] if stack else None
+
+    # ── multi-leg structures and the synthetic hedge (new code paths; the vertical's are untouched) ──
+    @staticmethod
+    def _book_open(session) -> bool:
+        """A synthetic futures book with units on (a strategy whose trade is the book itself, nq_vol_breakout, keeps
+        ``positions`` empty): the supervisor's close and the forced settlement must see it."""
+        try:
+            return abs(float(getattr(getattr(session, "hedge", None), "units", 0.0) or 0.0)) > 1e-9
+        except (TypeError, ValueError):
+            return False
+
+    @staticmethod
+    def _symbols_for(prov, kind: str, k_low: float, k_high: float) -> list:
+        """Every leg symbol of a structure or a vertical (the provider's own naming)."""
+        if is_structure(kind) and hasattr(prov, "structure_symbols"):
+            return list(prov.structure_symbols(kind, k_low, k_high))
+        return list(prov.leg_symbols(kind, k_low, k_high))
+
+    @staticmethod
+    def _quote_for(prov, kind: str, k_low: float, k_high: float, *args):
+        """A live quote for a structure or a vertical, with the provider's extra arguments (quotes, now, carry)."""
+        if is_structure(kind):
+            return prov.quote_structure(kind, k_low, k_high, *args) if hasattr(prov, "quote_structure") else None
+        return prov.quote_vertical(kind, k_low, k_high, *args)
+
+    # ── positions booked by call parity (ndx_gamma_walls) ─────────────────────
+    # The walls strategy sells a call credit spread and books it as the equivalent bear put spread (the platform
+    # trades debit verticals); its entry note says "priced via call parity". The calls are the quoted side: marked
+    # on its own deep in-the-money puts the position's P&L jumped between polls while the trade had not moved.
+    # So such a position is marked the way it was entered -- the call spread's quote turned into the put's
+    # (providers.parity_put_quote) -- everywhere this runner prices it: the engine's quote_fn (the heartbeat's
+    # ``marked`` and the state's last_mark come from it), the heartbeat's live_marks and its per-leg live_legs.
+
+    @staticmethod
+    def _parity_strikes(session) -> set:
+        """(k_low, k_high) of the open put verticals the engine booked by call parity (their note says so)."""
+        out = set()
+        for pos in (getattr(session, "positions", None) or []):
+            if str(getattr(pos, "kind", "")) == "put" and PARITY_TAG in str(getattr(pos, "note", "") or ""):
+                out.add((float(pos.k_low), float(pos.k_high)))
+        return out
+
+    def _mark_quote(self, prov, session, pos, quotes: dict, now: datetime, carry: int):
+        """The quote an open position is marked at this poll: its own structure's, or, for a put vertical booked by
+        call parity, the call spread's turned into the put's (its own legs' quote when the calls are unquoted)."""
+        if str(getattr(pos, "kind", "")) == "put" and (float(pos.k_low), float(pos.k_high)) in self._parity_strikes(session):
+            qc = self._quote_for(prov, "call", pos.k_low, pos.k_high, quotes, now, carry)
+            pq = parity_put_quote(qc, float(pos.k_high) - float(pos.k_low))
+            if pq is not None:
+                return pq
+        return self._quote_for(prov, pos.kind, pos.k_low, pos.k_high, quotes, now, carry)
+
+    def _parity_leg_mids(self, prov, session, pos, quotes: dict) -> dict:
+        """Each put leg of a parity-booked vertical priced off the call at its strike (providers.parity_leg_mid, at
+        the spot in this poll's quotes): {symbol: mid}. Empty for any other position, or without a spot."""
+        if str(getattr(pos, "kind", "")) != "put" or (float(pos.k_low), float(pos.k_high)) not in self._parity_strikes(session):
+            return {}
+        iq = quotes.get(self.underlying)
+        spot = float(iq.last) if (iq is not None and getattr(iq, "last", None) is not None) else None
+        if spot is None:
+            return {}
+        puts = list(prov.leg_symbols("put", pos.k_low, pos.k_high))       # (long = k_high, short = k_low)
+        calls = list(prov.leg_symbols("call", pos.k_low, pos.k_high))     # (long = k_low, short = k_high)
+        out: dict = {}
+        for psym, csym, K in ((puts[0], calls[1], float(pos.k_high)), (puts[1], calls[0], float(pos.k_low))):
+            cq = quotes.get(csym) if csym else None
+            if psym and cq is not None and cq.bid is not None and cq.ask is not None and cq.ask >= cq.bid:
+                out[str(psym)] = round(parity_leg_mid((float(cq.bid) + float(cq.ask)) / 2.0, spot, K), 2)
+        return out
+
+    def _write_structure_fill(self, f: dict, day: date, expiry: date, S: float, symbols_fn: Callable) -> None:
+        """A straddle / iron-fly event: the CSV row with the structure's quote and legs, and the ledger for
+        open / close (one Position, one Leg and one Transaction per leg)."""
+        kind = str(f["struct"])
+        try:
+            syms = self._symbols_for(self.provider, kind, f["kl"], f["kh"])
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("structure symbols failed: %s", exc); syms = []
+        legs = f.get("legs") or []
+        syms = [(syms[i] if i < len(syms) and syms[i] else f"{self.underlying}-{K:.0f}{cp}") for i, (cp, K, *_r) in enumerate(legs)] \
+            if legs else [s for s in syms if s]
+        q = self._last_quote.get((kind, f["kl"], f["kh"]))
+        row = dict(ts=str(datetime.combine(day, dtime(0, 0)) + timedelta(minutes=int(f["m"]))), minute=f["m"], event=f["kind"],
+                   ndx=round(float(f.get("ndx") or S), 2), k_low=f["kl"], k_high=f["kh"], kind=kind, direction=f["direction"],
+                   bid=(round(q.bid, 2) if q else ""), ask=(round(q.ask, 2) if q else ""), last=(round(q.last, 2) if q else ""),
+                   age=(q.age if q else ""), limit=(f["px"] if f["kind"] in ("rest", "cancel") else ""),
+                   fill=(f["px"] if f["kind"] in ("open", "close") else ""), lots=f["lots"], cash=f["cash"], reason=f["reason"],
+                   tgid="", long_symbol="", short_symbol="", note=json.dumps(f.get("legs") or [], default=str),
+                   spread=(round(q.ask - q.bid, 2) if q else ""), struct=kind, symbols="|".join(str(s) for s in syms),
+                   units="", delta=f.get("delta", ""), iv=f.get("iv", ""), hedge_units="", hedge_pnl=f.get("hedge_pnl", ""),
+                   synthetic="")
+        pid = None
+        key = (kind, f["direction"], f["kl"], f["kh"])
+        if f["kind"] in ("open", "close"):
+            stack = self._tgids.setdefault(key, [])
+            pid = stack[-1] if (f["kind"] == "close" and stack) else None
+            row["tgid"] = "" if pid is None else str(pid)
+        self._log(day, row)
+        logger.info("%s %s %s %s %s/%s @ %s (%s)", row["ts"][11:16], f["kind"], f["direction"], kind, f["kl"], f["kh"], f["px"], f["reason"])
+        if f["kind"] not in ("open", "close"):
+            return
+        if self.write_ledger:
+            try:
+                new_pid = L.record_structure_fill(self.db, self.account_id, self.slug, self.underlying, expiry, day, f, syms,
+                                                  position_id=pid, extra={"provider": getattr(self.provider, "name", "?"),
+                                                                          "bid": (q.bid if q else None), "ask": (q.ask if q else None)})
+                if f["kind"] == "open" and new_pid is not None:
+                    self._tgids.setdefault(key, []).append(int(new_pid))
+                elif f["kind"] == "close" and self._tgids.get(key):
+                    self._tgids[key].pop()
+            except Exception as exc:
+                logger.error("ledger write failed (structure): %s", exc)
+        elif f["kind"] == "open":
+            self._tgids.setdefault(key, []).append(-1)
+        elif self._tgids.get(key):
+            self._tgids[key].pop()
+
+    def _write_hedge_fill(self, f: dict, day: date, S: float) -> None:
+        """A SYNTHETIC hedge trade: the CSV row (labelled synthetic) and the ledger's synthetic-future position
+        (opened on the first trade of the day, adjusted by every trade, closed by the ``final`` row)."""
+        sym = str(f.get("symbol") or "NQ=NDX")
+        row = dict(ts=str(datetime.combine(day, dtime(0, 0)) + timedelta(minutes=int(f["m"]))), minute=f["m"], event="hedge",
+                   ndx=round(float(f.get("ndx") or S), 2), k_low="", k_high="", kind="hedge", direction=f["direction"],
+                   bid="", ask="", last="", age="", limit="", fill=f["px"], lots=f.get("units", f.get("lots", "")), cash=f["cash"],
+                   reason=f["reason"], tgid=("" if self._hedge_pid is None else str(self._hedge_pid)), long_symbol=sym, short_symbol="",
+                   note="SYNTHETIC hedge: NQ-equivalent priced at the NDX index level, never a real order", spread="", struct="hedge",
+                   symbols=sym, units=f.get("units", ""), delta=f.get("delta", ""), iv=f.get("iv", ""),
+                   hedge_units=f.get("hedge_units", ""), hedge_pnl=f.get("hedge_pnl", ""), synthetic=True)
+        self._log(day, row)
+        logger.info("%s hedge %s %s NQ-eq @ %s (book %s, P&L %s) [SYNTHETIC]", row["ts"][11:16], f["direction"], f.get("units"),
+                    f["px"], f.get("hedge_units"), f.get("hedge_pnl"))
+        if not self.write_ledger:
+            if self._hedge_pid is None:
+                self._hedge_pid = -1
+            if f.get("final"):
+                self._hedge_pid = None
+            return
+        try:
+            pid = L.record_synthetic_hedge(self.db, self.account_id, self.slug, self.underlying, day, f,
+                                           position_id=(self._hedge_pid if (self._hedge_pid or 0) > 0 else None),
+                                           extra={"provider": getattr(self.provider, "name", "?")})
+            self._hedge_pid = None if f.get("final") else pid
+        except Exception as exc:
+            logger.error("ledger write failed (synthetic hedge): %s", exc)
+
+    def _write_new_fills(self, session, day: date, expiry: date, S: float, symbols_fn: Callable) -> None:
+        fills = session.fills
+        while self._written < len(fills):
+            f = fills[self._written]; self._written += 1
+            if f.get("struct") == "hedge":                                   # the synthetic hedge (new path)
+                self._write_hedge_fill(f, day, S); continue
+            if is_structure(f.get("struct", "")):                            # a straddle / iron fly (new path)
+                self._write_structure_fill(f, day, expiry, S, symbols_fn); continue
+            kind_cp = "call" if f["direction"] == "bull" else "put"
+            ls, ss = symbols_fn(kind_cp, f["kl"], f["kh"])
+            pid = self._position_id(f) if f["kind"] in ("open", "add", "close") else None
+            tg = "" if pid is None else str(pid)
+            q = self._last_quote.get((kind_cp, f["kl"], f["kh"]))
+            ts = str(datetime.combine(day, dtime(0, 0)) + timedelta(minutes=int(f["m"])))
+            # Where the index stood when the fill was priced. Live, that is the level on the same broker
+            # poll as the quotes, seconds after the minute close the engine decided on (``ndx``); a replay
+            # has no poll, so the minute's close.
+            at, spot = self._poll_spot or (None, None)
+            is_fill = f["kind"] in ("open", "add", "close")
+            ndx_fill = round(float(spot if spot is not None else S), 2) if is_fill else ""
+            filled_at = (at.isoformat(sep=" ", timespec="seconds") if (at is not None and spot is not None) else ts) if is_fill else ""
+            row = dict(ts=ts, minute=f["m"], event=f["kind"], ndx=round(S, 2), ndx_at_fill=ndx_fill, filled_at=filled_at,
+                       k_low=f["kl"], k_high=f["kh"], kind=kind_cp, direction=f["direction"],
+                       bid=(round(q.bid, 2) if q else ""), ask=(round(q.ask, 2) if q else ""), last=(round(q.last, 2) if q else ""), age=(q.age if q else ""),
+                       limit=(f["px"] if f["kind"] in ("rest", "cancel") else ""), fill=(f["px"] if f["kind"] in ("open", "add", "close") else ""),
+                       lots=f["lots"], cash=f["cash"], reason=f["reason"], tgid=tg, long_symbol=ls or "", short_symbol=ss or "", note="",
+                       spread=(round(q.ask - q.bid, 2) if q else ""))
+            if q is not None and getattr(q, "legs", None):
+                (lb, la, lage), (sb, sa, sage) = q.legs
+                row.update(long_bid=lb, long_ask=la, long_age=lage, short_bid=sb, short_ask=sa, short_age=sage)
+            self._log(day, row)
+            logger.info("%s %s %s %s/%s @ %s (%s)", row["ts"][11:16], f["kind"], f["direction"], f["kl"], f["kh"], f["px"], f["reason"])
+            if self.write_ledger and f["kind"] in ("open", "add", "close"):
+                try:
+                    new_pid = L.record_fill(self.db, self.account_id, self.slug, self.underlying, expiry, day, f,
+                                            ls or f"{self.underlying}-{f['kl']:.0f}", ss or f"{self.underlying}-{f['kh']:.0f}", position_id=pid,
+                                            extra={"underlying_px": ndx_fill, "underlying_at": filled_at,     # first: Notes is cut at 500 characters
+                                                   "provider": getattr(self.provider, "name", "?"), "bid": (q.bid if q else None), "ask": (q.ask if q else None), "last": (q.last if q else None),
+                                                   # per-leg quotes so the ledger can book each leg at its own
+                                                   # price instead of hanging the whole debit on the long one
+                                                   **({"long_bid": q.legs[0][0], "long_ask": q.legs[0][1],
+                                                       "short_bid": q.legs[1][0], "short_ask": q.legs[1][1]}
+                                                      if (q is not None and getattr(q, "legs", None)) else {})})
+                    if f["kind"] == "open" and new_pid is not None:
+                        self._tgids.setdefault(self._unit_key(f), []).append(int(new_pid))
+                except Exception as exc:
+                    logger.error("ledger write failed: %s", exc)
+            elif f["kind"] == "open":                                   # no ledger: still track the unit
+                self._tgids.setdefault(self._unit_key(f), []).append(-1)
+
+    def _alert(self, text: str) -> None:
+        """WhatsApp (engine.notify) when --notify is on and configured; always logged."""
+        logger.info("ALERT %s", text)
+        if not self.notify:
+            return
+        try:
+            from engine.notify import whatsapp_configured
+            from engine.signal_alerts import send_trade_alert
+            if whatsapp_configured():
+                send_trade_alert(f"📄 paper {self.slug}: {text}")
+        except Exception as exc:
+            logger.warning("alert failed: %s", exc)
+
+    def _preflight(self, day: date) -> list[str]:
+        """Checks before a live session: database, VXN freshness for the gate, the strategy's live hooks."""
+        problems = []
+        if self.db is None:
+            problems.append("no database engine")
+        else:
+            try:
+                from db.client import get_price_bars
+                from datetime import timedelta
+                vx = get_price_bars(self.db, "VXN", day - timedelta(days=30), day - timedelta(days=1))
+                if vx is None or len(vx) == 0:
+                    problems.append("no VXN daily bars: run scripts.bootstrap_market_data")
+                else:
+                    last = pd.Timestamp(vx["date"].iloc[-1]).date()
+                    if (day - last).days > VXN_MAX_AGE_DAYS:
+                        problems.append(f"VXN close is stale ({last}); run scripts.bootstrap_market_data")
+            except Exception as exc:
+                problems.append(f"VXN check failed: {exc}")
+        if not self.strategy.live_instrument():
+            problems.append("strategy exposes no live instrument")
+        return problems
+
+    @staticmethod
+    def _fill_guard(session) -> int:
+        """The runaway guard's ceiling: the runner's, unless the engine declares its own (an engine that logs every
+        order placed and cancelled in ``fills`` would trip the default on a normal day; see strategy_api.live)."""
+        try:
+            return int(getattr(session, "max_fills_per_session", MAX_FILLS_PER_SESSION))
+        except (TypeError, ValueError):
+            return MAX_FILLS_PER_SESSION
+
+    def _guard(self, session) -> bool:
+        if len(session.fills) > self._fill_guard(session):
+            self.halted = f"runaway guard: {len(session.fills)} fills"
+            logger.error(self.halted)
+            self._alert(self.halted)
+            return False
+        return True
+
+    def _step(self, session, minute: int, bar: Bar, quote_fn, is_last: bool, day: date, expiry: date, symbols_fn) -> bool:
+        """One bar through the engine with the guards. Returns False when the session must halt."""
+        if self.halted:
+            return False
+        try:
+            extra = {"open": bar.open} if getattr(session, "wants_open", False) else {}   # an engine that sets levels from it
+            session.on_bar(minute, bar.close, quote_fn, is_last=is_last, high=bar.high, low=bar.low, **extra)
+        except Exception as exc:
+            self.halted = f"engine error at {bar.ts:%H:%M}: {exc}"
+            logger.exception("engine error; halting the session")
+            self._alert(self.halted)
+            return False
+        self._write_new_fills(session, day, expiry, bar.close, symbols_fn)
+        return self._guard(session)
+
+    def _poll(self, session, now: datetime, spot: Optional[float], quote_fn, day: date, expiry: date, symbols_fn) -> bool:
+        """The engine's optional per-poll hook (``on_poll``): resting orders checked against the quotes just fetched.
+        Fills it produces are logged, alerted and saved like a bar's. Returns False when the session must halt."""
+        on_poll = getattr(session, "on_poll", None)
+        if on_poll is None or self.halted:
+            return not self.halted
+        n_before = len(session.fills)
+        try:
+            on_poll(now, spot, quote_fn)
+        except Exception as exc:
+            self.halted = f"engine error at {now:%H:%M:%S} (poll): {exc}"
+            logger.exception("engine error in on_poll; halting the session")
+            self._alert(self.halted)
+            return False
+        if len(session.fills) > n_before:
+            S = float(spot) if spot is not None else (float(session.closes[-1]) if session.closes else 0.0)
+            for f in session.fills[n_before:]:
+                if f.get("struct") == "hedge":
+                    logger.info("%s hedge %s %s NQ-eq @ %.2f (%s) [SYNTHETIC]", f"{now:%H:%M:%S}", f["direction"], f.get("units"), f["px"], f["reason"])
+                elif f["kind"] in ("open", "add", "close"):
+                    self._alert(f"{now:%H:%M:%S} {f['kind']} {f['direction']} {f.get('struct') or ''} {f['kl']:.0f}/{f['kh']:.0f} @ {f['px']:.2f} "
+                                f"({f['reason']}); day {session.day_pnl:+,.0f}")
+            self._write_new_fills(session, day, expiry, S, symbols_fn)
+            self._save_state(session, day)
+        return self._guard(session)
+
+    def _supervise(self, session, now: datetime, spot: Optional[float], quote_fn, day: date, expiry: date, symbols_fn) -> bool:
+        """The supervisor's controls (paper/supervisor.py) at this poll: entries and adds on or off through the engine's
+        ``supervise`` hook, and a new close request through its ``flatten``. They only take risk off, so a failure to
+        read them leaves the rules in charge; returns False only when the session must halt (the runaway guard)."""
+        if self.halted:
+            return False
+        try:
+            c = SUP.effective(self._controls_fn(self.slug) or {}, day)
+            self._sup_read_failures = 0
+        except Exception as exc:
+            self._sup_read_failures += 1
+            if self._sup_read_failures in (1, 30):
+                logger.warning("supervisor controls unreadable (%d): %s", self._sup_read_failures, exc)
+            return True
+        sup, flat = getattr(session, "supervise", None), getattr(session, "flatten", None)
+        want = (c.entries, c.adds)
+        close_new = c.close_at is not None and (self._sup_close_seen is None or c.close_at > self._sup_close_seen)
+        if (want != self._sup_applied or close_new) and (sup is None or flat is None):
+            if not self._sup_unsupported:
+                self._sup_unsupported = True
+                logger.warning("SUPERVISOR: %s's engine has no supervise/flatten hooks: the controls are ignored", self.slug)
+                self._alert(f"supervisor: {self.slug} cannot be supervised (no hooks); controls ignored")
+            self._sup_applied = want
+            if close_new:
+                self._sup_close_seen = c.close_at
+            return True
+        if want != self._sup_applied:
+            sup(c.entries, c.adds, c.reason)
+            self._sup_applied = want
+            msg = f"supervisor: entries {'on' if c.entries else 'OFF'}, adds {'on' if c.adds else 'OFF'}" + (f" ({c.reason})" if c.reason else "")
+            logger.info("%s %s", f"{now:%H:%M:%S}", msg)
+            self._alert(msg)
+        if close_new:
+            self._sup_close_seen = c.close_at
+            if not session.positions and getattr(session, "pending", None) is None and not self._book_open(session):
+                logger.info("%s supervisor: close requested, nothing open", f"{now:%H:%M:%S}")
+                return True
+            S = float(spot) if spot is not None else (float(session.closes[-1]) if session.closes else 0.0)
+            n_before = len(session.fills)
+            try:
+                n = flat(_minute_of(now) + 1, S, quote_fn, "supervisor")
+            except Exception as exc:                      # the rules keep managing whatever is still open
+                logger.exception("supervisor: flatten failed")
+                self._alert(f"supervisor: close FAILED ({exc}); the rules still manage the position")
+                return True
+            for f in session.fills[n_before:]:
+                if f["kind"] in ("open", "add", "close"):
+                    self._alert(f"{now:%H:%M:%S} {f['kind']} {f['direction']} {f['kl']:.0f}/{f['kh']:.0f} @ {f['px']:.2f} "
+                                f"({f['reason']}); day {session.day_pnl:+,.0f}")
+            logger.info("%s supervisor: closed %d position(s)%s", f"{now:%H:%M:%S}", n, f" ({c.reason})" if c.reason else "")
+            self._write_new_fills(session, day, expiry, S, symbols_fn)
+            self._save_state(session, day)
+        return self._guard(session)
+
+    def _log_session_features(self, session, day: date, minute: int) -> None:
+        """Once per session, at the strategy's first entry minute: the ex-ante features a gate model
+        could use (prior VXN, overnight gap, prior-day move, morning range), written as a `features`
+        row in the CSV log and appended to the session's ModelSignal note. The day's outcome is in
+        the same log, so a shadow gate can be scored later without re-running anything."""
+        if self._features_logged or not self._day_bars:
+            return
+        start_min = int(getattr(self.strategy.params, "entry_start_min", 11 * 60))
+        if minute < start_min:
+            return
+        self._features_logged = True
+        feats: dict = {"minute": minute}
+        try:
+            o = self._day_bars[0].open; hi = max(b.high for b in self._day_bars); lo = min(b.low for b in self._day_bars); last = self._day_bars[-1].close
+            feats.update(am_range_pct=round((hi - lo) / last * 100, 3), am_move_pct=round((last / o - 1) * 100, 3), open=round(o, 2), level=round(last, 2))
+            if self.db is not None:
+                from db.client import get_price_bars
+                # (timedelta is the module's: importing it here again made it a local of this function, unbound at
+                # the log write below whenever there is no database engine)
+                px = get_price_bars(self.db, self.underlying, day - timedelta(days=10), day - timedelta(days=1))
+                if len(px) >= 2:
+                    c1, c2 = float(px["close"].iloc[-1]), float(px["close"].iloc[-2])
+                    feats.update(gap_pct=round((o / c1 - 1) * 100, 3), prev_day_pct=round((c1 / c2 - 1) * 100, 3), prev_close=round(c1, 2))
+                vx = get_price_bars(self.db, "VXN", day - timedelta(days=10), day - timedelta(days=1))
+                if len(vx):
+                    feats["vxn_prev"] = round(float(vx["close"].iloc[-1]), 2)
+        except Exception as exc:
+            feats["error"] = str(exc)[:80]
+        # the strategy's own feature set and gate-model verdict (shadow unless the strategy says "on")
+        ai = {}
+        try:
+            if hasattr(self.strategy, "ai_features") and hasattr(self.strategy, "ai_verdict"):
+                sf = self.strategy.ai_features(day, list(self._day_bars), self.db)
+                ai = self.strategy.ai_verdict(sf)
+                feats["ai"] = {k: v for k, v in ai.items() if k != "features"}
+                feats["ai_features"] = {k: (round(v, 4) if isinstance(v, float) else v) for k, v in sf.items()}
+                if ai.get("mode") == "on" and ai.get("verdict") == "skip":
+                    session.ai_blocked = f"ai gate skip (p={ai.get('p')})"
+                    logger.info("AI gate ON: skip today (p=%s); no new entries", ai.get("p"))
+                    self._alert(f"AI gate: skip today (p={ai.get('p')})")
+                elif ai.get("mode") == "shadow":
+                    logger.info("AI gate shadow: %s (p=%s, model %s)", ai.get("verdict"), ai.get("p"), ai.get("model"))
+        except Exception as exc:
+            feats["ai_error"] = str(exc)[:80]
+        self._log(day, dict(ts=str(datetime.combine(day, dtime(0, 0)) + timedelta(minutes=minute)), minute=minute, event="features",
+                            ndx=feats.get("level", ""), note=json.dumps(feats, default=str)))
+        if self.write_ledger:
+            try:
+                L.record_session(self.db, day, self.underlying, self.slug, bool(session.blocked_reason), session.blocked_reason,
+                                 note=f"features {json.dumps(feats)}")
+            except Exception as exc:
+                logger.warning("session features not recorded: %s", exc)
+
+    def _log_mark(self, day: date, now: datetime, pos, q) -> None:
+        """One row per poll per open position: the quote, and the target it is being measured against.
+
+        The engine acts on bar closes; this records what the price did between them, so "the target
+        was available but the bar had passed" becomes a number instead of an impression.
+        """
+        try:
+            avg = float(getattr(pos, "avg_px", 0.0) or 0.0)
+            target = avg + float(getattr(self.strategy.params, "target_pts", 5.0))
+            p = self.log_dir / f"marks_{day.isoformat()}.csv"
+            new = not p.exists()
+            with p.open("a", newline="", encoding="utf-8") as f:
+                w = csv.writer(f)
+                if new:
+                    w.writerow(["ts", "direction", "k_low", "k_high", "units", "avg_px", "target",
+                                "bid", "ask", "mid", "age", "at_target"])
+                w.writerow([now.isoformat(timespec="seconds"), pos.direction, pos.k_low, pos.k_high,
+                            getattr(pos, "units", ""), round(avg, 2), round(target, 2),
+                            round(float(q.bid), 2), round(float(q.ask), 2), round(float(q.last), 2),
+                            q.age, int(float(q.last) >= target)])
+        except Exception:
+            pass
+
+    def _log_bar(self, day: date, bar, source: str, fresh: bool = False) -> None:
+        """The underlying's minute bars as the session saw them, in underlying_<day>.csv: built from the
+        polls, or the broker's candle feed on a late start (``fresh`` restarts the file, since a backfill
+        supersedes whatever was polled before it). Kept so that replaying or reconciling the day never
+        waits on a vendor that publishes the index a day late, as Polygon does on this plan."""
+        try:
+            p = self.log_dir / f"underlying_{day.isoformat()}.csv"
+            new = fresh or not p.exists()
+            with p.open("w" if fresh else "a", newline="", encoding="utf-8") as f:
+                w = csv.writer(f)
+                if new:
+                    w.writerow(["ts", "open", "high", "low", "close", "source"])
+                w.writerow([bar.ts.strftime("%Y-%m-%d %H:%M"), round(float(bar.open), 2), round(float(bar.high), 2),
+                            round(float(bar.low), 2), round(float(bar.close), 2), source])
+        except Exception:
+            pass
+
+    def _heartbeat(self, day: date, now: datetime, session, note: str = "", live_marks: dict | None = None,
+                   live_legs: dict | None = None, spot: float | None = None) -> None:
+        """A small file the Paper tab reads: when the runner last polled, what it holds, the day so far.
+
+        ``live_marks`` carries each open position's mark from the quote in hand at THIS poll. The
+        engine only remarks a position when a minute bar closes, so without this the page could show
+        a price up to a minute old however often it was refreshed, and would sit unchanged through
+        three perfectly good quotes. These are for display only; the engine still decides on bars.
+        """
+        try:
+            hb = {"slug": self.slug, "day": str(day), "at": now.isoformat(timespec="seconds"), "provider": getattr(self.provider, "name", "?"),
+                  "open_positions": len(session.positions), "fills": len(session.fills), "trades": len(session.trades),
+                  "marked": round(session.marked(), 0), "day_pnl": round(session.day_pnl, 0), "halted": self.halted or "", "note": note,
+                  "live_marks": live_marks or {}, "live_legs": live_legs or {}, "spot": spot, "underlying": self.underlying,
+                  "marks_at": now.isoformat(timespec="seconds") if live_marks else "",
+                  "api_calls_today": getattr(getattr(self.provider, "budget", None), "calls_today", None),   # how many broker requests so far
+                  # the synthetic hedge book, when the engine keeps one (its P&L at this poll's spot)
+                  "hedge": self._hedge_heartbeat(session, spot)}
+            (self.state_dir / f"heartbeat_{self.slug}.json").write_text(json.dumps(hb), encoding="utf-8")
+        except Exception:
+            pass
+
+    def _hedge_heartbeat(self, session, spot: Optional[float]) -> Optional[dict]:
+        """The engine's synthetic hedge book for the heartbeat: units, average, P&L at ``spot``, the ledger id."""
+        h = getattr(session, "hedge", None)
+        if h is None:
+            return None
+        try:
+            S = float(spot) if spot is not None else (float(session.closes[-1]) if session.closes else None)
+            return {"symbol": "NQ=NDX", "synthetic": True, "units": round(float(h.units), 4), "avg_px": round(float(h.avg_px), 4),
+                    "multiplier": 20.0, "n_trades": int(h.n_trades), "pnl": (round(float(h.pnl(S)), 2) if S is not None else None),
+                    "spot": S, "pid": self._hedge_pid}
+        except Exception:
+            return None
+
+    def _settlement_bar(self, bar: Bar, now_fn=now_et, sleep_fn=time.sleep) -> Bar:
+        """The session's last bar with its close moved to the settlement level (``settlement_spot``): the engine
+        settles open units at intrinsic on the last bar's close."""
+        px, source = settlement_spot(self.provider, float(bar.close), now_fn, sleep_fn)
+        if abs(px - float(bar.close)) >= 0.005:
+            logger.info("settling at %.2f (%s); the %s bar closed at %.2f", px, source, bar.ts.strftime("%H:%M"), bar.close)
+            self._alert(f"settling at {px:,.2f} ({source}), not the last bar's {bar.close:,.2f}")
+        return Bar(ts=bar.ts, open=bar.open, high=max(float(bar.high), px), low=min(float(bar.low), px), close=px)
+
+    def _force_settlement(self, session, day: date, quote_fn, expiry: date, symbols_fn, why: str) -> None:
+        """The session is over but positions are still open (a missed final bar, a halt): settle
+        them now at the last known spot so the ledger and the state never carry a unit overnight."""
+        if not session.positions and not self._book_open(session):
+            return
+        S = float(session.closes[-1]) if session.closes else 0.0
+        logger.warning("%d position(s)%s still open at session end (%s); settling at the last spot %.2f", len(session.positions),
+                       " and a synthetic book" if self._book_open(session) else "", why, S)
+        try:
+            session.on_bar(SESSION_CLOSE_MIN, S, quote_fn, is_last=True)
+        except Exception as exc:
+            logger.exception("forced settlement failed: %s", exc)
+        self._write_new_fills(session, day, expiry, S, symbols_fn)
+        self._alert(f"{day}: {why}; open units settled at the last spot; day P&L {session.day_pnl:+,.0f}")
+
+    def _save_state(self, session, day: date, finished: bool = False) -> None:
+        try:
+            self._state_path(day).write_text(json.dumps({"state": session.to_dict(), "written": self._written,
+                                                         "tgids": {"|".join(map(str, k)): v for k, v in self._tgids.items()},
+                                                         "hedge_pid": self._hedge_pid,
+                                                         "provider": getattr(self.provider, "name", "?"), "finished": finished}, default=str), encoding="utf-8")
+        except Exception as exc:
+            logger.warning("state save failed: %s", exc)
+
+    def _restore(self, day: date, blocked_reason: str):
+        p = self._state_path(day)
+        if not p.exists():
+            return None
+        try:
+            d = json.loads(p.read_text(encoding="utf-8"))
+            if d.get("finished"):
+                logger.info("state for %s is a finished session; starting fresh", day); return None
+            if d.get("provider") != getattr(self.provider, "name", "?"):
+                logger.info("state for %s came from provider %r, not %r; starting fresh", day, d.get("provider"), getattr(self.provider, "name", "?")); return None
+            fresh = self.strategy.live_session(day, blocked_reason=blocked_reason)
+            session = type(fresh).from_dict(self.strategy.params, d["state"])
+            self._written = int(d.get("written", 0))
+            # a vertical's key is (direction, kl, kh); a structure's (kind, direction, kl, kh): the strikes are the floats
+            self._tgids = {tuple((float(x) if i >= len(k.split("|")) - 2 else x) for i, x in enumerate(k.split("|"))): v
+                           for k, v in d.get("tgids", {}).items()}
+            self._hedge_pid = d.get("hedge_pid")
+            logger.info("resumed %s from %s: %d fills, %d open", day, p.name, len(session.fills), len(session.positions))
+            return session
+        except Exception as exc:
+            logger.warning("state restore failed (%s); starting fresh", exc)
+            return None
+
+    def _other_runners_active(self, day: date) -> list[str]:
+        """Other paper runners still in today's session (a fresh heartbeat not marked finished), in this state
+        directory and in other checkouts' (read only). Their day balance write must come first."""
+        import json as _json
+        dirs = [self.state_dir]
+        try:
+            from paper.providers import _external_state_dirs
+            dirs += [Path(d) for d in _external_state_dirs()]
+        except Exception:
+            pass
+        out = []
+        for d in dirs:
+            for hb in Path(d).glob("heartbeat_*.json"):
+                try:
+                    h = _json.loads(hb.read_text(encoding="utf-8"))
+                    at = datetime.fromisoformat(str(h.get("at")))
+                except (OSError, ValueError, TypeError):
+                    continue
+                if h.get("slug") == self.slug or str(h.get("day")) != day.isoformat():
+                    continue
+                if h.get("note") != "finished" and (datetime.now() - at).total_seconds() < 180:
+                    out.append(str(h.get("slug")))
+        return out
+
+    def _record_day_balance(self, day: date, sleep_fn=time.sleep, wait_s: float = 600.0) -> None:
+        """The account's day balance holds every runner's P&L: wait for other runners of the day to finish (they
+        write their own balance, which only knows their P&L), then write the account's total from the ledger."""
+        waited = 0.0
+        while waited < wait_s:
+            others = self._other_runners_active(day)
+            if not others:
+                break
+            logger.info("waiting for %s to finish before writing the day balance", ", ".join(others))
+            sleep_fn(30.0); waited += 30.0
+        if waited:
+            sleep_fn(60.0)                              # their balance write follows their "finished" heartbeat
+        try:
+            total = L.account_day_pnl(self.db, self.account_id, day)
+        except Exception as exc:
+            logger.warning("account day P&L unavailable (%s); writing this session's", exc)
+            total = None
+        L.record_day_balance(self.db, self.account_id, day, total if total is not None else 0.0)
+
+    def _gate(self, day: date) -> tuple[bool, str]:
+        try:
+            return self.strategy.session_gate(day)
+        except Exception as exc:
+            logger.error("gate check failed: %s", exc)
+            return True, f"gate error: {exc}"
+
+    # ── replay ────────────────────────────────────────────────────────────────
+    def run_replay(self, day: date, resume: bool = False) -> RunResult:
+        prov: ReplayProvider = self.provider
+        blocked, why = self._gate(day)
+        session = (self._restore(day, why) if resume else None) or self.strategy.live_session(day, blocked_reason=why)
+        if self.write_ledger:
+            L.record_session(self.db, day, self.underlying, self.slug, blocked, why, note=f"replay {prov.describe()}"[:400])
+        if not prov.has_option_data() and not blocked:
+            logger.warning("%s: no option prints stored; the engine will find no quotes", day)
+        res = RunResult(day, self.slug, prov.name, blocked, why)
+
+        def quote_fn(S, k_low, k_high, kind, minute):
+            q = self._quote_for(prov, kind, k_low, k_high, minute, S)
+            self._last_quote[(kind, k_low, k_high)] = q
+            return q
+
+        n = 0
+        while True:
+            bar = prov.next_bar()
+            if bar is None:
+                break
+            n += 1
+            minute = _minute_of(bar.ts) + 1
+            self._day_bars.append(bar)
+            self._log_session_features(session, day, minute)
+            if prov.is_last_bar() and session.positions:
+                bar = self._settlement_bar(bar)
+            if not self._step(session, minute, bar, quote_fn, prov.is_last_bar(), day, prov.expiry, prov.leg_symbols):
+                break
+        self._save_state(session, day, finished=True)
+        res.trades, res.fills, res.day_pnl, res.bars = session.trades, session.fills, session.day_pnl, n
+        res.n_fills_written, res.log_path, res.state_path = self._written, str(self._log_path(day)), str(self._state_path(day))
+        if self.write_ledger:
+            L.record_day_balance(self.db, self.account_id, day, session.day_pnl)
+        return res
+
+    # ── live ──────────────────────────────────────────────────────────────────
+    def run_live(self, day: Optional[date] = None, poll_seconds: Optional[int] = None, until: dtime = dtime(16, 1),
+                 now_fn: Callable[[], datetime] = now_et, sleep_fn: Callable[[float], None] = time.sleep) -> RunResult:
+        """Follow the clock (``now_fn``, injectable for tests) with a real-time provider: poll quotes,
+        build the underlying's minute bars, drive the engine at each minute's end."""
+        prov = self.provider
+        poll = max(MIN_POLL_S, int(poll_seconds or getattr(prov, "poll_seconds", 15)))
+        fetch_failures = 0
+        day = day or now_fn().date()
+        problems = self._preflight(day)
+        for pr in problems:
+            logger.error("preflight: %s", pr)
+        blocked, why = self._gate(day)
+        if not blocked and any("VXN" in pr for pr in problems):
+            blocked, why = True, "stale or missing VXN (preflight)"
+        n_chain = 0
+        for attempt in range(3):                                   # the chain call can fail on a flaky connection
+            try:
+                n_chain = prov.load_chain(day); break
+            except Exception as exc:
+                logger.warning("chain load failed (%d/3): %s", attempt + 1, exc); sleep_fn(20)
+        if n_chain == 0 and not blocked:
+            blocked, why = True, f"no {prov.root} contracts expire today"
+        logger.info("%s %s: gate %s; %d contracts in today's %s chain", self.slug, day, (f"BLOCKED ({why})" if blocked else "open"), n_chain, prov.root)
+        self._alert(f"{day} gate {'BLOCKED: ' + why if blocked else 'open'}; {n_chain} contracts")
+        try:                                                    # the exact rules this session ran with, in its own diary
+            _pp = self.strategy.params; _pd = _pp.as_dict() if hasattr(_pp, "as_dict") else dict(vars(_pp))
+            logger.info("%s %s: params %s", self.slug, day, json.dumps(_pd, default=str, sort_keys=True))
+        except Exception:
+            pass
+        if self.write_ledger:
+            L.record_session(self.db, day, self.underlying, self.slug, blocked, why, note=f"live {prov.name}, {n_chain} contracts")
+        session = self._restore(day, why) or self.strategy.live_session(day, blocked_reason=why)
+        res = RunResult(day, self.slug, prov.name, blocked, why)
+        carry = int(getattr(self.strategy.params, "carry_min", 30))
+        cur_minute: Optional[datetime] = None
+        quotes: dict = {}
+        # late start: feed the engine today's earlier bars so its lookback and the features are complete
+        start_now = now_fn()
+        # Not "no history" but "not enough history": a session restarted mid-morning resumes holding
+        # the handful of bars it had polled before stopping, which is worse than none -- it looks
+        # populated, so the backfill is skipped, and the engine then waits out the whole lookback
+        # again before it can signal. The backfill runs to now, so it supersedes that partial history.
+        need = int(getattr(self.strategy.params, "lookback_min", 30))
+        if len(session.closes) < need and start_now.time() > SESSION_OPEN and hasattr(prov, "backfill_bars"):
+            back = prov.backfill_bars(day, start_now.replace(second=0, microsecond=0))
+            if back:
+                logger.info("late start %s: backfilling %d bars from %s (had %d)",
+                            start_now.strftime("%H:%M"), len(back), back[0].ts.strftime("%H:%M"), len(session.closes))
+                session.closes.clear()
+                self._day_bars.clear()
+                rows = []
+                for i, b in enumerate(back):
+                    m = _minute_of(b.ts) + 1
+                    self._day_bars.append(b)
+                    self._log_bar(day, b, "broker candles", fresh=(i == 0))
+                    rows.append((m, float(b.open), float(b.high), float(b.low), float(b.close)))
+                on_backfill = getattr(session, "on_backfill", None)
+                if on_backfill is not None:                  # an engine that wants the whole bars (its open, its range)
+                    on_backfill(rows)
+                else:
+                    for m, _o, _h, _l, c in rows:
+                        session.closes.append(c)             # history only: no decisions on backfilled bars
+                        session.last_minute = m
+
+        def live_quote(kind, k_low, k_high):
+            nonlocal quotes
+            syms = self._symbols_for(prov, kind, k_low, k_high)
+            if not syms or any(not s for s in syms):
+                return None
+            if any(s not in quotes for s in syms):                   # a strike the engine just chose: fetch it now
+                try:
+                    quotes.update(prov.fetch(syms))
+                except Exception as exc:
+                    logger.warning("quote fetch failed: %s", exc); return None
+            return self._quote_for(prov, kind, k_low, k_high, quotes, now_fn(), carry)
+
+        def quote_fn(S, k_low, k_high, kind, minute):
+            q = live_quote(kind, k_low, k_high)
+            # a put vertical the engine booked by call parity is priced the way it was entered: off the calls
+            if str(kind) == "put" and (float(k_low), float(k_high)) in self._parity_strikes(session):
+                q = parity_put_quote(live_quote("call", k_low, k_high), float(k_high) - float(k_low)) or q
+            self._last_quote[(kind, k_low, k_high)] = q
+            return q
+
+        def watched_symbols() -> list[str]:
+            syms = []
+            parity = self._parity_strikes(session)
+            for pos in session.positions:
+                syms += self._symbols_for(prov, pos.kind, pos.k_low, pos.k_high)
+                if str(pos.kind) == "put" and (float(pos.k_low), float(pos.k_high)) in parity:
+                    syms += self._symbols_for(prov, "call", pos.k_low, pos.k_high)     # marked off the calls
+            if getattr(session, "pending", None) is not None:
+                pe = session.pending; syms += self._symbols_for(prov, pe.kind, pe.k_low, pe.k_high)
+            watch = getattr(session, "watch_structures", None)         # an engine that wants more quoted each poll
+            if watch is not None:
+                try:
+                    for kind, k_low, k_high in watch():
+                        syms += self._symbols_for(prov, kind, k_low, k_high)
+                except Exception as exc:
+                    logger.warning("watch_structures failed: %s", exc)
+            out = []
+            for s in syms:
+                if s and s not in out:
+                    out.append(s)
+            return out
+
+        n = 0
+        last_good_fetch: Optional[datetime] = None
+        silence_alerted = False
+        self._sup_close_seen = now_fn()                 # a close requested before this run started is not this run's
+        while True:
+            now = now_fn()
+            if now.time() >= until:
+                break
+            if now.time() < SESSION_OPEN:
+                self._heartbeat(day, now, session, "waiting for the open")
+                sleep_fn(min(60, poll)); continue
+            try:
+                quotes = prov.fetch(watched_symbols())
+                last_good_fetch = now
+                silence_alerted = False
+            except Exception as exc:
+                fetch_failures += 1
+                logger.warning("fetch failed (%d in a row): %s", fetch_failures, exc)
+                if last_good_fetch is not None and not silence_alerted and (now - last_good_fetch).total_seconds() >= QUOTE_SILENCE_ALERT_MIN * 60:
+                    self._alert(f"no quotes for {QUOTE_SILENCE_ALERT_MIN} minutes ({exc}); {len(session.positions)} open"); silence_alerted = True
+                # a rejected credential is never retried: re-asking cannot fix it and looks like abuse to the broker
+                if "rejected the credentials" in str(exc) or fetch_failures >= FETCH_FAILURES_TO_HALT:
+                    self.halted = f"quote feed halted after {fetch_failures} failures: {str(exc)[:120]}"
+                    logger.error(self.halted); self._alert(self.halted)
+                    self._heartbeat(day, now, session, "halted: quote feed"); self._save_state(session, day, finished=False)
+                    break
+                wait = min(FETCH_BACKOFF_MAX_S, poll * (2 ** min(fetch_failures - 1, 5)))     # 15, 30, 60, 120, 240, 300 ...
+                self._heartbeat(day, now, session, f"fetch failing ({fetch_failures}), next try in {wait}s: {str(exc)[:60]}")
+                sleep_fn(wait); continue
+            fetch_failures = 0
+            # Remark every open position off the quote just fetched, so the page moves with the
+            # market rather than in once-a-minute steps. Costs nothing: these quotes are in hand.
+            live_marks: dict = {}
+            live_legs: dict = {}
+            for pos in session.positions:
+                try:
+                    qv = self._mark_quote(prov, session, pos, quotes, now, carry)
+                    if qv is not None:
+                        live_marks[f"{pos.direction}|{float(pos.k_low)}|{float(pos.k_high)}"] = round(float(qv.last), 2)
+                        # Every poll's mark against the target the engine will only check at the next
+                        # bar close. Near expiry the quote can travel several points inside a minute,
+                        # so the question of how much a bar-close check leaves on the table is real --
+                        # and unanswerable without keeping the intra-bar prices somewhere.
+                        self._log_mark(day, now, pos, qv)
+                    # the legs too, so the position popup can price each one without opening its own
+                    # broker connection from inside the web process
+                    for sym in self._symbols_for(prov, pos.kind, pos.k_low, pos.k_high):
+                        lq = quotes.get(sym) if sym else None
+                        if lq is not None and lq.bid is not None and lq.ask is not None and lq.ask >= lq.bid:
+                            live_legs[str(sym)] = round((float(lq.bid) + float(lq.ask)) / 2.0, 2)
+                    live_legs.update(self._parity_leg_mids(prov, session, pos, quotes))   # a parity-booked put: off the calls
+                except Exception:
+                    pass
+            iq = quotes.get(self.underlying)
+            spot_now = float(iq.last) if (iq is not None and iq.last is not None) else None
+            self._poll_spot = (now, spot_now)          # any fill this poll prices is stamped with this level
+            self._heartbeat(day, now, session, live_marks=live_marks, live_legs=live_legs, spot=spot_now)
+            prov.sample_underlying(quotes, now)
+            # the supervisor's controls first (paper/supervisor.py): they only take risk off
+            if not self._supervise(session, now, spot_now, quote_fn, day, prov.expiry or day, prov.leg_symbols):
+                break
+            # an engine with resting orders sees every poll's quotes, not one a minute (strategy_api.live: on_poll)
+            if not self._poll(session, now, spot_now, quote_fn, day, prov.expiry or day, prov.leg_symbols):
+                break
+            this_minute = now.replace(second=0, microsecond=0)
+            if cur_minute is None:
+                cur_minute = this_minute
+            if this_minute > cur_minute:                                # the previous minute is complete
+                bar = prov.close_minute(cur_minute)
+                if bar is not None:
+                    minute = _minute_of(bar.ts) + 1
+                    is_last = minute >= SESSION_CLOSE_MIN
+                    self._day_bars.append(bar)
+                    self._log_bar(day, bar, "polled")
+                    self._log_session_features(session, day, minute)
+                    if is_last and session.positions:
+                        bar = self._settlement_bar(bar, now_fn, sleep_fn)
+                    if not self._step(session, minute, bar, quote_fn, is_last, day, prov.expiry or day, prov.leg_symbols):
+                        break
+                    n += 1
+                    for f in session.fills[-3:]:
+                        if f["m"] == minute and f["kind"] in ("open", "add", "close"):
+                            self._alert(f"{bar.ts:%H:%M} {f['kind']} {f['direction']} {f['kl']:.0f}/{f['kh']:.0f} @ {f['px']:.2f} ({f['reason']}); day {session.day_pnl:+,.0f}")
+                    self._write_new_fills(session, day, prov.expiry or day, bar.close, prov.leg_symbols)
+                    self._save_state(session, day)
+                    if n % 15 == 0 or session.fills:
+                        logger.info("%s bar %s close %.2f | open %d | marked %+.0f | fills %d", day, bar.ts.strftime("%H:%M"), bar.close,
+                                    len(session.positions), session.marked(), len(session.fills))
+                cur_minute = this_minute
+            sleep_fn(poll)
+        if session.positions and now_fn().time() >= dtime(16, 0):
+            self._force_settlement(session, day, quote_fn, prov.expiry or day, prov.leg_symbols,
+                                   "session ended with open units" + (f" ({self.halted})" if self.halted else ""))
+        self._save_state(session, day, finished=True)
+        self._heartbeat(day, now_fn(), session, "finished")
+        res.trades, res.fills, res.day_pnl, res.bars = session.trades, session.fills, session.day_pnl, n
+        res.n_fills_written, res.log_path, res.state_path = self._written, str(self._log_path(day)), str(self._state_path(day))
+        if self.write_ledger:
+            self._record_day_balance(day, sleep_fn=sleep_fn)
+        logger.info("session done: %d bars, %d trades, day P&L %+.0f%s", n, len(session.trades), session.day_pnl, (f"; HALTED: {self.halted}" if self.halted else ""))
+        self._alert(f"{day} done: {len(session.trades)} trades, day P&L {session.day_pnl:+,.0f}" + (f"; HALTED: {self.halted}" if self.halted else ""))
+        res.reason = res.reason or (self.halted or "")
+        return res

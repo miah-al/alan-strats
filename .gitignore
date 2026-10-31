@@ -33,3 +33,9 @@ Thumbs.db
 
 # Claude Code local config
 .claude/
+paper_state/
+logs/paper/
+.venv-win/
+.pycache/
+# local strategy overlays (api/bootstrap.py)
+strategy_overlays.txt

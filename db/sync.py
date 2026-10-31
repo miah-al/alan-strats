@@ -33,6 +33,7 @@ def sync_price_bars(
     from_date: date = DEFAULT_START,
     to_date:   date = None,
     progress_cb: Callable[[str], None] = None,
+    source_symbol: Optional[str] = None,
 ) -> dict:
     """Fetch daily OHLCV from yfinance and store in mkt.PriceBar.
 
@@ -40,9 +41,12 @@ def sync_price_bars(
     endpoint is rate-limited to 5/min on this plan and frequently returns 0 bars,
     which silently left many universe tickers (QQQ/IWM/GLD/EEM…) with no history.
     `api_key` is retained for signature/UI compatibility and is unused here.
+    `source_symbol` is the yfinance ticker when it differs from the stored symbol
+    (index levels: NDX <- ^NDX, VXN <- ^VXN); YF_INDEX_SYMBOLS supplies it by default.
     """
     to_date = to_date or date.today()
     engine  = get_engine()
+    yf_symbol = source_symbol or YF_INDEX_SYMBOLS.get(symbol.upper(), symbol)
 
     # Incremental: re-sync last date (delete + re-insert) then continue forward
     from sqlalchemy import text as _t
@@ -66,11 +70,16 @@ def sync_price_bars(
     try:
         from alan_trader.data.stock_data import yf_daily_bars
         n_days = (date.today() - from_date).days + 5
-        df = yf_daily_bars(symbol, n_days=max(n_days, 30))
+        df = yf_daily_bars(yf_symbol, n_days=max(n_days, 30))
         if df is not None and not df.empty:
             df = df.copy()
             df["date"] = pd.to_datetime(df["date"]).dt.date
             df = df[(df["date"] >= from_date) & (df["date"] <= to_date)]
+            # yfinance includes the current session as a partial bar while the market is open; a
+            # daily close is only stored once the session is over (16:15 US/Eastern)
+            _now_et = pd.Timestamp.now(tz="US/Eastern")
+            if _now_et.hour * 60 + _now_et.minute < 16 * 60 + 15:
+                df = df[df["date"] < _now_et.date()]
         if df is None or df.empty:
             log_sync(engine, "PriceBar", to_date, 0, symbol)
             return {"status": "no_data", "rows": 0,
@@ -112,6 +121,31 @@ def _bs_mid(S: float, K: float, T: float, r: float, iv: float, opt: str) -> floa
             return K * math.exp(-r * T) * cdf(-d2) - S * cdf(-d1)
     except Exception:
         return float("nan")
+
+
+def _bs_greeks(S: float, K: float, T: float, r: float, iv: float, opt: str):
+    """Return (delta, gamma) under Black-Scholes for the reconstructed IV.
+
+    Polygon's Starter plan gives no historical greeks, so we derive delta/gamma
+    analytically from the same IV we invert from the option's traded price. This
+    lets gamma/delta-driven strategies (dealer_gamma_regime, expiry_max_pain,
+    sizing on delta) see real, self-consistent greeks instead of NULLs.
+    """
+    if T <= 0 or iv <= 0 or S <= 0 or K <= 0:
+        return None, None
+    try:
+        from scipy.stats import norm as _norm
+        cdf, pdf = _norm.cdf, _norm.pdf
+    except ImportError:
+        cdf = lambda x: 0.5 * (1 + math.erf(x / math.sqrt(2)))
+        pdf = lambda x: math.exp(-0.5 * x * x) / math.sqrt(2 * math.pi)
+    try:
+        d1 = (math.log(S / K) + (r + 0.5 * iv * iv) * T) / (iv * math.sqrt(T))
+        delta = cdf(d1) if opt == "call" else cdf(d1) - 1.0
+        gamma = pdf(d1) / (S * iv * math.sqrt(T))
+        return round(float(delta), 6), round(float(gamma), 8)
+    except Exception:
+        return None, None
 
 
 def bs_price_chain(df: pd.DataFrame, S: float, r: float = 0.045) -> pd.DataFrame:
@@ -277,6 +311,8 @@ def sync_option_snapshots(
     dte_max:   int  = 90,
     spot_range_pct: float = 0.25,   # fetch strikes within ±25% of spot
     progress_cb: Callable[[str, int, int, int], None] = None,
+    force: bool = False,            # re-fetch even dates already synced (adds new DTE bands / greeks)
+    monthly_only: bool = False,     # keep only 3rd-Friday monthly expiries (feasible ≥45-DTE backfill)
 ) -> dict:
     """
     Build a real historical IV surface from per-contract daily OHLC data.
@@ -344,6 +380,20 @@ def sync_option_snapshots(
     if not all_contracts:
         return {"status": "error", "message": "No contracts found for given parameters."}
 
+    # Optionally keep only standard monthly expiries (3rd Friday). SPY lists
+    # daily + weekly + monthly series, so a full per-contract OHLC backfill is
+    # O(10k) contracts even for a few weeks. Calendar / skew strategies only
+    # need the monthly ladder, so this cuts the fetch ~10-20× and makes a
+    # multi-month ≥45-DTE backfill feasible.
+    if monthly_only:
+        def _is_third_friday(dstr: str) -> bool:
+            d = date.fromisoformat(dstr)
+            return d.weekday() == 4 and 15 <= d.day <= 21
+        all_contracts = [c for c in all_contracts
+                         if _is_third_friday(c.get("expiration_date", ""))]
+        if not all_contracts:
+            return {"status": "error", "message": "No monthly (3rd-Friday) contracts in range."}
+
     if progress_cb:
         progress_cb(f"Found {len(all_contracts)} contracts — fetching daily OHLC...", 0, len(all_contracts), 0)
 
@@ -364,18 +414,34 @@ def sync_option_snapshots(
             """), {"d": snap_d}).fetchall()
         return {_TENOR_DTE[r[0]]: float(r[1]) / 100 for r in rows if r[1] is not None}
 
-    # Pre-load already-synced dates so we can skip them on resume
+    # Pre-load already-synced dates so we can skip them on resume. With
+    # force=True we intentionally do NOT skip — this lets a re-sync widen the
+    # DTE band (e.g. add 23–60 DTE rows) and backfill greeks on dates that were
+    # previously synced with a narrower window. The upsert is idempotent
+    # (IF NOT EXISTS INSERT) so existing rows are never duplicated.
     from alan_trader.db.client import get_ticker_id as _get_tid
+    # The resume key MUST include contract type. Keying on date alone is a
+    # date-level test applied inside a contract-level loop: `all_contracts`
+    # lists every call before every put, so once the calls have covered each
+    # snapshot date, every single put contract matches "already synced" and is
+    # skipped. That silently produced a 63,010-row, calls-only surface with
+    # zero puts — which quietly breaks every credit-spread, condor and
+    # put-based strategy downstream.
     _tid = _get_tid(engine, symbol)
-    synced_dates: set[date] = set()
-    if _tid:
+    synced_keys: set[tuple] = set()
+    if _tid and not force:
         with engine.connect() as _conn:
             from sqlalchemy import text as _t
             _rows = _conn.execute(_t("""
-                SELECT DISTINCT SnapshotDate FROM mkt.OptionSnapshot
+                SELECT DISTINCT SnapshotDate, ContractType FROM mkt.OptionSnapshot
                 WHERE TickerId = :tid AND SnapshotDate BETWEEN :from_d AND :to_d
             """), {"tid": _tid, "from_d": from_date, "to_d": to_date}).fetchall()
-            synced_dates = {r[0] if isinstance(r[0], date) else r[0].date() for r in _rows}
+            synced_keys = {
+                ((r[0] if isinstance(r[0], date) else r[0].date()),
+                 str(r[1] or "").upper()[:1])
+                for r in _rows
+            }
+    synced_dates = {k[0] for k in synced_keys}   # kept for progress reporting
 
     if synced_dates and progress_cb:
         progress_cb(
@@ -396,9 +462,17 @@ def sync_option_snapshots(
         """Write all accumulated rows to DB, update synced_dates."""
         for snap_date, date_rows in sorted(rows_by_date.items()):
             try:
-                n = upsert_option_snapshots(engine, symbol, snap_date, pd.DataFrame(date_rows))
+                # force=True means "recompute and REPLACE", so the write must
+                # overwrite. Without this the insert-only upsert silently drops
+                # every corrected value and a corrective re-sync is a no-op.
+                n = upsert_option_snapshots(engine, symbol, snap_date,
+                                            pd.DataFrame(date_rows),
+                                            overwrite=force)
                 total_rows_ref[0] += n
                 synced_dates.add(snap_date)
+                for _r in date_rows:
+                    synced_keys.add((snap_date,
+                                     str(_r.get("type") or "").upper()[:1]))
             except Exception as e:
                 errors.append(f"{snap_date}: {e}")
         rows_by_date.clear()
@@ -422,9 +496,11 @@ def sync_option_snapshots(
         if contract_start > contract_end:
             continue
         # Check if every trading date in this contract's window is already synced
+        _ct_key = str(opt_type or "").upper()[:1]     # 'C' or 'P'
         relevant_spot_dates = [d for d in spot_dates if contract_start <= d <= contract_end]
-        if relevant_spot_dates and all(d in synced_dates for d in relevant_spot_dates):
-            continue  # all dates covered — skip Polygon API call
+        if relevant_spot_dates and all((d, _ct_key) in synced_keys
+                                       for d in relevant_spot_dates):
+            continue  # this side of the chain is covered — skip the API call
 
         try:
             bars = client.get_aggregates(ticker, str(from_date), str(to_date))
@@ -440,8 +516,12 @@ def sync_option_snapshots(
                 bar_date = bar_date.date()
             if bar_date < from_date or bar_date > to_date:
                 continue
-            if bar_date in synced_dates:
-                continue  # already committed to DB
+            # Must be keyed on contract type, like the contract-level skip
+            # above. A bare date test drops every put bar on any date the calls
+            # already covered — which silently produced a calls-only surface
+            # even after the contract-level skip was fixed.
+            if (bar_date, _ct_key) in synced_keys:
+                continue  # this side of the chain already committed to DB
 
             S = spot_series.get(bar_date)
             if not S:
@@ -459,7 +539,20 @@ def sync_option_snapshots(
             if not (dte_min <= dte <= dte_max):
                 continue
 
-            T = dte / 252.0
+            # `dte` is CALENDAR days, so the year fraction must use a calendar
+            # year. Dividing calendar days by the 252 trading-day year made T
+            # 365/252 = 1.45x too large; because IV is found by inverting
+            # Black-Scholes against the observed price, an over-large T forces a
+            # correspondingly SMALLER sigma to reproduce that price. Every
+            # stored ImpliedVol was therefore ~15% too low
+            # (predicted sqrt(252/365) = 0.831; measured stored/correct = 0.851
+            # across 22,747 SPY puts), and _bs_greeks inherits the same T so
+            # Delta and Gamma carry it too.
+            #
+            # NOTE: this corrects future syncs only. Rows already in
+            # mkt.OptionSnapshot keep the old values until re-synced with
+            # `python -m scripts.bootstrap_market_data --options-only`.
+            T = dte / 365.0
             yc = _get_rate(bar_date)
             r  = _term_rate(dte, yc)
 
@@ -481,6 +574,7 @@ def sync_option_snapshots(
                 continue
 
             spread = max(0.01, close_price * (0.04 if close_price < 1 else 0.02))
+            delta, gamma = _bs_greeks(S, K, T, r, iv, opt_type)
             rows_by_date.setdefault(bar_date, []).append({
                 "expiration":    exp_str,
                 "type":          opt_type,
@@ -488,8 +582,8 @@ def sync_option_snapshots(
                 "bid":           round(close_price - spread / 2, 4),
                 "ask":           round(close_price + spread / 2, 4),
                 "iv":            round(iv, 6),
-                "delta":         None,
-                "gamma":         None,
+                "delta":         delta,
+                "gamma":         gamma,
                 "theta":         None,
                 "vega":          None,
                 "open_interest": None,
@@ -1230,6 +1324,341 @@ def sync_cpi(
 
 
 # ── Coverage summary ──────────────────────────────────────────────────────────
+
+# ── Intraday minute bars (Polygon aggregates) ────────────────────────────────
+
+#: Symbols served by Polygon's index feed (ticker prefix "I:") rather than the stock feed.
+INDEX_SYMBOLS = {"NDX", "SPX", "RUT", "DJI", "VIX", "VXN", "OEX", "XSP"}
+
+#: Daily bars for index levels come from yfinance under a caret symbol; the DB keeps the plain one.
+YF_INDEX_SYMBOLS = {"NDX": "^NDX", "VXN": "^VXN", "SPX": "^GSPC", "VIX": "^VIX", "RUT": "^RUT"}
+
+MINUTE_BARS_DEFAULT_START = date(2023, 10, 1)      # Polygon I:NDX 1-minute history starts here on this plan
+
+
+def polygon_ticker_for(symbol: str) -> str:
+    return f"I:{symbol}" if symbol.upper() in INDEX_SYMBOLS else symbol.upper()
+
+
+def _polygon_minute_aggs(polygon_ticker: str, start: date, end: date, api_key: str) -> pd.DataFrame:
+    """All 1-minute aggregates for [start, end] (inclusive), regular session only, as a frame
+    ts (naive US/Eastern bar START), open, high, low, close, volume, trades, vwap (the last two
+    are None for index feeds). Works for index (I:NDX), stock and option (O:NDXP...) tickers.
+    Paginates next_url, backs off on 429."""
+    import time
+    import requests
+    url = f"https://api.polygon.io/v2/aggs/ticker/{polygon_ticker}/range/1/minute/{start}/{end}"
+    params = {"adjusted": "false", "sort": "asc", "limit": 50000, "apiKey": api_key}
+    rows: list = []
+    while url:
+        resp = None
+        for attempt in range(6):
+            resp = requests.get(url, params=params, timeout=60)
+            if resp.status_code == 429:
+                time.sleep(2 ** attempt)
+                continue
+            resp.raise_for_status()
+            break
+        payload = resp.json()
+        rows += payload.get("results") or []
+        url = payload.get("next_url")
+        params = {"apiKey": api_key}
+    if not rows:
+        return pd.DataFrame(columns=["ts", "open", "high", "low", "close", "volume", "trades", "vwap"])
+    raw = pd.DataFrame(rows)
+    ts = pd.to_datetime(raw["t"], unit="ms", utc=True).dt.tz_convert("US/Eastern").dt.tz_localize(None)
+    df = pd.DataFrame({"ts": ts, "open": raw["o"], "high": raw["h"], "low": raw["l"], "close": raw["c"],
+                       "volume": raw["v"] if "v" in raw.columns else None,
+                       "trades": raw["n"] if "n" in raw.columns else None,
+                       "vwap": raw["vw"] if "vw" in raw.columns else None})
+    minute = df["ts"].dt.hour * 60 + df["ts"].dt.minute
+    df = df[(minute >= 9 * 60 + 30) & (minute < 16 * 60) & (df["ts"].dt.weekday < 5)]
+    return df.sort_values("ts").drop_duplicates("ts").reset_index(drop=True)
+
+
+def sync_minute_bars(
+    symbol: str,
+    api_key: str,
+    from_date: date = MINUTE_BARS_DEFAULT_START,
+    to_date: Optional[date] = None,
+    refresh: bool = False,
+    progress_cb: Callable[[str], None] = None,
+) -> dict:
+    """Pull 1-minute bars for symbol from Polygon into mkt.MinuteBar, one calendar month at a
+    time. Months already present are skipped unless refresh=True; the current month is always
+    re-pulled. Index symbols (NDX, SPX, ...) use Polygon's I: feed. Returns rows, sessions, months."""
+    import calendar as _cal
+    import time
+    from alan_trader.db.client import replace_minute_bars, get_minute_bar_months, get_minute_bar_coverage
+    if not api_key:
+        return {"status": "error", "rows": 0, "detail": "POLYGON_API_KEY missing"}
+    engine = get_engine()
+    to_date = to_date or date.today()
+    pticker = polygon_ticker_for(symbol)
+    asset_class = "index" if symbol.upper() in INDEX_SYMBOLS else "etf"
+    have = set() if refresh else get_minute_bar_months(engine, symbol)
+    today = date.today()
+    y, m = from_date.year, from_date.month
+    total_rows, months_pulled, empty_months = 0, 0, []
+    while (y, m) <= (to_date.year, to_date.month):
+        current = (y, m) == (today.year, today.month)
+        if (y, m) in have and not current:
+            m += 1
+            if m == 13:
+                y, m = y + 1, 1
+            continue
+        start = max(from_date, date(y, m, 1))
+        end = min(to_date, date(y, m, _cal.monthrange(y, m)[1]))
+        if progress_cb:
+            progress_cb(f"{symbol} minute bars {y}-{m:02d} ({pticker})…")
+        df = pd.DataFrame()
+        for attempt in range(3):                       # Polygon occasionally returns an empty page
+            df = _polygon_minute_aggs(pticker, start, end, api_key)
+            if len(df):
+                break
+            time.sleep(3)
+        if len(df):
+            n = replace_minute_bars(engine, symbol, df, source="polygon", asset_class=asset_class)
+            total_rows += n
+            months_pulled += 1
+            if progress_cb:
+                progress_cb(f"{symbol} {y}-{m:02d}: {n:,} bars, {df['ts'].dt.date.nunique()} sessions")
+        else:
+            empty_months.append(f"{y}-{m:02d}")
+        m += 1
+        if m == 13:
+            y, m = y + 1, 1
+    log_sync(engine, "MinuteBar", to_date, total_rows, symbol)
+    cov = get_minute_bar_coverage(engine, symbol)
+    return {"status": "ok" if total_rows or cov else "no_data", "rows": total_rows, "months": months_pulled,
+            "empty_months": empty_months,
+            "coverage": (f"{cov[0]} .. {cov[1]}, {cov[2]} sessions" if cov else "none")}
+
+
+# ── Option minute bars (per-contract trade aggregates, Polygon) ──────────────
+
+OPTION_MINUTE_DEFAULT_START = date(2024, 10, 1)     # Options Starter: about two years of option minute bars
+
+#: Option root for the same-day (PM-settled) expiries of each index underlying.
+OPTION_ROOTS = {"NDX": "NDXP", "SPX": "SPXW", "RUT": "RUTW", "XSP": "XSP"}
+
+
+def parse_option_ticker(ticker: str) -> tuple[str, date, str, float]:
+    """'O:NDXP260826C29270000' -> ('NDXP', date(2026, 8, 26), 'C', 29270.0). OCC 21-character body."""
+    body = ticker.split(":", 1)[1] if ":" in ticker else ticker
+    i = 0
+    while i < len(body) and not body[i].isdigit():
+        i += 1
+    root, rest = body[:i], body[i:]
+    yy, mm, dd = int(rest[0:2]), int(rest[2:4]), int(rest[4:6])
+    right = rest[6].upper()
+    strike = int(rest[7:15]) / 1000.0
+    return root, date(2000 + yy, mm, dd), right, strike
+
+
+def select_option_strikes(strikes, ref_level: float, band: float = 400.0, step: int = 25) -> list[float]:
+    """Strikes within +-band of ref_level that sit on the `step` grid, ascending, deduplicated."""
+    out = set()
+    for k in strikes:
+        k = float(k)
+        if abs(k - ref_level) <= band and (step <= 0 or abs(k / step - round(k / step)) < 1e-9):
+            out.add(k)
+    return sorted(out)
+
+
+def _polygon_option_contracts(underlying: str, expiry: date, api_key: str) -> pd.DataFrame:
+    """Every listed option contract on `underlying` expiring on `expiry` (as of that day), as a
+    frame ticker, root, strike, right, expiry. Paginates next_url, backs off on 429."""
+    import time
+    import requests
+    url = "https://api.polygon.io/v3/reference/options/contracts"
+    params: dict = {"underlying_ticker": underlying.upper(), "expiration_date": expiry.isoformat(),
+                    "as_of": expiry.isoformat(), "limit": 1000, "apiKey": api_key}
+    if expiry < date.today():
+        params["expired"] = "true"
+    rows: list = []
+    while url:
+        resp = None
+        for attempt in range(6):
+            resp = requests.get(url, params=params, timeout=60)
+            if resp.status_code == 429:
+                time.sleep(2 ** attempt)
+                continue
+            resp.raise_for_status()
+            break
+        payload = resp.json()
+        rows += payload.get("results") or []
+        url = payload.get("next_url")
+        params = {"apiKey": api_key}
+    if not rows:
+        return pd.DataFrame(columns=["ticker", "root", "strike", "right", "expiry"])
+    out = []
+    for r in rows:
+        try:
+            root, exp, right, strike = parse_option_ticker(r["ticker"])
+        except Exception:
+            continue
+        out.append({"ticker": r["ticker"], "root": root, "strike": float(r.get("strike_price", strike)),
+                    "right": (r.get("contract_type") or right)[0].upper(), "expiry": exp})
+    return pd.DataFrame(out)
+
+
+def _session_ref_level(engine, symbol: str, day: date, ref_time: str = "13:00") -> Optional[float]:
+    """The underlying's close at `ref_time` on `day` from mkt.MinuteBar (first bar at or after it,
+    else the session's last close). None when the session has no bars."""
+    from alan_trader.db import client as _client
+    bars = _client.get_minute_bars(engine, symbol, day, day)
+    if bars.empty:
+        return None
+    hh, mm = (int(x) for x in ref_time.split(":"))
+    minute = bars["ts"].dt.hour * 60 + bars["ts"].dt.minute
+    at = bars[minute >= hh * 60 + mm]
+    return float(at["close"].iloc[0]) if len(at) else float(bars["close"].iloc[-1])
+
+
+def sync_option_minute_bars(
+    symbol: str,
+    api_key: str,
+    from_date: date = OPTION_MINUTE_DEFAULT_START,
+    to_date: Optional[date] = None,
+    band: float = 400.0,
+    step: int = 25,
+    ref_time: str = "13:00",
+    root: Optional[str] = None,
+    refresh: bool = False,
+    max_sessions: Optional[int] = None,
+    progress_cb: Callable[[str], None] = None,
+) -> dict:
+    """Pull per-contract 1-minute trade bars for the SAME-DAY expiry of `symbol` into
+    mkt.OptionMinuteBar, one session at a time, for the strikes on the `step` grid within
+    +-band of the underlying's `ref_time` level (from mkt.MinuteBar, which must be filled
+    first). Sessions already in mkt.OptionMinuteSession are skipped unless refresh=True.
+    About 60 to 70 requests per session on NDX; resumable. Returns rows, sessions, coverage."""
+    from alan_trader.db.client import (get_minute_bar_sessions, replace_option_minute_bars,
+                                       upsert_option_minute_session, get_option_minute_sessions,
+                                       get_option_minute_coverage)
+    if not api_key:
+        return {"status": "error", "rows": 0, "detail": "POLYGON_API_KEY missing"}
+    engine = get_engine()
+    to_date = to_date or date.today()
+    root = (root or OPTION_ROOTS.get(symbol.upper(), symbol.upper())).upper()
+    sessions = get_minute_bar_sessions(engine, symbol, from_date, to_date)
+    if not sessions:
+        return {"status": "error", "rows": 0,
+                "detail": f"no mkt.MinuteBar sessions for {symbol} in {from_date}..{to_date}; pull the index bars first"}
+    have = set() if refresh else set(get_option_minute_sessions(engine, symbol)["session"].tolist())
+    todo = [d for d in sessions if d not in have]
+    if max_sessions:
+        todo = todo[:max_sessions]
+    total_rows, done, failed = 0, 0, []
+    for day in todo:
+        if progress_cb:
+            progress_cb(f"{symbol} option minutes {day} ({root})…")
+        try:
+            ref = _session_ref_level(engine, symbol, day, ref_time)
+            contracts = _polygon_option_contracts(symbol, day, api_key)
+            sel = contracts[contracts["root"] == root] if len(contracts) else contracts
+            strikes = select_option_strikes(sel["strike"].tolist(), ref, band, step) if (ref is not None and len(sel)) else []
+            sel = sel[sel["strike"].isin(strikes)]
+            frames, with_prints = [], 0
+            for c in sel.itertuples(index=False):
+                bars = _polygon_minute_aggs(c.ticker, day, day, api_key)
+                if len(bars):
+                    with_prints += 1
+                    frames.append(bars.assign(right=c.right, strike=float(c.strike)))
+            df = pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
+            n = replace_option_minute_bars(engine, symbol, day, df, root=root)
+            upsert_option_minute_session(engine, symbol, day, day, root=root, ref_level=ref,
+                                         strike_lo=(min(strikes) if strikes else None),
+                                         strike_hi=(max(strikes) if strikes else None), strike_step=step,
+                                         contracts=len(sel), with_prints=with_prints, bars=n)
+            total_rows += n
+            done += 1
+            if progress_cb:
+                progress_cb(f"{symbol} {day}: {len(sel)} contracts, {with_prints} with prints, {n:,} bars")
+        except Exception as exc:                        # one bad session must not end a three-hour pull
+            failed.append((day.isoformat(), str(exc)[:120]))
+            if progress_cb:
+                progress_cb(f"{symbol} {day}: FAILED {str(exc)[:80]}")
+    log_sync(engine, "OptionMinuteBar", to_date, total_rows, symbol,
+             error=(f"{len(failed)} sessions failed" if failed else None))
+    cov = get_option_minute_coverage(engine, symbol)
+    return {"status": "ok" if (done or cov) else "no_data", "rows": total_rows, "sessions": done,
+            "skipped": len(sessions) - len(todo), "failed": failed,
+            "coverage": (f"{cov['first']} .. {cov['last']}, {cov['sessions']} sessions, "
+                         f"{cov['contracts']:,} contracts, {cov['bars']:,} bars" if cov else "none")}
+
+
+# ── Event calendar (trading-day filters) ─────────────────────────────────────
+
+EVENT_SEED_DIR = None   # resolved lazily: <repo>/db/seed/events
+
+
+def _event_seed_dir():
+    import os
+    return EVENT_SEED_DIR or os.path.join(os.path.dirname(os.path.abspath(__file__)), "seed", "events")
+
+
+def _third_fridays(start: date, end: date):
+    y, m = start.year, start.month
+    while date(y, m, 1) <= end:
+        d = date(y, m, 15)
+        while d.weekday() != 4:
+            d += timedelta(days=1)
+        if start <= d <= end:
+            yield d
+        m += 1
+        if m == 13:
+            y, m = y + 1, 1
+
+
+def sync_event_calendar(
+    from_date: date = date(2024, 1, 1),
+    to_date: date = date(2026, 12, 31),
+    seed_dir: Optional[str] = None,
+    progress_cb: Callable[[str], None] = None,
+) -> dict:
+    """Rebuild mkt.EventCalendar for [from_date, to_date] from: FOMC decision dates in
+    mkt.FomcCalendar; the hand-kept seed CSVs in db/seed/events (bls: cpi/nfp, bea: pce,
+    exchange: holiday/early_close, megacap: earnings reactions); and computed monthly third
+    Fridays (opex). Kinds are lower-cased; one row per (date, kind)."""
+    import csv
+    import os
+    from sqlalchemy import text as _t
+    from alan_trader.db.client import replace_event_calendar
+    engine = get_engine()
+    rows: list[dict] = []
+    with engine.connect() as conn:
+        for (d,) in conn.execute(_t("SELECT MeetingDate FROM mkt.FomcCalendar WHERE IsRateDecision = 1 ORDER BY MeetingDate")).fetchall():
+            rows.append({"date": str(d)[:10], "kind": "fomc", "label": "FOMC decision", "source": "mkt.FomcCalendar"})
+    sdir = seed_dir or _event_seed_dir()
+    seeds_read = {}
+    for name in ("bls", "bea", "exchange", "megacap"):
+        p = os.path.join(sdir, f"{name}.csv")
+        if not os.path.exists(p):
+            continue
+        with open(p, encoding="utf-8", newline="") as fh:
+            got = [r for r in csv.DictReader(fh) if r.get("date")]
+        seeds_read[name] = len(got)
+        rows += got
+    rows += [{"date": str(d), "kind": "opex", "label": "Third Friday", "source": "computed"} for d in _third_fridays(from_date, to_date)]
+    rows = [r for r in rows if from_date <= date.fromisoformat(str(r["date"])[:10]) <= to_date]
+    seen, out = set(), []
+    for r in sorted(rows, key=lambda r: (str(r["date"]), str(r["kind"]).lower())):
+        key = (str(r["date"])[:10], str(r["kind"]).strip().lower())
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append({"date": key[0], "kind": key[1], "label": r.get("label", ""), "source": r.get("source", "")})
+    n = replace_event_calendar(engine, out)
+    by_kind: dict[str, int] = {}
+    for r in out:
+        by_kind[r["kind"]] = by_kind.get(r["kind"], 0) + 1
+    log_sync(engine, "EventCalendar", to_date, n)
+    if progress_cb:
+        progress_cb(f"EventCalendar: {n} rows {by_kind}")
+    return {"status": "ok" if n else "no_data", "rows": n, "by_kind": by_kind, "seeds": seeds_read}
+
 
 def get_coverage_summary(symbols: list[str]) -> pd.DataFrame:
     """Return a DataFrame with data coverage per ticker for display in the UI."""

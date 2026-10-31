@@ -12,6 +12,19 @@ from dash import html, dcc
 import dash_bootstrap_components as dbc
 
 from app import theme as T, get_polygon_api_key
+
+
+def _default_ticker() -> str:
+    """The first active strategy's default ticker (NDX for an index scalper), else SPY."""
+    try:
+        from strategy_api import registry as R
+        for slug in R.get_active_strategies():
+            t = str((R.get_ui(slug).meta or {}).get("default_ticker") or "").upper()
+            if t:
+                return t
+    except Exception:
+        pass
+    return "SPY"
 from app.ui import tokens as D, components as C
 from app.pages.market.data import (
     _section, _pill, _hint, _scr_empty_fig, _SCR_CFG,
@@ -123,7 +136,7 @@ def layout() -> html.Div:
                            "border": f"1px solid {'#10b981' if key_loaded else T.BORDER}",
                            "color": T.TEXT_PRIMARY},
                 ),
-                dbc.Input(id="mkt-ticker", type="text", value="SPY",
+                dbc.Input(id="mkt-ticker", type="text", value=_default_ticker(),
                           style={"fontSize": "12px", "width": "80px",
                                  "backgroundColor": T.BG_ELEVATED,
                                  "border": f"1px solid {T.BORDER}", "color": T.TEXT_PRIMARY}),
@@ -431,7 +444,7 @@ def layout() -> html.Div:
           ]),
         ]),
 
-        dcc.Store(id="mkt-ticker-store",     data="SPY"),
+        dcc.Store(id="mkt-ticker-store",     data=_default_ticker()),
         dcc.Store(id="mkt-apikey-store",     data=get_polygon_api_key()),
         dcc.Store(id="mkt-vol-view-store",   data="chain"),
         dcc.Store(id="mkt-chain-data-store"),

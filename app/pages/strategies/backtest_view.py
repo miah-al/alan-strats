@@ -1,18 +1,16 @@
 """
 app/pages/strategies/backtest_view.py — backtest run callbacks + result rendering.
 
-Holds _STRATEGY_CLASSES_BT (slug→strategy-class map), the result renderer
-(_render_backtest_results + _build_hmm_regime_panel), the UI-param resolver
+Holds the result renderer (_render_backtest_results), the UI-param resolver
 (_get_ui_params_for_slug, also used by the layout's backtest tab) and
 _make_backtest_callback. Importing this module registers a backtest callback set
-per strategy. Depends only on registry + theme; data loading is lazy (db.client,
-backtest_loaders) inside the callback.
+per visible strategy. Strategies are instantiated through the plugin registry;
+strategy-specific result panels come from `StrategyUI.backtest_panels`.
 """
 from __future__ import annotations
 
-import importlib
 import logging
-from datetime import date
+from datetime import date, timedelta as _timedelta
 
 import pandas as _pd
 import dash_bootstrap_components as dbc
@@ -23,7 +21,9 @@ from dash import html, dcc, callback, Input, Output, State, no_update
 
 from app import theme as T
 from app.ui import components as C
-from app.pages.strategies.registry import _STRATEGIES
+from alan_trader.strategy_api.base import StubStrategy
+from alan_trader.strategy_api.registry import get_strategy, get_ui
+from app.pages.strategies.registry import slugs as _slugs
 
 logger = logging.getLogger(__name__)
 
@@ -32,132 +32,19 @@ _TONE = {T.SUCCESS: "success", T.DANGER: "danger", T.WARNING: "warning",
          T.ACCENT: "accent", T.TEXT_PRIMARY: "default", T.TEXT_MUTED: "muted"}
 
 
-_STRATEGY_CLASSES_BT = {
-    # Validated-edge equity-timing strategies
-    "trend_following":       ("strategies.trend_following",       "TrendFollowingStrategy"),
-    "ts_momentum":           ("strategies.ts_momentum",           "TSMomentumStrategy"),
-    "iron_condor_rules":     ("strategies.iron_condor_rules",     "IronCondorRulesStrategy"),
-    "iron_condor_ai":        ("strategies.iron_condor_ai",        "IronCondorAIStrategy"),
-    "vix_spike_fade":        ("strategies.vix_spike_fade",        "VIXSpikeFadeStrategy"),
-    "ivr_credit_spread":     ("strategies.ivr_credit_spread",     "IVRCreditSpreadStrategy"),
-    "vol_arbitrage":         ("strategies.vol_arbitrage",         "VolArbitrageStrategy"),
-    "gex_positioning":       ("strategies.gex_positioning",       "GexPositioningStrategy"),
-    "dealer_gamma_regime":   ("strategies.dealer_gamma_regime",   "DealerGammaRegimeStrategy"),
-    "broken_wing_butterfly": ("strategies.broken_wing_butterfly", "BrokenWingButterflyStrategy"),
-    "calendar_spread":       ("strategies.calendar_spread",       "CalendarSpreadStrategy"),
-    "earnings_straddle":     ("strategies.earnings_straddle",     "EarningsStraddleStrategy"),
-    "wheel_strategy":        ("strategies.wheel_strategy",        "WheelStrategy"),
-    "bull_put_spread":       ("strategies.bull_put_spread",       "BullPutSpreadStrategy"),
-    # AI strategies (5 new)
-    "vix_term_structure":    ("strategies.vix_term_structure",    "VIXTermStructureStrategy"),
-    "earnings_vol_crush":    ("strategies.earnings_vol_crush",    "EarningsVolCrushStrategy"),
-    "momentum_regime_spread":("strategies.momentum_regime_spread","MomentumRegimeSpreadStrategy"),
-    "covered_call_ai":       ("strategies.covered_call_ai",       "CoveredCallAIStrategy"),
-    "rs_credit_spread":      ("strategies.rs_credit_spread",      "RSCreditSpreadStrategy"),
-    "put_steal":             ("strategies.put_steal",             "PutStealStrategy"),
-    # Tier A (5 new)
-    "hmm_regime":            ("strategies.hmm_regime",            "HMMRegimeStrategy"),
-    "expiry_max_pain":       ("strategies.expiry_max_pain",       "ExpiryMaxPainStrategy"),
-    "short_squeeze_detector":("strategies.short_squeeze_detector","ShortSqueezeDetectorStrategy"),
-    "tail_risk_put_spread":  ("strategies.tail_risk_put_spread",  "TailRiskPutSpreadStrategy"),
-    "news_sentiment_nlp":    ("strategies.news_sentiment_nlp",    "NewsSentimentNLPStrategy"),
-    # Tier B (5 new)
-    "fomc_event_straddle":   ("strategies.fomc_event_straddle",   "FOMCEventStraddleStrategy"),
-    "earnings_pin_risk":     ("strategies.earnings_pin_risk",     "EarningsPinRiskStrategy"),
-    "tail_risk_long_put":    ("strategies.tail_risk_long_put",    "TailRiskLongPutStrategy"),
-    "calendar_spread_vix":   ("strategies.calendar_spread_vix",   "VIXCalendarSpreadStrategy"),
-    "yield_curve_regime":    ("strategies.yield_curve_regime",    "YieldCurveRegimeStrategy"),
-    "vol_calendar_spread":   ("strategies.vol_calendar_spread",   "VolCalendarSpreadStrategy"),
-}
+# Matches scripts/rank_strategies.py and performance.py so all three agree.
+_WARMUP_DAYS = 420
 
 
 def _get_ui_params_for_slug(slug: str) -> list:
-    """Instantiate strategy and return its get_backtest_ui_params()."""
-    if slug not in _STRATEGY_CLASSES_BT:
-        return []
-    try:
-        mod_path, cls_name = _STRATEGY_CLASSES_BT[slug]
-        mod = importlib.import_module(mod_path)
-        return getattr(mod, cls_name)().get_backtest_ui_params()
-    except Exception:
-        return []
+    """Instantiate the strategy and return its get_backtest_ui_params()
+    (engine.strategy_backtest.backtest_param_specs, shared with the service API)."""
+    from engine.strategy_backtest import backtest_param_specs
+    return backtest_param_specs(slug)
 
 
-def _build_hmm_regime_panel(regime_df, extra: dict) -> dbc.Card | None:
-    """HMM-specific results panel: posterior time series + state distribution + health flags."""
-    if regime_df is None or regime_df.empty:
-        return None
-    if not all(c in regime_df.columns for c in ("p_state0", "p_state1", "p_state2")):
-        return None
-
-    df = regime_df.dropna(subset=["p_state0", "p_state1", "p_state2"]).copy()
-    if df.empty:
-        return None
-
-    # ── Posterior stacked area ────────────────────────────────────────────────
-    fig = make_subplots(rows=1, cols=1)
-    fig.add_trace(go.Scatter(x=df["date"], y=df["p_state0"], mode="lines",
-        name="P(state 0) bull", line=dict(color=T.SUCCESS, width=1.2),
-        stackgroup="one", fillcolor="rgba(16,185,129,0.55)",
-        hovertemplate="%{x|%Y-%m-%d}  P0=%{y:.2f}<extra></extra>"))
-    fig.add_trace(go.Scatter(x=df["date"], y=df["p_state1"], mode="lines",
-        name="P(state 1) chop", line=dict(color=T.WARNING, width=1.2),
-        stackgroup="one", fillcolor="rgba(245,158,11,0.55)",
-        hovertemplate="%{x|%Y-%m-%d}  P1=%{y:.2f}<extra></extra>"))
-    fig.add_trace(go.Scatter(x=df["date"], y=df["p_state2"], mode="lines",
-        name="P(state 2) crisis", line=dict(color=T.DANGER, width=1.2),
-        stackgroup="one", fillcolor="rgba(239,68,68,0.55)",
-        hovertemplate="%{x|%Y-%m-%d}  P2=%{y:.2f}<extra></extra>"))
-    fig.add_hline(y=0.60, line_dash="dash", line_color=T.TEXT_MUTED, line_width=1,
-                  annotation_text="Entry floor 0.60", annotation_position="top right",
-                  annotation_font=dict(size=10, color=T.TEXT_MUTED))
-    fig.update_layout(
-        paper_bgcolor=T.BG_CARD, plot_bgcolor=T.BG_CARD,
-        font=dict(color=T.TEXT_PRIMARY, family="Inter, sans-serif", size=12),
-        height=340, margin=dict(l=10, r=10, t=20, b=10),
-        legend=dict(orientation="h", yanchor="bottom", y=-0.22, xanchor="center", x=0.5,
-                    bgcolor="rgba(0,0,0,0)", font=dict(size=11)),
-        hovermode="x unified", template="plotly_dark",
-    )
-    fig.update_xaxes(gridcolor=T.BORDER, showgrid=True)
-    fig.update_yaxes(gridcolor=T.BORDER, range=[0, 1.05], tickformat=".0%")
-
-    # ── State distribution summary ────────────────────────────────────────────
-    state_counts = df["state"].value_counts(normalize=True).reindex([0, 1, 2], fill_value=0.0)
-    feat = extra.get("feature_importance", {}) or {}
-    mean_p0 = float(feat.get("mean_p_state0", state_counts.get(0, 0.0))) * 100
-    mean_p1 = float(feat.get("mean_p_state1", state_counts.get(1, 0.0))) * 100
-    mean_p2 = float(feat.get("mean_p_state2", state_counts.get(2, 0.0))) * 100
-
-    def _stat_chip(label: str, value: str, color: str) -> html.Div:
-        return C.metric_card(label, value, _TONE.get(color, "default"))
-
-    # ── Health flags ──────────────────────────────────────────────────────────
-    n_bars = len(df)
-    n_entry = int((df[["p_state0", "p_state1", "p_state2"]].max(axis=1) >= 0.60).sum())
-    pct_confident = 100.0 * n_entry / max(n_bars, 1)
-    backend = extra.get("hmm_backend", "unknown")
-    health_msg = "OK" if backend == "hmmlearn" else "GMM fallback (iid)"
-    health_color = T.SUCCESS if backend == "hmmlearn" else T.WARNING
-
-    stats_row = html.Div([
-        _stat_chip("Bull state (avg)",  f"{mean_p0:.1f}%", T.SUCCESS),
-        _stat_chip("Chop state (avg)",  f"{mean_p1:.1f}%", T.WARNING),
-        _stat_chip("Crisis state (avg)", f"{mean_p2:.1f}%", T.DANGER),
-        _stat_chip("Confident bars",   f"{pct_confident:.1f}%", T.ACCENT),
-        _stat_chip("Backend",          health_msg, health_color),
-    ], style={"display": "flex", "gap": "0", "flexWrap": "wrap", "marginBottom": "12px"})
-
-    return C.section("HMM Regime Posterior", [
-        stats_row,
-        dcc.Graph(figure=fig, config={"displayModeBar": False}),
-        html.P(
-            "Each band shows the probability that today belongs to that regime. "
-            "Trades fire only when one band exceeds the 0.60 entry floor.",
-            style={"color": T.TEXT_MUTED, "fontSize": "11px",
-                   "margin": "8px 0 0", "fontStyle": "italic"},
-        ),
-    ])
+#: The last backtest's trades per strategy, served by the "Download CSV" button.
+_LAST_TRADES: dict[str, "pd.DataFrame"] = {}
 
 
 def _render_backtest_results(result, slug: str) -> html.Div:
@@ -187,12 +74,15 @@ def _render_backtest_results(result, slug: str) -> html.Div:
         _card("Profit Factor", f"{pf:.3f}" if pf != float("inf") else "∞",
               T.SUCCESS if pf >= 1.5 else T.WARNING if pf >= 1.0 else T.DANGER),
         _card("Total Trades",  str(n_trades)),
+        # a strategy can add cards in its own units (dollars per lot, sessions, worst day) via result.extra["cards"]
+        *[_card(str(c.get("label", "")), str(c.get("value", "")), {"good": T.SUCCESS, "bad": T.DANGER, "warn": T.WARNING}.get(c.get("tone"), T.TEXT_PRIMARY))
+          for c in ((getattr(result, "extra", None) or {}).get("cards") or []) if isinstance(c, dict)],
     ], style={"display": "flex", "gap": "10px", "flexWrap": "wrap", "marginBottom": "16px"})
 
     # ── Equity curve + Capital Deployment ─────────────────────────────────────
     eq        = result.equity_curve
     cash_s    = result.extra.get("cash_curve",   _pd.Series(dtype=float))
-    start_cap = float(eq.iloc[0]) if not eq.empty else 100_000
+    start_cap = float(result.extra.get("starting_capital") or (eq.iloc[0] if not eq.empty else 100_000))
 
     has_breakdown = not cash_s.empty and not eq.empty
 
@@ -287,6 +177,8 @@ def _render_backtest_results(result, slug: str) -> html.Div:
                        .apply(lambda x: (1 + x).prod() - 1)
                        .reset_index())
             pivot = monthly.pivot(index="year", columns="month", values="ret").fillna(0)
+            pivot = pivot.loc[(pivot != 0).any(axis=1)] if (pivot != 0).any(axis=1).any() else pivot   # years with no sessions add nothing
+            _zmax = float(max(abs(pivot.values.min()), abs(pivot.values.max()), 1e-9) * 100)                # symmetric scale on the data, not a fixed +-50%
             month_labels = ["Jan","Feb","Mar","Apr","May","Jun",
                             "Jul","Aug","Sep","Oct","Nov","Dec"]
             col_labels = [month_labels[c - 1] for c in pivot.columns]
@@ -296,7 +188,7 @@ def _render_backtest_results(result, slug: str) -> html.Div:
                 x=col_labels,
                 y=[str(y) for y in pivot.index],
                 colorscale="RdYlGn",
-                zmid=0,
+                zmid=0, zmin=-_zmax, zmax=_zmax,
                 hovertemplate="%{y} %{x}: %{z:.2f}%<extra></extra>",
                 colorbar=dict(
                     tickformat=".1f",
@@ -311,7 +203,7 @@ def _render_backtest_results(result, slug: str) -> html.Div:
                 font=dict(color=T.TEXT_PRIMARY, family="Inter, sans-serif", size=11),
                 height=max(180, 40 + 35 * len(pivot)),
                 margin=dict(l=10, r=60, t=30, b=10),
-                title=dict(text="Monthly Returns (%)", font=dict(size=12, color=T.TEXT_MUTED)),
+                title=dict(text="Monthly return, % of equity at the time (colour scale fits the data)", font=dict(size=12, color=T.TEXT_MUTED)),
                 xaxis=dict(side="top"),
                 template="plotly_dark",
             )
@@ -354,6 +246,10 @@ def _render_backtest_results(result, slug: str) -> html.Div:
                             "margin_reserved", "ticker", "status"]
         cols_lower = {c.lower(): c for c in trades_df.columns}
         display_cols = []
+        _declared = (getattr(result, "extra", None) or {}).get("trade_columns") or []       # [(field, header), ...] in display order
+        for field, header in _declared:
+            if field in trades_df.columns and field not in display_cols:
+                display_cols.append(field); _COL_CONFIG[field.lower()] = (header, 100, None)
         for key in _preferred_order:
             orig = cols_lower.get(key)
             if orig and orig not in _SKIP:
@@ -423,15 +319,21 @@ def _render_backtest_results(result, slug: str) -> html.Div:
                 },
             },
         )
-        trades_card = C.section("Trades", [trades_grid])
+        _LAST_TRADES[slug] = trades_df.copy()
+        export_bar = html.Div([
+            dbc.Button("⬇ Download CSV", id=f"str-{slug}-bt-trades-btn", size="sm", outline=True, color="secondary", n_clicks=0),
+            html.Span(f"  {len(trades_df)} trades, every column the strategy records",
+                      style={"color": T.TEXT_MUTED, "fontSize": "11px", "marginLeft": "10px"}),
+            dcc.Download(id=f"str-{slug}-bt-trades-dl"),
+        ], style={"marginBottom": "6px"})
+        trades_card = C.section("Trades", [export_bar, trades_grid])
 
     # ── Strategy-specific panels ─────────────────────────────────────────────
-    extra_panels = []
-    if slug == "hmm_regime":
-        regime_df = result.extra.get("regime_log") if hasattr(result, "extra") else None
-        hmm_panel = _build_hmm_regime_panel(regime_df, result.extra or {})
-        if hmm_panel is not None:
-            extra_panels.append(hmm_panel)
+    try:
+        extra_panels = [p for p in (get_ui(slug).backtest_panels(result) or []) if p is not None]
+    except Exception:
+        logger.exception(f"{slug}: backtest_panels failed")
+        extra_panels = []
 
     return html.Div([
         metric_row,
@@ -474,6 +376,17 @@ def _make_backtest_callback(slug: str):
         _update_val.__name__ = f"_bt_val_{slug}_{key}"
 
     @callback(
+        Output(f"str-{slug}-bt-trades-dl", "data"),
+        Input(f"str-{slug}-bt-trades-btn", "n_clicks"),
+        prevent_initial_call=True,
+    )
+    def _download_trades(n):
+        df = _LAST_TRADES.get(slug)
+        if not n or df is None or df.empty:
+            return no_update
+        return dcc.send_data_frame(df.to_csv, f"{slug}_backtest_trades.csv", index=False)
+
+    @callback(
         Output(results_id, "children"),
         Input(run_id, "n_clicks"),
         State(ticker_id, "value"),
@@ -505,7 +418,11 @@ def _make_backtest_callback(slug: str):
         try:
             fd = date.fromisoformat(from_date)
             td = date.fromisoformat(to_date)
-            price_data = get_price_bars(engine, ticker, fd, td)
+            # Load WARMUP_DAYS of history before the window so indicators are
+            # live from bar one. Feeding a strategy only the reporting window
+            # cripples long-lookback signals; without this the Backtest tab
+            # disagreed with the Performance tab on identical inputs.
+            price_data = get_price_bars(engine, ticker, fd - _timedelta(days=_WARMUP_DAYS), td)
         except Exception as e:
             return dbc.Alert(
                 f"Error loading price data for {ticker}: {e}",
@@ -537,12 +454,12 @@ def _make_backtest_callback(slug: str):
         if not rate_df.empty:
             rate_df.index = _pd.to_datetime(rate_df.index)
 
-        auxiliary_data = {"vix": vix_df, "rate10y": rate_df, "ticker": ticker}
+        auxiliary_data = {"vix": vix_df, "rate10y": rate_df, "ticker": ticker,
+                          "report_from": from_date, "report_to": to_date}   # the window the user asked for; bars before it are warm-up
 
-        # ── Per-strategy auxiliary-data loaders ───────────────────────────────
+        # ── Strategy-declared auxiliary-data loaders ──────────────────────────
         # Loader logic lives in app/pages/backtest_loaders.py — one pure
-        # function per data type, registered in LOADERS_BY_SLUG. Each loader
-        # may return a blocking Alert if required data is missing.
+        # function per data type; the strategy declares which ones it needs.
         from app.pages.backtest_loaders import run_loaders_for
         _aux_extra, _block = run_loaders_for(
             slug, engine, ticker, fd, td, price_data=price_data,
@@ -553,12 +470,10 @@ def _make_backtest_callback(slug: str):
 
         # ── Instantiate strategy + run backtest ───────────────────────────────
         try:
-            if slug not in _STRATEGY_CLASSES_BT:
-                return dbc.Alert(f"No backtest class registered for strategy '{slug}'.",
+            strategy = get_strategy(slug)
+            if isinstance(strategy, StubStrategy):
+                return dbc.Alert(f"Strategy '{slug}' has no implementation registered.",
                                  color="danger")
-            mod_path, cls_name = _STRATEGY_CLASSES_BT[slug]
-            mod      = importlib.import_module(mod_path)
-            strategy = getattr(mod, cls_name)()
 
             params = dict(zip([p["key"] for p in ui_params], param_values))
             result = strategy.backtest(
@@ -575,6 +490,26 @@ def _make_backtest_callback(slug: str):
             logger.exception(f"Backtest error for {slug}: {e}")
             return dbc.Alert(f"Backtest error: {str(e)}", color="danger")
 
+        # Score on the reporting window only — the warm-up informs the signal
+        # but must not contribute to the metrics.
+        try:
+            _eq = _pd.Series(result.equity_curve).copy()
+            _eq.index = _pd.to_datetime(_eq.index)
+            _eq_win = _eq[_eq.index >= _pd.Timestamp(fd)]
+            if len(_eq_win) > 2:
+                from risk.metrics import compute_all_metrics as _cam
+                _tr = result.trades
+                if _tr is not None and not _tr.empty:
+                    for _c in ("exit_date", "entry_date"):
+                        if _c in _tr.columns:
+                            _w = _pd.to_datetime(_tr[_c], errors="coerce")
+                            _tr = _tr[_w >= _pd.Timestamp(fd)]
+                            break
+                result.equity_curve = _eq_win
+                result.metrics = _cam(_eq_win, _tr if _tr is not None and not _tr.empty else None)
+        except Exception:
+            logger.exception(f"{slug}: window truncation failed; showing full-span metrics")
+
         # ── Render results ────────────────────────────────────────────────────
         try:
             return _render_backtest_results(result, slug)
@@ -586,6 +521,6 @@ def _make_backtest_callback(slug: str):
     return _run_backtest
 
 
-# Register backtest callbacks for all strategies
-for _slug in [s["value"] for s in _STRATEGIES]:
+# Register backtest callbacks for every visible strategy
+for _slug in _slugs():
     _make_backtest_callback(_slug)

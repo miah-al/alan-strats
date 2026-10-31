@@ -17,24 +17,90 @@ TRADING_DAYS = 252
 # Core metrics
 # ─────────────────────────────────────────────────────────────────────────────
 
-def sharpe_ratio(returns: pd.Series, risk_free_daily: float = 0.0) -> float:
-    """Annualized Sharpe ratio."""
+def deployed_mask(returns: pd.Series) -> pd.Series:
+    """
+    Boolean mask of days on which capital was actually at risk.
+
+    Backtest equity curves do not credit interest on idle cash, so a day with
+    exactly zero P&L is a day the strategy was flat (or held an unmarked
+    position). Either way the risk-free hurdle must not be charged against it —
+    see `excess_returns`.
+    """
+    return returns != 0.0
+
+
+def excess_returns(
+    returns: pd.Series,
+    risk_free_daily: float = 0.0,
+    active: Optional[pd.Series] = None,
+) -> pd.Series:
+    """
+    Returns in excess of the risk-free rate, charging the hurdle **only on days
+    capital was deployed**.
+
+    A backtest equity curve holds idle cash at 0%, whereas a real account earns
+    the risk-free rate on it. Subtracting `risk_free_daily` from every calendar
+    day therefore invents a drag that the strategy never actually suffered: a
+    strategy flat 95% of the time accrues ~-rf on those days and reports a
+    hugely negative Sharpe that reflects the accounting, not its risk. Treating
+    an idle day as earning the risk-free rate makes its excess return zero,
+    which is both the economically correct statement and the one that keeps
+    intermittent and always-invested strategies comparable.
+
+    Days the strategy *is* deployed are charged the hurdle as normal.
+    """
+    if active is None:
+        active = deployed_mask(returns)
+    return (returns - risk_free_daily).where(active, 0.0)
+
+
+def sharpe_ratio(
+    returns: pd.Series,
+    risk_free_daily: float = 0.0,
+    active: Optional[pd.Series] = None,
+) -> float:
+    """
+    Annualized Sharpe ratio, measured on deployed capital.
+
+    The risk-free hurdle is applied only to days the strategy held risk; idle
+    days contribute zero excess return rather than a spurious -rf. Idle days
+    are still counted in the sample, so being out of the market genuinely
+    dilutes the ratio — it just no longer manufactures a loss.
+    """
     if returns.empty:
         return 0.0
-    excess = returns - risk_free_daily
+    excess = excess_returns(returns, risk_free_daily, active)
     std = excess.std()
     if std < 1e-10:
         return 0.0
     return float((excess.mean() / std) * np.sqrt(TRADING_DAYS))
 
 
-def sortino_ratio(returns: pd.Series, risk_free_daily: float = 0.0) -> float:
-    """Annualized Sortino ratio (uses downside deviation)."""
-    excess = returns - risk_free_daily
+def sortino_ratio(
+    returns: pd.Series,
+    risk_free_daily: float = 0.0,
+    active: Optional[pd.Series] = None,
+) -> float:
+    """Annualized Sortino ratio (uses downside deviation). See `sharpe_ratio`."""
+    if returns.empty:
+        return 0.0
+    excess = excess_returns(returns, risk_free_daily, active)
     downside = excess[excess < 0]
     if len(downside) == 0 or downside.std() == 0:
         return float("inf") if excess.mean() > 0 else 0.0
     return float((excess.mean() / downside.std()) * np.sqrt(TRADING_DAYS))
+
+
+def exposure_pct(returns: pd.Series) -> float:
+    """
+    Share of days (0–100) on which capital was deployed.
+
+    Companion to Sharpe: a 1.5 Sharpe at 8% exposure and a 1.5 Sharpe at 100%
+    exposure are very different propositions.
+    """
+    if returns.empty:
+        return 0.0
+    return float(deployed_mask(returns).mean() * 100)
 
 
 def calmar_ratio(equity_curve: pd.Series) -> float:
@@ -55,12 +121,35 @@ def max_drawdown(equity_curve: pd.Series) -> float:
     return float(dd.min())
 
 
+def elapsed_years(equity_curve: pd.Series) -> float:
+    """
+    Calendar years spanned by an equity curve.
+
+    Prefer the real elapsed time from a DatetimeIndex over `len / 252`. Row
+    count only equals elapsed time for a dense daily curve; strategies that
+    append a point per trade (or only on days their data exists) produce a
+    sparse curve, and counting rows then radically understates the period. That
+    understatement is not cosmetic — it inflates CAGR: a 13.95% gain over two
+    real years across 47 sparse rows annualizes to 101% instead of 6.8%.
+    """
+    idx = getattr(equity_curve, "index", None)
+    if isinstance(idx, pd.DatetimeIndex) and len(idx) >= 2:
+        days = (idx.max() - idx.min()).days
+        if days > 0:
+            return days / 365.25
+    return len(equity_curve) / TRADING_DAYS
+
+
 def annualized_return(equity_curve: pd.Series) -> float:
-    """CAGR from equity curve."""
+    """CAGR from equity curve, annualized over real elapsed time."""
     if len(equity_curve) < 2 or equity_curve.iloc[0] == 0:
         return 0.0
-    years = len(equity_curve) / TRADING_DAYS
+    years = elapsed_years(equity_curve)
+    if years <= 0:
+        return 0.0
     total = equity_curve.iloc[-1] / equity_curve.iloc[0]
+    if total <= 0:
+        return -1.0
     return float(total ** (1 / years) - 1)
 
 
@@ -199,6 +288,7 @@ def compute_all_metrics(
     """
     returns = equity_curve.pct_change().dropna()
     rf_daily = risk_free_annual / TRADING_DAYS
+    active = deployed_mask(returns)
 
     alpha, beta = (0.0, 1.0)
     ir = 0.0
@@ -209,9 +299,10 @@ def compute_all_metrics(
     result = {
         "total_return_pct":      round(total_return(equity_curve) * 100, 2),
         "annualized_return_pct": round(annualized_return(equity_curve) * 100, 2),
-        "sharpe":                round(sharpe_ratio(returns, rf_daily), 3),
-        "sortino":               round(sortino_ratio(returns, rf_daily), 3),
+        "sharpe":                round(sharpe_ratio(returns, rf_daily, active), 3),
+        "sortino":               round(sortino_ratio(returns, rf_daily, active), 3),
         "calmar":                round(calmar_ratio(equity_curve), 3),
+        "exposure_pct":          round(exposure_pct(returns), 2),
         "max_drawdown_pct":      round(max_drawdown(equity_curve) * 100, 2),
         "var_95_pct":            round(value_at_risk(returns, 0.95) * 100, 3),
         "cvar_95_pct":           round(conditional_var(returns, 0.95) * 100, 3),

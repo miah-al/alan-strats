@@ -1,0 +1,1113 @@
+"""Quote and bar providers for the paper runner.
+
+A provider answers three questions every minute: what time is it (ET, naive), what did the
+underlying do this minute (a 1-minute bar), and what is the two-sided quote for a given
+vertical on today's expiry. Two implementations:
+
+  TastytradeProvider  real time, from the tastytrade REST market-data endpoint (OAuth session
+                      from TT_SECRET / TT_REFRESH in .env), option chain from the same API
+  ReplayProvider      a stored session from the platform database (mkt.MinuteBar for the
+                      underlying, mkt.OptionMinuteBar prints for the legs, bid/ask = print -/+ the
+                      spread model's half spread), for tests and dry runs; runs as fast as the loop
+                      lets it. CONSERVATIVE by default (paper/spread_model.py): both legs must have
+                      printed in the same minute and the spread is the calibrated live one.
+
+The 16k trap (2026-09-24). The replay of that day showed +$16,384 on 24 trades where the live paper
+runner made -$1,117 on 2. The replay had priced each vertical from each leg's LAST print, carried for up
+to 30 minutes: a leg that printed this minute paired with one that printed 20 minutes ago at a different
+NDX level produces a spread move that never happened -- 11 of the day's 45 replay price moves were larger
+than NDX's own move over the same minutes, which a vertical cannot do. Requiring both legs to have printed
+in the same minute (carry 0) turned the day into -$2,392 on 2 trades, matching live. Over 38 days the
+same replay went from +$171k (carry 30) to +$12k (carry 0) to -$54k (carry 0, crossing a 3-point half
+spread). So a replay now carries nothing and quotes the calibrated spread; the old behaviour is still
+available and is labelled OPTIMISTIC wherever it prints.
+"""
+from __future__ import annotations
+
+import logging
+import os
+from dataclasses import dataclass, field
+from datetime import date, datetime, time as dtime, timedelta
+from typing import Optional
+
+import pandas as pd
+
+from strategy_api.live import Quote, structure_bound, structure_legs
+
+logger = logging.getLogger("paper.providers")
+ET = "US/Eastern"
+MAX_SPREAD_PTS = 20.0        # a vertical quoted wider than this (points) is treated as unquoted
+# Where the cross-process count of broker requests is kept for the day. A module setting rather than a
+# hard-coded path so the test suite can point it at a temporary folder: tests must neither read the live
+# runner's count (and fail against their own small caps) nor add to it (and spend its budget).
+BUDGET_STATE_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "paper_state")
+# The day's cap on broker REST calls, across this checkout and the other checkouts' runners. Each runner polls
+# once every 15 s (about 4 a minute), so five runners spend ~6,000 on a full day; 3,000 ran out by lunch on
+# 2026-09-28. 8,000 a day is still under 0.35 a second against tastytrade's suggested 50 a second.
+# ALAN_TRADER_BROKER_DAY_CAP overrides it.
+DEFAULT_BROKER_DAY_CAP = 8000
+
+
+def broker_day_cap() -> int:
+    try:
+        return int(os.environ.get("ALAN_TRADER_BROKER_DAY_CAP", "") or DEFAULT_BROKER_DAY_CAP)
+    except ValueError:
+        return DEFAULT_BROKER_DAY_CAP
+
+
+def now_et() -> datetime:
+    """Naive US/Eastern wall-clock time."""
+    return pd.Timestamp.now(tz=ET).tz_localize(None).to_pydatetime()
+
+
+@dataclass
+class Bar:
+    ts: datetime          # bar START (naive ET)
+    open: float
+    high: float
+    low: float
+    close: float
+
+
+@dataclass
+class LegQuote:
+    symbol: str
+    bid: Optional[float]
+    ask: Optional[float]
+    last: Optional[float]
+    last_time: Optional[datetime]     # naive ET
+    updated: Optional[datetime]       # naive ET
+
+
+def vertical_quote(long_leg: LegQuote, short_leg: LegQuote, now: datetime, carry_min: int = 30,
+                   max_width: Optional[float] = None) -> Optional[Quote]:
+    """Two-sided quote of a LONG vertical from its legs: bid = bid(long) - ask(short),
+    ask = ask(long) - bid(short), last = the midpoint, age = minutes since the older leg updated.
+
+    ``last`` is deliberately NOT last(long) - last(short). The two legs' prints happen at different
+    times -- the snapshot feed carries no trade timestamp at all, so a leg that has not traded for an
+    hour still reports one -- and subtracting them produces numbers that cannot exist: measured on
+    2026-09-23, that construction valued a 50-wide vertical at 226 points. The midpoint is both
+    well defined and, on that day's evidence, where spreads actually transact: of 1,458 two-leg
+    verticals rebuilt from the day's multi-leg prints, the median filled at the derived mid, and
+    whoever crossed paid about 1.2 points with the long leg 25+ points in the money, about 0.1
+    nearer. So the mid is a live vertical's price (a strategy that crosses adds its own cost to
+    it), and a synthetic "last" is not."""
+    if long_leg.bid is None or long_leg.ask is None or short_leg.bid is None or short_leg.ask is None:
+        return None
+    for leg in (long_leg, short_leg):                       # a crossed, empty or one-sided leg quote is no quote
+        if leg.ask <= 0 or leg.bid < 0 or leg.ask < leg.bid:
+            return None
+    bid = float(long_leg.bid) - float(short_leg.ask)
+    ask = float(long_leg.ask) - float(short_leg.bid)
+    # A derived width is the two legs' widths ADDED, not a spread anyone quotes, and it is widest
+    # exactly when one leg is deep in the money -- which is this structure by design. A flat 20-point
+    # cap threw away good quotes at the worst moment: with no quote the engine cannot check the target,
+    # the adds or the stop on that bar. On 2026-09-23 the strategy's own 50-wide verticals quoted up
+    # to 22.2 points wide at two of its target exits (median 7.5, p99 16.2 across 127 polls), so 20
+    # would have blocked both.
+    #
+    # The cap scales with the structure instead: 60% of the strike width, 30 points on a 50-wide. That
+    # leaves a third of headroom over anything observed, and still refuses a quote so wide that its
+    # midpoint says nothing -- a leg quoted 0/100 would otherwise produce a mark that could fire a
+    # target on its own.
+    cap = max(float(MAX_SPREAD_PTS), 0.6 * float(max_width)) if max_width else float(MAX_SPREAD_PTS)
+    if ask - bid > cap:
+        return None
+    # A long vertical is worth between nothing and the distance between its strikes -- that is
+    # arbitrage, not an assumption. Leg quotes that disagree can in principle produce a midpoint
+    # outside those bounds (a safeguard: no live mark has been seen to do it), and every decision
+    # reads that midpoint: the target through ``last``, and the engine's own mark, add trigger and
+    # daily loss cap through (bid + ask) / 2.
+    #
+    # So the MIDPOINT is what gets bounded, and the quote is shifted so that (bid + ask) / 2 lands
+    # exactly on it, width unchanged. Clamping bid and ask separately -- the first version of this
+    # -- is wrong: it drags the mid toward the middle of the range, so a raw 44/58 on a 50-wide
+    # (mid 51, fairly worth at most 50) came out at 47, understating exactly the near-max marks
+    # where targets are hit. A quote whose midpoint is already in range is left untouched.
+    mid = (bid + ask) / 2.0
+    if max_width:
+        w = float(max_width)
+        bounded = min(max(mid, 0.0), w)
+        if bounded != mid:
+            shift = bounded - mid
+            bid, ask, mid = bid + shift, ask + shift, bounded
+    ages = []
+    for leg in (long_leg, short_leg):
+        ref = leg.last_time or leg.updated
+        ages.append(int((now - ref).total_seconds() // 60) if ref is not None else carry_min + 1)
+    last = mid
+    age = max(0, max(ages))
+    if age > carry_min:
+        return None
+    legs = tuple((float(leg.bid), float(leg.ask), max(0, a)) for leg, a in zip((long_leg, short_leg), ages))
+    # the legs' most recent trades, as reported: a resting-order engine compares them with the previous poll's
+    # to know that a leg actually printed since (a price alone cannot say that, a stale one repeats for hours)
+    prints = tuple(((float(leg.last) if leg.last is not None else None), leg.last_time) for leg in (long_leg, short_leg))
+    return Quote(bid=bid, ask=ask, last=last, age=age, legs=legs, prints=prints)
+
+
+#: the note an engine puts on a put vertical it booked as the equivalent of a call credit spread (ndx_gamma_walls:
+#: "priced via call parity"); the runner and the service mark such a position off the calls, see parity_put_quote
+PARITY_TAG = "priced via call parity"
+
+
+def parity_put_quote(call_q: Optional[Quote], width: float) -> Optional[Quote]:
+    """The bear put spread's quote from the bull call spread's at the same strikes: put = width - call (put-call
+    parity on a vertical; no carry on a same-day expiry). The put's bid is the width less the call's ask, its ask
+    the width less the call's bid, so the quote is as wide as the CALL quote -- the tight one. A call-wall fade
+    sells the out-of-the-money calls, quoted a point or two either side, and books the trade as the deep
+    in-the-money put spread, quoted 10-20 points wide: marked on its own legs the same position read -$732 and
+    -$257 five minutes apart on 2026-09-25 while the trade it stands for had not moved. The age is the call's.
+    None without a call quote or a width."""
+    if call_q is None or not width or float(width) <= 0:
+        return None
+    w = float(width)
+    bid, ask, mid = w - float(call_q.ask), w - float(call_q.bid), w - float(call_q.last)
+    bid, ask, mid = max(0.0, bid), min(w, ask), min(w, max(0.0, mid))
+    if ask < bid or not (bid <= mid <= ask):
+        return None
+    return Quote(bid=bid, ask=ask, last=mid, age=int(call_q.age), age_s=call_q.age_s)
+
+
+def parity_leg_mid(call_mid: float, spot: float, strike: float) -> float:
+    """One put's price from the call's at the same strike and expiry: put = call - (spot - strike), never below
+    zero (put-call parity without carry: a same-day expiry). Leg by leg this is the same construction as
+    parity_put_quote: the two legs' parity prices difference to width - the call spread's value."""
+    return max(0.0, float(call_mid) - (float(spot) - float(strike)))
+
+
+def structure_quote(leg_quotes: list, legs: list, now: datetime, carry_min: int = 30,
+                    max_width: Optional[float] = None) -> Optional[Quote]:
+    """Two-sided quote of a LONG multi-leg structure (a straddle, an iron fly) from its legs' quotes:
+    bid = sum of the bought legs' bids minus the sold legs' asks, ask = the bought asks minus the sold bids, last
+    = the midpoint, age = minutes since the oldest leg updated (``age_s`` the same in seconds). ``legs`` is the
+    structure's [(cp, strike, sign), ...] in the same order as ``leg_quotes``. A missing, crossed or one-sided
+    leg is no quote; a quote wider than ``max_width`` (default 20% of the structure's mid, at least 20 points)
+    says nothing and is refused; a bounded structure (an iron fly) has its mid kept inside [0, width]."""
+    if len(leg_quotes) != len(legs) or not legs:
+        return None
+    for leg in leg_quotes:
+        if leg is None or leg.bid is None or leg.ask is None or leg.ask <= 0 or leg.bid < 0 or leg.ask < leg.bid:
+            return None
+    bid = sum((float(q.bid) if s > 0 else -float(q.ask)) for q, (_, _, s) in zip(leg_quotes, legs))
+    ask = sum((float(q.ask) if s > 0 else -float(q.bid)) for q, (_, _, s) in zip(leg_quotes, legs))
+    mid = (bid + ask) / 2.0
+    cap = float(max_width) if max_width else max(float(MAX_SPREAD_PTS), 0.2 * abs(mid))
+    if ask - bid > cap:
+        return None
+    w = structure_bound(legs)
+    if w is not None:                                      # an iron fly / condor is worth between 0 and its wing width
+        bounded = min(max(mid, 0.0), w)
+        if bounded != mid:
+            shift = bounded - mid
+            bid, ask, mid = bid + shift, ask + shift, bounded
+    # freshness is the QUOTE's: a far wing may not trade for an hour while its market updates every second, so
+    # ``updated`` comes first here (the vertical's convention, the last print first, is unchanged)
+    ages_s = []
+    for leg in leg_quotes:
+        ref = leg.updated or leg.last_time
+        ages_s.append((now - ref).total_seconds() if ref is not None else (carry_min + 1) * 60.0)
+    age_s = max(0.0, max(ages_s))
+    age = int(age_s // 60)
+    if age > carry_min:
+        return None
+    legs_out = tuple((float(leg.bid), float(leg.ask), max(0, int(a // 60))) for leg, a in zip(leg_quotes, ages_s))
+    prints = tuple(((float(leg.last) if leg.last is not None else None), leg.last_time) for leg in leg_quotes)
+    return Quote(bid=bid, ask=ask, last=mid, age=age, legs=legs_out, prints=prints, age_s=age_s)
+
+
+# ── replay ────────────────────────────────────────────────────────────────────
+
+#: replay defaults (2026-09-25): legs must share the minute, the spread is the calibrated live one
+REPLAY_CARRY_MIN = 0
+#: the old replay defaults, kept for an upper bound: legs carried half an hour, a flat half point
+OPTIMISTIC_CARRY_MIN = 30
+OPTIMISTIC_HALF_SPREAD = 0.5
+
+
+class ReplayProvider:
+    """Serves a stored session minute by minute. Each vertical is priced from its legs' prints of the
+    SAME minute (``carry_min`` = 0; parity from the other right in the same minute is fine) and bracketed
+    by the spread model (``half_spread``: None = the calibrated live model, a number = a flat bracket, a
+    callable (value, width) -> points). A market-priced backtest under the same settings reproduces a
+    replay's fills for the day. ``mode`` says which side of the trap a provider sits on."""
+
+    name = "replay"
+
+    def __init__(self, engine, underlying: str, day: date, half_spread=None, carry_min: int = REPLAY_CARRY_MIN, root: str = "NDXP"):
+        from db.client import get_minute_bars, get_option_minute_bars
+        bars = get_minute_bars(engine, underlying.upper(), day, day)
+        if bars.empty:
+            raise RuntimeError(f"no {underlying.upper()} minute bars stored for {day}")
+        prints = get_option_minute_bars(engine, underlying.upper(), day, day, expiry=day)
+        self._init(underlying, day, bars, prints, half_spread, carry_min, root)
+
+    @classmethod
+    def from_frames(cls, underlying: str, day: date, bars: pd.DataFrame, prints: pd.DataFrame, half_spread=None,
+                    carry_min: int = REPLAY_CARRY_MIN, root: str = "NDXP") -> "ReplayProvider":
+        """A provider over frames already in hand (tests; a study that loaded a range in one query).
+        ``bars``: ts, open, high, low, close; ``prints``: right, strike, ts, close."""
+        self = cls.__new__(cls)
+        self._init(underlying, day, bars, prints, half_spread, carry_min, root)
+        return self
+
+    def _init(self, underlying: str, day: date, bars: pd.DataFrame, prints, half_spread, carry_min: int, root: str) -> None:
+        from paper.spread_model import make_spread
+        self.day = day
+        self.underlying = underlying.upper()
+        self.root = root
+        self.spread = make_spread(half_spread)
+        self.carry = int(carry_min)
+        self.bars = bars.sort_values("ts").reset_index(drop=True)
+        self._prints: dict[tuple[str, float], tuple[list[int], list[float]]] = {}
+        if prints is not None and len(prints):
+            prints = prints.copy()
+            ts = pd.to_datetime(prints["ts"])
+            prints["m"] = (ts.dt.hour * 60 + ts.dt.minute + 1).astype(int)
+            for (r, k), g in prints.groupby([prints["right"].astype(str).str.upper().str[0], prints["strike"].astype(float)]):
+                g = g.sort_values("m").drop_duplicates("m", keep="last")
+                self._prints[(r, float(k))] = (g["m"].tolist(), g["close"].astype(float).tolist())
+        self._i = -1
+        self.expiry = day
+
+    @property
+    def h(self) -> Optional[float]:
+        """The flat half-spread when the bracket is flat; None under the live model (it depends on the quote)."""
+        return getattr(self.spread, "h", None)
+
+    @property
+    def mode(self) -> str:
+        """'conservative' (no carry, a conservative spread) or 'optimistic' (an upper bound)."""
+        from paper.spread_model import is_conservative
+        return "conservative" if self.carry == 0 and is_conservative(self.spread) else "optimistic"
+
+    def describe(self) -> str:
+        from paper.spread_model import label_of
+        tag = "CONSERVATIVE" if self.mode == "conservative" else "OPTIMISTIC (an upper bound, not an expectation)"
+        return f"{tag}: legs carried {self.carry} min, {label_of(self.spread)}"
+
+    def has_option_data(self) -> bool:
+        return bool(self._prints)
+
+    # the clock: each call to next_bar advances one minute
+    def next_bar(self) -> Optional[Bar]:
+        self._i += 1
+        if self._i >= len(self.bars):
+            return None
+        r = self.bars.iloc[self._i]
+        return Bar(ts=pd.Timestamp(r.ts).to_pydatetime(), open=float(r.open), high=float(r.high), low=float(r.low), close=float(r.close))
+
+    def is_last_bar(self) -> bool:
+        return self._i >= len(self.bars) - 1
+
+    def _leg(self, right: str, K: float, minute: int) -> Optional[tuple[float, int]]:
+        arr = self._prints.get((right, float(K)))
+        if arr is None:
+            return None
+        mins, px = arr
+        import bisect
+        i = bisect.bisect_right(mins, minute) - 1
+        if i < 0:
+            return None
+        age = minute - mins[i]
+        if age > self.carry:
+            return None
+        return px[i], age
+
+    def quote_vertical(self, kind: str, k_low: float, k_high: float, minute: int, S: Optional[float] = None) -> Optional[Quote]:
+        """Same valuation as the backtest's MarketPricer: the fresher of the two sides, parity for the other;
+        under carry 0 that is the side whose two legs both printed THIS minute. bid/ask = value -/+ the
+        spread model's half spread for that structure (``S``, the underlying now, lets the model price
+        each leg by its moneyness; without it the model falls back to the spread's value)."""
+        width = float(k_high - k_low)
+        same = "C" if kind == "call" else "P"; other = "P" if same == "C" else "C"
+        cands = []
+        a, b = self._leg(same, k_low, minute), self._leg(same, k_high, minute)
+        if a and b:
+            v = (a[0] - b[0]) if same == "C" else (b[0] - a[0]); cands.append((v, max(a[1], b[1])))
+        a, b = self._leg(other, k_low, minute), self._leg(other, k_high, minute)
+        if a and b:
+            v = (a[0] - b[0]) if other == "C" else (b[0] - a[0]); cands.append((width - v, max(a[1], b[1])))
+        if not cands:
+            return None
+        v, age = min(cands, key=lambda t: t[1])
+        v = min(width, max(0.0, v))
+        h = float(self.spread(v, width, S, float(k_low), float(k_high), kind))
+        return Quote(bid=v - h, ask=v + h, last=v, age=int(age))
+
+    def leg_symbols(self, kind: str, k_low: float, k_high: float) -> tuple[str, str]:
+        """OCC-style symbols for the ledger (long leg, short leg)."""
+        cp = "C" if kind == "call" else "P"
+        long_k, short_k = (k_low, k_high) if kind == "call" else (k_high, k_low)
+        occ = lambda k: f"{self.root}{self.day.strftime('%y%m%d')}{cp}{int(round(k * 1000)):08d}"
+        return occ(long_k), occ(short_k)
+
+    # ── multi-leg structures (strategy_api.live.STRUCTURE_KINDS) ──────────────
+    def _occ(self, cp: str, K: float) -> str:
+        return f"{self.root}{self.day.strftime('%y%m%d')}{cp}{int(round(K * 1000)):08d}"
+
+    def structure_symbols(self, kind: str, k_low: float, k_high: float) -> list[str]:
+        """OCC-style symbols of the structure's legs, in ``structure_legs`` order."""
+        return [self._occ(cp, K) for cp, K, _ in structure_legs(kind, k_low, k_high)]
+
+    def quote_structure(self, kind: str, k_low: float, k_high: float, minute: int, S: Optional[float] = None) -> Optional[Quote]:
+        """The structure valued on its legs' same-day prints (every leg needed, the oldest sets the age), bracketed
+        by the half spread PER LEG: a conservative replay quote, no prints reported. Under the live spread model
+        each leg's half-spread is read off its moneyness when ``S`` (the underlying now) is known."""
+        legs = structure_legs(kind, k_low, k_high)
+        vals = []
+        for cp, K, sign in legs:
+            leg = self._leg(cp, K, minute)
+            if leg is None:
+                return None
+            vals.append((sign * leg[0], leg[1]))
+        v = sum(x for x, _ in vals)
+        age = max(a for _, a in vals)
+        w = structure_bound(legs)
+        v = min(max(v, 0.0), w) if w is not None else max(v, 0.0)
+        h = self._structure_half_spread(legs, v, w, S)
+        return Quote(bid=max(0.0, v - h), ask=v + h, last=v, age=int(age), age_s=float(age) * 60.0)
+
+    def _structure_half_spread(self, legs: list, value: float, bound: Optional[float], S: Optional[float]) -> float:
+        """The structure's half-spread: the sum of its legs' half-spreads. A flat model brackets each leg by its
+        constant; the live model prices each leg by how far it is in the money (calls S - K, puts K - S) when
+        spot is known, else falls back to its value curve scaled from a two-leg vertical to this leg count."""
+        flat = getattr(self.spread, "h", None)
+        if flat is not None:
+            return float(flat) * len(legs)
+        leg_fn = getattr(self.spread, "leg", None)
+        if S is not None and leg_fn is not None:
+            return float(sum(leg_fn((float(S) - float(K)) if cp == "C" else (float(K) - float(S))) for cp, K, _ in legs))
+        from paper.spread_model import REFERENCE_WIDTH
+        width = float(bound) if bound else REFERENCE_WIDTH
+        return float(self.spread(value, width)) * len(legs) / 2.0
+
+
+# ── replay on recorded quotes ─────────────────────────────────────────────────
+
+#: where api/services/quote_recorder.py writes the day's quotes: <quotes dir>/<root>/<YYYY-MM-DD>.csv.gz
+QUOTES_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "paper_state", "quotes")
+# The index's official close is published seconds after 16:00 (2026-10-05: NDX 31,076.44 recorded from 16:00:14 on,
+# after a 15:59:59 print of 31,078.13); a reading from this time on is the settlement's candidate.
+SETTLE_FIRST_READ = dtime(16, 0, 10)
+
+
+class QuoteReplayProvider:
+    """Replays a day from the quotes the service recorded (api/services/quote_recorder.py: every watched contract's
+    bid, ask and last trade every 15 seconds) and prices it the way the LIVE runner does: a vertical is
+    ``vertical_quote`` of its two legs, a structure ``structure_quote`` of its legs, from the same fields the broker
+    feed supplies. So a replay on quotes asks what the live session would have done that day, not what the prints
+    say -- the print-priced replay fills +5 targets the live quotes never reach
+    (research/hard_look_2026-09-28/live_vs_backtest), this one cannot.
+
+    - The engine steps at a minute's end on the first snapshot at or after the boundary: the live runner steps on
+      the first poll after the minute closes, with the quotes that poll fetched.
+    - The underlying's minute bars (09:30-15:59, bar START times like the stored bars) come from the index level
+      recorded with each snapshot: open/high/low/close of the minute's snapshots.
+    - A leg's last trade time, which the live quote's freshness rule reads first (``carry_min``), is not recorded;
+      it is inferred as the snapshot at which the leg's day volume (else its last price) last changed. Before any
+      trade is seen that day the quote's own update time stands in, which errs toward quoting."""
+
+    name = "quote_replay"
+    mode = "quotes"
+
+    def __init__(self, day: date, underlying: str = "NDX", root: str = "NDXP", carry_min: int = 30,
+                 quotes_dir: Optional[str] = None, frame: Optional[pd.DataFrame] = None):
+        self.day = day
+        self.underlying = underlying.upper()
+        self.root = root
+        self.carry = int(carry_min)
+        self.expiry = day
+        if frame is None:
+            path = os.path.join(quotes_dir or QUOTES_DIR, root, f"{day.isoformat()}.csv.gz")
+            if not os.path.exists(path):
+                raise RuntimeError(f"no recorded {root} quotes for {day}: {path}")
+            frame = pd.read_csv(path)
+        q = frame.copy()
+
+        def naive_et(s):
+            t = pd.to_datetime(s, utc=True, errors="coerce")
+            return t.dt.tz_convert(ET).dt.tz_localize(None)
+        q["ts"] = naive_et(q["ts"])
+        q["quote_time"] = naive_et(q["quote_time"]) if "quote_time" in q else pd.NaT
+        q = q.dropna(subset=["ts"]).sort_values(["symbol", "ts"])
+        # the last trade: the snapshot at which the day volume grew (the last price changed, where volume is missing)
+        q["volume"] = pd.to_numeric(q["volume"], errors="coerce") if "volume" in q else float("nan")
+        q["last"] = pd.to_numeric(q["last"], errors="coerce")
+        g = q.groupby("symbol", sort=False)
+        vol, prev_vol = q["volume"], g["volume"].shift()
+        last, prev_last = q["last"], g["last"].shift()
+        with_vol = vol.notna() & prev_vol.notna()
+        # the first sighting is not a trade seen happening; neither is a volume that merely starts being reported
+        traded = (with_vol & (vol > prev_vol)) | (~with_vol & last.notna() & prev_last.notna() & (last != prev_last))
+        q["last_time"] = q["ts"].where(traded)
+        q["last_time"] = q.groupby("symbol", sort=False)["last_time"].ffill()
+        self._snaps: list = sorted(q["ts"].unique())
+        self._by_snap = {pd.Timestamp(ts): grp.set_index("symbol") for ts, grp in q.groupby("ts")}
+        u = q.drop_duplicates("ts")[["ts", "underlying"]].sort_values("ts")
+        # what the day's PM-settled options settle on: the index level the recorder saw after the close, not the
+        # last snapshot before it (None when the recording stopped at 16:00)
+        post = pd.to_numeric(u.loc[u["ts"].dt.time >= SETTLE_FIRST_READ, "underlying"], errors="coerce").dropna()
+        self.settle_close: Optional[float] = float(post.iloc[-1]) if len(post) else None
+        u = u[(u["ts"].dt.time >= dtime(9, 30)) & (u["ts"].dt.time < dtime(16, 0))]
+        b = u.groupby(u["ts"].dt.floor("min"))["underlying"].agg(["first", "max", "min", "last"])
+        self.bars = pd.DataFrame({"ts": b.index, "open": b["first"].to_numpy(), "high": b["max"].to_numpy(),
+                                  "low": b["min"].to_numpy(), "close": b["last"].to_numpy()}).reset_index(drop=True)
+        self._i = -1
+
+    def describe(self) -> str:
+        return f"RECORDED QUOTES: {len(self._snaps)} snapshots, legs carried {self.carry} min by last trade (live's rule)"
+
+    def has_option_data(self) -> bool:
+        return bool(self._snaps)
+
+    def next_bar(self) -> Optional[Bar]:
+        self._i += 1
+        if self._i >= len(self.bars):
+            return None
+        r = self.bars.iloc[self._i]
+        return Bar(ts=pd.Timestamp(r.ts).to_pydatetime(), open=float(r.open), high=float(r.high), low=float(r.low), close=float(r.close))
+
+    def is_last_bar(self) -> bool:
+        return self._i >= len(self.bars) - 1
+
+    def _snapshot(self, minute: int) -> Optional[tuple[pd.Timestamp, pd.DataFrame]]:
+        """The first snapshot at or after the minute's end (within a minute), else the last one before it (within
+        two): what the live runner's first poll after the boundary would have seen."""
+        import bisect
+        boundary = pd.Timestamp(datetime.combine(self.day, dtime(0, 0))) + pd.Timedelta(minutes=int(minute))
+        i = bisect.bisect_left(self._snaps, boundary.to_datetime64())
+        if i < len(self._snaps) and pd.Timestamp(self._snaps[i]) - boundary < pd.Timedelta(minutes=1):
+            ts = pd.Timestamp(self._snaps[i])
+        elif i > 0 and boundary - pd.Timestamp(self._snaps[i - 1]) <= pd.Timedelta(minutes=2):
+            ts = pd.Timestamp(self._snaps[i - 1])
+        else:
+            return None
+        return ts, self._by_snap[ts]
+
+    @staticmethod
+    def _leg(snap: pd.DataFrame, symbol: str) -> Optional[LegQuote]:
+        if symbol not in snap.index:
+            return None
+        r = snap.loc[symbol]
+        if isinstance(r, pd.DataFrame):                          # a duplicate row in one snapshot: take the last
+            r = r.iloc[-1]
+        num = lambda v: (None if pd.isna(v) else float(v))
+        tm = lambda v: (None if pd.isna(v) else pd.Timestamp(v).to_pydatetime())
+        return LegQuote(symbol=symbol, bid=num(r["bid"]), ask=num(r["ask"]), last=num(r["last"]),
+                        last_time=tm(r["last_time"]), updated=tm(r["quote_time"]))
+
+    def quote_vertical(self, kind: str, k_low: float, k_high: float, minute: int, S: Optional[float] = None) -> Optional[Quote]:
+        got = self._snapshot(minute)
+        if got is None:
+            return None
+        ts, snap = got
+        long_s, short_s = self.leg_symbols(kind, k_low, k_high)
+        long_q, short_q = self._leg(snap, long_s), self._leg(snap, short_s)
+        if long_q is None or short_q is None:
+            return None
+        return vertical_quote(long_q, short_q, ts.to_pydatetime(), carry_min=self.carry, max_width=float(k_high - k_low))
+
+    def quote_structure(self, kind: str, k_low: float, k_high: float, minute: int, S: Optional[float] = None) -> Optional[Quote]:
+        got = self._snapshot(minute)
+        if got is None:
+            return None
+        ts, snap = got
+        legs = structure_legs(kind, k_low, k_high)
+        return structure_quote([self._leg(snap, self._occ(cp, K)) for cp, K, _ in legs], legs, ts.to_pydatetime(), carry_min=self.carry)
+
+    def _occ(self, cp: str, K: float) -> str:
+        return f"{self.root}{self.day.strftime('%y%m%d')}{cp}{int(round(K * 1000)):08d}"
+
+    def leg_symbols(self, kind: str, k_low: float, k_high: float) -> tuple[str, str]:
+        """OCC-style symbols (long leg, short leg), spelled as the recorder spells them."""
+        cp = "C" if kind == "call" else "P"
+        long_k, short_k = (k_low, k_high) if kind == "call" else (k_high, k_low)
+        return self._occ(cp, long_k), self._occ(cp, short_k)
+
+
+# ── tastytrade ────────────────────────────────────────────────────────────────
+
+_SDK_LOOP = None            # one loop for the whole process: asyncio.run() per call closes the SDK's
+                            # pooled connections under it and the next call dies on "Event loop is closed"
+
+
+def _sdk_loop():
+    import asyncio
+    global _SDK_LOOP
+    if _SDK_LOOP is None or _SDK_LOOP.is_closed():
+        _SDK_LOOP = asyncio.new_event_loop()
+    return _SDK_LOOP
+
+
+def _sdk_call(fn, *args, **kwargs):
+    """Call a tastytrade SDK function and return its result, awaiting it when the installed SDK made it a
+    coroutine (13.x did); a synchronous SDK or a test fake passes straight through. Every await runs on
+    one long-lived loop, so the SDK's HTTP connection pool survives between calls."""
+    import asyncio
+    import inspect
+    result = fn(*args, **kwargs)
+    if inspect.isawaitable(result):
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            return _sdk_loop().run_until_complete(result)
+        raise RuntimeError("TastytradeProvider is synchronous and cannot be driven from inside a running event loop")
+    return result
+
+
+_CRED_HINT = ("tastytrade rejected the credentials ({why}). TT_SECRET is the Client Secret shown once when the OAuth "
+              "application is created (not the Client ID); TT_REFRESH is the refresh token from Create Grant on that "
+              "same application. A regenerated application needs both values replaced.")
+
+
+def _credential_error(exc: Exception) -> Optional[RuntimeError]:
+    msg = str(exc)
+    low = msg.lower()
+    if any(k in low for k in ("invalid_grant", "secret mismatch", "invalid_client", "invalid_grant_type")):
+        return RuntimeError(_CRED_HINT.format(why=msg.strip()[:160]))
+    return None
+
+
+class RequestBudget:
+    """A hard ceiling on calls to the broker's API, enforced where the request is made so no caller
+    can exceed it: a floor between calls, a cap per minute and a cap per session day. tastytrade
+    publishes no per-endpoint quota and suggests 50/s as a client-side ceiling; the paper runner
+    needs about 4 a minute, so these are set far below what would ever draw a 429."""
+
+    def __init__(self, min_interval_s: float = 5.0, per_minute: int = 20, per_day: Optional[int] = None, clock=None, sleep=None,
+                 shared_path: Optional["Path"] = None, external_dirs: Optional[list] = None):
+        import time as _time
+        self.min_interval_s = float(min_interval_s); self.per_minute = int(per_minute)
+        self.per_day = int(per_day) if per_day is not None else broker_day_cap()
+        self._clock = clock or _time.monotonic; self._sleep = sleep or _time.sleep
+        self._last: Optional[float] = None
+        self._minute: list[float] = []            # monotonic times of calls in the last 60 s
+        self.calls_today = 0
+        self.waits = 0
+        # The day's cap has to hold across PROCESSES, not just within one: a paper session, a streamer
+        # and an ad-hoc script each counting to the cap privately is three times the intended ceiling.
+        # A small shared file keeps one running total for the day; if it cannot be used the budget
+        # still works, just per process, so a filesystem problem never blocks trading.
+        if shared_path is None:
+            from pathlib import Path as _Path
+            shared_path = _Path(BUDGET_STATE_DIR) / f"broker_calls_{date.today().isoformat()}.json"
+        self.shared_path = shared_path
+        self.shared_calls = 0
+        # Other checkouts' runners count into their own state directory (a worktree's runner beside the main
+        # checkout's): their day totals are READ, never written, and count against this budget's day cap.
+        self.external_dirs = [__import__("pathlib").Path(d) for d in (external_dirs or [])]
+
+    def external_calls(self) -> int:
+        import json
+        total = 0
+        for d in self.external_dirs:
+            try:
+                total += int(json.loads((d / f"broker_calls_{date.today().isoformat()}.json").read_text(encoding="utf-8"))
+                             .get("calls", 0))
+            except (OSError, ValueError, TypeError):
+                continue
+        return total
+
+    def _bump_shared(self) -> int:
+        """Add one to the day's cross-process total and return it (0 when the file is unusable)."""
+        import json
+        import os
+        try:
+            self.shared_path.parent.mkdir(parents=True, exist_ok=True)
+            lock = self.shared_path.with_suffix(".lock")
+            for _ in range(50):                       # a brief spin: every writer holds the lock for microseconds
+                try:
+                    fd = os.open(str(lock), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+                    break
+                except FileExistsError:
+                    self._sleep(0.01)
+            else:
+                try:                                  # a stale lock from a killed process must not wedge the day
+                    os.unlink(str(lock))
+                except OSError:
+                    pass
+                return self.shared_calls
+            try:
+                total = 0
+                if self.shared_path.exists():
+                    try:
+                        total = int(json.loads(self.shared_path.read_text(encoding="utf-8")).get("calls", 0))
+                    except (ValueError, OSError):
+                        total = 0
+                total += 1
+                self.shared_path.write_text(json.dumps({"date": date.today().isoformat(), "calls": total}), encoding="utf-8")
+                self.shared_calls = total
+                return total
+            finally:
+                os.close(fd)
+                try:
+                    os.unlink(str(lock))
+                except OSError:
+                    pass
+        except OSError:
+            return self.shared_calls
+
+    def take(self) -> None:
+        """Block until a call is allowed, then count it. Raises when the day's budget is spent."""
+        if self.calls_today >= self.per_day:
+            raise RuntimeError(f"tastytrade request budget spent: {self.calls_today} calls today (cap {self.per_day}); not calling again today")
+        if self.shared_calls >= self.per_day:
+            raise RuntimeError(f"tastytrade request budget spent across all processes: {self.shared_calls} calls today "
+                               f"(cap {self.per_day}); not calling again today")
+        if self.external_dirs:
+            ext = self.external_calls()
+            if self.shared_calls + ext >= self.per_day:
+                raise RuntimeError(f"tastytrade request budget spent across this checkout ({self.shared_calls}) and other "
+                                   f"checkouts' runners ({ext}) today (cap {self.per_day}); not calling again today")
+        now = self._clock()
+        if self._last is not None and now - self._last < self.min_interval_s:
+            self._sleep(self.min_interval_s - (now - self._last)); self.waits += 1; now = self._clock()
+        self._minute = [x for x in self._minute if now - x < 60.0]
+        if len(self._minute) >= self.per_minute:
+            self._sleep(60.0 - (now - self._minute[0]) + 0.01); self.waits += 1; now = self._clock()
+            self._minute = [x for x in self._minute if now - x < 60.0]
+        self._last = now; self._minute.append(now); self.calls_today += 1
+        self._bump_shared()
+
+
+def _external_state_dirs() -> list:
+    """Other checkouts' paper_state directories whose broker-call totals count against this runner's day budget:
+    ALAN_TRADER_EXTERNAL_STATE_DIRS, else — for a runner started from a linked worktree (the service's) — the main
+    checkout's (api.config.external_state_dirs); none for a runner of the main checkout."""
+    env = os.environ.get("ALAN_TRADER_EXTERNAL_STATE_DIRS")
+    if env is not None:
+        return [p for p in env.split(os.pathsep) if p.strip()]
+    try:
+        from api.config import external_state_dirs
+        return [str(p) for p in external_state_dirs()]
+    except Exception:
+        return []
+
+
+def _num(x) -> Optional[float]:
+    """A feed number as a float; None when it is missing or not a number (the feed sends NaN for "no value")."""
+    try:
+        v = float(x)
+    except (TypeError, ValueError):
+        return None
+    return v if v == v else None
+
+
+class StreamQuotes:
+    """Live quotes for the runner's legs over DXLink, kept current by a background thread (2026-10-06, the owner:
+    "Fix the execution").
+
+    It is a market-data subscription, not a REST call, so it costs nothing from the day's broker budget. That lets a
+    runner look at its legs every couple of seconds, and a resting order fills the moment the price touches it, as
+    the friend's limits do at the exchange, rather than at a poll once a minute.
+
+    - The thread owns its own event loop and its own OAuth session: the SDK binds a session to the loop it is used
+      on, and the provider's REST calls run on another.
+    - The main thread only reads ``get``.
+    - Options arrive as Quote events (bid / ask).
+    - The cash index has no bid or ask; it publishes its level as Trade events.
+    - A dropped connection reconnects with a growing pause. ``healthy`` says whether events are flowing; when they
+      are not, the provider falls back to REST.
+    """
+
+    STALE_S = 30.0                      # no event for this long: not healthy
+
+    def __init__(self, session_factory, index_symbol: str, streamer_factory=None, quote_cls=None, trade_cls=None,
+                 clock=None, now_fn=None, start: bool = True):
+        import threading
+        import time
+        self._session_factory = session_factory
+        self._streamer_factory, self._quote_cls, self._trade_cls = streamer_factory, quote_cls, trade_cls
+        self.index_symbol = index_symbol
+        self._clock = clock or time.monotonic
+        self._now = now_fn or now_et
+        self._lock = threading.Lock()
+        self._latest: dict[str, LegQuote] = {}           # by streamer symbol
+        self._want: set[str] = set()
+        self._subscribed: set[str] = set()
+        self.last_event: Optional[float] = None
+        self.connected = False
+        self.error = ""
+        self.n_events = 0
+        self._stop = threading.Event()
+        self._thread = None
+        if start:
+            self._thread = threading.Thread(target=self._run, name="dxlink-quotes", daemon=True)
+            self._thread.start()
+
+    def want(self, symbols) -> None:
+        with self._lock:
+            self._want.update(s for s in symbols if s)
+
+    def get(self, symbol: Optional[str]) -> Optional[LegQuote]:
+        if not symbol:
+            return None
+        with self._lock:
+            return self._latest.get(symbol)
+
+    def healthy(self) -> bool:
+        t = self.last_event
+        return bool(self.connected and t is not None and self._clock() - t < self.STALE_S)
+
+    def stop(self) -> None:
+        self._stop.set()
+
+    # ── events (the thread calls these) ────────────────────────────────────────
+    def on_quote(self, ev) -> None:
+        sym = str(ev.event_symbol)
+        now = self._now()
+        with self._lock:
+            old = self._latest.get(sym)
+            self._latest[sym] = LegQuote(sym, _num(ev.bid_price), _num(ev.ask_price), old.last if old else None,
+                                         old.last_time if old else None, now)
+            self.last_event = self._clock()
+            self.n_events += 1
+
+    def on_trade(self, ev) -> None:
+        px = _num(getattr(ev, "price", None))
+        if px is None:
+            return
+        sym = str(ev.event_symbol)
+        now = self._now()
+        ms = getattr(ev, "time", None)
+        when = now
+        if ms:
+            try:
+                when = pd.Timestamp(int(ms), unit="ms", tz="UTC").tz_convert(ET).tz_localize(None).to_pydatetime()
+            except (TypeError, ValueError):
+                when = now
+        with self._lock:
+            old = self._latest.get(sym)
+            self._latest[sym] = LegQuote(sym, old.bid if old else None, old.ask if old else None, px, when, now)
+            self.last_event = self._clock()
+            self.n_events += 1
+
+    # ── the thread ─────────────────────────────────────────────────────────────
+    def _run(self) -> None:
+        import asyncio
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        pause = 2.0
+        while not self._stop.is_set():
+            try:
+                loop.run_until_complete(self._serve())
+                pause = 2.0
+            except Exception as exc:  # noqa: BLE001 - a dropped stream reconnects; the provider falls back to REST meanwhile
+                self.error = str(exc)[:200]
+                logger.warning("quote stream dropped (%s); reconnecting in %.0f s", self.error, pause)
+            self.connected = False
+            with self._lock:
+                self._subscribed.clear()
+            if self._stop.wait(pause):
+                break
+            pause = min(60.0, pause * 2)
+
+    async def _serve(self) -> None:
+        import asyncio
+        if self._streamer_factory is None:
+            from tastytrade import DXLinkStreamer
+            from tastytrade.dxfeed import Quote as DxQuote, Trade as DxTrade
+            self._streamer_factory, self._quote_cls, self._trade_cls = DXLinkStreamer, DxQuote, DxTrade
+        # the SDK logs every feed message at DEBUG: many a second on a live tape, which would drown the runner's diary
+        if logging.getLogger("tastytrade").getEffectiveLevel() < logging.INFO:
+            logging.getLogger("tastytrade").setLevel(logging.INFO)
+        session = self._session_factory()
+        async with self._streamer_factory(session) as st:
+            await st.subscribe(self._trade_cls, [self.index_symbol])
+            self.connected, self.error = True, ""
+            logger.info("quote stream connected (%s)", self.index_symbol)
+            while not self._stop.is_set():
+                with self._lock:
+                    new = sorted(self._want - self._subscribed)
+                if new:
+                    await st.subscribe(self._quote_cls, new)
+                    with self._lock:
+                        self._subscribed.update(new)
+                await asyncio.sleep(0.1)
+                ev = st.get_event_nowait(self._quote_cls)
+                while ev is not None:
+                    self.on_quote(ev)
+                    ev = st.get_event_nowait(self._quote_cls)
+                ev = st.get_event_nowait(self._trade_cls)
+                while ev is not None:
+                    self.on_trade(ev)
+                    ev = st.get_event_nowait(self._trade_cls)
+
+
+class TastytradeProvider:
+    """Real-time quotes through the tastytrade API. Needs TT_SECRET and TT_REFRESH (OAuth) in the
+    environment or .env; ``is_test`` selects the certification environment. Polls the REST
+    market-data endpoint; one call returns the underlying and every leg it is asked for."""
+
+    name = "tastytrade"
+
+    #: streaming: the stream is down, so REST no more often than this (the day's budget), else the last quotes in hand
+    STREAM_REST_FLOOR_S = 60.0
+    #: streaming: a leg the stream has not sent yet (a strike just chosen) is fetched over REST, at most this often
+    STREAM_MISSING_REST_S = 5.0
+
+    def __init__(self, underlying: str = "NDX", root: str = "NDXP", is_test: bool = False, poll_seconds: int = 15,
+                 stream: bool = False, stream_factory=None, clock=None):
+        import time
+        self.underlying = underlying.upper()
+        self.root = root.upper()
+        self.poll_seconds = int(poll_seconds)
+        try:
+            from engine.env import load_env               # the platform's own .env reader (no python-dotenv needed)
+            load_env()
+        except Exception:
+            pass
+        secret, refresh = os.environ.get("TT_SECRET"), os.environ.get("TT_REFRESH")
+        if not secret or not refresh:
+            raise RuntimeError("tastytrade credentials missing: set TT_SECRET and TT_REFRESH in .env (OAuth provider secret and refresh token)")
+        from tastytrade import Session
+        self._creds = (secret, refresh, is_test)
+        self.session = Session(secret, refresh, is_test=is_test)
+        self._chain: dict = {}
+        self._samples: list[tuple[datetime, float]] = []
+        self.expiry: Optional[date] = None
+        self.budget = RequestBudget(external_dirs=_external_state_dirs())   # every REST call goes through it (see RequestBudget)
+        # --stream: the legs' quotes come from a DXLink subscription (StreamQuotes), REST only as the fallback
+        self.stream_enabled = bool(stream)
+        self._stream_factory = stream_factory or (lambda: StreamQuotes(self._new_session, self.underlying))
+        self._stream: Optional[StreamQuotes] = None
+        self._streamer_of: dict[str, str] = {}
+        self._last_quotes: dict[str, LegQuote] = {}
+        self._clock = clock or time.monotonic
+        self._last_rest_at = -1e18
+
+    # chain for today's expiry
+    def load_chain(self, day: date) -> int:
+        from tastytrade.instruments import get_option_chain
+        self.budget.take()
+        try:
+            chain = _sdk_call(get_option_chain, self.session, self.underlying)
+        except Exception as exc:
+            err = _credential_error(exc)
+            if err is not None:
+                raise err from None
+            raise
+        # only the configured (PM-settled) root: an AM-settled monthly on a third Friday settles on the
+        # open and cannot be traded as a same-day expiry, so a day without the root is a blocked day
+        opts = [o for o in chain.get(day, []) if str(o.root_symbol).upper() == self.root]
+        self._chain = {(str(o.option_type.value if hasattr(o.option_type, "value") else o.option_type)[0].upper(), float(o.strike_price)): o
+                       for o in opts}
+        self.expiry = day
+        self._streamer_of = {str(o.symbol): str(o.streamer_symbol) for o in self._chain.values()
+                             if getattr(o, "streamer_symbol", None)}
+        if self.stream_enabled and self._stream is None:
+            self._stream = self._stream_factory()
+            logger.info("streaming the legs' quotes over DXLink (REST only as the fallback)")
+        return len(self._chain)
+
+    def near_the_money_vertical(self, spot: float, width: float, itm_offset: float, kind: str = "call") -> tuple[Optional[str], Optional[str], float, float]:
+        """The strategy's own structure at ``spot``: strikes on the loaded chain's grid, the long leg
+        ``itm_offset`` past the mid-strike. Returns (long_symbol, short_symbol, k_low, k_high)."""
+        cp = "C" if kind == "call" else "P"
+        strikes = sorted(K for (c, K) in self._chain if c == cp)
+        if len(strikes) < 2:
+            return None, None, 0.0, 0.0
+        mid_target = spot - itm_offset if kind == "call" else spot + itm_offset
+        k_low = min(strikes, key=lambda K: abs((K + width / 2) - mid_target))
+        k_high = k_low + width
+        if (cp, k_high) not in self._chain:                 # the grid may skip a strike: take the nearest one listed
+            k_high = min(strikes, key=lambda K: abs(K - (k_low + width)))
+        long_sym, short_sym = self.leg_symbols(kind, k_low, k_high)
+        return long_sym, short_sym, k_low, k_high
+
+    def _symbol(self, cp: str, K: float) -> Optional[str]:
+        o = self._chain.get((cp, float(K)))
+        return o.symbol if o is not None else None
+
+    def leg_symbols(self, kind: str, k_low: float, k_high: float) -> tuple[Optional[str], Optional[str]]:
+        cp = "C" if kind == "call" else "P"
+        long_k, short_k = (k_low, k_high) if kind == "call" else (k_high, k_low)
+        return self._symbol(cp, long_k), self._symbol(cp, short_k)
+
+    def structure_symbols(self, kind: str, k_low: float, k_high: float) -> list[Optional[str]]:
+        """The chain's symbols of the structure's legs, in ``structure_legs`` order (None for a strike not listed)."""
+        return [self._symbol(cp, K) for cp, K, _ in structure_legs(kind, k_low, k_high)]
+
+    def quote_structure(self, kind: str, k_low: float, k_high: float, quotes: dict[str, LegQuote], now: datetime,
+                        carry_min: int = 30) -> Optional[Quote]:
+        syms = self.structure_symbols(kind, k_low, k_high)
+        if any(s is None or s not in quotes for s in syms):
+            return None
+        return structure_quote([quotes[s] for s in syms], structure_legs(kind, k_low, k_high), now, carry_min)
+
+    def _relogin(self) -> None:
+        """A fresh OAuth session (the access token expires during a long day)."""
+        from tastytrade import Session
+        secret, refresh, is_test = self._creds
+        self.session = Session(secret, refresh, is_test=is_test)
+        logger.info("tastytrade session re-created")
+
+    def _new_session(self):
+        from tastytrade import Session
+        secret, refresh, is_test = self._creds
+        return Session(secret, refresh, is_test=is_test)
+
+    def fetch(self, option_symbols: list[str]) -> dict[str, LegQuote]:
+        """The underlying and the requested legs: from the stream when one is running and healthy, else one REST call."""
+        syms = [s for s in option_symbols if s]
+        st = self._stream
+        if st is None:
+            return self._fetch_rest(syms)
+        st.want([self._streamer_of.get(s) for s in syms])
+        if not st.healthy():
+            if self._clock() - self._last_rest_at >= self.STREAM_REST_FLOOR_S or not self._last_quotes:
+                return self._rest_and_keep(syms)
+            return {s: self._last_quotes[s] for s in [self.underlying, *syms] if s in self._last_quotes}
+        now = now_et()
+        out: dict[str, LegQuote] = {}
+        idx = st.get(self.underlying)
+        if idx is not None and idx.last is not None:
+            out[self.underlying] = idx
+        missing = []
+        for s in syms:
+            lq = st.get(self._streamer_of.get(s))
+            if lq is None or lq.bid is None or lq.ask is None:
+                missing.append(s)
+                continue
+            # the stream is live, so the quote it holds stands now, changed or not
+            out[s] = LegQuote(s, lq.bid, lq.ask, lq.last, lq.last_time, now)
+        if (missing or self.underlying not in out) and self._clock() - self._last_rest_at >= self.STREAM_MISSING_REST_S:
+            try:
+                for k, v in self._rest_and_keep(missing).items():
+                    out.setdefault(k, v)
+            except Exception as exc:  # noqa: BLE001 - the streamed quotes still stand; the missing legs come next poll
+                logger.warning("REST for %d legs the stream has not sent yet failed: %s", len(missing), exc)
+        self._last_quotes.update(out)
+        return out
+
+    def _rest_and_keep(self, syms: list[str]) -> dict[str, LegQuote]:
+        q = self._fetch_rest(syms)
+        self._last_rest_at = self._clock()
+        self._last_quotes.update(q)
+        return q
+
+    # one REST call: the underlying plus every option symbol requested
+    def _fetch_rest(self, option_symbols: list[str]) -> dict[str, LegQuote]:
+        from tastytrade.market_data import get_market_data_by_type
+        syms = [s for s in option_symbols if s]
+        if len(syms) > 100:                            # the endpoint takes up to 100 symbols per call; more would mean two
+            raise RuntimeError(f"{len(syms)} option symbols in one fetch; the paper runner watches a handful, this is a bug")
+        self.budget.take()
+        try:
+            rows = _sdk_call(get_market_data_by_type, self.session, indices=[self.underlying], options=syms)
+        except Exception as exc:                       # 401 / expired token / dropped connection: one re-login, one retry
+            err = _credential_error(exc)               # a wrong secret is not fixed by logging in again
+            if err is not None:
+                raise err from None
+            msg = str(exc).lower()
+            if any(k in msg for k in ("401", "unauthor", "token", "expired", "forbidden", "connection")):
+                self._relogin()
+                self.budget.take()
+                rows = _sdk_call(get_market_data_by_type, self.session, indices=[self.underlying], options=syms)
+            else:
+                raise
+        out: dict[str, LegQuote] = {}
+
+        def et(ts):
+            if ts is None:
+                return None
+            t = pd.Timestamp(ts)
+            t = t.tz_convert(ET) if t.tzinfo is not None else t.tz_localize("UTC").tz_convert(ET)
+            return t.tz_localize(None).to_pydatetime()
+
+        self._last_rows = {str(r.symbol): r for r in rows}        # the SDK rows, for anything that wants sizes or volume
+        for r in rows:
+            out[str(r.symbol)] = LegQuote(symbol=str(r.symbol), bid=(float(r.bid) if r.bid is not None else None),
+                                          ask=(float(r.ask) if r.ask is not None else None),
+                                          last=(float(r.last) if r.last is not None else None),
+                                          last_time=et(getattr(r, "last_trade_time", None)), updated=et(getattr(r, "updated_at", None)))
+        return out
+
+    def index_last(self) -> Optional[float]:
+        """The underlying's level now (one REST call). After 16:00 it becomes the index's official close, which is
+        what the day's PM-settled options settle on (see PaperSession's settlement read)."""
+        q = self._fetch_rest([]).get(self.underlying)       # REST even when streaming: the settlement reads the official close
+        return float(q.last) if q is not None and q.last is not None else None
+
+    def last_row(self, symbol):
+        """The raw SDK row from the most recent fetch (bid and ask sizes, volume, last trade), or None."""
+        return getattr(self, "_last_rows", {}).get(str(symbol)) if symbol else None
+
+    def sample_underlying(self, quotes: dict[str, LegQuote], when: datetime) -> Optional[float]:
+        q = quotes.get(self.underlying)
+        if q is None:
+            return None
+        # A quote stamped before the open is the previous session's close, still served for the first seconds
+        # after 09:30. Sampled, it became the day's first open and high (2026-09-24: 30,470.29, yesterday's
+        # close, against a 30,211 open). The first real print follows within seconds.
+        stamp = q.last_time or q.updated
+        if stamp is not None and stamp < datetime.combine(when.date(), dtime(9, 30)):
+            return None
+        px = q.last if q.last is not None else (((q.bid or 0) + (q.ask or 0)) / 2.0 if q.bid and q.ask else None)
+        if px is not None:
+            self._samples.append((when, float(px)))
+        return px
+
+    def backfill_bars(self, day: date, until: datetime) -> list[Bar]:
+        """Today's earlier 1-minute bars, for a runner that starts after 09:30: the engine's 30-minute
+        lookback needs them, and without them it cannot signal until it has polled its own history.
+
+        The broker's own candle feed, deliberately and only. A live session takes every number from
+        the venue it trades on, so its bars cannot disagree with its quotes; Polygon belongs to
+        backtests and stored history, not here. Returns the bars strictly before ``until``."""
+        bars = self._backfill_from_stream(day, until)
+        if bars:
+            logger.info("backfilled %d bars from the broker's candle feed (%s to %s)",
+                        len(bars), bars[0].ts.strftime("%H:%M"), bars[-1].ts.strftime("%H:%M"))
+        return bars
+
+    def _backfill_from_stream(self, day: date, until: datetime) -> list[Bar]:
+        """Today's 1-minute candles over DXLink. Costs no REST budget: it is a market-data subscription
+        that replays from ``fromTime``, then goes quiet once it has sent what it holds."""
+        async def _pull() -> list[Bar]:
+            import anyio
+            from tastytrade import DXLinkStreamer
+            from tastytrade.dxfeed import Candle
+            start = datetime.combine(day, dtime(9, 30))
+            out: dict[datetime, Bar] = {}
+            async with DXLinkStreamer(self.session) as st:
+                await st.subscribe_candle([self.underlying], "1m", start_time=start)
+                quiet = 0
+                while quiet < 12 and len(out) < 500:      # stop after ~3 s with nothing new
+                    await anyio.sleep(0.25)
+                    fresh = False
+                    c = st.get_event_nowait(Candle)
+                    while c is not None:
+                        if c.time and c.close:
+                            ts = datetime.fromtimestamp(c.time / 1000)
+                            if start <= ts < until:
+                                out[ts] = Bar(ts=ts, open=float(c.open), high=float(c.high),
+                                              low=float(c.low), close=float(c.close))
+                                fresh = True
+                        c = st.get_event_nowait(Candle)
+                    quiet = 0 if fresh else quiet + 1
+            return [out[k] for k in sorted(out)]
+
+        try:
+            return _sdk_loop().run_until_complete(_pull())
+        except Exception as exc:
+            logger.warning("backfill from the broker's candle feed failed: %s", exc)
+            return []
+
+    def close_minute(self, minute_start: datetime) -> Optional[Bar]:
+        """Build the 1-minute bar for ``minute_start`` from the samples taken during it."""
+        end = minute_start + timedelta(minutes=1)
+        s = [px for t, px in self._samples if minute_start <= t < end]
+        self._samples = [(t, px) for t, px in self._samples if t >= end]
+        if not s:
+            return None
+        return Bar(ts=minute_start, open=s[0], high=max(s), low=min(s), close=s[-1])
+
+    def quote_vertical(self, kind: str, k_low: float, k_high: float, quotes: dict[str, LegQuote], now: datetime, carry_min: int = 30) -> Optional[Quote]:
+        ls, ss = self.leg_symbols(kind, k_low, k_high)
+        if not ls or not ss or ls not in quotes or ss not in quotes:
+            return None
+        # the strikes give the arbitrage bound on how wide this vertical's quote can sensibly be
+        return vertical_quote(quotes[ls], quotes[ss], now, carry_min, max_width=abs(float(k_high) - float(k_low)))

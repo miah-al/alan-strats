@@ -61,6 +61,12 @@ _OPEN_COLS = [
          "cell-positive": {"function": "params.data._pnl > 0"},
          "cell-negative": {"function": "params.data._pnl < 0"},
      }},
+    # Which feed priced this row: a paper position is marked by the venue that filled it, and saying
+    # so on the row is the difference between a mark you can act on and one you have to go and verify.
+    # which way the position leans: this strategy trades bull call and bear put spreads, and the
+    # strategy name alone does not distinguish them
+    {"field": "Structure",   "minWidth": 150, "flex": 1},
+    {"field": "Priced by",   "minWidth": 100, "width": 110},
     {"field": "Alerts",      "minWidth": 80,  "width": 90},
     {"field": "_tgid",       "hide": True},
 ]
@@ -486,9 +492,31 @@ def _metric_card(label: str, value: str, color: str = T.TEXT_PRIMARY) -> html.Di
 
 # ── Legs table (MRT) ──────────────────────────────────────────────────────────
 
+def _net_legs(grp: pd.DataFrame) -> pd.DataFrame:
+    """One row per contract actually held, not one per fill.
+
+    A position that was added to has two fills per leg, so the raw rows list the same contract twice
+    and the table reads as four legs when two are held. Netting by (symbol, direction) gives the
+    position as it stands: quantity summed, entry price averaged by quantity.
+    """
+    if grp.empty or "Symbol" not in grp.columns:
+        return grp
+    rows = []
+    for (sym, dirn), g in grp.groupby(["Symbol", "Direction"], sort=False):
+        qty = float(pd.to_numeric(g["Quantity"], errors="coerce").fillna(0).sum())
+        px = pd.to_numeric(g["TransactionPrice"], errors="coerce").fillna(0.0)
+        q = pd.to_numeric(g["Quantity"], errors="coerce").fillna(0.0)
+        avg = float((px * q).sum() / q.sum()) if q.sum() else 0.0
+        r = g.iloc[0].copy()
+        r["Quantity"] = qty
+        r["TransactionPrice"] = avg
+        rows.append(r)
+    return pd.DataFrame(rows).reset_index(drop=True) if rows else grp
+
+
 def _build_legs_table(grp: pd.DataFrame, live_prices: dict | None = None):
     legs = []
-    for _, r in grp.iterrows():
+    for _, r in _net_legs(grp).iterrows():
         stype = str(r.get("SecurityType", "")).lower()
         if stype == "cash":
             continue
@@ -496,7 +524,11 @@ def _build_legs_table(grp: pd.DataFrame, live_prices: dict | None = None):
         qty  = float(r.get("Quantity")   or 0)
         mult = float(r.get("Multiplier") or 100)
         dirn = str(r.get("Direction", "")).upper()
-        sign = 1.0 if dirn == "SELL" else -1.0
+        # Liquidation convention, the same one live_market_value uses: a long leg is an asset you
+        # sell (+), a short leg a liability you buy back (-). This was inverted, so every long leg
+        # showed a negative market value and every short a positive one, and the legs summed to
+        # roughly minus the position's real value.
+        sign = 1.0 if dirn == "BUY" else -1.0
         sym  = str(r.get("Symbol", ""))
 
         live    = (live_prices or {}).get(sym, {})
@@ -567,15 +599,9 @@ def _build_ic_modal_body(
     # Live prices for current-price marker + position value
     spot: float | None = None
     live_prices: dict = {}
-    try:
-        from app import get_polygon_api_key
-        from engine.positions import fetch_stock_price, fetch_option_prices
-        api_key = get_polygon_api_key()
-        if api_key:
-            spot = fetch_stock_price(api_key, underlying)
-            live_prices = fetch_option_prices(api_key, grp)
-    except Exception:
-        pass
+    # From the broker the paper session trades on, never a second vendor (see live_leg_prices).
+    from app.pages.paper_trading.data import live_leg_prices
+    live_prices, spot = live_leg_prices(grp)
 
     opt = grp[grp["SecurityType"].str.lower() == "option"].copy()
 
@@ -676,10 +702,17 @@ def _build_ic_modal_body(
             cur  = live.get("price") if isinstance(live, dict) else None
             if cur is None:
                 all_ok = False; break
-            sign = 1.0 if dirn == "SELL" else -1.0
+            sign = 1.0 if dirn == "BUY" else -1.0      # liquidation value: long legs are assets, short legs liabilities
             running += sign * cur * abs(qty) * mult
         if all_ok:
             pos_val = round(running, 2)
+            try:
+                from app.pages.paper_trading.data import _vertical_bound
+                _b = _vertical_bound(grp)
+                if _b is not None:                      # a vertical is worth between 0 and its width
+                    pos_val = round(min(_b[1], max(_b[0], pos_val)), 2)
+            except Exception:
+                pass
 
     pos_val_str   = f"${pos_val:,.2f}"  if pos_val is not None else "—"
     pos_val_color = (T.SUCCESS if pos_val is not None and pos_val >= 0
@@ -690,7 +723,7 @@ def _build_ic_modal_body(
         _metric_card("Max Loss",        max_loss_str,                    T.DANGER),
         _metric_card("50% Target",      f"${profit_target_dollar:,.2f}", T.SUCCESS),
         _metric_card("2× Stop",         f"${stop_loss_dollar:,.2f}",     T.DANGER),
-        _metric_card("Position Value",  pos_val_str,                     pos_val_color),
+        _metric_card("Liquidation Value", pos_val_str,                   pos_val_color),
         _metric_card("DTE Remaining",   dte_str,
                      T.DANGER if (dte_remaining or 999) <= 7 else
                      (T.WARNING if (dte_remaining or 999) <= 21 else T.TEXT_PRIMARY)),
@@ -758,15 +791,9 @@ def _build_screener_modal_body(
     # Live prices: spot for chart marker, option marks for position value + legs table
     spot: float | None = None
     live_prices: dict  = {}
-    try:
-        from app import get_polygon_api_key
-        from engine.positions import fetch_stock_price, fetch_option_prices
-        api_key = get_polygon_api_key()
-        if api_key and underlying:
-            spot        = fetch_stock_price(api_key, underlying)
-            live_prices = fetch_option_prices(api_key, grp)
-    except Exception:
-        pass
+    # From the broker the paper session trades on, never a second vendor (see live_leg_prices).
+    from app.pages.paper_trading.data import live_leg_prices
+    live_prices, spot = live_leg_prices(grp)
 
     opt = grp[grp["SecurityType"].str.lower() == "option"].copy() \
         if "SecurityType" in grp.columns else pd.DataFrame()
@@ -835,10 +862,17 @@ def _build_screener_modal_body(
             cur  = live.get("price") if isinstance(live, dict) else None
             if cur is None:
                 all_ok = False; break
-            sign = 1.0 if dirn == "SELL" else -1.0
+            sign = 1.0 if dirn == "BUY" else -1.0      # liquidation value: long legs are assets, short legs liabilities
             running += sign * cur * abs(qty) * mult
         if all_ok:
             pos_val = round(running, 2)
+            try:
+                from app.pages.paper_trading.data import _vertical_bound
+                _b = _vertical_bound(grp)
+                if _b is not None:                      # a vertical is worth between 0 and its width
+                    pos_val = round(min(_b[1], max(_b[0], pos_val)), 2)
+            except Exception:
+                pass
 
     pos_val_str   = f"${pos_val:,.2f}"  if pos_val is not None else "—"
     pos_val_color = (T.SUCCESS if pos_val is not None and pos_val >= 0
@@ -847,7 +881,7 @@ def _build_screener_modal_body(
     metrics  = html.Div([
         _metric_card(label_type,       f"${net_credit_dollar_gen:,.2f}",    T.SUCCESS if is_credit else T.DANGER),
         _metric_card("50% Target",     f"${profit_target_dollar_gen:,.2f}", T.SUCCESS),
-        _metric_card("Position Value", pos_val_str,                         pos_val_color),
+        _metric_card("Liquidation Value", pos_val_str,                       pos_val_color),
         _metric_card("DTE Remaining",  dte_str,
                      T.DANGER if (dte_remaining or 999) <= 7 else
                      (T.WARNING if (dte_remaining or 999) <= 21 else T.TEXT_PRIMARY)),
@@ -858,7 +892,7 @@ def _build_screener_modal_body(
     hints = []
     if dte_remaining is not None and dte_remaining <= 14:
         hints.append(html.Div(
-            f"{dte_remaining} DTE — consider closing to avoid gamma/pin risk at expiry.",
+            ("0 DTE — expires at today's close." if dte_remaining <= 0 else f"{dte_remaining} DTE — consider closing to avoid gamma/pin risk at expiry."),
             style={
                 "padding": "8px 14px",
                 "background": "#451a00",
@@ -968,7 +1002,7 @@ def _build_equity_curve(df: "pd.DataFrame | None" = None):
     series (DataFrame[BusinessDate, Amount]); see data.mtm_equity_series."""
     if df is None or len(df) == 0:
         return html.P(
-            "No account history yet — record a deposit in Transactions to start.",
+            "No trades yet — the equity curve starts with the first paper session (the account is seeded with the strategy's capital).",
             style={"color": T.TEXT_MUTED, "fontSize": "13px", "padding": "10px 0"},
         )
     df = df.copy()
@@ -1078,14 +1112,14 @@ def _build_perf_chart(closed_rows: list[dict]):
     cap = 100_000.0
     returns = np.array([p / cap for p in pnls])
     sharpe = float(np.mean(returns) / np.std(returns) * np.sqrt(252)) if np.std(returns) > 0 else 0.0
+    _sharpe_ok = len(pnls) >= 20                              # fewer trades than that and the number means nothing
 
     # Max drawdown from cumulative P&L series
     cum_arr     = np.array(cum_pnl)
     running_max = np.maximum.accumulate(cum_arr)
     # avoid div-by-zero when running_max contains zeros (early trades all flat)
-    safe_max    = np.where(running_max == 0, 1.0, running_max)
-    dd_series   = (cum_arr - running_max) / np.abs(safe_max) * 100
-    max_dd      = float(np.min(dd_series))  # most-negative value
+    dd_series   = cum_arr - running_max                    # dollars: a % of a running P&L that starts near zero means nothing
+    max_dd      = float(np.min(dd_series))
 
     # ── Helper: metric card ──────────────────────────────────────────────────
     _CARD_STYLE = {
@@ -1108,9 +1142,9 @@ def _build_perf_chart(closed_rows: list[dict]):
         ], style=_CARD_STYLE)
 
     pf_str  = f"{profit_factor:.2f}" if profit_factor != float("inf") else "∞"
-    dd_str  = f"{max_dd:.1f}%"
+    dd_str  = f"-${abs(max_dd):,.0f}" if max_dd < 0 else "$0"
     sr_color = T.SUCCESS if sharpe >= 1.0 else (T.WARNING if sharpe >= 0 else T.DANGER)
-    dd_color = T.DANGER if max_dd < -10 else (T.WARNING if max_dd < -5 else T.SUCCESS)
+    dd_color = T.DANGER if max_dd < -15_000 else (T.WARNING if max_dd < -5_000 else T.SUCCESS)
 
     summary_row = html.Div([
         _card("Total P&L",
@@ -1122,7 +1156,7 @@ def _build_perf_chart(closed_rows: list[dict]):
         _card("Avg Loss",   f"${avg_loss:,.2f}",  T.DANGER),
         _card("Profit Factor", pf_str,
               T.SUCCESS if profit_factor >= 1.5 else (T.WARNING if profit_factor >= 1.0 else T.DANGER)),
-        _card("Sharpe Ratio",  f"{sharpe:.2f}", sr_color),
+        _card("Sharpe Ratio",  f"{sharpe:.2f}" if _sharpe_ok else f"n/a ({len(pnls)} of 20 trades)", sr_color if _sharpe_ok else T.TEXT_MUTED),
         _card("Max Drawdown",  dd_str,          dd_color),
     ], style={
         "display": "flex", "flexWrap": "wrap", "gap": "10px",
@@ -1220,22 +1254,25 @@ def _build_perf_chart(closed_rows: list[dict]):
     colors = [T.SUCCESS if p >= 0 else T.DANGER for p in pnls]
 
     fig_bar = go.Figure()
+    _n = list(range(1, len(pnls) + 1))                      # trade number: several 0DTE trades share one date
+    _d = [str(d)[:10] for d in dates]
     fig_bar.add_trace(go.Bar(
-        x=dates, y=pnls,
+        x=_n, y=pnls, customdata=_d,
         marker_color=colors,
         name="Trade P&L",
-        hovertemplate="%{x}<br>P&L: $%{y:+,.2f}<extra></extra>",
+        hovertemplate="trade %{x} · %{customdata}<br>P&L: $%{y:+,.2f}<extra></extra>",
     ))
     fig_bar.add_trace(go.Scatter(
-        x=dates, y=cum_pnl,
+        x=_n, y=cum_pnl, customdata=_d,
         mode="lines+markers",
         line=dict(color=T.ACCENT, width=2),
         marker=dict(size=5),
         name="Cumulative",
         yaxis="y2",
-        hovertemplate="%{x}<br>Cumulative: $%{y:+,.2f}<extra></extra>",
+        hovertemplate="trade %{x} · %{customdata}<br>Cumulative: $%{y:+,.2f}<extra></extra>",
     ))
     fig_bar.add_hline(y=0, line=dict(color=T.BORDER_BRT, width=1))
+    fig_bar.update_xaxes(title_text="trade #", dtick=1 if len(pnls) <= 30 else None)
     fig_bar.update_layout(D.plotly_layout())
     fig_bar.update_layout(
         title=dict(text="Per-Trade P&L", font=dict(size=12, color=T.TEXT_SEC)),

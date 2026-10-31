@@ -1,0 +1,83 @@
+"""Shared test isolation.
+
+The paper provider keeps a day-long count of broker requests in a file shared by every process, so that
+a paper session, a streamer and any ad-hoc script cannot each spend the whole daily budget. Tests must
+never touch the real one: they would read the live runner's count and fail against their own small caps,
+and every request they made would come out of the live session's budget.
+
+The same goes for the runner's diary (logs/paper/<strategy>_<date>.log): a test that runs the runner
+script's main() attached it to the root logger, and every later test's warnings, simulated halts included,
+landed in the live session's diary and from there in the committed day archive.
+"""
+import os
+import sys
+from pathlib import Path
+
+import pytest
+
+# The platform is ``alan_trader`` by file path, whatever this checkout's folder is called (api/bootstrap.py). Bind it
+# before any test module imports ``alan_trader.*``: pytest puts the checkout's parent on sys.path, and beside the
+# live checkout that name would otherwise resolve to the live code.
+_ROOT = Path(__file__).resolve().parent.parent
+if str(_ROOT) not in sys.path:
+    sys.path.insert(0, str(_ROOT))
+from api.bootstrap import register_platform_package  # noqa: E402
+
+register_platform_package()
+
+# The service's market-data hub starts no live provider under test (no DXLink stream, no polling):
+# hub tests inject fakes. A developer who really wants live providers sets the variable explicitly.
+os.environ.setdefault("ALAN_TRADER_PROVIDERS", "none")
+# ... and the fakes they inject carry names of their own (faketasty, fakeyf, polygon): let any of them serve live
+# quotes. The production default is tastytrade only (api.marketdata.service.DEFAULT_LIVE_QUOTES); the isolation
+# itself is tested in test_api_marketdata.py.
+os.environ.setdefault("ALAN_TRADER_LIVE_QUOTES", "all")
+# The runner's real paper account (AccountId 1): the service's DB guard refuses any ledger / app write
+# for it while the suite runs. Service tests trade a throwaway account of their own and delete it.
+os.environ.setdefault("ALAN_TRADER_PROTECTED_ACCOUNTS", "1")
+# Backtest jobs run under test do not leave app.BacktestRun rows behind.
+os.environ.setdefault("ALAN_TRADER_STORE_BACKTESTS", "0")
+# ... and no live GEX is recorded into app.GexHistory.
+os.environ.setdefault("ALAN_TRADER_GEX_RECORD", "0")
+os.environ.setdefault("ALAN_TRADER_QUOTE_RECORD", "0")
+# ... no nightly daily-bars sync, and no bar top-ups (a GET must not reach yfinance or write bars under test).
+os.environ.setdefault("ALAN_TRADER_NIGHTLY_SYNC", "0")
+os.environ.setdefault("ALAN_TRADER_BARS_TOPUP", "0")
+# ... arms live in memory only and nothing is ever started on a schedule (a test must never launch a paper run).
+os.environ.setdefault("ALAN_TRADER_ARMS", "memory")
+os.environ.setdefault("ALAN_TRADER_ARM_SCHEDULER", "0")
+# ... the morning brief keeps its rows in memory, runs only on demand, fetches no feed and calls no model.
+os.environ.setdefault("ALAN_TRADER_BRIEF", "memory")
+os.environ.setdefault("ALAN_TRADER_BRIEF_SCHEDULER", "0")
+os.environ.setdefault("ALAN_TRADER_BRIEF_NETWORK", "0")
+os.environ.pop("ANTHROPIC_API_KEY", None)
+# ... and the crypto-flush poller never polls an exchange under test (tests inject a fake OKX client).
+os.environ.setdefault("ALAN_TRADER_CRYPTO_FLUSH", "0")
+
+
+@pytest.fixture(autouse=True)
+def _the_real_paper_account_is_protected():
+    """The DB guard (api/bootstrap.py) refuses every ledger / app write for ALAN_TRADER_PROTECTED_ACCOUNTS -- but
+    the service installs it on its own start-up, so a ledger test that ran before any API test wrote unguarded.
+    Installed before every test instead; a test that removes it on its way out is covered again by the next."""
+    try:
+        from api.bootstrap import install_db_read_only_guard
+        install_db_read_only_guard()
+    except Exception:
+        pass
+    yield
+
+
+@pytest.fixture(autouse=True)
+def _isolated_broker_budget(tmp_path, monkeypatch):
+    try:
+        import paper.providers as providers
+        monkeypatch.setattr(providers, "BUDGET_STATE_DIR", str(tmp_path / "budget"))
+    except Exception:
+        pass
+    try:
+        import scripts.paper_runner as runner_script
+        monkeypatch.setattr(runner_script, "DIARY_DIR", tmp_path / "diary")
+    except Exception:
+        pass
+    yield

@@ -918,8 +918,7 @@ def simulate_portfolio_returns(
     start_date = end_date - timedelta(days=int(n_days * 2.0))
     dates      = _trading_days(start_date.isoformat(), end_date.isoformat())[:n_days]
 
-    strategy_names = ["iron_condor_rules", "dividend_arb"] + \
-                     [f"strategy_{i}" for i in range(2, n_strategies)]
+    strategy_names = [f"strategy_{i}" for i in range(n_strategies)]
 
     result = {}
     for i, name in enumerate(strategy_names[:n_strategies]):

@@ -240,9 +240,147 @@ GO
 
 
 -- ============================================================
+-- mkt.MinuteBar
+-- Intraday 1-minute OHLC bars for any ticker (indexes via Polygon
+-- I:<symbol>, stocks/ETFs via Polygon). BarTs is the bar START in
+-- US/Eastern, naive. Regular session only (09:30 .. 15:59).
+-- Written by db.sync.sync_minute_bars, read by db.client.get_minute_bars.
+-- ============================================================
+
+IF OBJECT_ID('mkt.MinuteBar', 'U') IS NULL
+BEGIN
+    CREATE TABLE mkt.MinuteBar (
+        TickerId        SMALLINT        NOT NULL,
+        BarTs           DATETIME2(0)    NOT NULL,
+        [Open]          DECIMAL(14,4)   NOT NULL,
+        High            DECIMAL(14,4)   NOT NULL,
+        Low             DECIMAL(14,4)   NOT NULL,
+        [Close]         DECIMAL(14,4)   NOT NULL,
+        Volume          BIGINT          NULL,
+        Source          VARCHAR(20)     NOT NULL DEFAULT 'polygon',
+        CreatedAt       DATETIME2(0)    NOT NULL DEFAULT SYSUTCDATETIME(),
+
+        CONSTRAINT PK_MinuteBar        PRIMARY KEY (TickerId, BarTs),
+        CONSTRAINT FK_MinuteBar_Ticker FOREIGN KEY (TickerId) REFERENCES mkt.Ticker(TickerId)
+    );
+END
+GO
+
+
+-- ============================================================
+-- mkt.EventCalendar
+-- Session-level event flags used as trading filters, one row per
+-- (EventDate, Kind). Kinds: fomc, cpi, nfp, pce, megacap, opex,
+-- early_close, holiday. Built by db.sync.sync_event_calendar from
+-- mkt.FomcCalendar, computed third Fridays and db/seed/events/*.csv.
+-- ============================================================
+
+IF OBJECT_ID('mkt.EventCalendar', 'U') IS NULL
+BEGIN
+    CREATE TABLE mkt.EventCalendar (
+        EventDate       DATE            NOT NULL,
+        Kind            VARCHAR(20)     NOT NULL,
+        Label           NVARCHAR(200)   NULL,
+        Source          NVARCHAR(100)   NULL,
+        CreatedAt       DATETIME2(0)    NOT NULL DEFAULT SYSUTCDATETIME(),
+
+        CONSTRAINT PK_EventCalendar PRIMARY KEY (EventDate, Kind)
+    );
+END
+GO
+
+-- ============================================================
+-- mkt.OptionMinuteBar
+-- 1-minute trade aggregates per option contract (Polygon), keyed by the
+-- UNDERLYING ticker (e.g. NDX) plus expiry / right / strike. Root records the
+-- option root actually pulled (NDXP for the PM-settled NDX dailies).
+-- ============================================================
+
+IF OBJECT_ID('mkt.OptionMinuteBar', 'U') IS NULL
+BEGIN
+    CREATE TABLE mkt.OptionMinuteBar (
+        TickerId            SMALLINT        NOT NULL,
+        ExpirationDate      DATE            NOT NULL,
+        ContractType        CHAR(1)         NOT NULL,   -- C | P
+        Strike              DECIMAL(10,2)   NOT NULL,
+        BarTs               DATETIME2(0)    NOT NULL,   -- naive US/Eastern bar START
+        [Open]              DECIMAL(12,4)   NOT NULL,
+        High                DECIMAL(12,4)   NOT NULL,
+        Low                 DECIMAL(12,4)   NOT NULL,
+        [Close]             DECIMAL(12,4)   NOT NULL,
+        Volume              INT             NULL,
+        Trades              INT             NULL,
+        Vwap                DECIMAL(12,4)   NULL,
+        Root                VARCHAR(8)      NOT NULL DEFAULT 'NDXP',
+        Source              VARCHAR(20)     NOT NULL DEFAULT 'polygon',
+        CreatedAt           DATETIME2(0)    NOT NULL DEFAULT SYSUTCDATETIME(),
+
+        CONSTRAINT PK_OptionMinuteBar        PRIMARY KEY (TickerId, ExpirationDate, ContractType, Strike, BarTs),
+        CONSTRAINT FK_OptionMinuteBar_Ticker FOREIGN KEY (TickerId) REFERENCES mkt.Ticker(TickerId),
+        CONSTRAINT CK_OptionMinuteBar_Type   CHECK (ContractType IN ('C', 'P'))
+    );
+
+    CREATE INDEX IX_OptionMinuteBar_Ticker_Ts ON mkt.OptionMinuteBar (TickerId, BarTs);
+END
+GO
+
+-- ============================================================
+-- mkt.OptionMinuteSession
+-- Pull manifest: one row per (underlying, session, expiry) that the option
+-- minute sync has processed, with what was requested and what came back.
+-- The sync skips sessions present here unless asked to refresh.
+-- ============================================================
+
+IF OBJECT_ID('mkt.OptionMinuteSession', 'U') IS NULL
+BEGIN
+    CREATE TABLE mkt.OptionMinuteSession (
+        TickerId            SMALLINT        NOT NULL,
+        SessionDate         DATE            NOT NULL,
+        ExpirationDate      DATE            NOT NULL,
+        Root                VARCHAR(8)      NOT NULL,
+        RefLevel            DECIMAL(14,4)   NULL,       -- underlying level the strike band was centred on
+        StrikeLo            DECIMAL(10,2)   NULL,
+        StrikeHi            DECIMAL(10,2)   NULL,
+        StrikeStep          SMALLINT        NULL,
+        Contracts           INT             NOT NULL DEFAULT 0,
+        ContractsWithPrints INT             NOT NULL DEFAULT 0,
+        Bars                INT             NOT NULL DEFAULT 0,
+        Source              VARCHAR(20)     NOT NULL DEFAULT 'polygon',
+        PulledAt            DATETIME2(0)    NOT NULL DEFAULT SYSUTCDATETIME(),
+
+        CONSTRAINT PK_OptionMinuteSession        PRIMARY KEY (TickerId, SessionDate, ExpirationDate),
+        CONSTRAINT FK_OptionMinuteSession_Ticker FOREIGN KEY (TickerId) REFERENCES mkt.Ticker(TickerId)
+    );
+END
+GO
+
+
+-- ============================================================
 -- mkt.News
 -- News articles from Polygon, VADER-scored sentiment
 -- ============================================================
+
+-- ============================================================
+-- mkt.Dividend — cash dividends per ticker (written by db.sync.sync_dividends)
+-- ============================================================
+
+IF OBJECT_ID('mkt.Dividend', 'U') IS NULL
+BEGIN
+    CREATE TABLE mkt.Dividend (
+        TickerId        SMALLINT        NOT NULL,
+        ExDate          DATE            NOT NULL,
+        PayDate         DATE            NULL,
+        DeclaredDate    DATE            NULL,
+        RecordDate      DATE            NULL,
+        CashAmount      DECIMAL(12,6)   NULL,
+        DividendType    VARCHAR(10)     NULL,
+        Frequency       SMALLINT        NULL,
+        CreatedAt       DATETIME2(0)    NOT NULL DEFAULT SYSUTCDATETIME(),
+        CONSTRAINT PK_Dividend        PRIMARY KEY (TickerId, ExDate),
+        CONSTRAINT FK_Dividend_Ticker FOREIGN KEY (TickerId) REFERENCES mkt.Ticker(TickerId)
+    );
+END
+GO
 
 IF OBJECT_ID('mkt.News', 'U') IS NULL
 BEGIN
@@ -599,6 +737,53 @@ GO
 -- Current position snapshot per account + security
 -- ============================================================
 
+-- ============================================================
+-- portfolio.Security + per-leg Transaction columns
+-- The Paper Trading page (engine/positions.py) reads transactions per leg,
+-- joined to a Security row per option contract and grouped by TradeGroupId.
+-- The paper runner writes both this layout and Position/Leg.
+-- ============================================================
+
+IF OBJECT_ID('portfolio.Security', 'U') IS NULL
+BEGIN
+    CREATE TABLE portfolio.Security (
+        SecurityId      BIGINT          NOT NULL IDENTITY(1,1),
+        Symbol          VARCHAR(40)     NOT NULL,
+        Underlying      VARCHAR(10)     NULL,
+        SecurityType    VARCHAR(10)     NOT NULL DEFAULT 'Option',   -- Equity | Option | cash
+        OptionType      VARCHAR(4)      NULL,                        -- CALL | PUT
+        Strike          DECIMAL(10,2)   NULL,
+        Expiration      DATE            NULL,
+        Multiplier      INT             NOT NULL DEFAULT 100,
+        CreatedAt       DATETIME2(0)    NOT NULL DEFAULT SYSUTCDATETIME(),
+        CONSTRAINT PK_Security PRIMARY KEY (SecurityId)
+    );
+    CREATE INDEX IX_Security_Symbol ON portfolio.Security (Symbol, SecurityType);
+END
+GO
+
+IF COL_LENGTH('portfolio.[Transaction]', 'TradeGroupId') IS NULL
+BEGIN
+    ALTER TABLE portfolio.[Transaction] ADD
+        BusinessDate     DATE            NULL,
+        TradeGroupId     VARCHAR(50)     NULL,
+        Direction        VARCHAR(5)      NULL,       -- Buy | Sell
+        TransactionPrice DECIMAL(10,4)   NULL,
+        LegType          VARCHAR(12)     NULL,       -- LongLeg | ShortLeg | ...
+        Source           VARCHAR(20)     NULL;       -- Paper | Close | Settle | Target | Stop | DayCap
+END
+GO
+IF EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID('portfolio.[Transaction]') AND name = 'Action' AND is_nullable = 0)
+BEGIN
+    ALTER TABLE portfolio.[Transaction] ALTER COLUMN Action VARCHAR(10) NULL;
+    ALTER TABLE portfolio.[Transaction] ALTER COLUMN TransactionDate DATE NULL;
+    ALTER TABLE portfolio.[Transaction] ALTER COLUMN Amount DECIMAL(14,2) NULL;
+END
+GO
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_Transaction_Group')
+    CREATE INDEX IX_Transaction_Group ON portfolio.[Transaction] (TradeGroupId);
+GO
+
 IF OBJECT_ID('portfolio.Holding', 'U') IS NULL
 BEGIN
     CREATE TABLE portfolio.Holding (
@@ -764,3 +949,14 @@ GO
 
 
 PRINT 'AlanStrats schema created / verified successfully.';
+
+-- 2026-09-17: the Paper Trading page records deposits/withdrawals as Balance rows with a BalanceType,
+-- an Amount and a BusinessDate (callbacks.record_cash, data.py). The runner's daily snapshots keep
+-- BalanceType NULL; a filtered unique index replaces the (AccountId, BalanceDate) constraint so a
+-- deposit and a snapshot may share a date.
+IF COL_LENGTH('portfolio.Balance', 'BalanceType') IS NULL
+    ALTER TABLE portfolio.Balance ADD BalanceType VARCHAR(20) NULL, Amount DECIMAL(14,2) NULL, BusinessDate DATE NULL;
+IF EXISTS (SELECT 1 FROM sys.key_constraints WHERE name = 'UQ_Balance_Date')
+    ALTER TABLE portfolio.Balance DROP CONSTRAINT UQ_Balance_Date;
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'UX_Balance_Snapshot')
+    CREATE UNIQUE INDEX UX_Balance_Snapshot ON portfolio.Balance (AccountId, BalanceDate) WHERE BalanceType IS NULL;

@@ -1,0 +1,456 @@
+{
+ "summary": {
+  "days": 20,
+  "backtest_trades": 16,
+  "replay_trades": 17,
+  "matched": 16,
+  "same_signal": 11,
+  "mean_debit_gap_pts": 0.38375,
+  "backtest_only": [],
+  "replay_only": [
+   "2026-09-10"
+  ]
+ },
+ "rows": [
+  {
+   "day": "2026-08-17",
+   "backtest": {
+    "signal_min": 665,
+    "wall": 30200.0,
+    "entry_min": 667,
+    "call_credit": 9.41,
+    "put_equiv_debit": 40.59,
+    "pnl_before_costs": 941.0
+   },
+   "replay": {
+    "signal_min": 665,
+    "wall": 30200.0,
+    "entry_min": 667,
+    "put_debit": 38.1,
+    "pnl": 1188.0,
+    "strikes": [
+     30225.0,
+     30275.0
+    ]
+   },
+   "same_signal": true,
+   "debit_gap_pts": -3.99
+  },
+  {
+   "day": "2026-08-19",
+   "backtest": {
+    "signal_min": 739,
+    "wall": 29600.0,
+    "entry_min": 740,
+    "call_credit": 13.54,
+    "put_equiv_debit": 36.46,
+    "pnl_before_costs": 1354.0
+   },
+   "replay": {
+    "signal_min": 739,
+    "wall": 29600.0,
+    "entry_min": 740,
+    "put_debit": 37.96,
+    "pnl": 1202.0,
+    "strikes": [
+     29625.0,
+     29675.0
+    ]
+   },
+   "same_signal": true,
+   "debit_gap_pts": 0.0
+  },
+  {
+   "day": "2026-08-21",
+   "backtest": {
+    "signal_min": 701,
+    "wall": 29400.0,
+    "entry_min": 703,
+    "call_credit": 15.85,
+    "put_equiv_debit": 34.15,
+    "pnl_before_costs": 1585.0
+   },
+   "replay": {
+    "signal_min": 695,
+    "wall": 29400.0,
+    "entry_min": 703,
+    "put_debit": 37.35,
+    "pnl": 1263.0,
+    "strikes": [
+     29425.0,
+     29475.0
+    ]
+   },
+   "same_signal": false,
+   "debit_gap_pts": 1.7
+  },
+  {
+   "day": "2026-08-24",
+   "backtest": {
+    "signal_min": 698,
+    "wall": 29100.0,
+    "entry_min": 699,
+    "call_credit": 11.52,
+    "put_equiv_debit": 38.48,
+    "pnl_before_costs": 1152.0
+   },
+   "replay": {
+    "signal_min": 698,
+    "wall": 29100.0,
+    "entry_min": 699,
+    "put_debit": 40.26,
+    "pnl": 972.0,
+    "strikes": [
+     29125.0,
+     29175.0
+    ]
+   },
+   "same_signal": true,
+   "debit_gap_pts": 0.28
+  },
+  {
+   "day": "2026-08-25",
+   "backtest": {
+    "signal_min": 874,
+    "wall": 29200.0,
+    "entry_min": 875,
+    "call_credit": 3.49,
+    "put_equiv_debit": 46.51,
+    "pnl_before_costs": 349.0
+   },
+   "replay": {
+    "signal_min": 743,
+    "wall": 29200.0,
+    "entry_min": 875,
+    "put_debit": 48.01,
+    "pnl": 197.0,
+    "strikes": [
+     29225.0,
+     29275.0
+    ]
+   },
+   "same_signal": false,
+   "debit_gap_pts": 0.0
+  },
+  {
+   "day": "2026-08-26",
+   "backtest": {
+    "signal_min": 819,
+    "wall": 29250.0,
+    "entry_min": 822,
+    "call_credit": 5.52,
+    "put_equiv_debit": 44.48,
+    "pnl_before_costs": 552.0
+   },
+   "replay": {
+    "signal_min": 790,
+    "wall": 29250.0,
+    "entry_min": 822,
+    "put_debit": 45.45,
+    "pnl": 453.0,
+    "strikes": [
+     29275.0,
+     29325.0
+    ]
+   },
+   "same_signal": false,
+   "debit_gap_pts": -0.53
+  },
+  {
+   "day": "2026-08-27",
+   "backtest": {
+    "signal_min": 714,
+    "wall": 29550.0,
+    "entry_min": 715,
+    "call_credit": 13.01,
+    "put_equiv_debit": 36.99,
+    "pnl_before_costs": -3699.0
+   },
+   "replay": {
+    "signal_min": 714,
+    "wall": 29550.0,
+    "entry_min": 715,
+    "put_debit": 40.2,
+    "pnl": -4022.0,
+    "strikes": [
+     29575.0,
+     29625.0
+    ]
+   },
+   "same_signal": true,
+   "debit_gap_pts": 1.71
+  },
+  {
+   "day": "2026-09-01",
+   "backtest": {
+    "signal_min": 701,
+    "wall": 29250.0,
+    "entry_min": 702,
+    "call_credit": 11.42,
+    "put_equiv_debit": 38.58,
+    "pnl_before_costs": 1142.0
+   },
+   "replay": {
+    "signal_min": 687,
+    "wall": 29250.0,
+    "entry_min": 702,
+    "put_debit": 39.3,
+    "pnl": 1068.0,
+    "strikes": [
+     29275.0,
+     29325.0
+    ]
+   },
+   "same_signal": false,
+   "debit_gap_pts": -0.78
+  },
+  {
+   "day": "2026-09-02",
+   "backtest": {
+    "signal_min": 676,
+    "wall": 29150.0,
+    "entry_min": 678,
+    "call_credit": 14.41,
+    "put_equiv_debit": 35.59,
+    "pnl_before_costs": 1441.0
+   },
+   "replay": {
+    "signal_min": 676,
+    "wall": 29150.0,
+    "entry_min": 678,
+    "put_debit": 36.78,
+    "pnl": 1320.0,
+    "strikes": [
+     29175.0,
+     29225.0
+    ]
+   },
+   "same_signal": true,
+   "debit_gap_pts": -0.31
+  },
+  {
+   "day": "2026-09-03",
+   "backtest": {
+    "signal_min": 661,
+    "wall": 29350.0,
+    "entry_min": 662,
+    "call_credit": 15.61,
+    "put_equiv_debit": 34.39,
+    "pnl_before_costs": -3439.0
+   },
+   "replay": {
+    "signal_min": 661,
+    "wall": 29350.0,
+    "entry_min": 662,
+    "put_debit": 38.8,
+    "pnl": -3882.0,
+    "strikes": [
+     29375.0,
+     29425.0
+    ]
+   },
+   "same_signal": true,
+   "debit_gap_pts": 2.91
+  },
+  {
+   "day": "2026-09-08",
+   "backtest": {
+    "signal_min": 674,
+    "wall": 29600.0,
+    "entry_min": 675,
+    "call_credit": 10.35,
+    "put_equiv_debit": 39.65,
+    "pnl_before_costs": 1035.0
+   },
+   "replay": {
+    "signal_min": 674,
+    "wall": 29600.0,
+    "entry_min": 675,
+    "put_debit": 40.67,
+    "pnl": 931.0,
+    "strikes": [
+     29625.0,
+     29675.0
+    ]
+   },
+   "same_signal": true,
+   "debit_gap_pts": -0.48
+  },
+  {
+   "day": "2026-09-09",
+   "backtest": null,
+   "replay": null,
+   "replay_fills": []
+  },
+  {
+   "day": "2026-09-10",
+   "backtest": null,
+   "replay": {
+    "signal_min": 688,
+    "wall": 29250.0,
+    "entry_min": 689,
+    "put_debit": 36.4,
+    "pnl": 1358.0,
+    "strikes": [
+     29275.0,
+     29325.0
+    ]
+   }
+  },
+  {
+   "day": "2026-09-11",
+   "backtest": null,
+   "replay": null,
+   "replay_fills": [
+    {
+     "m": 693,
+     "kind": "rest",
+     "direction": "bear",
+     "kl": 29525.0,
+     "kh": 29575.0,
+     "px": 0.0,
+     "lots": 1,
+     "cash": 0,
+     "reason": "signal: wall 29500 rank 3"
+    },
+    {
+     "m": 696,
+     "kind": "cancel",
+     "direction": "bear",
+     "kl": 29525.0,
+     "kh": 29575.0,
+     "px": 0.0,
+     "lots": 1,
+     "cash": 0,
+     "reason": "no_fill"
+    }
+   ]
+  },
+  {
+   "day": "2026-09-14",
+   "backtest": {
+    "signal_min": 688,
+    "wall": 29100.0,
+    "entry_min": 690,
+    "call_credit": 11.99,
+    "put_equiv_debit": 38.01,
+    "pnl_before_costs": 837.0
+   },
+   "replay": {
+    "signal_min": 688,
+    "wall": 29100.0,
+    "entry_min": 690,
+    "put_debit": 41.52,
+    "pnl": 483.86,
+    "strikes": [
+     29125.0,
+     29175.0
+    ]
+   },
+   "same_signal": true,
+   "debit_gap_pts": 2.01
+  },
+  {
+   "day": "2026-09-15",
+   "backtest": null,
+   "replay": null,
+   "replay_fills": []
+  },
+  {
+   "day": "2026-09-16",
+   "backtest": {
+    "signal_min": 884,
+    "wall": 29200.0,
+    "entry_min": 887,
+    "call_credit": 20.85,
+    "put_equiv_debit": 29.15,
+    "pnl_before_costs": 2085.0
+   },
+   "replay": {
+    "signal_min": 841,
+    "wall": 29200.0,
+    "entry_min": 846,
+    "put_debit": 34.64,
+    "pnl": 1534.0,
+    "strikes": [
+     29225.0,
+     29275.0
+    ]
+   },
+   "same_signal": false,
+   "debit_gap_pts": 3.99
+  },
+  {
+   "day": "2026-09-17",
+   "backtest": {
+    "signal_min": 701,
+    "wall": 29450.0,
+    "entry_min": 702,
+    "call_credit": 13.34,
+    "put_equiv_debit": 36.66,
+    "pnl_before_costs": 1334.0
+   },
+   "replay": {
+    "signal_min": 701,
+    "wall": 29450.0,
+    "entry_min": 702,
+    "put_debit": 38.47,
+    "pnl": 1151.0,
+    "strikes": [
+     29475.0,
+     29525.0
+    ]
+   },
+   "same_signal": true,
+   "debit_gap_pts": 0.31
+  },
+  {
+   "day": "2026-09-18",
+   "backtest": {
+    "signal_min": 823,
+    "wall": 29500.0,
+    "entry_min": 825,
+    "call_credit": 3.87,
+    "put_equiv_debit": 46.13,
+    "pnl_before_costs": -4613.0
+   },
+   "replay": {
+    "signal_min": 823,
+    "wall": 29500.0,
+    "entry_min": 825,
+    "put_debit": 47.63,
+    "pnl": -4765.0,
+    "strikes": [
+     29525.0,
+     29575.0
+    ]
+   },
+   "same_signal": true,
+   "debit_gap_pts": 0.0
+  },
+  {
+   "day": "2026-09-23",
+   "backtest": {
+    "signal_min": 838,
+    "wall": 30500.0,
+    "entry_min": 840,
+    "call_credit": 8.88,
+    "put_equiv_debit": 41.12,
+    "pnl_before_costs": 888.0
+   },
+   "replay": {
+    "signal_min": 838,
+    "wall": 30500.0,
+    "entry_min": 840,
+    "put_debit": 41.94,
+    "pnl": 804.0,
+    "strikes": [
+     30525.0,
+     30575.0
+    ]
+   },
+   "same_signal": true,
+   "debit_gap_pts": -0.68
+  }
+ ]
+}

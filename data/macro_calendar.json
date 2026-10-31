@@ -1,0 +1,413 @@
+{
+ "year": 2026,
+ "timezone": "America/New_York",
+ "about": "US macro release dates for 2026. CPI, NFP, PCE and FOMC dates are the platform's hand-kept schedules (db/seed/events, a test keeps the two in step); GDP from BEA's release schedule (bea.gov/news/schedule/full). Times are US/Eastern.",
+ "events": [
+  {
+   "date": "2026-01-09",
+   "time": "08:30",
+   "kind": "nfp",
+   "title": "Employment Situation (NFP) Dec 2025",
+   "source": "bls.gov"
+  },
+  {
+   "date": "2026-01-13",
+   "time": "08:30",
+   "kind": "cpi",
+   "title": "CPI Dec 2025",
+   "source": "bls.gov"
+  },
+  {
+   "date": "2026-01-22",
+   "time": "08:30",
+   "kind": "gdp",
+   "title": "GDP, 3rd Quarter 2025 (Updated Estimate)",
+   "source": "bea.gov"
+  },
+  {
+   "date": "2026-01-22",
+   "time": "08:30",
+   "kind": "pce",
+   "title": "Personal Income and Outlays (PCE) Oct and Nov 2025 (combined)",
+   "source": "bea.gov"
+  },
+  {
+   "date": "2026-01-28",
+   "time": "14:00",
+   "kind": "fomc",
+   "title": "FOMC rate decision (statement 14:00, press conference 14:30)",
+   "source": "federalreserve.gov"
+  },
+  {
+   "date": "2026-02-11",
+   "time": "08:30",
+   "kind": "nfp",
+   "title": "Employment Situation (NFP) Jan 2026",
+   "source": "bls.gov"
+  },
+  {
+   "date": "2026-02-13",
+   "time": "08:30",
+   "kind": "cpi",
+   "title": "CPI Jan 2026",
+   "source": "bls.gov"
+  },
+  {
+   "date": "2026-02-20",
+   "time": "08:30",
+   "kind": "gdp",
+   "title": "GDP (Advance Estimate), 4th Quarter and Year 2025",
+   "source": "bea.gov"
+  },
+  {
+   "date": "2026-02-20",
+   "time": "08:30",
+   "kind": "pce",
+   "title": "Personal Income and Outlays (PCE) Dec 2025",
+   "source": "bea.gov"
+  },
+  {
+   "date": "2026-03-06",
+   "time": "08:30",
+   "kind": "nfp",
+   "title": "Employment Situation (NFP) Feb 2026",
+   "source": "bls.gov"
+  },
+  {
+   "date": "2026-03-11",
+   "time": "08:30",
+   "kind": "cpi",
+   "title": "CPI Feb 2026",
+   "source": "bls.gov"
+  },
+  {
+   "date": "2026-03-13",
+   "time": "08:30",
+   "kind": "gdp",
+   "title": "GDP (Second Estimate), 4th Quarter and Year 2025",
+   "source": "bea.gov"
+  },
+  {
+   "date": "2026-03-13",
+   "time": "08:30",
+   "kind": "pce",
+   "title": "Personal Income and Outlays (PCE) Jan 2026",
+   "source": "bea.gov"
+  },
+  {
+   "date": "2026-03-18",
+   "time": "14:00",
+   "kind": "fomc",
+   "title": "FOMC rate decision (statement 14:00, press conference 14:30)",
+   "source": "federalreserve.gov"
+  },
+  {
+   "date": "2026-04-03",
+   "time": "08:30",
+   "kind": "nfp",
+   "title": "Employment Situation (NFP) Mar 2026",
+   "source": "bls.gov"
+  },
+  {
+   "date": "2026-04-09",
+   "time": "08:30",
+   "kind": "gdp",
+   "title": "GDP (Third Estimate), 4th Quarter and Year 2025",
+   "source": "bea.gov"
+  },
+  {
+   "date": "2026-04-09",
+   "time": "08:30",
+   "kind": "pce",
+   "title": "Personal Income and Outlays (PCE) Feb 2026",
+   "source": "bea.gov"
+  },
+  {
+   "date": "2026-04-10",
+   "time": "08:30",
+   "kind": "cpi",
+   "title": "CPI Mar 2026",
+   "source": "bls.gov"
+  },
+  {
+   "date": "2026-04-29",
+   "time": "14:00",
+   "kind": "fomc",
+   "title": "FOMC rate decision (statement 14:00, press conference 14:30)",
+   "source": "federalreserve.gov"
+  },
+  {
+   "date": "2026-04-30",
+   "time": "08:30",
+   "kind": "gdp",
+   "title": "GDP (Advance Estimate), 1st Quarter 2026",
+   "source": "bea.gov"
+  },
+  {
+   "date": "2026-04-30",
+   "time": "08:30",
+   "kind": "pce",
+   "title": "Personal Income and Outlays (PCE) Mar 2026",
+   "source": "bea.gov"
+  },
+  {
+   "date": "2026-05-08",
+   "time": "08:30",
+   "kind": "nfp",
+   "title": "Employment Situation (NFP) Apr 2026",
+   "source": "bls.gov"
+  },
+  {
+   "date": "2026-05-12",
+   "time": "08:30",
+   "kind": "cpi",
+   "title": "CPI Apr 2026",
+   "source": "bls.gov"
+  },
+  {
+   "date": "2026-05-28",
+   "time": "08:30",
+   "kind": "gdp",
+   "title": "GDP (Second Estimate), 1st Quarter 2026",
+   "source": "bea.gov"
+  },
+  {
+   "date": "2026-05-28",
+   "time": "08:30",
+   "kind": "pce",
+   "title": "Personal Income and Outlays (PCE) Apr 2026",
+   "source": "bea.gov"
+  },
+  {
+   "date": "2026-06-05",
+   "time": "08:30",
+   "kind": "nfp",
+   "title": "Employment Situation (NFP) May 2026",
+   "source": "bls.gov"
+  },
+  {
+   "date": "2026-06-10",
+   "time": "08:30",
+   "kind": "cpi",
+   "title": "CPI May 2026",
+   "source": "bls.gov"
+  },
+  {
+   "date": "2026-06-17",
+   "time": "14:00",
+   "kind": "fomc",
+   "title": "FOMC rate decision (statement 14:00, press conference 14:30)",
+   "source": "federalreserve.gov"
+  },
+  {
+   "date": "2026-06-25",
+   "time": "08:30",
+   "kind": "gdp",
+   "title": "GDP (Third Estimate), 1st Quarter 2026",
+   "source": "bea.gov"
+  },
+  {
+   "date": "2026-06-25",
+   "time": "08:30",
+   "kind": "pce",
+   "title": "Personal Income and Outlays (PCE) May 2026",
+   "source": "bea.gov"
+  },
+  {
+   "date": "2026-07-02",
+   "time": "08:30",
+   "kind": "nfp",
+   "title": "Employment Situation (NFP) Jun 2026",
+   "source": "bls.gov"
+  },
+  {
+   "date": "2026-07-14",
+   "time": "08:30",
+   "kind": "cpi",
+   "title": "CPI Jun 2026",
+   "source": "bls.gov"
+  },
+  {
+   "date": "2026-07-29",
+   "time": "14:00",
+   "kind": "fomc",
+   "title": "FOMC rate decision (statement 14:00, press conference 14:30)",
+   "source": "federalreserve.gov"
+  },
+  {
+   "date": "2026-07-30",
+   "time": "08:30",
+   "kind": "gdp",
+   "title": "GDP (Advance Estimate), 2nd Quarter 2026",
+   "source": "bea.gov"
+  },
+  {
+   "date": "2026-07-30",
+   "time": "08:30",
+   "kind": "pce",
+   "title": "Personal Income and Outlays (PCE) Jun 2026",
+   "source": "bea.gov"
+  },
+  {
+   "date": "2026-08-07",
+   "time": "08:30",
+   "kind": "nfp",
+   "title": "Employment Situation (NFP) Jul 2026",
+   "source": "bls.gov"
+  },
+  {
+   "date": "2026-08-12",
+   "time": "08:30",
+   "kind": "cpi",
+   "title": "CPI Jul 2026",
+   "source": "bls.gov"
+  },
+  {
+   "date": "2026-08-26",
+   "time": "08:30",
+   "kind": "gdp",
+   "title": "GDP (Second Estimate), 2nd Quarter 2026",
+   "source": "bea.gov"
+  },
+  {
+   "date": "2026-08-26",
+   "time": "08:30",
+   "kind": "pce",
+   "title": "Personal Income and Outlays (PCE) Jul 2026",
+   "source": "bea.gov"
+  },
+  {
+   "date": "2026-09-04",
+   "time": "08:30",
+   "kind": "nfp",
+   "title": "Employment Situation (NFP) Aug 2026",
+   "source": "bls.gov"
+  },
+  {
+   "date": "2026-09-11",
+   "time": "08:30",
+   "kind": "cpi",
+   "title": "CPI Aug 2026",
+   "source": "bls.gov"
+  },
+  {
+   "date": "2026-09-16",
+   "time": "14:00",
+   "kind": "fomc",
+   "title": "FOMC rate decision (statement 14:00, press conference 14:30)",
+   "source": "federalreserve.gov"
+  },
+  {
+   "date": "2026-09-30",
+   "time": "08:30",
+   "kind": "gdp",
+   "title": "GDP (Third Estimate), 2nd Quarter 2026",
+   "source": "bea.gov"
+  },
+  {
+   "date": "2026-09-30",
+   "time": "08:30",
+   "kind": "pce",
+   "title": "Personal Income and Outlays (PCE) Aug 2026",
+   "source": "bea.gov"
+  },
+  {
+   "date": "2026-10-02",
+   "time": "08:30",
+   "kind": "nfp",
+   "title": "Employment Situation (NFP) Sep 2026",
+   "source": "bls.gov"
+  },
+  {
+   "date": "2026-10-14",
+   "time": "08:30",
+   "kind": "cpi",
+   "title": "CPI Sep 2026",
+   "source": "bls.gov"
+  },
+  {
+   "date": "2026-10-28",
+   "time": "14:00",
+   "kind": "fomc",
+   "title": "FOMC rate decision (statement 14:00, press conference 14:30)",
+   "source": "federalreserve.gov"
+  },
+  {
+   "date": "2026-10-29",
+   "time": "08:30",
+   "kind": "gdp",
+   "title": "GDP (Advance Estimate), 3rd Quarter 2026",
+   "source": "bea.gov"
+  },
+  {
+   "date": "2026-10-29",
+   "time": "08:30",
+   "kind": "pce",
+   "title": "Personal Income and Outlays (PCE) Sep 2026",
+   "source": "bea.gov"
+  },
+  {
+   "date": "2026-11-06",
+   "time": "08:30",
+   "kind": "nfp",
+   "title": "Employment Situation (NFP) Oct 2026",
+   "source": "bls.gov"
+  },
+  {
+   "date": "2026-11-10",
+   "time": "08:30",
+   "kind": "cpi",
+   "title": "CPI Oct 2026",
+   "source": "bls.gov"
+  },
+  {
+   "date": "2026-11-25",
+   "time": "08:30",
+   "kind": "gdp",
+   "title": "GDP (Second Estimate), 3rd Quarter 2026",
+   "source": "bea.gov"
+  },
+  {
+   "date": "2026-11-25",
+   "time": "08:30",
+   "kind": "pce",
+   "title": "Personal Income and Outlays (PCE) Oct 2026",
+   "source": "bea.gov"
+  },
+  {
+   "date": "2026-12-04",
+   "time": "08:30",
+   "kind": "nfp",
+   "title": "Employment Situation (NFP) Nov 2026",
+   "source": "bls.gov"
+  },
+  {
+   "date": "2026-12-09",
+   "time": "14:00",
+   "kind": "fomc",
+   "title": "FOMC rate decision (statement 14:00, press conference 14:30)",
+   "source": "federalreserve.gov"
+  },
+  {
+   "date": "2026-12-10",
+   "time": "08:30",
+   "kind": "cpi",
+   "title": "CPI Nov 2026",
+   "source": "bls.gov"
+  },
+  {
+   "date": "2026-12-23",
+   "time": "08:30",
+   "kind": "gdp",
+   "title": "GDP (Third Estimate), 3rd Quarter 2026",
+   "source": "bea.gov"
+  },
+  {
+   "date": "2026-12-23",
+   "time": "08:30",
+   "kind": "pce",
+   "title": "Personal Income and Outlays (PCE) Nov 2026",
+   "source": "bea.gov"
+  }
+ ]
+}

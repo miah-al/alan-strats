@@ -3,15 +3,28 @@
 // `busy` class on #app-busy-indicator accordingly.
 (function () {
     let pending = 0;
+    let timer = null;
+    const SHOW_AFTER_MS = 700;   // quick periodic callbacks (a replay clock, a heartbeat) must not blink the page
 
-    function update() {
+    function apply(busy) {
         const el = document.getElementById("app-busy-indicator");
         if (el) {
-            el.classList.toggle("busy", pending > 0);
+            el.classList.toggle("busy", busy);
         }
         // Toggle a body class so CSS can gray-out & block interactive controls.
         if (document.body) {
-            document.body.classList.toggle("app-busy", pending > 0);
+            document.body.classList.toggle("app-busy", busy);
+        }
+    }
+
+    function update() {
+        if (pending > 0) {
+            if (timer === null) {
+                timer = setTimeout(function () { timer = null; if (pending > 0) apply(true); }, SHOW_AFTER_MS);
+            }
+        } else {
+            if (timer !== null) { clearTimeout(timer); timer = null; }
+            apply(false);
         }
     }
 

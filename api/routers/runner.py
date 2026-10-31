@@ -1,0 +1,106 @@
+"""/api/runner — paper runner sessions: list all, start and stop the service's own; arm scheduled paper runs."""
+from __future__ import annotations
+
+from typing import Optional
+
+from fastapi import APIRouter, Body, HTTPException, Request
+
+from api.services import runner as RN
+
+router = APIRouter(tags=["runner"])
+
+
+@router.get("/runner/sessions")
+def runner_sessions(request: Request):
+    return request.app.state.runner.sessions()
+
+
+@router.post("/runner/{strategy}/start")
+def runner_start(strategy: str, request: Request, body: Optional[dict] = Body(default=None)):
+    try:
+        return request.app.state.runner.start(strategy, body or {})
+    except KeyError:
+        raise HTTPException(404, f"unknown strategy {strategy!r}")
+    except RN.RunnerError as exc:
+        raise HTTPException(422, str(exc))
+    except RN.RunnerConflict as exc:
+        raise HTTPException(409, str(exc))
+
+
+@router.post("/runner/{strategy}/stop")
+def runner_stop(strategy: str, request: Request):
+    try:
+        return request.app.state.runner.stop(strategy)
+    except RN.RunnerConflict as exc:
+        raise HTTPException(409, str(exc))
+    except LookupError as exc:
+        raise HTTPException(404, str(exc))
+
+
+@router.post("/runner/stop-all")
+def runner_stop_all(request: Request):
+    """The kill switch: stop every session the service started (never one it did not)."""
+    return {"stopped": request.app.state.runner.stop_all()}
+
+
+@router.get("/runner/arms")
+def runner_arms(request: Request):
+    return request.app.state.arms.arms()
+
+
+@router.post("/runner/{strategy}/arm")
+def runner_arm(strategy: str, request: Request, body: Optional[dict] = Body(default=None)):
+    from api.services.arms import ArmError
+    b = body or {}
+    try:
+        return request.app.state.arms.arm(strategy, b.get("schedule") or "weekdays", b.get("date"), b.get("variant"),
+                                          b.get("mode") or "paper")
+    except ArmError as exc:
+        raise HTTPException(422, str(exc))
+
+
+@router.delete("/runner/{strategy}/arm")
+def runner_disarm(strategy: str, request: Request, variant: Optional[str] = None):
+    from api.services.arms import ArmError
+    try:
+        rows = request.app.state.arms.disarm(strategy, variant)
+    except ArmError as exc:
+        raise HTTPException(422, str(exc))
+    if not rows:
+        raise HTTPException(404, f"{strategy}{':' + variant if variant else ''} is not armed")
+    return rows
+
+
+@router.get("/runner/{strategy}/combo-chart")
+def runner_combo_chart(strategy: str, request: Request, day: Optional[str] = None, k: Optional[str] = None):
+    """A pair strategy's structure as one price through the session (the spread-vs-spread chart), from its legs' 1-minute
+    candles; ``k`` = each vertical's long strike, comma separated (default: the open structure, else the day's last trade,
+    else the one it would open now). api/services/pair_charts.py."""
+    import datetime as _dt
+    from api.services import pair_charts as PC
+    try:
+        d = _dt.date.fromisoformat(day) if day else None
+        ks = [float(x) for x in k.split(",")] if k else None
+    except ValueError as exc:
+        raise HTTPException(422, f"bad day or strikes: {exc}")
+
+    def spots():
+        hub = getattr(request.app.state, "market", None)
+        out = {}
+        if hub is not None:
+            for s in ("NDX", "SPX"):
+                try:
+                    px = hub.price(s, wait=2.0)
+                    if px:
+                        out[s] = float(px)
+                except Exception:  # noqa: BLE001
+                    pass
+        return out
+    try:
+        return PC.combo(strategy, d, ks, spot_fn=spots)
+    except KeyError:
+        raise HTTPException(404, f"unknown strategy {strategy!r}")
+    except ValueError as exc:
+        raise HTTPException(422, str(exc))
+    except LookupError as exc:
+        raise HTTPException(404, str(exc))

@@ -1,0 +1,154 @@
+"""The account-wide day stop (api/services/day_stop.py): when the whole paper account is the system limit's amount
+down on the day, every armed strategy's new entries go off (sup_entries = 0, by "system"), once a day, during the
+session only. An in-memory limits store and a scripted usage; no database, no runner."""
+from __future__ import annotations
+
+import datetime as dt
+
+from api.bootstrap import bootstrap
+
+bootstrap()
+
+from api.services import limits as LM  # noqa: E402
+from api.services.day_stop import AccountDayStop  # noqa: E402
+
+THU = dt.date(2026, 10, 8)
+
+
+def rig(day_pnls: dict, stop=None):
+    store = LM.MemoryLimitStore()
+    lim = LM.Limits(store, strategies=lambda: ["ndx_spx_ratio", "spx_0dte_call13"], specs_for=lambda s: [],
+                    values_for=lambda s: {})
+    if stop is not None:
+        lim.set("system", "account_day_stop", stop, by="owner")
+    usage = {**{s: {"day_pnl": v} for s, v in day_pnls.items()}, "system": {"broker_calls": 10}}
+    return store, lim, AccountDayStop(lambda: lim, lambda: usage)
+
+
+def at(h, m, day=THU):
+    return dt.datetime.combine(day, dt.time(h, m))
+
+
+def test_it_turns_every_strategy_off_once_the_account_is_down_the_limit():
+    store, lim, ds = rig({"ndx_spx_ratio": -900.0, "ndx_0dte_friend_real": -215.0, "spx_0dte_call13": 120.0})
+    out = ds.tick(at(14, 0))                                     # -995: not yet (default limit 1,000)
+    assert out is None
+    store2, lim2, ds2 = rig({"ndx_spx_ratio": -1000.0, "claude_events": -50.0, "spx_0dte_call13": 40.0})
+    out = ds2.tick(at(14, 0))                                    # -1,010: across every scope, desks included
+    assert out and out["day_pnl"] == -1010.0 and out["limit"] == 1000.0
+    assert sorted(out["strategies"]) == ["ndx_spx_ratio", "spx_0dte_call13"]
+    vals = store2.all()
+    for s in ("ndx_spx_ratio", "spx_0dte_call13"):
+        assert vals[(s, "sup_entries")]["value"] == 0 and vals[(s, "sup_entries")]["updated_by"] == "system"
+    assert ("claude_events", "sup_entries") not in vals            # desks have their own day stops
+    assert ds2.tick(at(14, 5)) is None                              # once a day
+
+
+def test_off_hours_weekends_and_a_zero_limit_do_nothing():
+    _, _, ds = rig({"ndx_spx_ratio": -5000.0})
+    assert ds.tick(at(9, 29)) is None and ds.tick(at(16, 0)) is None
+    assert ds.tick(at(11, 0, dt.date(2026, 10, 10))) is None        # Saturday
+    _, _, off = rig({"ndx_spx_ratio": -5000.0}, stop=0)
+    assert off.tick(at(11, 0)) is None
+    _, _, tight = rig({"ndx_spx_ratio": -300.0}, stop=250)
+    assert tight.tick(at(11, 0))["limit"] == 250.0
+
+
+def test_the_limits_page_shows_the_account_day_against_the_stop():
+    usage = {"a": {"day_pnl": -600.0}, "b": {"day_pnl": -300.0}, "system": {"broker_calls": 5, "day_pnl": -900.0}}
+    used, status = LM._usage_of("account_day_stop", 1000, usage["system"], usage)
+    assert used == -900.0 and status == "near"
+    assert AccountDayStop.account_day_pnl(usage) == -900.0
+
+
+def test_the_accounts_real_day_beats_the_since_entry_sum():
+    # the scopes' since-entry P&L says -1,200 (multi-day holdings), but the account is only -200 since the last close
+    store = LM.MemoryLimitStore()
+    lim = LM.Limits(store, strategies=lambda: ["spx_0dte_call13"], specs_for=lambda s: [], values_for=lambda s: {})
+    usage = {"sector_rotation": {"day_pnl": -700.0}, "btc_momentum": {"day_pnl": -500.0},
+             "system": {"broker_calls": 1, "day_pnl": -1200.0, "account_day": -200.0}}
+    ds = AccountDayStop(lambda: lim, lambda: usage)
+    assert AccountDayStop.account_day_pnl(usage) == -200.0
+    assert ds.tick(at(11, 0)) is None
+    usage["system"]["account_day"] = -1050.0
+    assert ds.tick(at(11, 5))["day_pnl"] == -1050.0
+    used, status = LM._usage_of("account_day_stop", 1000, usage["system"], usage)
+    assert used == -1050.0 and status != "ok"
+
+
+def test_account_day_change_is_equity_now_minus_the_last_close(monkeypatch):
+    from api.services import paper as P
+    calls = {"equity": 0}
+
+    def equity(a, b):
+        calls["equity"] += 1
+        return {"series": [{"name": "equity", "t": ["2026-10-08", "2026-10-09", "2026-10-12"],
+                            "v": [15979.0, 16095.0, 15800.0]}]}
+    monkeypatch.setattr(P, "equity", equity)
+    monkeypatch.setattr(P, "summary", lambda hub=None: {"equity": 15900.0})
+    LM._PRIOR_EQUITY.clear()
+    assert LM.account_day_change(today=dt.date(2026, 10, 12)) == -195.0      # 15,900 now vs Friday's 16,095
+    assert LM.account_day_change(today=dt.date(2026, 10, 12)) == -195.0
+    assert calls["equity"] == 1                                              # the last close is read once a day
+    monkeypatch.setattr(P, "summary", lambda hub=None: {"equity": None})
+    assert LM.account_day_change(today=dt.date(2026, 10, 12)) is None
+    LM._PRIOR_EQUITY.clear()
+
+
+def test_a_failed_read_of_the_last_close_is_not_retried_every_tick(monkeypatch):
+    from api.services import paper as P
+    calls = {"n": 0}
+
+    def broken(a, b):
+        calls["n"] += 1
+        raise RuntimeError("no network")
+    monkeypatch.setattr(P, "equity", broken)
+    monkeypatch.setattr(P, "summary", lambda hub=None: {"equity": 15900.0})
+    LM._PRIOR_EQUITY.clear()
+    LM._PRIOR_FAILED.clear()
+    d = dt.date(2026, 10, 12)
+    assert LM.account_day_change(today=d) is None and LM.account_day_change(today=d) is None
+    assert calls["n"] == 1                                                   # the second tick did not retry
+    LM._PRIOR_FAILED[d] -= LM.PRIOR_RETRY_S + 1                              # ten minutes later it tries again
+    assert LM.account_day_change(today=d) is None and calls["n"] == 2
+    LM._PRIOR_FAILED.clear()
+
+
+def test_the_marks_of_positions_held_to_settlement_wait_for_the_settlement():
+    """10/20: a 6-lot SPX 13:00 spread marked on paper alone tripped the stop at 13:55 and blocked every entry. From
+    10/23 (the owner: "Ignore held-to-expiry marks") those marks wait for the settlement; real losses still count."""
+    store = LM.MemoryLimitStore()
+    lim = LM.Limits(store, strategies=lambda: ["claude_discretionary", "spx_0dte_call13"], specs_for=lambda s: [],
+                    values_for=lambda s: {})
+    usage = {"spx_0dte_call13": {"day_pnl": -1100.0, "open_pnl": -1100.0}, "claude_discretionary": {"day_pnl": -300.0},
+             "system": {"account_day": -1400.0, "settle_marks": -1100.0}}
+    ds = AccountDayStop(lambda: lim, lambda: usage)
+    assert AccountDayStop.account_day_pnl(usage) == -300.0
+    assert ds.tick(at(13, 55)) is None                                 # the held spread's paper swing: no stop
+    usage["claude_discretionary"]["day_pnl"] = -1000.0                # a real loss on the desk
+    usage["system"]["account_day"] = -2100.0
+    out = ds.tick(at(14, 5))
+    assert out and out["day_pnl"] == -1000.0
+    used, status = LM._usage_of("account_day_stop", 1000, usage["system"], usage)
+    assert used == -1000.0 and status == "hit"                         # the Limits page shows what the stop counts
+
+
+def test_usage_totals_the_open_marks_of_the_strategies_that_hold_to_settlement(monkeypatch):
+    from api.services import paper as P
+    today = dt.date.today().isoformat()
+    rows = {"open": [{"strategy": "spx_0dte_call13", "pnl": -600.0, "max_loss": -5400.0},
+                     {"strategy": "claude_discretionary", "pnl": -200.0, "max_loss": -1400.0}],
+            "closed": [{"strategy": "claude_discretionary", "pnl": -100.0, "closed": today}]}
+    monkeypatch.setattr(P, "positions", lambda status, hub=None: {"rows": rows[status]})
+    monkeypatch.setattr(LM, "settlement_scopes", lambda: {"spx_0dte_call13"})
+    monkeypatch.setattr(LM, "account_day_change", lambda hub=None: -900.0)
+    u = LM.paper_usage(broker_calls=lambda: 3)
+    assert u["spx_0dte_call13"]["open_pnl"] == -600.0 and u["claude_discretionary"]["open_pnl"] == -200.0
+    assert u["system"]["settle_marks"] == -600.0 and LM.stop_day(u["system"]) == -300.0
+    assert LM.stop_day({"day_pnl": -50.0}) == -50.0 and LM.stop_day({}) is None
+
+
+def test_the_settlement_scopes_come_from_the_strategies_own_metadata(monkeypatch):
+    from alan_trader.strategy_api import registry
+    monkeypatch.setattr(registry, "STRATEGY_METADATA", {"a": {"holds_to_settlement": True}, "b": {}, "c": None})
+    assert LM.settlement_scopes() == {"a"}

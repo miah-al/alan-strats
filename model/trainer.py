@@ -19,8 +19,8 @@ from alan_trader.model.architecture import SequenceDataset, SpreadSignalModel
 
 logger = logging.getLogger(__name__)
 
-MODEL_DIR = Path(__file__).parent.parent / "saved_models"
-MODEL_DIR.mkdir(exist_ok=True)
+MODEL_DIR = Path(__file__).parent.parent / "runtime_state" / "models"
+MODEL_DIR.mkdir(parents=True, exist_ok=True)
 
 
 class ModelTrainer:
