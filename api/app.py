@@ -87,8 +87,6 @@ def create_app():
     from api.services.runner import RunnerManager
     runners = RunnerManager(publish=hub.publish)
     from api.services.arms import ArmScheduler, make_store
-    from api.services.gex_alloc import GexAllocator
-    gex_allocator = GexAllocator(market_hub, order_book, publish=hub.publish)
     # the event desk: signals, event log, playbooks, the (never armed by default) allocators, the post-close signal
     # log and the crypto-flush poller — api/services/event_desk.py, event_alloc.py, crypto_flush.py
     from api.services.crypto_flush import CryptoFlushPoller
@@ -100,8 +98,6 @@ def create_app():
     oil_fade = OilFadeAllocator(event_desk, order_book, hub=market_hub, publish=hub.publish)
     btc_dip = BtcDipAllocator(event_desk, order_book, hub=market_hub, publish=hub.publish)
     signal_log = SignalLogJob(event_desk, publish=hub.publish)
-    from api.services.rotation_alloc import RotationAllocator
-    sector_rotation = RotationAllocator(event_desk.store, order_book, hub=market_hub, publish=hub.publish)
     from api.services.momentum_alloc import MomentumAllocator
     btc_momentum = MomentumAllocator(event_desk.store, order_book, hub=market_hub, publish=hub.publish)
     sol_momentum = MomentumAllocator(event_desk.store, order_book, hub=market_hub, publish=hub.publish, slug="sol_momentum")
@@ -110,9 +106,9 @@ def create_app():
     gold_trend = TrendAllocator(event_desk.store, order_book, hub=market_hub, publish=hub.publish, slug="gold_trend")
     from api.services.cash_alloc import CashSleeveAllocator
     cash_sleeve = CashSleeveAllocator(event_desk.store, order_book, hub=market_hub, publish=hub.publish)
-    arm_scheduler = ArmScheduler(make_store(), runners, publish=hub.publish, allocator=gex_allocator,
+    arm_scheduler = ArmScheduler(make_store(), runners, publish=hub.publish,
                                  allocators={"oil_fade": oil_fade, "btc_dip": btc_dip, "event_signal_log": signal_log,
-                                             "sector_rotation": sector_rotation, "btc_momentum": btc_momentum,
+                                             "btc_momentum": btc_momentum,
                                              "sol_momentum": sol_momentum, "equity_trend": equity_trend, "gold_trend": gold_trend,
                                              "cash_sleeve": cash_sleeve,
                                              "crypto_flush": crypto_flush})
@@ -205,7 +201,6 @@ def create_app():
     app.state.alerts = alert_engine
     app.state.runner = runners
     app.state.arms = arm_scheduler
-    app.state.gex_allocator = gex_allocator
     app.state.volstats = vol_stats
     app.state.gex_recorder = gex_recorder
     app.state.quote_recorder = quote_recorder

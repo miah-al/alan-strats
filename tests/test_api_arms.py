@@ -163,7 +163,7 @@ def test_once_arms_and_validation(rig):
     with pytest.raises(A.ArmError):
         sched.arm("ndx_0dte_tasty", "daily")
     with pytest.raises(A.ArmError):
-        sched.arm("gex_positioning", "weekdays", variant="vix")                    # no allocator in this rig
+        sched.arm("btc_momentum", "weekdays")                                      # no allocator in this rig
     [row] = sched.arm("ndx_0dte_tasty", "once")                                    # the next session: today
     assert row["date"] == "2026-09-25" and row["next_run"] == iso("2026-09-25 09:30")
     [row] = sched.arm("ndx_0dte_tasty", "once", "2026-09-29")                      # re-arming replaces it

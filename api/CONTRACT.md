@@ -492,8 +492,8 @@ clarifications of what the service does where the spec leaves room.
     "script|allocator", "window": {"at", "until", "timezone"}, "status"}]` (times ISO with the ET offset; `status` is the
     allocator variant's state, null for the NDX runner).
   - `POST /api/runner/{strategy}/arm` body `{"schedule": "once|weekdays", "date"?: "YYYY-MM-DD" (once; default the next
-    session), "variant"?: "vix|gex|both" (gex_positioning; default both)}` → the arm rows (re-arming replaces the
-    active arm). 422: a strategy with no scheduled run (armable: `ndx_0dte_tasty`, `gex_positioning`), a bad schedule,
+    session), "variant"?: a variant the strategy's spec lists}` → the arm rows (re-arming replaces the
+    active arm). 422: a strategy with no scheduled run (armable: the keys of `api/services/arms.py` SPECS), a bad schedule,
     a date that is not a trading day or whose window has passed, a variant the strategy does not have.
   - `DELETE /api/runner/{strategy}/arm?variant=` → the disarmed rows (404 when nothing was armed). Disarming does not
     stop a running session.
@@ -520,35 +520,9 @@ clarifications of what the service does where the spec leaves room.
     `launched_by` (`request|arm`); a running `start_paper_runner.ps1` counts as its strategy's runner.
   - Environment: `ALAN_TRADER_ARMS` (`db` | `memory` — the test suite | `off`), `ALAN_TRADER_ARM_SCHEDULER` (`1` | `0`:
     arms kept, nothing started), `ALAN_TRADER_TASK_CHECKOUT` (default the main checkout).
-- **The GEX paper allocator** (`gex_positioning`, run by the service; the strategy's classes are imported read only).
-  Arm it like a runner: `POST /api/runner/gex_positioning/arm` `{"schedule": "once|weekdays", "date"?, "variant":
-  "vix|gex|both"}` (one arm per variant). At 15:50 ET on each armed trading day (late up to 16:00, else `missed`) each
-  variant decides once:
-  - `vix` — the backtest's logic exactly: VIX -> HighPositive / MildPositive / Neutral / Negative / DeepNegative ->
-    90 / 80 / 60 / 35 / 15 % SPY, 3-day confirmation, 5-day cooldown (the strategy's defaults). Its state (the last
-    raw regime, the streak, the confirmed and held regimes, days since the held regime changed) persists in
-    `app.GexAllocState`; the first run seeds it by replaying the rules over about two years of stored VIX closes on SPY's
-    trading days (days CBOE has not published yet from yfinance's ^VIX; a day neither has is carried forward, as the
-    backtest does). VIX at 15:50 stands in for the day's close.
-  - `gex` — the strategy's `generate_signal` on SPY's live net GEX in **$B per 1% move** (`/api/market/gex/SPY?source=hub`
-    net_gex / 1e9, the units `_classify_gex` expects: > +3 HighPositive, > +1.5 Mild, > −1.5 Neutral, > −3 Negative,
-    else DeepNegative), no confirmation.
-  - Sizing: each variant on the WHOLE paper account: target shares = floor(weight × account equity / SPY price). The two
-    variants together can exceed 1× equity; the paper order engine has no buying-power check, so nothing is shrunk
-    (the decision records `combined_exposure_x`).
-  - Rebalance only when |target − current| is worth ≥ 1% of equity, with paper market orders through the service's
-    order book, ledger strategy `gex_positioning:vix` / `gex_positioning:gex`: a buy opens a new lot; a reduction
-    closes whole lots, oldest first, only lots held ≥ 1 night (`ALAN_TRADER_GEX_ALLOC_MIN_NIGHTS`, the account's ETF
-    rule), then buys back any remainder. One decision per variant per day (client order ids
-    `gexalloc-<variant>-<date>-buy|close-<group>`).
-  - Each decision: an event `{"type": "gex_alloc", "variant", "date", "status": "rebalanced|held|order_failed|failed",
-    "regime", "regime_label", "weight", "equity", "price", "current", "target", "summary", "orders": [...]}` (plus the
-    arm's `ran` event) and a row in `app.GexAllocLog`.
-  - `GET /api/runner/gex_positioning/log?days=30` → `{"strategy", "days", "decisions": [{"variant", "date", "status",
-    "regime", "weight", "equity", "price", "current", "target", "detail": {vix / raw_regime / streak / … or net_gex_billions
-    …, "plan", "lots", "orders", "combined_exposure_x"}, "decided_at"}], "table"}` (newest first).
-  - `/api/runner/arms` rows for it carry `status`: `{"variant", "ledger_strategy", "shares", "lots", "state",
-    "last_decision"}`.
+- **The GEX paper allocator** (`gex_positioning`) was RETIRED on 2026-10-31 with its strategy (its arm spec,
+  `api/services/gex_alloc.py` and `GET /api/runner/gex_positioning/log` are gone; alan-strats issue "Retired service
+  pieces"). Its history stays in `app.GexAllocState` / `app.GexAllocLog` and in the ledger under `gex_positioning:vix|gex`.
 - **GEX by scope, with the top strikes.** `GET /api/market/gex/{ticker}?source=&scope=all|0dte|weekly&top=8` — the same
   response as before plus `scope`, `expiry` (the expiry used; for `weekly` / `all` the nearest), `expiries` (all used),
   `top` and volume columns.
@@ -580,7 +554,8 @@ clarifications of what the service does where the spec leaves room.
   - Asking for a symbol watches it for 20 minutes, only while the broker streams (no polling cost). Regular hours
     only (09:30–16:00 ET). `minutes` 1–390 (the last N minutes of the session), `interval` 1, 2, 5, 10, 15 or 30.
     Cached 15 s. 422 for another interval or an option symbol.
-- **ndx_gamma_walls: a strategy overlay and a second paper runner.**
+- **ndx_gamma_walls: a strategy overlay and a second paper runner.** (Its arm spec was retired 2026-10-31; the overlay
+  and runner support below stays and serves the live runners.)
   - Overlay: a strategy folder from another checkout of the plugin (a worktree on a branch) is registered without
     touching the plugin checkout the service loads — list the folder in `strategy_overlays.txt` in the service checkout
     (untracked, one per line) or in `ALAN_TRADER_STRATEGY_OVERLAYS`. `/api/health`'s bootstrap info lists them; the
@@ -598,14 +573,16 @@ clarifications of what the service does where the spec leaves room.
   - Fallback when the service will not be running at the arm's time: `python -m api.services.arms later ndx_gamma_walls
     09:25 YYYY-MM-DD` starts a detached waiter (`python -m api.launch_later`) that runs the same runner at that time;
     the service does not track it (an external runner to it).
-- **ndx_0dte_rally_fade (NDX Rally Fade): put spreads into rallies with resting entries, the same way.** An overlay (its
+- **ndx_0dte_rally_fade (NDX Rally Fade): put spreads into rallies with resting entries, the same way.** (Arm spec retired
+  2026-10-31; the resting-order hooks stay.) An overlay (its
   folder in `strategy_overlays.txt`), armed with `POST /api/runner/ndx_0dte_rally_fade/arm`; the runner starts at 10:25 ET
   (late up to 15:30; entries 11:00-15:30, flatten 15:50; its lookback is backfilled from the broker's candle feed). For engines that work resting
   orders the paper runner has three optional hooks (`strategy_api/live.py`): `on_poll(now, spot, quote_fn)` is called
   at every quote poll between bar closes, `watch_structures()` names extra structures to keep quoted each poll, and
   `max_fills_per_session` sets the engine's own runaway ceiling; a vertical quote now carries each leg's last print
   (`Quote.prints`). An engine without the hooks sees the loop exactly as before.
-- **ndx_gamma_scalp: a delta-hedged straddle and a SYNTHETIC futures hedge in the paper ledger.** An overlay (its folder
+- **ndx_gamma_scalp: a delta-hedged straddle and a SYNTHETIC futures hedge in the paper ledger.** (Arm spec retired
+  2026-10-31; the structure and synthetic-hedge ledger support stays, nq_vol_breakout's synthetic MNQ uses it.) An overlay (its folder
   in `strategy_overlays.txt`); the arm spec exists (`POST /api/runner/ndx_gamma_scalp/arm`: the runner would start at
   09:45 ET, late up to 10:30, the end of its entry window, and exit after the 16:00 settlement) but NOTHING arms it by
   default: the research behind it found no out-of-sample edge, and the runner is armed by hand only once a week of
@@ -630,7 +607,8 @@ clarifications of what the service does where the spec leaves room.
     runner's spot (`priced_by` ends in `synthetic hedge`); the straddle group is marked by the runner with its sign
     (a short structure's liquidation value is negative). `api/services/risk.py` now treats any non-option security as a
     linear leg (a SecurityType without an OptionType used to be priced as a put).
-- **ndx_0dte_condor: a quote-gated short iron condor.** An overlay (its folder in `strategy_overlays.txt`), armed with
+- **ndx_0dte_condor: a quote-gated short iron condor.** (Arm spec retired 2026-10-31; the iron-condor structure support
+  stays.) An overlay (its folder in `strategy_overlays.txt`), armed with
   `POST /api/runner/ndx_0dte_condor/arm {"schedule": "weekdays"}`: the runner starts at 09:45 ET (late up to 10:25), logs
   the four-leg width from 09:45, decides at 10:00-10:30 behind a 5-pt width gate and exits after the 16:00 settlement.
   Platform: a third structure kind, `iron_condor:<wing>` (k_low / k_high are the short put / short call; the wings sit

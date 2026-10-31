@@ -71,16 +71,6 @@ def runner_disarm(strategy: str, request: Request, variant: Optional[str] = None
     return rows
 
 
-@router.get("/runner/{strategy}/log")
-def runner_log(strategy: str, request: Request, days: int = 30):
-    """The GEX paper allocator's daily decisions (regime, weight, target, orders), newest first."""
-    if strategy != "gex_positioning":
-        raise HTTPException(404, f"no decision log for {strategy!r} (only gex_positioning keeps one)")
-    if not 1 <= days <= 3660:
-        raise HTTPException(422, "days must be between 1 and 3660")
-    return request.app.state.gex_allocator.log(days)
-
-
 @router.get("/runner/{strategy}/combo-chart")
 def runner_combo_chart(strategy: str, request: Request, day: Optional[str] = None, k: Optional[str] = None):
     """A pair strategy's structure as one price through the session (the spread-vs-spread chart), from its legs' 1-minute

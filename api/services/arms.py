@@ -17,16 +17,11 @@ holidays skipped) and records what happened in the arm's ``last_result``:
                     with the user's own logon environment, as the task had. Its console output goes to
                     paper_state/runner_logs/arm/ in the service's checkout. The service tracks it as its own
                     (pid + creation time in the arm row), so the kill switch still works after a restart.
-  gex_positioning   (the GEX paper allocator) at 15:50 ET, in the service — see api/services/gex_alloc.py.
-  ndx_gamma_walls   the platform's paper runner for the strategy, started at 09:25 ET from THIS checkout (so the
+  spx_0dte_call13   the platform's paper runner for the strategy, started at 12:50 ET from THIS checkout (so a
                     strategy overlay applies — api/bootstrap.py) and detached the same way (WMI):
-                        "<venv python>" -m api.runner_launch --strategy ndx_gamma_walls --poll 15 --log-dir <…>
-                    It waits for the open and exits after 16:01 ET; a late start (up to 15:00, the end of its entry
-                    window) builds no stream backfill (the strategy needs no lookback).
-  spx_gamma_walls   the same on SPX (NDX Gamma Walls' rule on the same-day SPXW chain, a live paper trial; the
-                    strategy is an overlay too): the same runner, time and window.
-  spx_0dte_call13   the same runner at 12:50 ET with a 60 s poll (its spec's ``poll``): it sells one SPXW call spread
-                    at 13:00 and holds it to the settlement, so one quote a minute is enough.
+                        "<venv python>" -m api.runner_launch --strategy spx_0dte_call13 --poll 60 --log-dir <…>
+                    with a 60 s poll (its spec's ``poll``): it sells one SPXW call spread at 13:00 and holds it to the
+                    settlement, so one quote a minute is enough. It exits after 16:01 ET.
   spx_0dte_event13  the same at 12:50 ET for the same trade on FOMC/CPI days only (its gate blocks the rest).
   ndx_0dte_call14   the same at 12:50 ET for its NDX twin (one NDXP call spread at 13:00 since the 2026-10-31 tweak;
                     13:50 for 14:00 before), armed in paper.
@@ -34,6 +29,12 @@ holidays skipped) and records what happened in the arm's ``last_result``:
                     flat at 15:49.
   (a pair strategy, two indexes at once, is handed by the runner script to paper/pair_runner.py; the one that used it,
   ndx_spx_ratio, was deleted with the clone on 2026-10-25: the desk's AI agent trades both strategies itself.)
+  The allocators (btc_momentum, sol_momentum, equity_trend, gold_trend at 15:50, cash_sleeve at 15:55, the event desk's)
+  run inside the service.
+  Retired 2026-10-31 (the owner: "Remove failed strategies code"; alan-strats #115): the
+  specs of ndx_0dte_friend, ndx_0dte_friend_w50, ndx_0dte_always_bull, ndx_0dte_calm_theta, gex_positioning (and its
+  allocator, gex_alloc.py), ndx_gamma_walls, spx_gamma_walls, ndx_0dte_rally_fade, ndx_gamma_scalp, ndx_0dte_condor
+  and sector_rotation (its allocator; the shared sleeve helpers moved to sleeve_common.py).
 
 Rules: if a runner for the strategy is already running anywhere (the service's own or external: another
 process, the scheduled task, a fresh heartbeat), the day is "skipped: already running (...)". A service that
@@ -88,30 +89,6 @@ SPECS: dict[str, Spec] = {
     # backfills the 30-minute lookback from the broker's candle feed, so it starts at 09:30
     "ndx_0dte_tasty": Spec("script", _dt.time(9, 30), _dt.time(16, 0), ("",),
                            "the scheduled task's start_paper_runner.ps1 from the live checkout"),
-    # the owner's friend's rules with a theta tilt (2026-09-28): the same start script, from the live checkout; its entries
-    # run 13:00-15:30, or from 10:00 after a gap-down of 0.75%+ (its gap_down_early_pct, 2026-10-02), so it starts at
-    # 09:50 every day and the strategy decides (the 30-minute lookback comes from the broker's candle backfill)
-    "ndx_0dte_friend": Spec("script", _dt.time(9, 50), _dt.time(15, 30), ("",),
-                            "start_paper_runner.ps1 -Strategy ndx_0dte_friend from the live checkout (the friend's rules, theta tilt)"),
-    # Friend's rules on a 50-wide vertical (2026-10-04, the owner: "Arm another version of friend 50 point wide", then
-    # "arm it anyway" over the evidence: the model favours it, the recorded quotes so far do not): a live paper test
-    # beside the 100-wide, so the same start script, start and window
-    "ndx_0dte_friend_w50": Spec("script", _dt.time(9, 50), _dt.time(15, 30), ("",),
-                                "start_paper_runner.ps1 -Strategy ndx_0dte_friend_w50 from the live checkout (Friend's rules, 50 wide)"),
-    # EXPERIMENTS (2026-10-05, the owner: "arm experiments now" -- "i understand no risk no reward"), polled every 60 s
-    # (~400 broker calls a day each instead of ~1,560) so the day stays inside the 8,000-call budget
-    "ndx_0dte_always_bull": Spec("script", _dt.time(9, 45), _dt.time(10, 25), ("",),
-                                 "EXPERIMENTAL: one 25-wide bull call vertical at 10:00, held to settlement", poll=60),
-    "ndx_0dte_calm_theta": Spec("script", _dt.time(9, 50), _dt.time(15, 30), ("",),
-                                "EXPERIMENTAL: Friend's fade on calm days only (realised/VXN <= 0.45), 25-wide, settle",
-                                poll=60),
-    "gex_positioning": Spec("allocator", _dt.time(15, 50), _dt.time(16, 0), ("vix", "gex"),
-                            "the service's GEX paper allocator on the whole paper account"),
-    "ndx_gamma_walls": Spec("runner", _dt.time(9, 25), _dt.time(15, 0), ("",),
-                            "the platform's paper runner from the service checkout (detached)"),
-    # NDX Gamma Walls' rule on SPX (2026-09-30; untested on SPX, so a live paper trial): entries 11:00-15:00 like it
-    "spx_gamma_walls": Spec("runner", _dt.time(9, 25), _dt.time(15, 0), ("",),
-                            "the platform's paper runner from the service checkout (detached; the strategy is an overlay)"),
     # the call-spread study's F1 on a 10-wide (2026-10-05, the owner: "we need a winner"; a thin edge, an experiment): one
     # SPXW call spread sold at 13:00 and held to the settlement. Up at 12:50 with a 60 s poll (~200 broker calls a day);
     # a runner that is not up by 13:03 trades nothing, so a late start after 13:02 is pointless
@@ -139,25 +116,6 @@ SPECS: dict[str, Spec] = {
     "nq_vol_breakout": Spec("runner", _dt.time(9, 25), _dt.time(15, 30), ("",),
                             "Williams' volatility breakout: 1 synthetic MNQ at the open +/- half yesterday's range, "
                             "the other level the stop, flat 15:49"),
-    # the rally fade (the resting-order trial, once ndx_0dte_maker; branch maker-runner 8741f3a): entries 11:00-15:30,
-    # its 30-minute lookback backfilled from the broker's candle feed, so it starts at 10:25: polling from the open
-    # would spend the shared broker budget on an hour it cannot trade
-    "ndx_0dte_rally_fade": Spec("runner", _dt.time(10, 25), _dt.time(15, 30), ("",),
-                                "the platform's paper runner from the service checkout (detached; the strategy is an overlay)"),
-    # the gamma scalper logs the ATM straddle's width from 09:30, enters at 10:00 (behind a 2-pt width gate) and needs the
-    # morning's bars (backfilled from the broker's candle feed on a late start), so it starts at 09:45; its entry window
-    # closes at 10:30 and it hedges the position (a SYNTHETIC NQ-equivalent, never a real order) until the runner exits
-    # after the 16:00 settlement. The spec exists so the arm endpoint knows the strategy; NOTHING arms it by default -
-    # the research found no out-of-sample edge, and the lead arms it by hand once a week of recorded quotes says the
-    # straddle market is 2 pts or tighter (the strategy's guide.md)
-    "ndx_gamma_scalp": Spec("runner", _dt.time(9, 45), _dt.time(10, 30), ("",),
-                            "the platform's paper runner from the service checkout (detached; the strategy is an overlay; "
-                            "the hedge is synthetic; never armed by default)"),
-    # the 0DTE condor logs its four-leg width from 09:45, enters at 10:00 behind a 5-pt width gate (no trade that day
-    # otherwise) and holds to the 16:00 settlement; meant to be armed weekdays (the gate protects it), exits after 16:01
-    "ndx_0dte_condor": Spec("runner", _dt.time(9, 45), _dt.time(10, 25), ("",),
-                            "the platform's paper runner from the service checkout (detached; the strategy is an overlay; "
-                            "quote-gated)"),
     # the event desk (api/services/event_desk.py, event_alloc.py, crypto_flush.py) — never armed by default
     "oil_fade": Spec("allocator", _dt.time(15, 45), _dt.time(16, 0), ("",),
                      "EXPERIMENTAL: the event desk's USO put-vertical fade of a threat-only crude spike"),
@@ -167,10 +125,6 @@ SPECS: dict[str, Spec] = {
                              "the event desk's post-close signal log (USO 2σ moves, VIX 2σ, BTC −3%) and outcome back-fill"),
     "crypto_flush": Spec("allocator", _dt.time(0, 5), _dt.time(23, 55), ("",),
                          "the crypto liquidation-flush paper leg: armed = the 24/7 poller records the synthetic micro future"),
-    # the sector rotation (api/services/rotation_alloc.py): a fixed $5,000 sleeve in the top 3 sector SPDRs, re-ranked on
-    # the month's last trading day; other days it only repairs holdings that differ from the standing picks (2026-10-05)
-    "sector_rotation": Spec("allocator", _dt.time(15, 50), _dt.time(16, 0), ("",),
-                            "the sector rotation's month-end rebalance: the top 3 sector SPDRs on a $5,000 paper sleeve"),
     # BTC shock momentum (api/services/momentum_alloc.py): IBIT bought after a 2-sigma up day, held 10 sessions,
     # $4,000 a trade (2026-10-09)
     "btc_momentum": Spec("allocator", _dt.time(15, 50), _dt.time(16, 0), ("",),
@@ -516,7 +470,7 @@ def launch_task_script(strategy: str, log_dir: Path, shadow: bool = False) -> di
 class ArmScheduler:
     def __init__(self, store, runners, publish: Optional[Callable[[dict], None]] = None,
                  clock: Optional[Callable[[], pd.Timestamp]] = None,
-                 launcher: Optional[Callable[[str], dict]] = None, allocator=None,
+                 launcher: Optional[Callable[[str], dict]] = None,
                  runner_launcher: Optional[Callable[[str], dict]] = None, allocators: Optional[dict] = None):
         from api.bootstrap import WORKING_COPY
         self.store = store
@@ -526,8 +480,7 @@ class ArmScheduler:
         self.log_dir = WORKING_COPY / "paper_state" / "runner_logs" / "arm"
         self.launcher = launcher or (lambda strategy, shadow=False: launch_task_script(strategy, self.log_dir, shadow))
         self.runner_launcher = runner_launcher or (lambda strategy, shadow=False: launch_runner(strategy, self.log_dir, shadow))
-        self.allocator = allocator                      # gex_positioning's
-        self.allocators = dict(allocators or {})        # other allocator-kind strategies -> their runner (run / status)
+        self.allocators = dict(allocators or {})        # allocator-kind strategies -> their runner (run / status)
         self._stop = threading.Event()
         self._thread: Optional[threading.Thread] = None
         self._lock = threading.RLock()
@@ -581,9 +534,8 @@ class ArmScheduler:
         return ev
 
     def _alloc(self, strategy: str):
-        """The allocator that runs ``strategy`` (gex_positioning's, or one of ``allocators``), else None."""
-        a = self.allocators.get(strategy)
-        return a if a is not None else (self.allocator if strategy == "gex_positioning" else None)
+        """The allocator that runs ``strategy`` (one of ``allocators``), else None."""
+        return self.allocators.get(strategy)
 
     def is_armed(self, strategy: str) -> bool:
         try:
@@ -858,7 +810,7 @@ class ArmScheduler:
         return n
 
 
-if __name__ == "__main__":                       # python -m api.services.arms later ndx_gamma_walls 09:25 2026-09-25
+if __name__ == "__main__":                       # python -m api.services.arms later spx_0dte_call13 12:50 2026-11-02
     import sys as _sys
     if len(_sys.argv) >= 4 and _sys.argv[1] == "later":
         from api.bootstrap import bootstrap

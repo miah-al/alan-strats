@@ -403,12 +403,3 @@ def test_risk_treats_the_synthetic_future_as_a_linear_leg():
     legs = RK.net_legs(grp)
     assert len(legs) == 1 and legs[0].type == "stock" and not legs[0].is_option and legs[0].qty == -2.5 and legs[0].mult == 20.0
     assert RK.describe_structure(legs) == "short stock 2.5"
-
-
-def test_the_gamma_scalp_arm_spec():
-    from api.services import arms as A
-    spec = A.SPECS["ndx_gamma_scalp"]
-    assert spec.kind == "runner" and spec.at == _dt.time(9, 45) and spec.until == _dt.time(10, 30) and spec.variants == ("",)
-    assert "synthetic" in spec.label and "never armed by default" in spec.label
-    cmd = A.runner_command("ndx_gamma_scalp", Path(r"C:\l\g.log"), Path(r"C:\csv"), py=r"D:\venv\python.exe")
-    assert "-m api.runner_launch --strategy ndx_gamma_scalp --poll 15" in cmd and "--ledger" not in cmd and "--replay" not in cmd

@@ -1,24 +1,23 @@
-"""The two experiments armed 2026-10-05 (ndx_0dte_always_bull, ndx_0dte_calm_theta) run the live checkout's start script
-with a 60-second poll, so they stay inside the broker's daily call budget; every other script runner keeps the 15 s."""
+"""Arm specs: the live 13:00 runners poll once a minute, every other runner keeps the 15 s default, and the retired
+strategies' specs are gone (2026-10-25: the clone and ratio robots; 2026-10-31, the owner: "Remove failed strategies
+code": the Friend family, the 10/05 experiments, the gamma walls, the GEX allocator, the sector rotation and the
+overlay-only rally fade, gamma scalp and NDX condor)."""
 from __future__ import annotations
 
 from pathlib import Path
 
 from api.services import arms as A
 
+RETIRED = ("ndx_0dte_friend_real", "ndx_spx_ratio", "ndx_0dte_friend", "ndx_0dte_friend_w50", "ndx_0dte_always_bull",
+           "ndx_0dte_calm_theta", "gex_positioning", "ndx_gamma_walls", "spx_gamma_walls", "sector_rotation",
+           "ndx_0dte_rally_fade", "ndx_gamma_scalp", "ndx_0dte_condor")
 
-def test_the_experiments_poll_every_60_seconds_and_the_rest_keep_the_default():
-    co = Path("D:/checkout")
-    for slug in ("ndx_0dte_always_bull", "ndx_0dte_calm_theta"):
-        spec = A.SPECS[slug]
-        assert spec.kind == "script" and spec.poll == 60
-        assert f"-Strategy {slug} -Poll 60" in A.task_command(slug, co)
-    assert "-Poll" not in A.task_command("ndx_0dte_friend", co)
-    assert A.SPECS["ndx_0dte_friend"].poll == 0
-    assert A.SPECS["ndx_0dte_always_bull"].at.strftime("%H:%M") == "09:45"
-    assert A.SPECS["ndx_0dte_calm_theta"].until.strftime("%H:%M") == "15:30"
-    # the clone and ratio robots were deleted on 2026-10-25: the desk's AI agent trades both strategies itself
-    assert "ndx_0dte_friend_real" not in A.SPECS and "ndx_spx_ratio" not in A.SPECS
+
+def test_the_retired_strategies_have_no_spec():
+    assert not set(RETIRED) & set(A.SPECS)
+    for slug in ("spx_0dte_call13", "spx_0dte_event13", "ndx_0dte_call14", "nq_vol_breakout", "btc_momentum",
+                 "sol_momentum", "equity_trend", "gold_trend", "cash_sleeve", "event_signal_log"):
+        assert slug in A.SPECS, slug
 
 
 def test_the_spx_13_00_call_spread_runs_the_platform_runner_at_12_50_with_a_60_second_poll():
@@ -27,5 +26,5 @@ def test_the_spx_13_00_call_spread_runs_the_platform_runner_at_12_50_with_a_60_s
     cmd = A.runner_command("spx_0dte_call13", Path("x.log"), Path("csv"), py="py")
     assert "-m api.runner_launch --strategy spx_0dte_call13 --poll 60 " in cmd
     # every other runner keeps the default
-    assert "--strategy spx_gamma_walls --poll 15 " in A.runner_command("spx_gamma_walls", Path("x.log"), Path("csv"), py="py")
-    assert A.runner_poll("ndx_gamma_walls") == A.RUNNER_POLL_S == 15 and A.runner_poll("no_such_strategy") == 15
+    assert "--strategy nq_vol_breakout --poll 15 " in A.runner_command("nq_vol_breakout", Path("x.log"), Path("csv"), py="py")
+    assert A.runner_poll("nq_vol_breakout") == A.RUNNER_POLL_S == 15 and A.runner_poll("no_such_strategy") == 15
