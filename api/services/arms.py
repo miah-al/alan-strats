@@ -28,7 +28,8 @@ holidays skipped) and records what happened in the arm's ``last_result``:
   spx_0dte_call13   the same runner at 12:50 ET with a 60 s poll (its spec's ``poll``): it sells one SPXW call spread
                     at 13:00 and holds it to the settlement, so one quote a minute is enough.
   spx_0dte_event13  the same at 12:50 ET for the same trade on FOMC/CPI days only (its gate blocks the rest).
-  ndx_0dte_call14   the same at 13:50 ET for its NDX twin (one NDXP call spread at 14:00), armed in shadow.
+  ndx_0dte_call14   the same at 12:50 ET for its NDX twin (one NDXP call spread at 13:00 since the 2026-10-31 tweak;
+                    13:50 for 14:00 before), armed in paper.
   nq_vol_breakout   the same at 09:25 ET: Williams' volatility breakout as one SYNTHETIC micro Nasdaq future (no options),
                     flat at 15:49.
   (a pair strategy, two indexes at once, is handed by the runner script to paper/pair_runner.py; the one that used it,
@@ -122,12 +123,14 @@ SPECS: dict[str, Spec] = {
     "spx_0dte_event13": Spec("runner", _dt.time(12, 50), _dt.time(13, 2), ("",),
                              "SPX 13:00's call spread again on FOMC/CPI days only (+1 lot on its best days)",
                              poll=60),
-    # its NDX twin (2026-10-11, the owner: "find me a ndx option spread strategy that can make money"; armed in SHADOW, the
-    # owner's choice): one NDXP call spread at 14:00 held to the settlement, its P&L logged at the bid and at the mid. Up
-    # at 13:50 with a 60 s poll; a runner that is not up by 14:03 trades nothing, so a late start after 14:02 is pointless
-    "ndx_0dte_call14": Spec("runner", _dt.time(13, 50), _dt.time(14, 2), ("",),
-                            "SHADOW: a 25-wide NDXP call spread ~50 above NDX sold at 14:00, held to settlement",
-                            poll=60),
+    # its NDX twin (2026-10-11, the owner: "find me a ndx option spread strategy that can make money"; shadow, then paper
+    # from 10/21): one NDXP call spread held to the settlement, its P&L logged at the fill and at the mid. The 13:00 tweak
+    # (2026-10-31, the owner: "Restate pnl and load ndx with tweak"; strategies #95): it sells at 13:00, one straddle out,
+    # so it is up at 12:50 like SPX 13:00 with a 60 s poll; a runner not up by 13:03 trades nothing, so a late start
+    # after 13:02 is pointless (13:50-14:02 for the 14:00 rule before)
+    "ndx_0dte_call14": Spec("runner", _dt.time(12, 50), _dt.time(13, 2), ("",),
+                            "a 25-wide NDXP call spread at least one 13:00 straddle above NDX sold at 13:00, held to "
+                            "settlement", poll=60),
     # Larry Williams' volatility breakout on Nasdaq futures (2026-10-26, the owner: "Arm the winner"): one SYNTHETIC micro
     # future (MNQ, priced at the NDX level, never a real order) at today's open +/- half the prior session's range, the
     # other level its stop, flat at 15:49, before the 15:50 sleeves and the 15:55 cash sleeve read the account's cash (the
