@@ -24,7 +24,7 @@ from typing import Callable, Optional
 
 import pandas as pd
 
-from api.services import rotation_alloc as RA
+from api.services import sleeve_common as RA
 
 logger = logging.getLogger("alan_trader.api.cash_alloc")
 

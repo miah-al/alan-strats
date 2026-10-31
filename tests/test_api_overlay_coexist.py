@@ -1,4 +1,4 @@
-"""Strategy overlays (api/bootstrap.py) and a second paper runner beside the NDX one: the arm for ndx_gamma_walls,
+"""Strategy overlays (api/bootstrap.py) and a second paper runner beside the NDX one: a runner-kind arm (nq_vol_breakout),
 runner detection that keeps the two apart, one broker budget across checkouts, and the account's day balance
 written last with every runner's P&L. No runner is started, no broker is called, nothing is written."""
 from __future__ import annotations
@@ -99,10 +99,10 @@ def test_the_arm_starts_the_runner_from_this_checkout(tmp_path, monkeypatch):
     import subprocess
     monkeypatch.setattr(RN, "scan_processes", lambda: [])
     monkeypatch.setattr(RN, "fresh_heartbeats", lambda: {})
-    spec = A.SPECS["ndx_gamma_walls"]
-    assert spec.kind == "runner" and spec.at == _dt.time(9, 25) and spec.until == _dt.time(15, 0)
-    cmd = A.runner_command("ndx_gamma_walls", Path(r"C:\l\w.log"), Path(r"C:\csv dir"), py=r"D:\v env\python.exe")
-    assert cmd == ('cmd.exe /d /v:on /s /c ""D:\\v env\\python.exe" -m api.runner_launch --strategy ndx_gamma_walls '
+    spec = A.SPECS["nq_vol_breakout"]
+    assert spec.kind == "runner" and spec.at == _dt.time(9, 25) and spec.until == _dt.time(15, 30)
+    cmd = A.runner_command("nq_vol_breakout", Path(r"C:\l\w.log"), Path(r"C:\csv dir"), py=r"D:\v env\python.exe")
+    assert cmd == ('cmd.exe /d /v:on /s /c ""D:\\v env\\python.exe" -m api.runner_launch --strategy nq_vol_breakout '
                    '--poll 15 --log-dir "C:\\csv dir" > "C:\\l\\w.log" 2>&1 & echo !ERRORLEVEL! > "C:\\l\\w.log.exit""')
     procs = []
 
@@ -117,16 +117,16 @@ def test_the_arm_starts_the_runner_from_this_checkout(tmp_path, monkeypatch):
                            launcher=lambda s: (_ for _ in ()).throw(AssertionError("not the task script")),
                            runner_launcher=runner_launcher)
     try:
-        [row] = sched.arm("ndx_gamma_walls", "weekdays")
+        [row] = sched.arm("nq_vol_breakout", "weekdays")
         assert row["next_run"] == "2026-09-25T09:25:00-04:00" and row["kind"] == "runner"
         assert sched.tick(pd.Timestamp("2026-09-25 09:24", tz=NY)) == []
         [ev] = sched.tick(pd.Timestamp("2026-09-25 09:25:05", tz=NY))
         assert ev["event"] == "started" and len(procs) == 1
         s = next(x for x in runners.sessions() if x["pid"] == procs[0].pid)
         assert s["kind"] == "runner" and s["launched_by"] == "arm" and s["managed_by"] == "service"
-        # the NDX arm, due at 10:30, still starts: the walls runner is not its runner
+        # the NDX arm, due at 10:30, still starts: the breakout runner is not its runner
         assert runners.running_elsewhere("ndx_0dte_tasty") is None
-        assert sched.tick(pd.Timestamp("2026-09-28 15:00", tz=NY))[0]["event"] == "missed"   # after 15:00: missed
+        assert sched.tick(pd.Timestamp("2026-09-28 15:31", tz=NY))[0]["event"] == "missed"   # after 15:30: missed
     finally:
         runners.stop_all()
         for pr in procs:
@@ -135,46 +135,14 @@ def test_the_arm_starts_the_runner_from_this_checkout(tmp_path, monkeypatch):
                 pr.wait(5)
 
 
-def test_friend_starts_before_its_gap_down_entries():
-    """Friend trades from 10:00 after a gap-down (its gap_down_early_pct, 2026-10-02), so its run starts at 09:50 every
-    day; the strategy keeps its 13:00 start on other days."""
-    friend = A.SPECS["ndx_0dte_friend"]
-    assert friend.kind == "script" and friend.at == _dt.time(9, 50) and friend.until == _dt.time(15, 30)
-    sched = A.ArmScheduler(A.MemoryArmStore(), RN.RunnerManager(), clock=lambda: pd.Timestamp("2026-10-02 20:00", tz=NY),
-                           launcher=lambda s: {}, runner_launcher=lambda s: {})
-    [row] = sched.arm("ndx_0dte_friend", "weekdays")
-    assert row["next_run"] == "2026-10-05T09:50:00-04:00"
-
-
-def test_friend_w50_arms_beside_friend_and_is_never_taken_for_it():
-    """The 50-wide Friend (2026-10-04) runs beside the 100-wide: the same start script, start and window, its own arm,
-    and a runner of one is never read as the other ('ndx_0dte_friend' is the start of 'ndx_0dte_friend_w50')."""
-    w50, friend = A.SPECS["ndx_0dte_friend_w50"], A.SPECS["ndx_0dte_friend"]
-    assert (w50.kind, w50.at, w50.until, w50.variants) == (friend.kind, friend.at, friend.until, friend.variants)
-    sched = A.ArmScheduler(A.MemoryArmStore(), RN.RunnerManager(), clock=lambda: pd.Timestamp("2026-10-04 12:00", tz=NY),
-                           launcher=lambda s: {}, runner_launcher=lambda s: {})
-    for slug in ("ndx_0dte_friend", "ndx_0dte_friend_w50"):
-        [row] = sched.arm(slug, "weekdays")
-        assert row["next_run"] == "2026-10-05T09:50:00-04:00"
-    assert sorted(a["strategy"] for a in sched.store.active()) == ["ndx_0dte_friend", "ndx_0dte_friend_w50"]
+def test_a_runner_is_never_taken_for_one_whose_slug_starts_the_same():
+    """Runner detection matches the whole slug: 'ndx_0dte_call14' is the start of 'ndx_0dte_call14_w50', and a runner of
+    one is never read as the other (the case was Friend and its 50-wide, both retired 2026-10-31)."""
     script = r"D:\Work\Project Dream\alan_trader\scripts\start_paper_runner.ps1"
-    for slug in ("ndx_0dte_friend", "ndx_0dte_friend_w50"):
+    for slug in ("ndx_0dte_call14", "ndx_0dte_call14_w50"):
         cmd = ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", script, "-Strategy", slug]
         assert RN.parse_runner_cmdline(cmd)["strategy"] == slug
         assert RN.parse_runner_cmdline(["python", "-m", "scripts.paper_runner", "--strategy", slug, "--poll", "15"])["strategy"] == slug
-
-
-def test_spx_gamma_walls_arms_like_ndx_gamma_walls():
-    """NDX Gamma Walls' rule on SPX: the same runner kind, start and window; arming it never needs the NDX arm."""
-    spx, ndx = A.SPECS["spx_gamma_walls"], A.SPECS["ndx_gamma_walls"]
-    assert (spx.kind, spx.at, spx.until, spx.variants) == (ndx.kind, ndx.at, ndx.until, ndx.variants)
-    cmd = A.runner_command("spx_gamma_walls", Path(r"C:\l\w.log"), Path(r"C:\csv"), py=r"D:\py.exe")
-    assert "-m api.runner_launch --strategy spx_gamma_walls --poll 15" in cmd
-    sched = A.ArmScheduler(A.MemoryArmStore(), RN.RunnerManager(), clock=lambda: pd.Timestamp("2026-09-30 20:00", tz=NY),
-                           launcher=lambda s: {}, runner_launcher=lambda s: {})
-    [row] = sched.arm("spx_gamma_walls", "weekdays")
-    assert row["next_run"] == "2026-10-01T09:25:00-04:00" and row["kind"] == "runner"
-    assert [a["strategy"] for a in sched.store.active()] == ["spx_gamma_walls"]
 
 
 def test_one_broker_budget_across_checkouts(tmp_path):
