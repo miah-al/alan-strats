@@ -12,12 +12,13 @@ portfolio.Leg is the option-contract table (integer Contracts, a strike, an expi
 """
 from __future__ import annotations
 
-import json
 import re
 from datetime import date
 from typing import Optional
 
 from sqlalchemy import text
+
+from .notes import CLOSE_PREFIX, NOTES_MAX, note_json
 
 from strategy_api.live import SYNTHETIC_FUTURE_TYPE
 
@@ -47,9 +48,9 @@ def record_structure_fill(engine, account_id: int, slug: str, underlying: str, e
     long_side = str(fill["direction"]) == "long"
     px, lots = float(fill["px"]), int(fill["lots"])
     struct = str(fill.get("struct"))
-    notes = json.dumps({"structure_px": px, "struct": struct, "kind": kind, "reason": fill["reason"], "minute": fill["m"], "lots": lots,
-                        "k_low": fill["kl"], "k_high": fill["kh"], "direction": fill["direction"], "delta": fill.get("delta"),
-                        "iv": fill.get("iv"), "ndx": fill.get("ndx"), **(extra or {})}, default=str)[:500]
+    notes = note_json({"structure_px": px, "struct": struct, "kind": kind, "reason": fill["reason"], "minute": fill["m"], "lots": lots,
+                       "k_low": fill["kl"], "k_high": fill["kh"], "direction": fill["direction"], "delta": fill.get("delta"),
+                       "iv": fill.get("iv"), "ndx": fill.get("ndx"), **(extra or {})})
     opening = kind == "open"
     comm = len(legs) * lots * L.COMMISSION_PER_LEG if opening else 0.0
     if struct.startswith("iron_condor"):                     # k_low / k_high are the short put / short call
@@ -76,7 +77,7 @@ def record_structure_fill(engine, account_id: int, slug: str, underlying: str, e
         n_legs = int(conn.execute(text("SELECT COUNT(*) FROM portfolio.Leg WHERE PositionId = :p"), {"p": position_id}).fetchone()[0])
         tgid = f"{underlying[:4]}-{slug[:8].upper()}-{position_id}"
         src = "Paper" if opening else {"stop": "Stop", "flatten": "Time", "settle": "Settle"}.get(fill["reason"], "Close")
-        page_notes = (("" if opening else "CLOSE ") + notes)[:500]
+        page_notes = (("" if opening else CLOSE_PREFIX) + notes)[:NOTES_MAX]
         for i, ((cp, K, sign, leg_px), sym) in enumerate(zip(legs, symbols)):
             bought = (int(sign) > 0) == long_side            # this leg is bought by THIS position when opening
             action = ("BTO" if bought else "STO") if opening else ("STC" if bought else "BTC")
@@ -133,10 +134,10 @@ def record_synthetic_hedge(engine, account_id: int, slug: str, underlying: str, 
     direction = str(fill.get("direction", "flat"))
     symbol = str(fill.get("symbol") or HEDGE_SYMBOL)
     fee = float(fill.get("fee", 0.0) or 0.0)
-    notes = json.dumps({"synthetic": True, "hedge": "NQ-equivalent priced at the NDX index level (never a real order)", "units": units,
-                        "px": px, "book_after": after, "reason": fill["reason"], "minute": fill["m"], "ndx": fill.get("ndx"),
-                        "delta": fill.get("delta"), "iv": fill.get("iv"), "hedge_pnl": fill.get("hedge_pnl"), "fee": fee,
-                        **(extra or {})}, default=str)[:480]
+    notes = note_json({"synthetic": True, "hedge": "NQ-equivalent priced at the NDX index level (never a real order)", "units": units,
+                       "px": px, "book_after": after, "reason": fill["reason"], "minute": fill["m"], "ndx": fill.get("ndx"),
+                       "delta": fill.get("delta"), "iv": fill.get("iv"), "hedge_pnl": fill.get("hedge_pnl"), "fee": fee,
+                       **(extra or {})})
     with engine.begin() as conn:
         sid = _hedge_security_id(conn, symbol, underlying)
         if position_id is None:
@@ -152,7 +153,7 @@ def record_synthetic_hedge(engine, account_id: int, slug: str, underlying: str, 
             position_id = int(conn.execute(text("SELECT MAX(PositionId) FROM portfolio.Position WHERE AccountId = :aid AND StrategyName = :s"),
                                            {"aid": account_id, "s": slug}).fetchone()[0])
         tgid = f"{underlying[:4]}-{slug[:8].upper()}-{position_id}"
-        page_notes = (("CLOSE " + notes) if final else _no_close_word(notes))[:500]
+        page_notes = ((CLOSE_PREFIX + notes) if final else _no_close_word(notes))[:NOTES_MAX]
         if units > 0.0 or final:
             conn.execute(text("""
                 INSERT INTO portfolio.[Transaction] (AccountId, SecurityId, PositionId, TransactionDate, Action, Quantity, Price, Amount,
