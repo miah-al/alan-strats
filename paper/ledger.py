@@ -7,13 +7,14 @@ leg so a group nets to the spread. ``load_paper_positions`` reads it back for re
 """
 from __future__ import annotations
 
-import json
 import logging
 from datetime import date
 from typing import Optional
 
 import pandas as pd
 from sqlalchemy import text
+
+from .notes import CLOSE_PREFIX, NOTES_MAX, note_json
 
 logger = logging.getLogger("paper.ledger")
 COMMISSION_PER_LEG = 1.00
@@ -109,8 +110,8 @@ def record_fill(engine, account_id: int, slug: str, underlying: str, expiry: dat
         return position_id
     cp, long_k, short_k = _legs(fill)
     px, lots = float(fill["px"]), int(fill["lots"])
-    notes = json.dumps({"spread_px": px, "kind": kind, "reason": fill["reason"], "minute": fill["m"], "lots": lots,
-                        "k_low": fill["kl"], "k_high": fill["kh"], "direction": fill["direction"], **(extra or {})}, default=str)[:500]
+    notes = note_json({"spread_px": px, "kind": kind, "reason": fill["reason"], "minute": fill["m"], "lots": lots,
+                       "k_low": fill["kl"], "k_high": fill["kh"], "direction": fill["direction"], **(extra or {})})
     opening = kind in ("open", "add")
     # the commission the engine charged (its cash less the premium), so the columns agree with the cash; a strategy on
     # tastytrade's index fees (paper/fill_rule.py) pays more than the flat COMMISSION_PER_LEG
@@ -146,7 +147,7 @@ def record_fill(engine, account_id: int, slug: str, underlying: str, expiry: dat
         # number here that has always been right.
         tgid = f"{underlying[:4]}-{slug[:8].upper()}-{position_id}"
         src = "Paper" if opening else {"target": "Target", "stop": "Stop", "daycap": "DayCap", "time": "Time", "settle": "Settle"}.get(fill["reason"], "Close")
-        page_notes = (("" if opening else "CLOSE ") + notes)[:500]
+        page_notes = (("" if opening else CLOSE_PREFIX) + notes)[:NOTES_MAX]
         for i, (sym, action, k, fpx) in enumerate(leg_rows):
             psid = _page_security_id(conn, sym, underlying, cp, k, expiry)
             conn.execute(text("""

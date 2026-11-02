@@ -717,7 +717,7 @@ BEGIN
         Commission      DECIMAL(8,2)    NOT NULL DEFAULT 0,
         Regime          VARCHAR(30)     NULL,
         StrategyName    VARCHAR(50)     NULL,
-        Notes           NVARCHAR(500)   NULL,
+        Notes           NVARCHAR(2000)  NULL,
         CreatedAt       DATETIME2(0)    NOT NULL DEFAULT SYSUTCDATETIME(),
 
         CONSTRAINT PK_Transaction  PRIMARY KEY (TransactionId),
@@ -782,6 +782,13 @@ END
 GO
 IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_Transaction_Group')
     CREATE INDEX IX_Transaction_Group ON portfolio.[Transaction] (TradeGroupId);
+GO
+-- Notes was NVARCHAR(500): a runner's entry note (JSON with its reason, quote and chain odds) runs past that, and the
+-- ledger's cut fell inside the JSON, so the app lost each entry's quote, reason and index level (2026-11-02).
+-- paper/notes.py keeps notes within 2,000 and always valid JSON. max_length is in bytes (2 a character).
+IF EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID('portfolio.[Transaction]') AND name = 'Notes'
+           AND max_length BETWEEN 1 AND 3999)
+    ALTER TABLE portfolio.[Transaction] ALTER COLUMN Notes NVARCHAR(2000) NULL;
 GO
 
 IF OBJECT_ID('portfolio.Holding', 'U') IS NULL
