@@ -393,3 +393,88 @@ def chain(hub: MarketDataHub, underlying: str, expiry: str, strikes: int = 30) -
                         "strikes": n, "table": table,
                         "units": {"iv": "fraction", "theta": "per day", "vega": "per 1 vol point"},
                         "warnings": notes})
+
+
+# ── the at-the-money straddle ─────────────────────────────────────────────────
+
+#: the daily-expiry roots of the index options (their AM-settled monthlies trade as SPX / NDX)
+DAILY_ROOT = {"SPX": "SPXW", "NDX": "NDXP"}
+#: a quote older than this is named stale (the hub can hand back one minutes old: two adjacent SPXW calls 10 points
+#: apart at 12:43 on 2026-11-05)
+STRADDLE_MAX_AGE_S = 60.0
+
+
+def _age_s(q: dict, now: _dt.datetime) -> Optional[float]:
+    t = q.get("quote_time")
+    if not t:
+        return None
+    try:
+        at = _dt.datetime.fromisoformat(str(t))
+    except ValueError:
+        return None
+    if at.tzinfo is None:
+        at = at.astimezone()
+    return max(0.0, (now - at).total_seconds())
+
+
+def pick_straddle(rows: list[dict], spot: float, now: _dt.datetime, max_age_s: float = STRADDLE_MAX_AGE_S) -> Optional[dict]:
+    """The straddle at the listed strike nearest ``spot`` whose call and put both have two-sided quotes, each at its
+    mid; of two strikes as near, the one with fresh quotes (both no older than ``max_age_s``). None without one."""
+    best = None
+    for r in rows:
+        c, p = r.get("call") or {}, r.get("put") or {}
+        if not (_two_sided(c) and _two_sided(p)):
+            continue
+        ages = [_age_s(c, now), _age_s(p, now)]
+        age = None if any(a is None for a in ages) else max(ages)
+        stale = age is None or age > max_age_s
+        key = (round(abs(float(r["strike"]) - spot), 6), stale)
+        if best is None or key < best[0]:
+            cm, pm = (c["bid"] + c["ask"]) / 2.0, (p["bid"] + p["ask"]) / 2.0
+            best = (key, {"strike": float(r["strike"]), "call_mid": round(cm, 4), "put_mid": round(pm, 4),
+                          "straddle": round(cm + pm, 4), "pct": round((cm + pm) / spot * 100.0, 4),
+                          "half_spread": round((c["ask"] - c["bid"] + p["ask"] - p["bid"]) / 2.0, 4),
+                          "quote_age_s": None if age is None else round(age, 1), "stale": stale,
+                          "call_symbol": c.get("symbol"), "put_symbol": p.get("symbol")})
+    return best[1] if best else None
+
+
+def straddle_expiry(now=None) -> _dt.date:
+    """The daily expiry a straddle is read on: today's until the 16:00 close on a weekday, else the next weekday's."""
+    import pandas as pd
+    now = now or pd.Timestamp.now(tz="America/New_York")
+    d = now.date()
+    if now.weekday() < 5 and now.time() < _dt.time(16, 0):
+        return d
+    d += _dt.timedelta(days=1)
+    while d.weekday() >= 5:
+        d += _dt.timedelta(days=1)
+    return d
+
+
+def atm_straddle(hub: MarketDataHub, underlying: str) -> dict:
+    """The nearest daily expiry's at-the-money straddle of ``underlying`` (SPX and NDX on their SPXW / NDXP dailies):
+    the market's expected move to that expiry, in points and as a share of spot. Quotes older than a minute are named
+    stale, never passed off as live."""
+    u = SYM.normalize(underlying)
+    root = DAILY_ROOT.get(u)
+    exp = straddle_expiry()
+    spot = _spot(hub, u)
+    out = {"underlying": u, "root": root or u, "expiry": exp.isoformat(), "dte": (exp - _dt.date.today()).days,
+           "spot": spot, "asof": _dt.datetime.now().astimezone().isoformat(timespec="seconds"), "warnings": []}
+    if spot is None:
+        out["warnings"].append(f"no {u} price")
+        return out
+    notes: list[str] = []
+    rows, used = merged_chain(hub, u, exp, spot, 2, notes, root=root)
+    out["source"] = used[0] if used else None
+    pick = pick_straddle(rows, float(spot), _dt.datetime.now().astimezone())
+    if pick is None:
+        out["warnings"].append("no two-sided at-the-money quotes" + (f" ({'; '.join(notes)})" if notes else ""))
+        return out
+    out.update(pick)
+    if pick["stale"]:
+        out["warnings"].append("quotes older than a minute" if pick["quote_age_s"] is not None else "quote times unknown")
+    if not _market_open():
+        out["warnings"].append("market closed: the session's last quotes")
+    return to_jsonable(out)

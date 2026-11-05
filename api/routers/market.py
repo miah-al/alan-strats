@@ -32,6 +32,7 @@ def gex_ttl(now: Optional[_dt.datetime] = None) -> float:
         return GEX_TTL
     return GEX_TTL_CLOSED
 IV_TERM_TTL = 60.0
+STRADDLE_TTL = 10.0
 BARS_TTL = 30.0
 
 
@@ -76,6 +77,14 @@ def market_vol_stats(request: Request, symbols: str = Query(..., description="co
         return request.app.state.volstats.get([x for x in symbols.split(",") if x.strip()])
     except ValueError as exc:
         raise HTTPException(422, str(exc))
+
+
+@router.get("/market/straddle")
+def market_straddle(request: Request, symbols: str = Query(default="SPX,NDX", description="comma-separated, at most 6")):
+    """The nearest daily expiry's at-the-money straddle per symbol (api/marketdata/options.py atm_straddle)."""
+    from api.marketdata import options as O
+    syms = [x.strip().upper() for x in symbols.split(",") if x.strip()][:6]
+    return [cached(("straddle", s), STRADDLE_TTL, lambda s=s: O.atm_straddle(request.app.state.market, s)) for s in syms]
 
 
 @router.get("/market/events")
