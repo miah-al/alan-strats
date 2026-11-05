@@ -454,7 +454,12 @@ def insert_closing_transactions(
                 close_dir = "SELL" if orig_dir == "BUY" else "BUY"
                 symbol    = str(row.get("Symbol", ""))
                 orig_tgid = str(row.get("TradeGroupId", ""))
-                leg_price = (live_opt.get(symbol) or {}).get("price") or fallback_price or float(row.get("TransactionPrice", 0) or 0)
+                given = (live_opt.get(symbol) or {}).get("price")
+                # A leg filled at 0.00 (a far out-of-the-money long sold at its 0.00 bid) books 0.00. `price or ...` read
+                # 0.0 as "no price" and booked such a leg at its OPENING price: the desk's 7300 put sold at 0.00 was booked
+                # at 4.375 on 2026-11-05 (+$432), and three long legs the same way on 11-03 (~+$440).
+                leg_price = (float(given) if given is not None
+                             else fallback_price or float(row.get("TransactionPrice", 0) or 0))
                 qty = float(row.get("Quantity", 0) or 0)
                 fee = (live_opt.get(symbol) or {}).get("fee_per_contract")
                 comm = round(float(fee) * abs(qty), 4) if fee is not None else _COMMISSION
