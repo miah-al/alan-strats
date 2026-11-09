@@ -195,6 +195,21 @@ class ServiceBrokerBudget:
         return self._rb.calls_today
 
 
+def parse_nested_chains(data: dict, underlying: str = "") -> list:
+    """The nested chain's roots, each validated on its own: a root the SDK's model rejects is skipped (and logged)
+    instead of failing the underlying's other roots."""
+    from tastytrade.instruments import NestedOptionChain
+    out, bad = [], []
+    for item in (data or {}).get("items") or []:
+        try:
+            out.append(NestedOptionChain(**item))
+        except Exception as exc:  # noqa: BLE001 - pydantic's ValidationError, or any malformed item
+            bad.append(f"{item.get('root-symbol', '?') if isinstance(item, dict) else '?'} ({type(exc).__name__})")
+    if bad:
+        logger.warning("%s nested chain: skipped %d malformed root(s): %s", underlying, len(bad), ", ".join(bad))
+    return out
+
+
 class TastytradeProvider(Provider):
     name = "tastytrade"
     streaming = True
@@ -589,12 +604,14 @@ class TastytradeProvider(Provider):
             return hit[1]
 
         async def fetch():
-            from tastytrade.instruments import NestedOptionChain
             await self._refresh()
             await self._take()
-            return await NestedOptionChain.get(self._session, underlying)
+            # the raw items, not NestedOptionChain.get: that validates every root at once, so one malformed root
+            # fails the whole underlying (2026-11-09: tastytrade listed an SPXO root without tick-sizes, and every
+            # SPX chain, straddle and surface fell back to stale yfinance quotes)
+            return await self._session._get(f"/option-chains/{underlying.replace('/', '%2F')}/nested")
 
-        chains = self._call(fetch())
+        chains = parse_nested_chains(self._call(fetch()), underlying)
         self._chains[underlying] = (time.monotonic(), list(chains))
         return list(chains)
 
