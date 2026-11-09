@@ -60,7 +60,9 @@ ALL_SYMBOLS = CORE + SECTOR_ETFS + EXTRA
 EARNINGS_SYMBOLS = ["F", "AAPL", "HOOD", "TSLA"]
 
 # Index levels stored as daily price bars (yfinance caret symbols, mapped in db.sync).
-INDEX_DAILY = ["NDX", "VXN"]
+# SPX too (2026-11-09): its closes otherwise come only from the service's nightly top-up after 16:30, which does not
+# run when the PC is shut down at night (SPX stood at 11/04 on Mon 11/09).
+INDEX_DAILY = ["NDX", "VXN", "SPX"]
 # Intraday 1-minute bars pulled from Polygon (index feed for NDX). Off by default: ~10 minutes
 # for the full history, so it runs only with --intraday.
 INTRADAY_DEFAULT = ["NDX"]
