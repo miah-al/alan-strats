@@ -103,7 +103,7 @@ async def cmd_check_key(a) -> int:
         try:
             resp = await b.dry_run(acct, R.build_order(sample))
         except Exception as exc:  # noqa: BLE001
-            print(f"TEST ORDER refused by tastytrade: {b.scrub(f'{type(exc).__name__}: {exc}')}")
+            print(f"TEST ORDER refused by tastytrade: {b.scrub(R.describe_error(exc))}")
             return 3
     s = R.summarize(resp)
     print(f"TEST ORDER (checked by tastytrade, never sent): {_order_line(sample)}")
@@ -216,7 +216,15 @@ def main(argv=None) -> int:
     logging.basicConfig(level=logging.WARNING, format="%(levelname)s %(name)s: %(message)s")
     for name in ("httpx", "httpx2", "httpcore"):
         logging.getLogger(name).setLevel(logging.WARNING)
-    from api.services.real_orders import Refused
+    # the SDK logs at DEBUG (its errors among them): capture those, print only its warnings
+    sdk = logging.getLogger("tastytrade")
+    sdk.propagate = False
+    console = logging.StreamHandler()
+    console.setLevel(logging.WARNING)
+    console.setFormatter(logging.Formatter("%(levelname)s %(name)s: %(message)s"))
+    sdk.addHandler(console)
+    from api.services.real_orders import Refused, capture_sdk_errors
+    capture_sdk_errors()
     fn = {"check-key": cmd_check_key, "place": cmd_place, "status": cmd_status, "cancel": cmd_cancel,
           "settle": cmd_settle}[a.cmd]
     try:

@@ -57,6 +57,43 @@ class Refused(RuntimeError):
     """The order may not go; the message says why. Nothing was sent."""
 
 
+class _SdkErrors(logging.Handler):
+    """The SDK logs (at DEBUG) a tastytrade error it cannot format, e.g. ``Token has insufficient scopes``, and raises
+    an EMPTY TastytradeError. Keep the last few so a refusal can say what tastytrade said."""
+
+    def __init__(self) -> None:
+        super().__init__(logging.DEBUG)
+        self.last: list[str] = []
+
+    def emit(self, record: logging.LogRecord) -> None:
+        msg = record.getMessage()
+        if msg.startswith("Unknown error type:"):
+            self.last = (self.last + [msg.split(":", 1)[1].strip()])[-3:]
+
+
+_SDK_ERRORS = _SdkErrors()
+_HINTS = {"insufficient scopes": "this login cannot trade: create an OAuth grant with the 'trade' scope"}
+
+
+def capture_sdk_errors() -> None:
+    """Attach the capture to the SDK's logger (idempotent). The caller decides what reaches the console."""
+    lg = logging.getLogger("tastytrade")
+    if _SDK_ERRORS not in lg.handlers:
+        lg.addHandler(_SDK_ERRORS)
+
+
+def describe_error(exc: BaseException) -> str:
+    """``Type: message``, with what tastytrade said when the SDK raised an empty error, and a hint for known ones."""
+    text = str(exc).strip()
+    if not text and _SDK_ERRORS.last:
+        text = _SDK_ERRORS.last[-1]
+        _SDK_ERRORS.last = []
+    for k, hint in _HINTS.items():
+        if k in text.lower():
+            text += f" ({hint})"
+    return f"{type(exc).__name__}: {text or '(tastytrade gave no message)'}"
+
+
 # ── the permission file and the ticket ───────────────────────────────────────────────────────────────────────────
 
 @dataclass(frozen=True)
@@ -465,7 +502,7 @@ async def place(t: Ticket, perm: Permission, rule: Rule, broker: Broker, state_d
     try:
         dry = await broker.dry_run(acct, order)
     except Exception as exc:  # noqa: BLE001 - tastytrade's refusal: say it, send nothing
-        msg = broker.scrub(f"{type(exc).__name__}: {exc}")
+        msg = broker.scrub(describe_error(exc))
         record(state_dir, t.day, "dry_run_refused", now(), ticket=tk, error=msg)
         raise Refused(f"tastytrade refused the test order: {msg}") from None
     ds = summarize(dry)
@@ -485,7 +522,7 @@ async def place(t: Ticket, perm: Permission, rule: Rule, broker: Broker, state_d
     try:
         resp = await broker.send(acct, order)
     except Exception as exc:  # noqa: BLE001
-        msg = broker.scrub(f"{type(exc).__name__}: {exc}")
+        msg = broker.scrub(describe_error(exc))
         record(state_dir, t.day, "live_send_failed", now(), error=msg)
         raise RuntimeError(f"the live send failed ({msg}); the day's slot stays used: run `status` to see whether "
                            "tastytrade has the order") from None
@@ -511,7 +548,7 @@ async def watch(broker: Broker, acct, oid: int, t: Ticket, rule: Rule, state_dir
             st = _s(po.status)
         except Exception as exc:  # noqa: BLE001 - keep watching; the cancel below does not depend on this read
             po, st = None, ""
-            logger.warning("order %s status read failed: %s", oid, broker.scrub(str(exc)))
+            logger.warning("order %s status read failed: %s", oid, broker.scrub(describe_error(exc)))
         if st and st != last:
             say(f"{now():%H:%M:%S} order {oid}: {st}")
             last = st
@@ -529,7 +566,7 @@ async def watch(broker: Broker, acct, oid: int, t: Ticket, rule: Rule, state_dir
                 record(state_dir, t.day, "live_cancel_sent", n, order_id=oid)
                 say(f"{n:%H:%M:%S} not filled by {rule.cancel_at:%H:%M}: cancel sent")
             except Exception as exc:  # noqa: BLE001 - it may have just filled; the next read tells, else retry
-                record(state_dir, t.day, "live_cancel_failed", n, order_id=oid, error=broker.scrub(str(exc)))
+                record(state_dir, t.day, "live_cancel_failed", n, order_id=oid, error=broker.scrub(describe_error(exc)))
         if cancel_sent_at is not None and (n - cancel_sent_at).total_seconds() >= AFTER_CANCEL_S:
             record(state_dir, t.day, "live_watch_ended", n, order_id=oid, status=st or "unknown")
             return {"status": st or "unknown",
