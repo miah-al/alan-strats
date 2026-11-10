@@ -261,6 +261,18 @@ def test_the_account_must_be_the_permitted_one(sd):
     assert acct.calls == []
 
 
+def test_an_empty_sdk_error_says_what_tastytrade_said():
+    import logging
+
+    import tastytrade  # noqa: F401 - the SDK sets its logger to DEBUG on import
+    R.capture_sdk_errors()
+    logging.getLogger("tastytrade").debug("Unknown error type: {'message': 'Token has insufficient scopes for this request'}")
+    text = R.describe_error(RuntimeError(""))
+    assert "insufficient scopes" in text and "'trade' scope" in text
+    assert R.describe_error(RuntimeError("")) == "RuntimeError: (tastytrade gave no message)"   # used once
+    assert R.describe_error(ValueError("price_too_far: x")) == "ValueError: price_too_far: x"
+
+
 def test_the_cancel_goes_out_even_when_the_budget_is_spent(sd):
     class Spent:
         def take(self):
