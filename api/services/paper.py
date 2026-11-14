@@ -724,7 +724,8 @@ def _cash_series(txns: pd.DataFrame, start, end) -> pd.Series:
 
 def equity(from_date: Optional[str], to_date: Optional[str]) -> dict:
     """Mark-to-market equity (the page's ``mtm_equity_series``: ledger + daily closes)
-    and the cash line."""
+    and the cash line. A day whose close the service recorded from the live marks (``close_mark``) shows that record
+    instead of the rebuilt figure: an option's daily close is its last trade, which can be hours old."""
     _o, _c, txns = load()
     end = _dt.date.fromisoformat(to_date) if to_date else _today()
     start = _dt.date.fromisoformat(from_date) if from_date else end - _dt.timedelta(days=30)
@@ -733,8 +734,16 @@ def equity(from_date: Optional[str], to_date: Optional[str]) -> dict:
     df = PD().mtm_equity_series(txns, start, end, account_id=account_id())
     eq = pd.Series(df["Amount"].values, index=pd.to_datetime(df["BusinessDate"])) if not df.empty else None
     cash = _cash_series(txns, start, end)
+    recorded: list = []
+    try:
+        from api.services import close_mark
+        eq, recorded = close_mark.apply(eq, cash, close_mark.store().read(account_id()))
+    except Exception:  # noqa: BLE001 — the records are an improvement, never a reason to lose the series
+        logger.warning("equity: the recorded closes could not be applied", exc_info=True)
     return to_jsonable({"series": [series(eq, "equity"), series(cash, "cash")], "from": start, "to": end,
-                        "method": "mark-to-market: net deposits + trade cash flow + holdings x daily close"})
+                        "method": "mark-to-market: net deposits + trade cash flow + holdings x daily close; "
+                                  "the close recorded from the live marks where there is one",
+                        "recorded_closes": [d.isoformat() for d in recorded]})
 
 
 # ── Runner ────────────────────────────────────────────────────────────────────
