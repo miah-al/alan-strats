@@ -6,8 +6,13 @@ scripts/real_order.py — the owner's REAL order, on the owner's yes. The only c
     python scripts/real_order.py place --ticket T.json --live        # ONLY after the owner's yes: the test order, then the
                                                                      #   real one, watched; cancelled at the cut-off if unfilled
     python scripts/real_order.py status [--day D] [--broker]         # the day's ledger (+ tastytrade's live orders)
-    python scripts/real_order.py cancel [--day D]                    # cancel the day's live order (only the one sent here)
-    python scripts/real_order.py settle --close 7549.83 [--day D]    # book the day's result at the cash settlement
+    python scripts/real_order.py cancel [--day D] [--closing]        # cancel the day's live order (only the one sent here),
+                                                                     #   or with --closing its latest closing order
+    python scripts/real_order.py close --limit 0.80                  # a tastytrade test of closing the day's spread (never sent)
+    python scripts/real_order.py close --limit 0.80 --live           # ONLY on the owner's word: close the day's OWN spread;
+                                                                     #   cancelled after --wait seconds (45) if unfilled
+    python scripts/real_order.py settle [--close 7549.83] [--day D]  # book the day's result: held, give the index's official
+                                                                     #   close; closed early, the closing fill is used
 
 What may go is decided by <paper_state>/real_orders/permission.json (see api/services/real_orders.py). Nothing here
 prints a secret or the full account number. Exit codes: 0 done, 3 refused (nothing sent), 1 error.
@@ -66,6 +71,11 @@ def _money(x) -> str:
 def _order_line(t) -> str:
     return (f"SELL TO OPEN {t.lots} {t.root} {t.day:%m/%d} {t.short:g} CALL + BUY TO OPEN {t.lots} {t.long:g} CALL, "
             f"LIMIT {t.limit:.2f} CREDIT, DAY")
+
+
+def _close_line(t, debit: float) -> str:
+    return (f"BUY TO CLOSE {t.lots} {t.root} {t.day:%m/%d} {t.short:g} CALL + SELL TO CLOSE {t.lots} {t.long:g} CALL, "
+            f"LIMIT {debit:.2f} DEBIT, DAY")
 
 
 def _verdict(s: dict) -> str:
@@ -159,6 +169,11 @@ async def cmd_status(a) -> int:
             for o in live:
                 legs = " / ".join(f"{getattr(l.action, 'value', l.action)} {l.quantity} {l.symbol}" for l in o.legs)
                 print(f"  {o.id} {getattr(o.status, 'value', o.status)} {legs} price {o.price}")
+            tk = R.day_order(sd, day).get("ticket")
+            if tk:
+                t = R.parse_ticket(tk)
+                s, lg = R.held(await b.positions(acct), t)
+                print(f"  held in the day's spread {t.short:g}/{t.long:g}: short leg {s:+d}, long leg {lg:+d}")
     return 0
 
 
@@ -166,9 +181,10 @@ async def cmd_cancel(a) -> int:
     from api.services import real_orders as R
     sd = _state_dir()
     day = dt.date.fromisoformat(a.day) if a.day else _now().date()
-    oid = R.day_order(sd, day).get("order_id")
+    o = R.day_order(sd, day)
+    oid = (o.get("close") or {}).get("order_id") if a.closing else o.get("order_id")
     if not oid:
-        raise R.Refused(f"no live order was sent here on {day}")
+        raise R.Refused(f"no {'closing' if a.closing else 'live'} order was sent here on {day}")
     perm = R.load_permission(sd)
     async with R.Broker(R.credentials(perm.key), budget=_budget()) as b:
         acct = await b.account(perm.account)
@@ -179,14 +195,42 @@ async def cmd_cancel(a) -> int:
     return 0
 
 
+async def cmd_close(a) -> int:
+    from api.services import real_orders as R
+    sd = _state_dir()
+    perm = R.load_permission(sd)
+    day = dt.date.fromisoformat(a.day) if a.day else _now().date()
+    debit = round(float(a.limit), 2)
+    if not (5 <= a.wait <= 300):
+        raise R.Refused("--wait is 5 to 300 seconds")
+    t, rule = R.check_close(R.day_order(sd, day), perm, debit, _now(), a.live, sd)
+    print(("LIVE CLOSING ORDER" if a.live else "TEST CLOSING ORDER (checked by tastytrade, never sent)")
+          + f": {_close_line(t, debit)}")
+    async with R.Broker(R.credentials(perm.key), budget=_budget()) as b:
+        out = await R.close_spread(t, perm, rule, debit, b, sd, live=a.live, now=_now, wait_s=a.wait, say=print)
+    print(f"  account {out['account']}; tastytrade test order: {_verdict(out['dry_run'])}")
+    if a.live:
+        lv = out["live"]
+        line = f"  LIVE closing order {lv['order_id']}: {lv['status']}"
+        if lv.get("fill_debit") is not None:
+            line += f" at {lv['fill_debit']:.2f} debit"
+        elif lv["status"] == "Cancelled":
+            line += f" (not filled in {a.wait:g} s; the spread is still open: close again at a new limit)"
+        if lv.get("warning"):
+            line += f" - {lv['warning']}"
+        print(line)
+    return 0
+
+
 async def cmd_settle(a) -> int:
     from api.services import real_orders as R
     sd = _state_dir()
     day = dt.date.fromisoformat(a.day) if a.day else _now().date()
-    row = R.settle(sd, day, float(a.close))
+    row = R.settle(sd, day, float(a.close) if a.close is not None else None)
+    how = (f"closed early at {row['settle_value']:.2f} debit" if row["how"] == "closed"
+           else f"settled {row['settle_value']:.2f} (close {float(row['spx_close']):,.2f})")
     print(f"{day}: {row['strategy']} {row['short']:g}/{row['long']:g} x{row['lots']} credit {row['credit']:.2f}, "
-          f"settled {row['settle_value']:.2f} (close {row['spx_close']:,.2f}), fees {_money(row['fees'])}: "
-          f"P&L {_money(row['pnl'])}")
+          f"{how}, fees {_money(row['fees'])}: P&L {_money(row['pnl'])}")
     return 0
 
 
@@ -206,8 +250,14 @@ def main(argv=None) -> int:
     s.add_argument("--broker", action="store_true", help="also list tastytrade's orders for today")
     c = sub.add_parser("cancel")
     c.add_argument("--day")
+    c.add_argument("--closing", action="store_true", help="cancel the latest closing order instead")
+    x = sub.add_parser("close", help="close the day's own filled spread")
+    x.add_argument("--limit", required=True, type=float, help="the DEBIT per spread, in 0.05 steps")
+    x.add_argument("--live", action="store_true", help="ONLY on the owner's word at the time")
+    x.add_argument("--wait", type=float, default=45.0, help="seconds before an unfilled closing order is cancelled")
+    x.add_argument("--day")
     t = sub.add_parser("settle")
-    t.add_argument("--close", required=True, type=float)
+    t.add_argument("--close", type=float, help="the index's official close (not needed when the spread was closed)")
     t.add_argument("--day")
     a = ap.parse_args(argv)
 
@@ -226,7 +276,7 @@ def main(argv=None) -> int:
     from api.services.real_orders import Refused, capture_sdk_errors
     capture_sdk_errors()
     fn = {"check-key": cmd_check_key, "place": cmd_place, "status": cmd_status, "cancel": cmd_cancel,
-          "settle": cmd_settle}[a.cmd]
+          "close": cmd_close, "settle": cmd_settle}[a.cmd]
     try:
         return asyncio.run(fn(a))
     except Refused as exc:

@@ -74,13 +74,15 @@ class FakeSession:
 
 class FakeAcct:
     def __init__(self, number="5WX16973", statuses=("Live", "Filled"), dry_errors=(), send_exc=None,
-                 fills=(3.20, 1.90)):
+                 fills=(3.20, 1.90), positions=(), working=()):
         self.account_number = number
         self.is_closed = False
         self.statuses = list(statuses)
         self.dry_errors = list(dry_errors)
         self.send_exc = send_exc
-        self.fills = fills
+        self.fills = fills                      # per leg of the last order placed, in its leg order
+        self.positions = list(positions)
+        self.working = list(working)
         self.calls: list[str] = []
         self.cancelled = False
         self.orders: list = []
@@ -102,10 +104,12 @@ class FakeAcct:
     async def get_order(self, session, oid):
         self.calls.append("get")
         st = "Cancelled" if self.cancelled else (self.statuses.pop(0) if len(self.statuses) > 1 else self.statuses[0])
-        legs = [NS(action="Sell to Open", fills=[]), NS(action="Buy to Open", fills=[])]
+        acts = ([getattr(leg.action, "value", leg.action) for leg in self.orders[-1].legs] if self.orders
+                else ["Sell to Open", "Buy to Open"])
+        legs = [NS(action=a, fills=[]) for a in acts]
         if st == "Filled":
-            legs = [NS(action="Sell to Open", fills=[NS(quantity=Decimal(1), fill_price=Decimal(str(self.fills[0])))]),
-                    NS(action="Buy to Open", fills=[NS(quantity=Decimal(1), fill_price=Decimal(str(self.fills[1])))])]
+            legs = [NS(action=a, fills=[NS(quantity=Decimal(1), fill_price=Decimal(str(f)))])
+                    for a, f in zip(acts, self.fills)]
         return NS(id=oid, status=st, legs=legs)
 
     async def delete_order(self, session, oid):
@@ -113,7 +117,12 @@ class FakeAcct:
         self.cancelled = True
 
     async def get_live_orders(self, session):
-        return []
+        self.calls.append("orders")
+        return list(self.working)
+
+    async def get_positions(self, session):
+        self.calls.append("positions")
+        return list(self.positions)
 
 
 def account_api(*accts):
@@ -287,7 +296,8 @@ def test_the_cancel_goes_out_even_when_the_budget_is_spent(sd):
 def test_settle_books_the_result_and_the_loss_pause_stops_the_next_order(sd):
     run_place(sd, FakeAcct(statuses=("Filled",), fills=(3.20, 1.90)))
     row = R.settle(sd, dt.date(2026, 11, 10), 7580.0)                  # above the long strike: the full loss
-    assert row["settle_value"] == 10 and row["pnl"] == pytest.approx((1.30 - 10) * 100 - 3.44)
+    # both legs settle in the money: tastytrade's $5 a leg on top of the order's fees (as it posted on 11/10)
+    assert row["settle_value"] == 10 and row["pnl"] == pytest.approx((1.30 - 10) * 100 - 3.44 - 10.0)
     with pytest.raises(R.Refused, match="already in the results"):
         R.settle(sd, dt.date(2026, 11, 10), 7580.0)
     R.add_result(sd, {"day": "2026-11-11", "strategy": STRAT, "pnl": -700})
@@ -306,6 +316,159 @@ def test_an_expired_worthless_spread_keeps_the_credit(sd):
     run_place(sd, FakeAcct(statuses=("Filled",), fills=(3.20, 1.90)))
     row = R.settle(sd, dt.date(2026, 11, 10), 7549.83)
     assert row["settle_value"] == 0 and row["pnl"] == pytest.approx(130 - 3.44)
+
+
+def test_settle_adds_tastytrades_fee_for_each_leg_settled_in_the_money(sd):
+    # 2026-11-13: 7560/7570 sold at 1.35, SPX closed 7,561.67: the short settled 1.67 in the money, the long worthless
+    t = dict(TICKET, day="2026-11-13", short=7560, long=7570, limit=1.35, spot=7533.37)
+    run_place(sd, FakeAcct(statuses=("Filled",), fills=(2.95, 1.60)), ticket=t,
+              clock=Clock(dt.datetime(2026, 11, 13, 13, 1, 30)))
+    row = R.settle(sd, dt.date(2026, 11, 13), 7561.67)
+    assert row["settle_value"] == pytest.approx(1.67) and row["fees"] == pytest.approx(3.44 + 5.0)
+    assert row["pnl"] == pytest.approx(-40.44) and row["how"] == "settled"           # what tastytrade posted
+
+
+def test_settle_needs_the_index_close_unless_the_spread_was_closed(sd):
+    run_place(sd, FakeAcct(statuses=("Filled",), fills=(3.20, 1.90)))
+    with pytest.raises(R.Refused, match="official close"):
+        R.settle(sd, dt.date(2026, 11, 10), None)
+
+
+# ── closing the day's own spread ─────────────────────────────────────────────────────────────────────────────────────
+
+CLOSE_AT = dt.datetime(2026, 11, 10, 15, 46, 0)
+HELD = [NS(symbol="SPXW  261110C07565000", quantity=Decimal("1"), quantity_direction="Short"),
+        NS(symbol="SPXW  261110C07575000", quantity=Decimal("1"), quantity_direction="Long")]
+
+
+def opened(sd):
+    """The day's spread, filled at 1.30 at 13:01."""
+    run_place(sd, FakeAcct(statuses=("Filled",), fills=(3.20, 1.90)))
+    return sd
+
+
+def run_close(sd, acct, debit=0.80, *, live=True, clock=None, wait_s=45.0):
+    clock = clock or Clock(CLOSE_AT)
+    perm = R.load_permission(sd)
+    t, rule = R.check_close(R.day_order(sd, dt.date(2026, 11, 10)), perm, debit, clock.now(), live, sd)
+
+    async def go():
+        async with R.Broker(("secret", "refresh"), session_factory=FakeSession, account_api=account_api(acct)) as b:
+            return await R.close_spread(t, perm, rule, debit, b, sd, live=live, now=clock.now, sleep=clock.sleep,
+                                        wait_s=wait_s, say=lambda s: None)
+    return asyncio.run(go()), clock
+
+
+def test_the_closing_order_buys_back_the_short_and_sells_the_long_for_a_debit():
+    o = R.build_close_order(R.parse_ticket(TICKET), 0.80)
+    assert [leg.symbol for leg in o.legs] == ["SPXW  261110C07565000", "SPXW  261110C07575000"]
+    assert [leg.action.value for leg in o.legs] == ["Buy to Close", "Sell to Close"]
+    assert [leg.quantity for leg in o.legs] == [1, 1]
+    js = json.loads(o.model_dump_json(exclude_none=True, by_alias=True))
+    assert js["order-type"] == "Limit" and js["time-in-force"] == "Day"
+    assert js["price-effect"] == "Debit" and Decimal(str(js["price"])) == Decimal("0.80")
+
+
+def test_a_test_close_is_never_sent(sd):
+    opened(sd)
+    acct = FakeAcct(positions=HELD)
+    out, _ = run_close(sd, acct, live=False)
+    assert acct.calls == ["positions", "orders", "dry"] and "live" not in out
+    assert R.close_slots_used(sd, dt.date(2026, 11, 10)) == 0
+    assert R.live_slots_used(sd, dt.date(2026, 11, 10)) == 1                        # the opening order's, untouched
+
+
+def test_a_live_close_fills_and_settle_books_it(sd):
+    opened(sd)
+    acct = FakeAcct(positions=HELD, statuses=("Live", "Filled"), fills=(2.00, 1.20))  # buy back 2.00, sell 1.20
+    out, _ = run_close(sd, acct)
+    assert acct.calls == ["positions", "orders", "dry", "live", "get", "get"]
+    assert out["live"]["status"] == "Filled" and out["live"]["fill_debit"] == pytest.approx(0.80)
+    o = R.day_order(sd, dt.date(2026, 11, 10))
+    assert o["status"] == "Filled" and o["fill_credit"] == pytest.approx(1.30)        # the opening order, unchanged
+    assert o["close"]["status"] == "Filled" and o["close"]["fill_debit"] == pytest.approx(0.80)
+    row = R.settle(sd, dt.date(2026, 11, 10), None)                                     # no index close needed
+    assert row["how"] == "closed" and row["settle_value"] == pytest.approx(0.80)
+    assert row["pnl"] == pytest.approx((1.30 - 0.80) * 100 - 3.44 - 3.44)              # both orders' fees, no settlement fee
+    with pytest.raises(R.Refused, match="already closed"):
+        R.check_close(R.day_order(sd, dt.date(2026, 11, 10)), R.load_permission(sd), 0.80, CLOSE_AT, True, sd)
+
+
+def test_a_close_needs_the_spread_held_exactly_as_opened(sd):
+    opened(sd)
+    short2 = NS(symbol=HELD[0].symbol, quantity=Decimal("2"), quantity_direction="Short")
+    for positions in ([], HELD[:1], [short2, HELD[1]]):
+        acct = FakeAcct(positions=positions)
+        with pytest.raises(R.Refused, match="does not hold"):
+            run_close(sd, acct)
+        assert acct.calls == ["positions"]
+    assert R.close_slots_used(sd, dt.date(2026, 11, 10)) == 0
+
+
+def test_a_close_waits_for_any_order_working_on_the_spread(sd):
+    opened(sd)
+    working = NS(id=77, status="Live", legs=[NS(symbol="SPXW  261110C07565000")])
+    acct = FakeAcct(positions=HELD, working=[working])
+    with pytest.raises(R.Refused, match="77 is still working"):
+        run_close(sd, acct)
+    assert "dry" not in acct.calls
+    done = NS(id=78, status="Cancelled", legs=[NS(symbol="SPXW  261110C07565000")])
+    other = NS(id=79, status="Live", legs=[NS(symbol="IBIT  261120P00043000")])
+    acct = FakeAcct(positions=HELD, working=[done, other])
+    run_close(sd, acct, live=False)                       # a final order, or one on another symbol: no obstacle
+    assert acct.calls[-1] == "dry"
+
+
+def test_an_unfilled_close_is_cancelled_after_the_wait_and_the_next_attempt_may_go(sd):
+    opened(sd)
+    acct = FakeAcct(positions=HELD, statuses=("Live",))
+    out, _ = run_close(sd, acct, wait_s=30)
+    assert acct.calls.count("cancel") == 1 and out["live"]["status"] == "Cancelled"
+    sent = next(r for r in R.read_ledger(sd, dt.date(2026, 11, 10)) if r["event"] == "close_cancel_sent")
+    assert sent["at"] >= "2026-11-10T15:46:30"
+    assert R.day_order(sd, dt.date(2026, 11, 10))["close"]["status"] == "Cancelled"
+    acct2 = FakeAcct(positions=HELD, statuses=("Filled",), fills=(2.10, 1.20))
+    out2, _ = run_close(sd, acct2, debit=0.90)
+    assert out2["live"]["status"] == "Filled" and R.close_slots_used(sd, dt.date(2026, 11, 10)) == 2
+    assert R.day_order(sd, dt.date(2026, 11, 10))["close"]["fill_debit"] == pytest.approx(0.90)
+
+
+CLOSE_REFUSALS = [
+    ("off the 0.05 tick", {}, 0.83, CLOSE_AT, True, "steps"),
+    ("nothing to pay", {}, 0.0, CLOSE_AT, True, "between"),
+    ("more than the width", {}, 10.05, CLOSE_AT, True, "between"),
+    ("mode off", {"mode": "off"}, 0.80, CLOSE_AT, False, "off"),
+    ("a test-only permission refuses a live close", {"mode": "dry_run"}, 0.80, CLOSE_AT, True, "not allowed"),
+    ("before the open", {}, 0.80, dt.datetime(2026, 11, 10, 9, 29, 59), True, "outside"),
+    ("in the last half minute", {}, 0.80, dt.datetime(2026, 11, 10, 15, 59, 30), True, "outside"),
+    ("the next day", {}, 0.80, dt.datetime(2026, 11, 11, 10, 0), True, "only today"),
+]
+
+
+@pytest.mark.parametrize("what,p_over,debit,now,live,why", CLOSE_REFUSALS, ids=[r[0] for r in CLOSE_REFUSALS])
+def test_closing_refusals(tmp_path, what, p_over, debit, now, live, why):
+    sd = opened(write_perm(tmp_path))
+    if p_over:
+        write_perm(sd, **p_over)
+    with pytest.raises(R.Refused, match=why):
+        R.check_close(R.day_order(sd, dt.date(2026, 11, 10)), R.load_permission(sd), debit, now, live, sd)
+
+
+def test_a_close_needs_a_filled_opening_order(sd):
+    with pytest.raises(R.Refused, match="no filled real order"):
+        R.check_close(R.day_order(sd, dt.date(2026, 11, 10)), R.load_permission(sd), 0.80, CLOSE_AT, True, sd)
+    run_place(sd, FakeAcct(statuses=("Live",)), clock=Clock(dt.datetime(2026, 11, 10, 13, 3, 30)))   # cancelled unfilled
+    with pytest.raises(R.Refused, match="no filled real order"):
+        R.check_close(R.day_order(sd, dt.date(2026, 11, 10)), R.load_permission(sd), 0.80, CLOSE_AT, True, sd)
+
+
+def test_the_closing_attempts_are_capped(sd):
+    opened(sd)
+    for i in range(1, R.HARD_MAX_CLOSES_PER_DAY + 1):
+        (R.orders_dir(sd) / f"2026-11-10.close.{i}.lock").write_text("x", encoding="utf-8")
+    with pytest.raises(R.Refused, match="closing attempts"):
+        R.check_close(R.day_order(sd, dt.date(2026, 11, 10)), R.load_permission(sd), 0.80, CLOSE_AT, True, sd)
+    assert R.check_close(R.day_order(sd, dt.date(2026, 11, 10)), R.load_permission(sd), 0.80, CLOSE_AT, False, sd)
 
 
 # ── segregation: nothing else reaches the real account ─────────────────────────────────────────────────────────────
@@ -347,12 +510,36 @@ def test_nothing_else_places_or_cancels_a_broker_order():
 
 
 def test_the_strategies_never_touch_the_real_order_path():
+    """The strategy folders, which the service and the runners load. The operator's scripts in ops/ are checked below."""
     strategies = REPO.parent / "alan_trader_strategies"
     if not strategies.is_dir():
         pytest.skip("no strategies checkout beside this one")
     pat = re.compile(r"services[./]real_orders|scripts[./]real_order|real_order\.py|TT_TRADE_|\.place_order\(|"
                      r"\.delete_order\(")
-    assert _grep(strategies, pat, set()) == []
+    assert [rel for rel in _grep(strategies, pat, set()) if not rel.startswith("ops/")] == []
+
+
+def test_the_ops_scripts_reach_the_real_account_only_through_the_cli():
+    """The strategies repo's ops/ (the operator's scripts) may write a ticket and run scripts/real_order.py, but never
+    import its module, read the order login or call the broker's order endpoints themselves; and only the no-ask 1 PM
+    job, run for a day the owner names, sends a live order."""
+    ops = REPO.parent / "alan_trader_strategies" / "ops"
+    if not ops.is_dir():
+        pytest.skip("no strategies checkout with ops/ beside this one")
+    direct = re.compile(r"services[./]real_orders|TT_TRADE_|\.place_order\(|\.delete_order\(|/orders/dry-run")
+    live = re.compile(r"real_order\.py\b[^\n]*--live")
+    hits = []
+    for p in sorted(ops.rglob("*")):
+        if not p.is_file() or p.suffix not in (".py", ".sh", ".ps1") or "__pycache__" in p.parts:
+            continue
+        rel = p.relative_to(ops).as_posix()
+        code = "\n".join(line for line in p.read_text(encoding="utf-8", errors="replace").splitlines()
+                         if not line.lstrip().startswith("#"))
+        if direct.search(code):
+            hits.append(f"{rel}: reaches the broker directly")
+        if live.search(code) and rel != "ticket/run_1pm_noask.sh":
+            hits.append(f"{rel}: sends a live order")
+    assert hits == []
 
 
 def test_the_paper_order_book_still_refuses_live_orders():
