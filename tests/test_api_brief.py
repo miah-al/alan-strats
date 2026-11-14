@@ -294,7 +294,8 @@ def test_the_job_writes_one_row_a_day_and_the_decision_stands(monkeypatch):
     clock.t = ts("2026-09-25 09:50")
     out = job.tick()
     assert out["decision"] == "GO" and out["source"] == "rules" and src.calls == 1
-    assert out["created_at"].endswith("-04:00") and out["prompt_version"] == B.PROMPT_VERSION
+    # created_at is stamped with the real clock, in New York time: summer or winter offset, whatever today is
+    assert out["created_at"][-6:] in ("-04:00", "-05:00") and out["prompt_version"] == B.PROMPT_VERSION
     assert events and events[0]["type"] == "brief" and "inputs" not in events[0]["brief"]
     clock.t = ts("2026-09-25 10:05")
     assert job.tick() is None and src.calls == 1                               # written: not again

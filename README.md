@@ -37,12 +37,12 @@ to this directory, and the package `alan_trader.*`. Plugins import the
 platform as `alan_trader.*`.
 
 The service and its test suite bind `alan_trader` to this checkout by file
-path (`api/bootstrap.py`, `register_platform_package`), so a service checkout
-can sit in a folder of any name — e.g. `alan_trader_service/` directly beside
-the live `alan_trader/` — and never resolves `alan_trader.*` to the copy next
-door. `app/app.py`, `main.py` and `scripts/` still use the older convention
-(the parent directory on `sys.path`, which needs the folder to be called
-`alan_trader`): run those from the live checkout.
+path (`api/bootstrap.py`, `register_platform_package`), so the checkout can
+sit in a folder of any name (it is `alan-strats/`, like the repository) and
+never resolves `alan_trader.*` to another copy next door. The scripts under
+`scripts/` that the service uses bind the name the same way. `app/app.py` and
+`main.py` (the older Dash app) still use the older convention, the parent
+directory on `sys.path`, which needs the folder to be called `alan_trader`.
 
 ## Running
 
