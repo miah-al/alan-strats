@@ -128,6 +128,9 @@ Body `{"ticker": "SPY", "from": "2020-01-01", "to": "2026-09-01", "capital": 100
   side, quantity, entry price, mark, pnl).
 - `GET /api/paper/transactions` → `Table` of raw transactions.
 - `GET /api/paper/equity?from=&to=` → `{"series": [Series, ...]}` (at least `equity`; also `cash` when known).
+  A day whose close the service recorded from the live marks (16:00-16:20 New York time on a trading day) shows that
+  record, carried over the non-trading days after it, instead of the figure rebuilt from daily closes;
+  `recorded_closes` lists those days.
 - `GET /api/paper/runner` → runner status: `{"sessions": [{"strategy", "date", "state", "detail": {}}], "marks": {}}`.
 
 ### Market data

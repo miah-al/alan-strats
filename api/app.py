@@ -141,6 +141,11 @@ def create_app():
     day_stop = AccountDayStop(lambda: trade_limits.Limits(limits_store, strategies=_armed_strategies),
                               lambda: trade_limits.paper_usage(hub=market_hub), publish=hub.publish)
 
+    # the account's equity at each close, from the live marks: what "Day P&L" and the day stop measure the day from
+    from api.services import paper as _paper
+    from api.services.close_mark import CloseMark
+    close_mark = CloseMark(lambda: _paper.summary(market_hub), _paper.account_id)
+
     from api.redact import RedactingFilter, install_redaction, redact
     forwarder.addFilter(RedactingFilter())
 
@@ -165,6 +170,7 @@ def create_app():
         brief.start()
         if limits_store is not None:
             day_stop.start()
+        close_mark.start()
         beat = asyncio.create_task(hub.heartbeat_forever())
         logger.info("alan_trader service %s (%s) up; strategies from %s",
                     build["version"], build["branch"], info.get("strategies_dir"))
@@ -184,6 +190,7 @@ def create_app():
             crypto_flush.stop()
             brief.stop()
             day_stop.stop()
+            close_mark.stop()
             await market_hub.stop()
             if request_gate.installed() is market_hub.gate:
                 request_gate.install(None)
@@ -212,6 +219,7 @@ def create_app():
     app.state.brief = brief
     app.state.limits_store = limits_store
     app.state.day_stop = day_stop
+    app.state.close_mark = close_mark
     app.state.build = build
     app.state.bootstrap = info
     app.state.json_response = SafeJSONResponse
