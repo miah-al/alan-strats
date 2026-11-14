@@ -331,16 +331,18 @@ MODES = ("paper", "shadow")
 # ── launching the scheduled task's script ────────────────────────────────────
 
 def live_checkout() -> Path:
-    """The checkout the scheduled task ran from (``ALAN_TRADER_TASK_CHECKOUT``, default the main checkout)."""
+    """The checkout the scheduled task's script runs from: ``ALAN_TRADER_TASK_CHECKOUT``, else the main checkout when
+    this one is a linked worktree beside it, else this checkout itself (the service and the live code are one folder
+    since 2026-11-14)."""
     env = os.environ.get("ALAN_TRADER_TASK_CHECKOUT")
     if env:
         return Path(env)
     from api.config import main_checkout
     main = main_checkout()
-    if main is None:
-        raise RuntimeError("the live checkout is not known (the service is not a linked worktree); set "
-                           "ALAN_TRADER_TASK_CHECKOUT")
-    return main
+    if main is not None:
+        return main
+    from api.bootstrap import WORKING_COPY
+    return WORKING_COPY
 
 
 def limit_params(strategy: str) -> dict:
