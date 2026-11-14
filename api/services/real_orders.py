@@ -23,6 +23,12 @@ How nothing else can reach the real account:
 * Every live order is preceded by a tastytrade dry run of the same order; a dry run with errors stops the send.
 * After the send the order is watched and cancelled at the entry's cancel_at if it has not filled. The broker budget
   counts these calls but never blocks one (a cancel must always go out).
+* CLOSING (2026-11-14; on 11/13 the owner said "Close" three times and there was no reviewed path): ``close_spread``
+  buys back the day's OWN filled spread and nothing else. The account must hold exactly that short and long call, no
+  other order may be working on them, the debit is a LIMIT DAY in 0.05 steps no higher than the width, and a
+  tastytrade dry run goes first. An unfilled closing order is cancelled after ``wait_s``, so one is never left working;
+  at most HARD_MAX_CLOSES_PER_DAY attempts a day, one at a time. The loss pause does not apply: a close only reduces
+  risk. Closing is the owner's call: it runs only on the owner's word at the time.
 
 The full account number is never printed or recorded: ``mask`` it.
 """
@@ -51,6 +57,12 @@ TERMINAL = {"Filled", "Cancelled", "Rejected", "Expired", "Removed", "Partially 
 POLL_S = 3.0
 AFTER_CANCEL_S = 60.0
 RESULT_COLS = ["day", "strategy", "short", "long", "lots", "credit", "fees", "spx_close", "settle_value", "pnl"]
+#: closing the day's own spread
+HARD_MAX_CLOSES_PER_DAY = 5          # closing attempts a day; one at a time, each cancelled if unfilled before the next
+CLOSE_WAIT_S = 45.0                  # a closing order not filled in this long is cancelled; run close again at a new limit
+CLOSE_HOURS = (_dt.time(9, 30), _dt.time(15, 59, 30))   # SPXW 0DTE options stop trading at 16:00
+#: tastytrade's fee per contract for each leg cash-settled IN the money (seen 11/10 on both legs, 11/13 on the short)
+SETTLE_FEE_PER_ITM_LEG = 5.0
 
 
 class Refused(RuntimeError):
@@ -259,6 +271,24 @@ def take_live_slot(state_dir: Path, day: _dt.date, per_day: int) -> Path:
     raise Refused(f"a live order was already sent on {day} (one a day)")
 
 
+def close_slots_used(state_dir: Path, day: _dt.date) -> int:
+    return len(list(orders_dir(state_dir).glob(f"{day}.close.*.lock")))
+
+
+def take_close_slot(state_dir: Path, day: _dt.date) -> Path:
+    """Claim one of the day's closing attempts atomically (O_EXCL), BEFORE the order is sent; never given back."""
+    for i in range(1, HARD_MAX_CLOSES_PER_DAY + 1):
+        p = orders_dir(state_dir) / f"{day}.close.{i}.lock"
+        try:
+            fd = os.open(p, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+        except FileExistsError:
+            continue
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(_dt.datetime.now().isoformat(timespec="seconds"))
+        return p
+    raise Refused(f"all {HARD_MAX_CLOSES_PER_DAY} closing attempts of {day} are used")
+
+
 def results_path(state_dir: Path) -> Path:
     return orders_dir(state_dir) / "results.csv"
 
@@ -347,6 +377,36 @@ def check(t: Ticket, perm: Permission, now: _dt.datetime, live: bool, state_dir:
     return rule
 
 
+def check_close(o: dict, perm: Permission, debit: float, now: _dt.datetime, live: bool,
+                state_dir: Path) -> tuple[Ticket, Rule]:
+    """The day's filled spread (``o`` is ``day_order``) and its allow-list entry, if a closing order at ``debit`` may
+    go; else Refused. ``now`` is naive US/Eastern."""
+    if perm.mode == "off":
+        raise Refused("real orders are off (permission mode 'off')")
+    if live and perm.mode != "live":
+        raise Refused(f"live orders are not allowed (permission mode {perm.mode!r}); only test orders")
+    if o.get("status") != "Filled" or not o.get("ticket"):
+        raise Refused("no filled real order to close")
+    if (o.get("close") or {}).get("status") == "Filled":
+        raise Refused("the day's spread is already closed")
+    t = parse_ticket(o["ticket"])
+    rule = next((r for r in perm.rules if r.strategy == t.strategy), None)
+    if rule is None:
+        raise Refused(f"strategy {t.strategy!r} may not trade the real account")
+    if t.day != now.date():
+        raise Refused(f"the spread expired {t.day}: only today's spread can be closed")
+    if not (CLOSE_HOURS[0] <= now.time() < CLOSE_HOURS[1]):
+        raise Refused(f"{now:%H:%M:%S} is outside {CLOSE_HOURS[0]:%H:%M}-{CLOSE_HOURS[1]:%H:%M:%S}, when a close can go")
+    steps = debit / TICK
+    if not _close(steps, round(steps)):
+        raise Refused(f"limit {debit} is not in {TICK:.2f} steps")
+    if not (TICK - 1e-9 <= debit <= rule.width + 1e-9):
+        raise Refused(f"a debit of {debit:.2f} is not between {TICK:.2f} and the width {rule.width:g}")
+    if live and close_slots_used(state_dir, t.day) >= HARD_MAX_CLOSES_PER_DAY:
+        raise Refused(f"all {HARD_MAX_CLOSES_PER_DAY} closing attempts of {t.day} are used")
+    return t, rule
+
+
 # ── the order ────────────────────────────────────────────────────────────────────────────────────────────────────
 
 def occ_symbol(root: str, day: _dt.date, right: str, strike: float) -> str:
@@ -362,6 +422,43 @@ def build_order(t: Ticket):
             Leg(instrument_type=InstrumentType.EQUITY_OPTION, symbol=occ_symbol(t.root, t.day, t.right, t.long),
                 action=OrderAction.BUY_TO_OPEN, quantity=t.lots)]
     return LimitOrder(time_in_force=OrderTimeInForce.DAY, legs=legs, price=Decimal(f"{t.limit:.2f}"))  # + = credit
+
+
+def build_close_order(t: Ticket, debit: float):
+    """BUY TO CLOSE the short call, SELL TO CLOSE the long one, as one LIMIT DAY order for a debit."""
+    from tastytrade.order import InstrumentType, Leg, LimitOrder, OrderAction, OrderTimeInForce
+    legs = [Leg(instrument_type=InstrumentType.EQUITY_OPTION, symbol=occ_symbol(t.root, t.day, t.right, t.short),
+                action=OrderAction.BUY_TO_CLOSE, quantity=t.lots),
+            Leg(instrument_type=InstrumentType.EQUITY_OPTION, symbol=occ_symbol(t.root, t.day, t.right, t.long),
+                action=OrderAction.SELL_TO_CLOSE, quantity=t.lots)]
+    return LimitOrder(time_in_force=OrderTimeInForce.DAY, legs=legs, price=Decimal(f"-{debit:.2f}"))  # - = debit
+
+
+def _bare(symbol) -> str:
+    return "".join(str(symbol or "").split())
+
+
+def held(positions, t: Ticket) -> tuple[int, int]:
+    """(short leg, long leg): the contracts the account holds in the ticket's two calls, negative when short."""
+    short_sym = _bare(occ_symbol(t.root, t.day, t.right, t.short))
+    long_sym = _bare(occ_symbol(t.root, t.day, t.right, t.long))
+    s = lg = 0
+    for p in positions or []:
+        sym = _bare(getattr(p, "symbol", ""))
+        if sym not in (short_sym, long_sym):
+            continue
+        q = abs(int(Decimal(str(getattr(p, "quantity", 0) or 0))))
+        q = -q if _s(getattr(p, "quantity_direction", "")).lower() == "short" else q
+        if sym == short_sym:
+            s += q
+        else:
+            lg += q
+    return s, lg
+
+
+def _touches(order, t: Ticket) -> bool:
+    syms = {_bare(occ_symbol(t.root, t.day, t.right, k)) for k in (t.short, t.long)}
+    return any(_bare(getattr(leg, "symbol", "")) in syms for leg in getattr(order, "legs", None) or [])
 
 
 def _s(v) -> str:
@@ -483,6 +580,10 @@ class Broker:
         self._count()
         return list(await acct.get_live_orders(self.session))
 
+    async def positions(self, acct) -> list:
+        self._count()
+        return list(await acct.get_positions(self.session))
+
 
 # ── place, watch, settle ─────────────────────────────────────────────────────────────────────────────────────────
 
@@ -538,8 +639,11 @@ async def place(t: Ticket, perm: Permission, rule: Rule, broker: Broker, state_d
 
 async def watch(broker: Broker, acct, oid: int, t: Ticket, rule: Rule, state_dir: Path, *,
                 now: Callable[[], _dt.datetime], sleep: Callable = _sleep, poll_s: float = POLL_S,
-                say: Callable[[str], Any] = print) -> dict:
-    """Poll the order until it is final; at the cut-off cancel it (retrying until tastytrade takes the cancel)."""
+                say: Callable[[str], Any] = print, deadline: Optional[_dt.datetime] = None,
+                prefix: str = "live") -> dict:
+    """Poll the order until it is final; at the cut-off (the entry's cancel_at, or ``deadline``) cancel it, retrying
+    until tastytrade takes the cancel. ``prefix`` names the ledger events: ``live`` for the opening order, ``close`` for
+    a closing one, whose fill is booked as a debit."""
     cancel_sent_at: Optional[_dt.datetime] = None
     last = ""
     while True:
@@ -555,27 +659,91 @@ async def watch(broker: Broker, acct, oid: int, t: Ticket, rule: Rule, state_dir
         if st in TERMINAL:
             res: dict = {"status": st}
             if st == "Filled":
-                res["fill_credit"] = net_fill(po, t.lots)
-            record(state_dir, t.day, "live_final", now(), order_id=oid, **res)
+                fill = net_fill(po, t.lots)
+                if prefix == "close":
+                    res["fill_debit"] = None if fill is None else round(-fill, 2)
+                else:
+                    res["fill_credit"] = fill
+            record(state_dir, t.day, f"{prefix}_final", now(), order_id=oid, **res)
             return res
         n = now()
-        if cancel_sent_at is None and n.time() >= rule.cancel_at:
+        due = n >= deadline if deadline is not None else n.time() >= rule.cancel_at
+        if cancel_sent_at is None and due:
+            cut = f"{deadline:%H:%M:%S}" if deadline is not None else f"{rule.cancel_at:%H:%M}"
             try:
                 await broker.cancel(acct, oid)
                 cancel_sent_at = n
-                record(state_dir, t.day, "live_cancel_sent", n, order_id=oid)
-                say(f"{n:%H:%M:%S} not filled by {rule.cancel_at:%H:%M}: cancel sent")
+                record(state_dir, t.day, f"{prefix}_cancel_sent", n, order_id=oid)
+                say(f"{n:%H:%M:%S} not filled by {cut}: cancel sent")
             except Exception as exc:  # noqa: BLE001 - it may have just filled; the next read tells, else retry
-                record(state_dir, t.day, "live_cancel_failed", n, order_id=oid, error=broker.scrub(describe_error(exc)))
+                record(state_dir, t.day, f"{prefix}_cancel_failed", n, order_id=oid,
+                       error=broker.scrub(describe_error(exc)))
         if cancel_sent_at is not None and (n - cancel_sent_at).total_seconds() >= AFTER_CANCEL_S:
-            record(state_dir, t.day, "live_watch_ended", n, order_id=oid, status=st or "unknown")
+            record(state_dir, t.day, f"{prefix}_watch_ended", n, order_id=oid, status=st or "unknown")
             return {"status": st or "unknown",
                     "warning": "cancel sent but no final status after 60 s: check the order in tastytrade"}
         await sleep(poll_s)
 
 
+async def close_spread(t: Ticket, perm: Permission, rule: Rule, debit: float, broker: Broker, state_dir: Path, *,
+                       live: bool, now: Callable[[], _dt.datetime], sleep: Callable = _sleep, poll_s: float = POLL_S,
+                       wait_s: float = CLOSE_WAIT_S, say: Callable[[str], Any] = print) -> dict:
+    """Close the day's own spread (``check_close`` passed): the account must hold it exactly as opened and no order may
+    be working on it; then a tastytrade dry run; with ``live`` the real closing order, cancelled if it has not filled
+    in ``wait_s`` seconds."""
+    order = build_close_order(t, debit)
+    acct = await broker.account(perm.account)
+    s, lg = held(await broker.positions(acct), t)
+    if (s, lg) != (-t.lots, t.lots):
+        record(state_dir, t.day, "close_refused", now(), held={"short": s, "long": lg})
+        raise Refused(f"the account does not hold the spread as opened (short {s:+d}, long {lg:+d}; expected "
+                      f"-{t.lots}/+{t.lots}): nothing sent")
+    working = [o for o in await broker.live_orders(acct)
+               if _s(getattr(o, "status", "")) not in TERMINAL and _touches(o, t)]
+    if working:
+        ids = ", ".join(str(getattr(o, "id", "?")) for o in working)
+        record(state_dir, t.day, "close_refused", now(), working=ids)
+        raise Refused(f"order {ids} is still working on this spread: cancel it first; nothing sent")
+    try:
+        dry = await broker.dry_run(acct, order)
+    except Exception as exc:  # noqa: BLE001 - tastytrade's refusal: say it, send nothing
+        msg = broker.scrub(describe_error(exc))
+        record(state_dir, t.day, "close_dry_run_refused", now(), debit=debit, error=msg)
+        raise Refused(f"tastytrade refused the test closing order: {msg}") from None
+    ds = summarize(dry)
+    record(state_dir, t.day, "close_dry_run", now(), debit=debit, **ds)
+    out: dict = {"dry_run": ds, "account": mask(broker.account_number)}
+    if ds["errors"]:
+        raise Refused("tastytrade's test closing order has errors: " + "; ".join(ds["errors"]))
+    if not live:
+        return out
+
+    n = now()
+    if not (CLOSE_HOURS[0] <= n.time() < CLOSE_HOURS[1]):
+        raise Refused(f"{n:%H:%M:%S} is outside {CLOSE_HOURS[0]:%H:%M}-{CLOSE_HOURS[1]:%H:%M:%S}: nothing sent")
+    slot = take_close_slot(state_dir, t.day)
+    record(state_dir, t.day, "close_sending", n, debit=debit, slot=slot.name)
+    try:
+        resp = await broker.send(acct, order)
+    except Exception as exc:  # noqa: BLE001
+        msg = broker.scrub(describe_error(exc))
+        record(state_dir, t.day, "close_send_failed", now(), error=msg)
+        raise RuntimeError(f"the closing send failed ({msg}): run `status --broker` to see whether tastytrade has the "
+                           "order before trying again") from None
+    po = resp.order
+    oid = int(po.id)
+    ls = summarize(resp)
+    record(state_dir, t.day, "close_sent", now(), order_id=oid, status=_s(po.status), **ls)
+    say(f"{now():%H:%M:%S} SENT: closing order {oid}, status {_s(po.status)}")
+    out["live"] = {"order_id": oid, "status": _s(po.status), **ls}
+    out["live"].update(await watch(broker, acct, oid, t, rule, state_dir, now=now, sleep=sleep, poll_s=poll_s, say=say,
+                                   deadline=n + _dt.timedelta(seconds=wait_s), prefix="close"))
+    return out
+
+
 def day_order(state_dir: Path, day: _dt.date) -> dict:
-    """The day's live order as the ledger has it: the ticket, the order id, the final status and fill."""
+    """The day's live order as the ledger has it: the ticket, the order id, the final status and fill; and under
+    ``close`` the latest closing order sent (the filled one, once one filled): its limit, id, fees, status and fill."""
     out: dict = {}
     for r in read_ledger(state_dir, day):
         ev = r.get("event")
@@ -587,11 +755,21 @@ def day_order(state_dir: Path, day: _dt.date) -> dict:
             out.update(status=r.get("status"), fill_credit=r.get("fill_credit"))
         elif ev == "dry_run" and out.get("dry_fees") is None:
             out["dry_fees"] = r.get("fees")
+        elif ev in ("close_sending", "close_sent", "close_final") and (out.get("close") or {}).get("status") != "Filled":
+            if ev == "close_sending":
+                out["close"] = {"debit": r.get("debit"), "order_id": None, "fees": None, "status": None,
+                                "fill_debit": None}
+            elif ev == "close_sent":
+                out.setdefault("close", {}).update(order_id=r.get("order_id"), fees=r.get("fees"))
+            else:
+                out.setdefault("close", {}).update(status=r.get("status"), fill_debit=r.get("fill_debit"))
     return out
 
 
-def settle(state_dir: Path, day: _dt.date, index_close: float) -> dict:
-    """Book the day's filled real order at the cash settlement: (credit - the spread's value) x 100 x lots - fees."""
+def settle(state_dir: Path, day: _dt.date, index_close: Optional[float]) -> dict:
+    """Book the day's filled real order. Closed early: (credit - the closing debit) x 100 x lots - both orders' fees.
+    Held: (credit - the spread's value at ``index_close``) x 100 x lots - the fees, with tastytrade's fee for each leg
+    settled in the money."""
     o = day_order(state_dir, day)
     if o.get("status") != "Filled" or not o.get("ticket"):
         raise Refused(f"no filled real order on {day}")
@@ -601,11 +779,22 @@ def settle(state_dir: Path, day: _dt.date, index_close: float) -> dict:
     credit = float(credit) if credit is not None else float(tk["limit"])
     fees = o.get("fees") if o.get("fees") is not None else o.get("dry_fees")
     fees = abs(float(fees)) if fees is not None else 0.0
-    value = max(0.0, min(long_ - short, float(index_close) - short))
+    c = o.get("close") or {}
+    if c.get("status") == "Filled":
+        how = "closed"
+        value = float(c["fill_debit"] if c.get("fill_debit") is not None else c["debit"])
+        fees += abs(float(c.get("fees") or 0.0))
+    else:
+        if index_close is None:
+            raise Refused(f"the {day} spread was held to the settlement: give the index's official close")
+        how = "settled"
+        x = float(index_close)
+        value = max(0.0, min(long_ - short, x - short))
+        fees += SETTLE_FEE_PER_ITM_LEG * lots * (int(x > short) + int(x > long_))
     pnl = round((credit - value) * 100 * lots - fees, 2)
     row = {"day": str(day), "strategy": tk["strategy"], "short": short, "long": long_, "lots": lots,
-           "credit": credit, "fees": round(fees, 2), "spx_close": float(index_close), "settle_value": round(value, 2),
-           "pnl": pnl}
+           "credit": credit, "fees": round(fees, 2), "spx_close": "" if index_close is None else float(index_close),
+           "settle_value": round(value, 2), "pnl": pnl}
     add_result(state_dir, row)
-    record(state_dir, day, "settled", None, result=row)
-    return row
+    record(state_dir, day, "settled", None, result=dict(row, how=how))
+    return dict(row, how=how)
